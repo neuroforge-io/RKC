@@ -104,10 +104,53 @@ func TestProcSnapshotParsing(t *testing.T) {
 	if err != nil || len(processes) != 1 || processes[0].pid != 42 || processes[0].parentPID != 7 || processes[0].commandLine != "python -m ERais" {
 		t.Fatalf("proc snapshots = %+v, %v", processes, err)
 	}
-	for _, invalid := range []string{"", "12 no-close S 1", "12 (x)", "12 (x) S nope"} {
+	for _, invalid := range []string{"", "12 no-close S 1", "12 (x)", "12 (x) S", "12 (x) S nope"} {
 		if _, err := parseParentPID([]byte(invalid)); err == nil {
 			t.Fatalf("accepted invalid stat %q", invalid)
 		}
+	}
+}
+
+func TestPrioritySnapshotFailuresAreHermetic(t *testing.T) {
+	if _, err := procProcessSnapshots(filepath.Join(t.TempDir(), "missing")); err == nil {
+		t.Fatal("missing proc root was accepted")
+	}
+	cycle := []processSnapshot{{pid: 10, parentPID: 9}, {pid: 9, parentPID: 10}}
+	if err := checkHigherPriority(cycle, 10); err != nil {
+		t.Fatalf("ancestor cycle produced a false conflict: %v", err)
+	}
+	if err := checkHigherPriority(nil, 10); err != nil {
+		t.Fatalf("missing self snapshot produced a false conflict: %v", err)
+	}
+
+	root := t.TempDir()
+	makeProcess := func(pid string) string {
+		t.Helper()
+		path := filepath.Join(root, pid)
+		if err := os.Mkdir(path, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		return path
+	}
+	makeProcess("1")
+	commandDirectory := makeProcess("2")
+	if err := os.Mkdir(filepath.Join(commandDirectory, "cmdline"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	missingStat := makeProcess("3")
+	if err := os.WriteFile(filepath.Join(missingStat, "cmdline"), []byte("python\x00"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	invalidStat := makeProcess("4")
+	if err := os.WriteFile(filepath.Join(invalidStat, "cmdline"), []byte("python\x00"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(invalidStat, "stat"), []byte("invalid"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	processes, err := procProcessSnapshots(root)
+	if err != nil || len(processes) != 0 {
+		t.Fatalf("unstable proc fixtures = %+v, %v", processes, err)
 	}
 }
 
@@ -201,5 +244,37 @@ func TestConfigEnvironmentAndGuardArguments(t *testing.T) {
 				t.Errorf("guard arguments missing %q: %s", required, arguments)
 			}
 		}
+	}
+}
+
+func TestGuardValidationBranchesDoNotInspectLiveProcesses(t *testing.T) {
+	allow := func() error { return nil }
+	publicCommand, err := NewCommand(context.Background(), Config{
+		Executable: "/bin/true", MaximumRSSBytes: 64 << 20,
+		UnsafeDisableCgroup: true, UnsafeDisablePriorityCheck: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := publicCommand.Run(context.Background(), nil, nil); err != nil {
+		t.Fatalf("test-only public command = %v", err)
+	}
+	if _, err := newCommand(nil, Config{Executable: "/bin/true", MaximumRSSBytes: 64 << 20, UnsafeDisableCgroup: true}, allow); err == nil {
+		t.Fatal("nil construction context was accepted")
+	}
+	defaultLimit, err := newCommand(context.Background(), Config{
+		Executable: "/bin/true", UnsafeDisableCgroup: true,
+	}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if defaultLimit.maximumRSSBytes != 2560*1024*1024 {
+		t.Fatalf("default RSS limit = %d", defaultLimit.maximumRSSBytes)
+	}
+	if _, err := defaultLimit.Run(nil, nil, nil); err == nil || !strings.Contains(err.Error(), "context") {
+		t.Fatalf("nil run context error = %v", err)
+	}
+	if err := (*Command)(nil).waitUnitInactive(time.Second); err != nil {
+		t.Fatalf("nil command unit wait = %v", err)
 	}
 }

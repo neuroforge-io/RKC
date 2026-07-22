@@ -89,6 +89,81 @@ func TestEnvelopeParsingRejectsAmbiguousPathsAndSchedulingFailure(t *testing.T) 
 	}
 }
 
+func TestEnvelopeFailuresUseOnlyHermeticControlFixtures(t *testing.T) {
+	schedule := func(int) (schedulingEnvelope, error) {
+		return schedulingEnvelope{nice: rkcNice, ioClass: rkcIOClassIdle}, nil
+	}
+	if err := requireProcessLowPriority("unused", "unused", 0, schedule); !errors.Is(err, ErrLowPriorityEnvelope) {
+		t.Fatalf("invalid pid error = %v", err)
+	}
+
+	tests := []struct {
+		name   string
+		mutate func(*envelopeFixture)
+		want   string
+	}{
+		{"missing membership", func(f *envelopeFixture) {
+			if err := os.Remove(filepath.Join(f.process, "cgroup")); err != nil {
+				f.t.Fatal(err)
+			}
+		}, "read unified cgroup"},
+		{"malformed membership", func(f *envelopeFixture) { f.writeProc("cgroup", "0::relative\n") }, "parse unified cgroup"},
+		{"non-directory cgroup", func(f *envelopeFixture) {
+			if err := os.RemoveAll(f.unit); err != nil {
+				f.t.Fatal(err)
+			}
+			if err := os.WriteFile(f.unit, []byte("not a directory"), 0o600); err != nil {
+				f.t.Fatal(err)
+			}
+		}, "cgroup directory"},
+		{"missing cpu weight", func(f *envelopeFixture) {
+			if err := os.Remove(filepath.Join(f.unit, "cpu.weight")); err != nil {
+				f.t.Fatal(err)
+			}
+		}, "cpu.weight"},
+		{"missing cpu max", func(f *envelopeFixture) {
+			if err := os.Remove(filepath.Join(f.unit, "cpu.max")); err != nil {
+				f.t.Fatal(err)
+			}
+		}, "read cpu.max"},
+		{"unreadable io weight", func(f *envelopeFixture) {
+			path := filepath.Join(f.unit, "io.weight")
+			if err := os.Remove(path); err != nil {
+				f.t.Fatal(err)
+			}
+			if err := os.Mkdir(path, 0o700); err != nil {
+				f.t.Fatal(err)
+			}
+		}, "read io.weight"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			fixture := newEnvelopeFixture(t)
+			test.mutate(fixture)
+			err := requireProcessLowPriority(fixture.proc, fixture.cgroup, fixture.pid, schedule)
+			if !errors.Is(err, ErrLowPriorityEnvelope) || !strings.Contains(err.Error(), test.want) {
+				t.Fatalf("envelope error = %v, want %q", err, test.want)
+			}
+		})
+	}
+
+	root := t.TempDir()
+	oversized := filepath.Join(root, "oversized")
+	if err := os.WriteFile(oversized, []byte(strings.Repeat("1", maximumControlRead+1)), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := readSmallControl(oversized); err == nil {
+		t.Fatal("oversized cgroup control was accepted")
+	}
+	missing := filepath.Join(root, "missing")
+	if _, err := readControlInteger(missing); err == nil {
+		t.Fatal("missing integer control was accepted")
+	}
+	if err := requireControlInteger(root, "missing", 1); err == nil {
+		t.Fatal("missing required integer control was accepted")
+	}
+}
+
 type envelopeFixture struct {
 	t        *testing.T
 	proc     string

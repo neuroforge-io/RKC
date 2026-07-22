@@ -31,6 +31,139 @@ func TestResolveGenerationBindsQualifiedModelAndRuntimeReceipt(t *testing.T) {
 	}
 }
 
+func TestResolveGenerationUsesHermeticExecutableAndReceiptDefaults(t *testing.T) {
+	fixture := newResolverFixture(t)
+	t.Setenv("PATH", filepath.Dir(fixture.executable))
+	request := fixture.request()
+	request.ExecutablePath = ""
+	request.RuntimeReceiptPath = ""
+	binding, err := ResolveGeneration(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if binding.ExecutablePath != fixture.executable || binding.RuntimeReceiptPath != fixture.receiptPath {
+		t.Fatalf("default paths = executable %q, receipt %q", binding.ExecutablePath, binding.RuntimeReceiptPath)
+	}
+}
+
+func TestResolveGenerationRejectsMalformedRequestsAndBindings(t *testing.T) {
+	if _, err := ResolveGeneration(GenerationRequest{}); err == nil || !strings.Contains(err.Error(), "lock path") {
+		t.Fatalf("missing lock error = %v", err)
+	}
+	if _, err := ResolveGeneration(GenerationRequest{LockPath: "missing"}); err == nil || !strings.Contains(err.Error(), "model path") {
+		t.Fatalf("missing model error = %v", err)
+	}
+
+	tests := []struct {
+		name   string
+		mutate func(*resolverFixture, *GenerationRequest)
+		want   string
+	}{
+		{"asset whitespace", func(_ *resolverFixture, request *GenerationRequest) { request.AssetID = " generation " }, "surrounding whitespace"},
+		{"absent asset", func(_ *resolverFixture, request *GenerationRequest) { request.AssetID = "absent" }, "is absent"},
+		{"source revision", func(f *resolverFixture, _ *GenerationRequest) { f.lock.Assets[0].Revision = strings.Repeat("d", 40) }, "source archive"},
+		{"source provenance", func(f *resolverFixture, _ *GenerationRequest) { f.lock.Assets[0].SHA256 = "bad" }, "source asset provenance"},
+		{"model basename", func(f *resolverFixture, request *GenerationRequest) {
+			other := filepath.Join(f.root, "other.gguf")
+			f.write(other, []byte("GGUFtest"), 0o600)
+			request.ModelPath = other
+		}, "basename"},
+		{"receipt directory permissions", func(f *resolverFixture, _ *GenerationRequest) {
+			if err := os.Chmod(filepath.Dir(f.receiptPath), 0o777); err != nil {
+				f.t.Fatal(err)
+			}
+		}, "private real directory"},
+		{"executable receipt size", func(f *resolverFixture, _ *GenerationRequest) { f.receipt.Binaries[1].SizeBytes++ }, "llama-cli size"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			fixture := newResolverFixture(t)
+			request := fixture.request()
+			test.mutate(fixture, &request)
+			fixture.publishDocuments()
+			_, err := ResolveGeneration(request)
+			if err == nil || !strings.Contains(err.Error(), test.want) {
+				t.Fatalf("ResolveGeneration error = %v, want %q", err, test.want)
+			}
+		})
+	}
+}
+
+func TestResolverPolicyValidationRejectsInvalidShapes(t *testing.T) {
+	fixture := newResolverFixture(t)
+	asset := fixture.lock.Assets[1]
+	assetCases := []struct {
+		name   string
+		mutate func(*lockAsset)
+	}{
+		{"digest", func(asset *lockAsset) { asset.SHA256 = "bad" }},
+		{"filename", func(asset *lockAsset) { asset.Filename = "../fixture.gguf" }},
+		{"provenance", func(asset *lockAsset) { asset.Repository = "http://example.com/model" }},
+		{"metadata", func(asset *lockAsset) { asset.Quantization = nil }},
+		{"qualification", func(asset *lockAsset) { asset.QualificationSpec = stringPointer("../fixture.json") }},
+		{"model-only", func(asset *lockAsset) { asset.ExtractionRoot = stringPointer("source") }},
+	}
+	for _, test := range assetCases {
+		t.Run("asset "+test.name, func(t *testing.T) {
+			candidate := asset
+			test.mutate(&candidate)
+			if err := validateGenerationAsset(candidate); err == nil {
+				t.Fatalf("invalid generation asset was accepted: %+v", candidate)
+			}
+		})
+	}
+
+	receiptCases := []struct {
+		name   string
+		mutate func(*runtimeReceipt)
+	}{
+		{"profile", func(receipt *runtimeReceipt) { receipt.Profile = "gpu" }},
+		{"build policy", func(receipt *runtimeReceipt) { receipt.CMake = "" }},
+		{"binary record", func(receipt *runtimeReceipt) { receipt.Binaries[0].Path = "../llama-bench" }},
+		{"duplicate binary", func(receipt *runtimeReceipt) { receipt.Binaries[1].Path = receipt.Binaries[0].Path }},
+	}
+	lockBytes, err := os.ReadFile(fixture.lockPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lockDigest := sha256.Sum256(lockBytes)
+	for _, test := range receiptCases {
+		t.Run("receipt "+test.name, func(t *testing.T) {
+			receipt := fixture.receipt
+			receipt.Binaries = append([]runtimeBinary(nil), fixture.receipt.Binaries...)
+			test.mutate(&receipt)
+			data, marshalErr := json.Marshal(receipt)
+			if marshalErr != nil {
+				t.Fatal(marshalErr)
+			}
+			if err := validateReceiptShape(data, receipt, fixture.lock, hex.EncodeToString(lockDigest[:]), fixture.lock.Assets[0]); err == nil {
+				t.Fatalf("invalid runtime receipt was accepted: %+v", receipt)
+			}
+		})
+	}
+
+	if _, _, err := canonicalRegularPath("", false); err == nil {
+		t.Fatal("empty artifact path was accepted")
+	}
+	plain := filepath.Join(fixture.root, "plain")
+	fixture.write(plain, []byte("plain"), 0o600)
+	if _, _, err := canonicalRegularPath(plain, true); err == nil {
+		t.Fatal("non-executable artifact was accepted")
+	}
+	if _, _, _, _, err := readBoundedRegular(plain, 0); err == nil {
+		t.Fatal("non-positive read limit was accepted")
+	}
+	if _, _, _, _, err := readBoundedRegular(" ", 1); err == nil {
+		t.Fatal("blank document path was accepted")
+	}
+	if _, _, _, _, err := readBoundedRegular(plain, 1); err == nil {
+		t.Fatal("oversized document was accepted")
+	}
+	if quantizationBits("not-quantized") != 0 || quantizationBits("Qx") != 0 {
+		t.Fatal("invalid quantization was assigned a bit width")
+	}
+}
+
 func TestResolveGenerationRejectsUnqualifiedOrMismatchedArtifacts(t *testing.T) {
 	tests := []struct {
 		name   string
