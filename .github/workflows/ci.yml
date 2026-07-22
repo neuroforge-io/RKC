@@ -67,6 +67,10 @@ jobs:
         env:
           RKC_RESOURCE_GUARD_MODE: service
         run: sh scripts/with-rkc-limits.sh make demo
+      - name: Build verified non-recursive RKC self-catalogue
+        env:
+          RKC_RESOURCE_GUARD_MODE: service
+        run: make self-catalogue
       - name: Docker build
         run: docker build -t rkc:ci .
       - name: Docker runtime smoke (explicit portable no-Python profile)
@@ -107,3 +111,10 @@ jobs:
             dist/demo
             dist/demo-*.txt
           if-no-files-found: error
+      - name: Upload verified self-catalogue
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: rkc-self-catalogue-${{ github.sha }}
+          path: dist/self-catalogue
+          if-no-files-found: error
+          include-hidden-files: true

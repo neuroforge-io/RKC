@@ -31,6 +31,31 @@ func TestResolveGenerationBindsQualifiedModelAndRuntimeReceipt(t *testing.T) {
 	}
 }
 
+func TestResolveEmbeddingBindsQualifiedDefaultAndEmbeddingExecutable(t *testing.T) {
+	fixture := newResolverFixture(t)
+	embeddingModel := filepath.Join(fixture.root, "embedding.gguf")
+	fixture.write(embeddingModel, []byte("GGUFembed"), 0o600)
+	asset := &fixture.lock.Assets[2]
+	asset.Status = "qualified"
+	asset.DefaultEligible = true
+	asset.Filename = filepath.Base(embeddingModel)
+	asset.SHA256 = fileDigest(t, embeddingModel)
+	asset.SizeBytes = int64(len("GGUFembed"))
+	fixture.lock.DefaultEmbeddingModel = stringPointer(asset.ID)
+	fixture.receipt = runtimeReceipt{}
+	fixture.publishDocuments()
+	binding, err := ResolveEmbedding(EmbeddingRequest{
+		LockPath: fixture.lockPath, RuntimeReceiptPath: fixture.receiptPath,
+		ExecutablePath: fixture.embeddingExecutable, ModelPath: embeddingModel,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if binding.AssetID != asset.ID || binding.RuntimeSHA256 != fixture.embeddingExecutableSHA || binding.ModelSHA256 != asset.SHA256 {
+		t.Fatalf("unexpected embedding binding: %+v", binding)
+	}
+}
+
 func TestResolveGenerationUsesHermeticExecutableAndReceiptDefaults(t *testing.T) {
 	fixture := newResolverFixture(t)
 	t.Setenv("PATH", filepath.Dir(fixture.executable))
@@ -219,16 +244,18 @@ func TestStrictDocumentsRejectDuplicateUnknownAndTrailingJSON(t *testing.T) {
 }
 
 type resolverFixture struct {
-	t             *testing.T
-	root          string
-	lockPath      string
-	receiptPath   string
-	model         string
-	executable    string
-	modelSHA      string
-	executableSHA string
-	lock          lockDocument
-	receipt       runtimeReceipt
+	t                      *testing.T
+	root                   string
+	lockPath               string
+	receiptPath            string
+	model                  string
+	executable             string
+	embeddingExecutable    string
+	modelSHA               string
+	executableSHA          string
+	embeddingExecutableSHA string
+	lock                   lockDocument
+	receipt                runtimeReceipt
 }
 
 func newResolverFixture(t *testing.T) *resolverFixture {
@@ -240,14 +267,17 @@ func newResolverFixture(t *testing.T) *resolverFixture {
 	}
 	fixture := &resolverFixture{
 		t: t, root: root, lockPath: filepath.Join(root, "models.lock.json"),
-		receiptPath: filepath.Join(runtimeRoot, runtimeReceiptName),
-		model:       filepath.Join(root, "fixture.gguf"),
-		executable:  filepath.Join(runtimeRoot, "build", "bin", "llama-cli"),
+		receiptPath:         filepath.Join(runtimeRoot, runtimeReceiptName),
+		model:               filepath.Join(root, "fixture.gguf"),
+		executable:          filepath.Join(runtimeRoot, "build", "bin", "llama-cli"),
+		embeddingExecutable: filepath.Join(runtimeRoot, "build", "bin", "llama-embedding"),
 	}
 	fixture.write(fixture.model, []byte("GGUFtest"), 0o600)
 	fixture.write(fixture.executable, []byte("#!/bin/sh\nexit 0\n"), 0o700)
+	fixture.write(fixture.embeddingExecutable, []byte("#!/bin/sh\nexit 0\n"), 0o700)
 	fixture.modelSHA = fileDigest(t, fixture.model)
 	fixture.executableSHA = fileDigest(t, fixture.executable)
+	fixture.embeddingExecutableSHA = fileDigest(t, fixture.embeddingExecutable)
 	quantization := "Q4_K_M"
 	contextTokens := 32768
 	qualification := "models/qualification/fixture.json"
@@ -285,7 +315,7 @@ func (fixture *resolverFixture) publishDocuments() {
 			Binaries: []runtimeBinary{
 				{Path: "build/bin/llama-bench", SHA256: strings.Repeat("1", 64), SizeBytes: 1},
 				{Path: "build/bin/llama-cli", SHA256: fixture.executableSHA, SizeBytes: int64(len("#!/bin/sh\nexit 0\n"))},
-				{Path: "build/bin/llama-embedding", SHA256: strings.Repeat("2", 64), SizeBytes: 1},
+				{Path: "build/bin/llama-embedding", SHA256: fixture.embeddingExecutableSHA, SizeBytes: int64(len("#!/bin/sh\nexit 0\n"))},
 				{Path: "build/bin/llama-server", SHA256: strings.Repeat("3", 64), SizeBytes: 1},
 			},
 		}

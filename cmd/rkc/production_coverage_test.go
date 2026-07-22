@@ -30,6 +30,7 @@ func TestRunDispatchesEveryProductionCommand(t *testing.T) {
 		{"serve", []string{"serve", "--definitely-invalid"}, "flag provided but not defined"},
 		{"check", []string{"check", "--definitely-invalid"}, "flag provided but not defined"},
 		{"init", []string{"init", "unexpected"}, "does not accept positional"},
+		{"answer", []string{"answer", "--definitely-invalid"}, "flag provided but not defined"},
 		{"synthesize", []string{"synthesize", "--limit", "0"}, "limit must be"},
 		{"components", []string{"components", "--definitely-invalid"}, "flag provided but not defined"},
 		{"doctor", []string{"doctor", "--definitely-invalid"}, "flag provided but not defined"},

@@ -5,7 +5,7 @@ PYTHON ?= $(if $(wildcard .venv/bin/python),.venv/bin/python,python3)
 MODEL_RUNTIME ?=
 MODEL_QUALIFICATION_OUTPUT ?=
 
-.PHONY: all build safe-build format-check vet test python-test coverage safe-coverage test-race contracts docs-check licenses model-lock-check model-runtime-portable model-runtime-native model-fetch-generation model-fetch-embedding model-qualify plugins smoke reproducibility smoke-api smoke-mcp smoke-git benchmark verify safe-verify safe-test safe-test-race release-verify safe-release-verify demo release-binaries complete-package clean package
+.PHONY: all build safe-build format-check vet test python-test coverage safe-coverage test-race contracts docs-check licenses model-lock-check model-runtime-portable model-runtime-native model-fetch-generation model-fetch-embedding model-qualify plugins smoke reproducibility smoke-api smoke-mcp smoke-git benchmark verify safe-verify safe-test safe-test-race release-verify safe-release-verify self-catalogue demo release-binaries complete-package clean package
 
 all: verify build
 
@@ -111,6 +111,11 @@ release-verify:
 
 safe-release-verify:
 	sh scripts/with-rkc-limits.sh $(MAKE) release-verify
+
+# The wrapper builds and scans inside one subordinate cgroup and refuses dirty
+# source, unsafe output, generated-input recursion, links, and model weights.
+self-catalogue:
+	sh scripts/with-rkc-limits.sh bash scripts/self-catalogue.sh
 
 demo: build
 	sh scripts/generate-demo.sh

@@ -37,11 +37,11 @@ var (
 	tagPattern      = regexp.MustCompile(`^b[0-9]+$`)
 )
 
-// GenerationRequest identifies local artifacts without trusting caller-provided
+// ModelRequest identifies local artifacts without trusting caller-provided
 // digests or provenance strings. AssetID may be empty only when the lock names a
-// qualified default generation model. RuntimeReceiptPath may be empty when the
-// executable has the standard <runtime>/build/bin/llama-cli layout.
-type GenerationRequest struct {
+// qualified default for the requested model kind. RuntimeReceiptPath may be
+// empty when the executable has the standard <runtime>/build/bin layout.
+type ModelRequest struct {
 	LockPath           string
 	RuntimeReceiptPath string
 	ExecutablePath     string
@@ -49,10 +49,16 @@ type GenerationRequest struct {
 	AssetID            string
 }
 
-// GenerationBinding contains only provenance derived from verified lock and
+// GenerationRequest is the generation-model request contract.
+type GenerationRequest = ModelRequest
+
+// EmbeddingRequest is the embedding-model request contract.
+type EmbeddingRequest = ModelRequest
+
+// ModelBinding contains only provenance derived from verified lock and
 // receipt documents. The provider independently hashes the executable/model
 // bytes against these expectations before and after every inference process.
-type GenerationBinding struct {
+type ModelBinding struct {
 	AssetID              string `json:"asset_id"`
 	LockSHA256           string `json:"lock_sha256"`
 	RuntimeReceiptSHA256 string `json:"runtime_receipt_sha256"`
@@ -74,6 +80,12 @@ type GenerationBinding struct {
 	RuntimeReceiptPath   string `json:"-"`
 	LockPath             string `json:"-"`
 }
+
+// GenerationBinding is a verified generation model/runtime binding.
+type GenerationBinding = ModelBinding
+
+// EmbeddingBinding is a verified embedding model/runtime binding.
+type EmbeddingBinding = ModelBinding
 
 type lockDocument struct {
 	Schema                 string      `json:"$schema"`
@@ -144,14 +156,38 @@ type runtimeBinary struct {
 // ResolveGeneration fails closed unless a qualified Apache-2.0 model and the
 // exact locally built llama-cli binary can be bound to one lock document.
 func ResolveGeneration(request GenerationRequest) (GenerationBinding, error) {
+	return resolveModelBinding(request, "generation-model")
+}
+
+// ResolveEmbedding fails closed unless a qualified Apache-2.0 embedding model
+// and the exact locally built llama-embedding binary bind to one lock document.
+func ResolveEmbedding(request EmbeddingRequest) (EmbeddingBinding, error) {
+	return resolveModelBinding(request, "embedding-model")
+}
+
+func resolveModelBinding(request ModelRequest, modelKind string) (ModelBinding, error) {
+	if modelKind != "generation-model" && modelKind != "embedding-model" {
+		return ModelBinding{}, errors.New("unsupported model binding kind")
+	}
+	purpose := strings.TrimSuffix(modelKind, "-model")
+	executableName := "llama-cli"
+	defaultModel := func(lock lockDocument) *string { return lock.DefaultGenerationModel }
+	defaultField := "default_generation_model"
+	assetFlag := "--model-asset"
+	if modelKind == "embedding-model" {
+		executableName = "llama-embedding"
+		defaultModel = func(lock lockDocument) *string { return lock.DefaultEmbeddingModel }
+		defaultField = "default_embedding_model"
+		assetFlag = "--embedding-asset"
+	}
 	if strings.TrimSpace(request.LockPath) == "" {
-		return GenerationBinding{}, errors.New("model lock path is required")
+		return ModelBinding{}, errors.New("model lock path is required")
 	}
 	if strings.TrimSpace(request.ModelPath) == "" {
-		return GenerationBinding{}, errors.New("generation model path is required")
+		return ModelBinding{}, fmt.Errorf("%s model path is required", purpose)
 	}
 	if strings.TrimSpace(request.ExecutablePath) == "" {
-		request.ExecutablePath = "llama-cli"
+		request.ExecutablePath = executableName
 	}
 	lockPath, lockBytes, lockDigest, _, err := readBoundedRegular(request.LockPath, maximumLockBytes)
 	if err != nil {
@@ -169,10 +205,11 @@ func ResolveGeneration(request GenerationRequest) (GenerationBinding, error) {
 		return GenerationBinding{}, errors.New("model asset ID has surrounding whitespace")
 	}
 	if assetID == "" {
-		if lock.DefaultGenerationModel == nil || strings.TrimSpace(*lock.DefaultGenerationModel) == "" {
-			return GenerationBinding{}, errors.New("model lock has no qualified default_generation_model; --model-asset is required after qualification")
+		selectedDefault := defaultModel(lock)
+		if selectedDefault == nil || strings.TrimSpace(*selectedDefault) == "" {
+			return GenerationBinding{}, fmt.Errorf("model lock has no qualified %s; %s is required after qualification", defaultField, assetFlag)
 		}
-		assetID = *lock.DefaultGenerationModel
+		assetID = *selectedDefault
 	}
 	var selected *lockAsset
 	var source *lockAsset
@@ -188,7 +225,7 @@ func ResolveGeneration(request GenerationRequest) (GenerationBinding, error) {
 	if selected == nil {
 		return GenerationBinding{}, fmt.Errorf("model asset %q is absent from the lock", assetID)
 	}
-	if err := validateGenerationAsset(*selected); err != nil {
+	if err := validateModelAsset(*selected, modelKind); err != nil {
 		return GenerationBinding{}, err
 	}
 	if source == nil || source.Kind != "source-archive" || source.Revision != lock.LlamaCPP.Commit {
@@ -199,13 +236,13 @@ func ResolveGeneration(request GenerationRequest) (GenerationBinding, error) {
 	}
 	modelPath, modelInfo, err := canonicalRegularPath(request.ModelPath, false)
 	if err != nil {
-		return GenerationBinding{}, fmt.Errorf("resolve generation model: %w", err)
+		return GenerationBinding{}, fmt.Errorf("resolve %s model: %w", purpose, err)
 	}
 	if filepath.Base(modelPath) != selected.Filename {
-		return GenerationBinding{}, fmt.Errorf("generation model basename %q does not match locked filename %q", filepath.Base(modelPath), selected.Filename)
+		return GenerationBinding{}, fmt.Errorf("%s model basename %q does not match locked filename %q", purpose, filepath.Base(modelPath), selected.Filename)
 	}
 	if modelInfo.Size() != selected.SizeBytes {
-		return GenerationBinding{}, fmt.Errorf("generation model size %d does not match locked size %d", modelInfo.Size(), selected.SizeBytes)
+		return GenerationBinding{}, fmt.Errorf("%s model size %d does not match locked size %d", purpose, modelInfo.Size(), selected.SizeBytes)
 	}
 	executablePath, executableInfo, err := resolveExecutable(request.ExecutablePath)
 	if err != nil {
@@ -231,7 +268,7 @@ func ResolveGeneration(request GenerationRequest) (GenerationBinding, error) {
 		return GenerationBinding{}, err
 	}
 	runtimeRoot := filepath.Dir(receiptPath)
-	expectedBinaryName := "llama-cli"
+	expectedBinaryName := executableName
 	if runtime.GOOS == "windows" {
 		expectedBinaryName += ".exe"
 	}
@@ -244,18 +281,18 @@ func ResolveGeneration(request GenerationRequest) (GenerationBinding, error) {
 		}
 	}
 	if executableReceipt == nil {
-		return GenerationBinding{}, errors.New("llama.cpp runtime receipt has no llama-cli binary")
+		return GenerationBinding{}, fmt.Errorf("llama.cpp runtime receipt has no %s binary", executableName)
 	}
 	expectedExecutable := filepath.Join(runtimeRoot, filepath.FromSlash(executableReceipt.Path))
 	expectedExecutable, _, err = canonicalRegularPath(expectedExecutable, true)
 	if err != nil {
-		return GenerationBinding{}, fmt.Errorf("resolve receipt-bound llama-cli: %w", err)
+		return GenerationBinding{}, fmt.Errorf("resolve receipt-bound %s: %w", executableName, err)
 	}
 	if executablePath != expectedExecutable {
-		return GenerationBinding{}, fmt.Errorf("llama-cli %q is not the receipt-bound executable %q", executablePath, expectedExecutable)
+		return GenerationBinding{}, fmt.Errorf("%s %q is not the receipt-bound executable %q", executableName, executablePath, expectedExecutable)
 	}
 	if executableInfo.Size() != executableReceipt.SizeBytes {
-		return GenerationBinding{}, fmt.Errorf("llama-cli size %d does not match receipt size %d", executableInfo.Size(), executableReceipt.SizeBytes)
+		return GenerationBinding{}, fmt.Errorf("%s size %d does not match receipt size %d", executableName, executableInfo.Size(), executableReceipt.SizeBytes)
 	}
 	return GenerationBinding{
 		AssetID: assetID, LockSHA256: lockDigest, RuntimeReceiptSHA256: receiptDigest,
@@ -319,8 +356,17 @@ func validateLockShape(data []byte, lock lockDocument) error {
 }
 
 func validateGenerationAsset(asset lockAsset) error {
-	if asset.Kind != "generation-model" || asset.Status != "qualified" || !asset.DefaultEligible {
-		return fmt.Errorf("model asset %q is not a qualified, default-eligible generation model", asset.ID)
+	return validateModelAsset(asset, "generation-model")
+}
+
+func validateEmbeddingAsset(asset lockAsset) error {
+	return validateModelAsset(asset, "embedding-model")
+}
+
+func validateModelAsset(asset lockAsset, expectedKind string) error {
+	purpose := strings.TrimSuffix(expectedKind, "-model")
+	if asset.Kind != expectedKind || asset.Status != "qualified" || !asset.DefaultEligible {
+		return fmt.Errorf("model asset %q is not a qualified, default-eligible %s model", asset.ID, purpose)
 	}
 	if !revisionPattern.MatchString(asset.Revision) || !sha256Pattern.MatchString(asset.SHA256) || asset.SizeBytes <= 4 || asset.SizeBytes > 8*1024*1024*1024 {
 		return fmt.Errorf("model asset %q has invalid revision, digest, or size", asset.ID)
@@ -398,7 +444,7 @@ func resolveExecutable(path string) (string, os.FileInfo, error) {
 		var err error
 		resolved, err = exec.LookPath(path)
 		if err != nil {
-			return "", nil, fmt.Errorf("resolve llama-cli: %w", err)
+			return "", nil, fmt.Errorf("resolve llama.cpp executable: %w", err)
 		}
 	}
 	return canonicalRegularPath(resolved, true)

@@ -30,13 +30,15 @@ The reference build provides:
 - explicit unresolved-symbol nodes instead of discarded or guessed relations;
 - canonical sorting, validation, deterministic digests, and coverage ratios;
 - crash-safe filesystem snapshots and content-addressed object storage;
-- ranked lexical search, graph neighbourhoods, shortest paths, impact traversal,
-  strongly connected components, and semantic snapshot diffs;
+- ranked lexical search, qualification-gated semantic and hybrid retrieval,
+  graph neighbourhoods, shortest paths, impact traversal, strongly connected
+  components, and semantic snapshot diffs;
 - deterministic Markdown documentation, normalized/redacted source envelopes,
   NotebookLM packs, JSONL, SARIF, GraphML, Mermaid, CSV, and a static browser;
 - a read-only HTTP API and Model Context Protocol server;
 - bounded evidence packets, a CPU-only `llama.cpp` CLI provider, RSS policy,
-  prompt-isolation rules, and model-claim validation;
+  prompt-isolation rules, citation and claim validation, and a grounded
+  repository-answer command;
 - plugin manifests, lockfiles, GraphPatch validation, and an external Python
   worker protocol;
 - offline contract, documentation, determinism, API, MCP, Git-acquisition,
@@ -73,6 +75,8 @@ The exact ordered work, interfaces, migrations, tests, and exit gates are in
 - [`docs/data-model.md`](docs/data-model.md): canonical records and invariants.
 - [`docs/plugin-sdk.md`](docs/plugin-sdk.md): plugin and GraphPatch contracts.
 - [`docs/MODEL_RUNTIME.md`](docs/MODEL_RUNTIME.md): bounded local-model design.
+- [`docs/SELF_CATALOGUE.md`](docs/SELF_CATALOGUE.md): guarded, non-recursive
+  compilation of RKC's committed source into its own verified atlas.
 - [`docs/SECURITY_MODEL.md`](docs/SECURITY_MODEL.md): hostile-repository threat model.
 - [`docs/OPERATIONS.md`](docs/OPERATIONS.md): deployment and operational practice.
 - [`docs/RELEASE_VALIDATION.md`](docs/RELEASE_VALIDATION.md): exact verification
@@ -150,6 +154,54 @@ Open `http://127.0.0.1:8787`.
 ./bin/rkc path --dir /tmp/rkc-output --from '<node-id>' --to '<node-id>'
 ```
 
+Lexical retrieval is the dependency-free default. Semantic and hybrid retrieval
+are available only when every model-supply-chain gate resolves to one exact,
+qualified embedding asset, GGUF file, and `llama.cpp` runtime receipt. A new
+vector index is published outside the verified atlas and is bound to the
+current lexical corpus and model/runtime hashes:
+
+```sh
+./bin/rkc query \
+  --dir /tmp/rkc-output \
+  --mode hybrid \
+  --build-vector-index \
+  --embedding-model-lock models/models.lock.json \
+  --embedding-asset '<qualified-embedding-asset-id>' \
+  --embedding-model /path/to/model.gguf \
+  --llama-embedding /path/to/llama-embedding \
+  --embedding-runtime-receipt /path/to/build-receipt.json \
+  Login
+```
+
+The committed model lock currently has no generation or embedding default and
+its lightweight candidates remain unqualified. Therefore this path fails
+closed until an operator runs the published qualification gate and promotes an
+asset; RKC does not silently download, select, or trust a model.
+
+## Ask a grounded repository question
+
+`rkc answer` combines bounded lexical retrieval and graph expansion with the
+grounded-answer validator. The model receives only a size-limited canonical
+evidence packet. Output is either citation-backed claims or an explicit
+abstention, and it is written to standard output rather than fed back into the
+atlas:
+
+```sh
+./bin/rkc answer \
+  --dir /tmp/rkc-output \
+  --graph-hops 1 \
+  --model-lock models/models.lock.json \
+  --model-asset '<qualified-generation-asset-id>' \
+  --model /path/to/model.gguf \
+  --llama-cli /path/to/llama-cli \
+  --runtime-receipt /path/to/build-receipt.json \
+  'How does snapshot publication fail closed?'
+```
+
+The same exact model/runtime qualification boundary applies here. With the
+committed lock's current null default, the command intentionally refuses model
+execution rather than presenting an unqualified answer.
+
 ## Build evidence packets without running a model
 
 ```sh
@@ -191,6 +243,23 @@ unbundled and no candidate is a default until it passes the published gate. See
 
 Optional model packets and citation-linked prose are kept outside that verified
 tree under `/tmp/rkc-output.rkc-derived/synthesis/<profile>/` by default.
+
+## Catalogue RKC with RKC
+
+From a clean Git worktree, build a complete atlas of RKC's own committed source:
+
+```sh
+make self-catalogue
+```
+
+The target runs inside the mandatory low-priority cgroup guard, stages only
+verified stage-zero Git files into a private temporary source tree, and writes
+to the physically separate `dist/self-catalogue/atlas` tree. Generated output,
+runtime/model trees, model-weight formats, links, and uncommitted files cannot
+become scan input. No model is invoked. `MANIFEST.json` and `SHA256SUMS.txt`
+bind the source commit, tool binary, snapshot, canonical files, and explicit
+non-recursion assertions. See
+[`docs/SELF_CATALOGUE.md`](docs/SELF_CATALOGUE.md) for the verification contract.
 
 ## Configuration
 

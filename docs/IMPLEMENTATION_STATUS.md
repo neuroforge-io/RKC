@@ -51,10 +51,12 @@ The labels below mean:
 | NotebookLM pack | Implemented | byte-bounded grouping |
 | static browser | Implemented | self-contained reference UI |
 | ranked lexical search | Implemented | persisted portable index |
+| semantic/hybrid query | Partial | qualified `llama.cpp` embedding path and corpus-bound vector receipts implemented; no qualified/default model active |
 | FTS5 runtime search | Planned | depends on SQLite runtime writer |
 | graph paths, impact, SCCs | Implemented | bounded in-memory graph operations |
 | semantic diff | Implemented | conservative logical/signature comparison |
-| embeddings | Planned | exact Apache-2.0 candidate and qualification corpus locked; runtime integration pending |
+| guarded self-catalogue | Implemented | clean Git staging; recursive-output and model-weight exclusion; deterministic receipts |
+| embeddings | Partial | exact qualified asset/runtime resolver and CLI integration implemented; committed candidate remains unqualified |
 
 ## Model subsystem
 
@@ -65,6 +67,7 @@ The labels below mean:
 | pinned native `llama.cpp` bootstrap | Implemented | exact source digest, CPU-only portable/native profiles, guarded build |
 | cgroup, priority, CPU-only and RSS policy | Partial | guarded Linux path implemented; portable non-Linux hard limits pending |
 | claim/summary validation | Implemented | citations and identifiers checked |
+| grounded repository answers | Implemented | CLI uses bounded lexical/graph evidence, canonical re-resolution, validation, and abstention; qualified generation binding required |
 | real GGUF benchmark below 2.5 GiB | Planned | generation and embedding candidates are unqualified and not defaults |
 | remote model providers | Planned | policy/egress controls required |
 
@@ -115,3 +118,8 @@ The labels below mean:
 13. constrained remote-Git acquisition test;
 14. Go race detector;
 15. self-analysis benchmark.
+
+CI additionally runs `make self-catalogue` inside the delegated resource guard
+and uploads the commit-bound `dist/self-catalogue` receipts and atlas. The
+workflow does not qualify or promote a model; both committed model defaults
+remain null until the separate measured qualification gate passes.

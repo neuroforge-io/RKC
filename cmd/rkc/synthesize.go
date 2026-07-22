@@ -70,50 +70,6 @@ type synthesisRecord struct {
 	Error      string                       `json:"error,omitempty"`
 }
 
-// qualifiedClaimResponseSchema matches the generation response contract used
-// by models/qualification/rkc-local-model-v1.json. It deliberately permits only
-// evidence-bound supported claims; inferred prose is not part of the qualified
-// production profile.
-const qualifiedClaimResponseSchema = `{"type":"object","additionalProperties":false,"required":["claims","unresolved_questions"],"properties":{"claims":{"type":"array","maxItems":8,"items":{"type":"object","additionalProperties":false,"required":["text","category","certainty","evidence_ids"],"properties":{"text":{"type":"string","maxLength":1200},"category":{"type":"string","enum":["purpose","signature","error","relationship","constraint"]},"certainty":{"const":"supported"},"evidence_ids":{"type":"array","minItems":1,"maxItems":8,"uniqueItems":true,"items":{"type":"string"}}}}},"unresolved_questions":{"type":"array","maxItems":8,"items":{"type":"string","maxLength":500}}}}`
-
-func qualifiedStructuredGenerationArguments() []string {
-	return []string{
-		"--json-schema", qualifiedClaimResponseSchema,
-		"--conversation", "--single-turn", "--jinja",
-		"--chat-template-kwargs", `{"enable_thinking":false}`,
-		"--reasoning", "off", "--reasoning-format", "none", "--reasoning-budget", "0",
-		"--offline", "--no-perf", "--poll", "0", "--poll-batch", "0",
-	}
-}
-
-func qualifiedResponseSchemaSHA256() string {
-	digest := sha256.Sum256([]byte(qualifiedClaimResponseSchema))
-	return hex.EncodeToString(digest[:])
-}
-
-func defaultSynthesisModelLockPath() string {
-	executable, err := os.Executable()
-	if err != nil {
-		return ""
-	}
-	executable, err = filepath.EvalSymlinks(executable)
-	if err != nil {
-		return ""
-	}
-	binDirectory := filepath.Dir(executable)
-	candidates := []string{
-		filepath.Join(filepath.Dir(binDirectory), "models", "models.lock.json"),
-		filepath.Join(filepath.Dir(binDirectory), "share", "rkc", "models", "models.lock.json"),
-	}
-	for _, candidate := range candidates {
-		info, err := os.Lstat(candidate)
-		if err == nil && info.Mode().IsRegular() && info.Mode()&os.ModeSymlink == 0 {
-			return candidate
-		}
-	}
-	return ""
-}
-
 func runSynthesize(args []string) error {
 	modelContext, stopModel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stopModel()
@@ -201,7 +157,7 @@ func runSynthesizeContext(modelContext context.Context, args []string) error {
 		return errors.New("no eligible subject nodes selected")
 	}
 
-	var provider modelruntime.Provider
+	var generation *qualifiedGenerationSession
 	providerName := "packet-only"
 	var descriptor modelruntime.ModelDescriptor
 	var generationBinding *modelassets.GenerationBinding
@@ -209,61 +165,26 @@ func runSynthesizeContext(modelContext context.Context, args []string) error {
 	budget := modelruntime.Budget{MaximumRSSBytes: *maxRSSMiB * 1024 * 1024, SafetyMarginBytes: 128 * 1024 * 1024}
 	inferenceOptions := modelruntime.InferenceOptions{ContextTokens: *contextTokens, MaxOutputTokens: *maxOutputTokens, Threads: *threads, BatchSize: *batchSize, Parallel: 1}
 	if !*packetOnly {
-		selectedProvider := strings.TrimSpace(*providerType)
-		if selectedProvider == "" || selectedProvider == "disabled" {
-			if strings.TrimSpace(*modelPath) != "" {
-				selectedProvider = "llama.cpp"
-			} else {
-				return errors.New("model provider is disabled; choose --provider or use --packet-only")
-			}
+		if *allowInference {
+			return errors.New("--allow-inference is incompatible with the qualified supported-claim response contract")
 		}
-		switch selectedProvider {
-		case "llama.cpp":
-			if strings.TrimSpace(*modelPath) == "" {
-				return errors.New("--model is required for the llama.cpp provider")
-			}
-			if cfg.Model.Temperature != 0 {
-				return errors.New("model.temperature must be 0 for deterministic qualified synthesis")
-			}
-			if *allowInference {
-				return errors.New("--allow-inference is incompatible with the qualified supported-claim response contract")
-			}
-			binding, err := modelassets.ResolveGeneration(modelassets.GenerationRequest{
-				LockPath: *modelLock, RuntimeReceiptPath: *runtimeReceipt,
-				ExecutablePath: *llamaCLI, ModelPath: *modelPath, AssetID: *modelAsset,
-			})
-			if err != nil {
-				return err
-			}
-			if *contextTokens > binding.NativeContextTokens {
-				return fmt.Errorf("requested context %d exceeds locked model context %d", *contextTokens, binding.NativeContextTokens)
-			}
-			localProvider, err := modelruntime.NewLlamaCPPProvider(modelruntime.LlamaCPPConfig{
-				Executable: binding.ExecutablePath, ModelPath: binding.ModelPath,
-				ExpectedExecutableSHA256: binding.RuntimeSHA256, ExpectedModelSHA256: binding.ModelSHA256,
-				ModelID: binding.AssetID, ModelRevision: binding.ModelRevision, ModelLicense: binding.ModelLicense,
-				RuntimeRevision: binding.RuntimeRevision, ContextLimit: binding.NativeContextTokens,
-				QuantizationBits: binding.QuantizationBits, Threads: *threads, BatchSize: *batchSize,
-				Seed: 1, Temperature: 0, Timeout: *timeout, Budget: budget,
-				AdditionalArguments: qualifiedStructuredGenerationArguments(),
-			})
-			if err != nil {
-				return err
-			}
-			provider = localProvider
-			providerName = "llamacpp-cli"
-			generationBinding = &binding
-			responseSchemaDigest = qualifiedResponseSchemaSHA256()
-		default:
-			return fmt.Errorf("provider %q is not implemented by synthesize", selectedProvider)
+		generation, err = openQualifiedGenerationProvider(qualifiedGenerationRequest{
+			Provider: *providerType, ModelPath: *modelPath, LlamaCLI: *llamaCLI,
+			ModelLock: *modelLock, ModelAsset: *modelAsset, RuntimeReceipt: *runtimeReceipt,
+			ContextTokens: *contextTokens, MaximumOutputTokens: *maxOutputTokens,
+			MaximumRSSMiB: *maxRSSMiB, Threads: *threads, BatchSize: *batchSize,
+			Timeout: *timeout, Temperature: cfg.Model.Temperature,
+		})
+		if err != nil {
+			return err
 		}
-		defer provider.Close()
-		descriptor = provider.Descriptor()
-		if generationBinding != nil {
-			if err := validateSynthesisDescriptor(*generationBinding, descriptor); err != nil {
-				return err
-			}
-		}
+		defer generation.Close()
+		providerName = generation.ProviderName
+		descriptor = generation.Descriptor
+		generationBinding = &generation.Binding
+		responseSchemaDigest = generation.ResponseSchemaSHA256
+		budget = generation.Budget
+		inferenceOptions = generation.Inference
 	}
 	profile := profileName(providerName, descriptor.ID, task)
 	finalOutput, err := resolveSynthesisOutput(*output, dataset.Root, *repositoryRoot, profile)
@@ -357,7 +278,7 @@ func runSynthesizeContext(modelContext context.Context, args []string) error {
 		}
 
 		requestID := rkcmodel.StableID("model_request", report.Packet.PacketID, descriptor.ID, string(task))
-		response, generationErr := provider.Generate(modelContext, modelruntime.Request{RequestID: requestID, Task: task, Packet: report.Packet, Options: inferenceOptions})
+		response, generationErr := generation.Provider.Generate(modelContext, modelruntime.Request{RequestID: requestID, Task: task, Packet: report.Packet, Options: inferenceOptions})
 		if err := synthesisCancellation(modelContext); err != nil {
 			return err
 		}
@@ -473,16 +394,6 @@ func runSynthesizeContext(modelContext context.Context, args []string) error {
 	fmt.Printf("Packets: %d; responses: %d; accepted claims: %d; rejected claims: %d\n", manifest.PacketsWritten, manifest.ResponsesReceived, manifest.AcceptedClaims, manifest.RejectedClaims)
 	fmt.Printf("Source excerpts: %d bytes; redacted secret findings: %d\n", manifest.SourceBytesIncluded, manifest.RedactedFindings)
 	fmt.Printf("Output: %s\n", finalOutput)
-	return nil
-}
-
-func validateSynthesisDescriptor(binding modelassets.GenerationBinding, descriptor modelruntime.ModelDescriptor) error {
-	if descriptor.ID != binding.AssetID || descriptor.Architecture != "gguf" || descriptor.WeightBytes != binding.ModelSizeBytes ||
-		descriptor.ContextLimit != binding.NativeContextTokens || descriptor.QuantizationBits != binding.QuantizationBits ||
-		descriptor.Digest != "sha256:"+binding.ModelSHA256 || descriptor.Revision != binding.ModelRevision || descriptor.License != binding.ModelLicense ||
-		descriptor.Runtime != "llama.cpp-cli" || descriptor.RuntimeDigest != "sha256:"+binding.RuntimeSHA256 || descriptor.RuntimeRevision != binding.RuntimeRevision {
-		return errors.New("llama.cpp provider descriptor does not match the resolved model/runtime binding")
-	}
 	return nil
 }
 

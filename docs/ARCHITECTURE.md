@@ -16,7 +16,7 @@ repository or Git URL
   -> merge, conservative resolution, conflict retention
   -> canonical validation and coverage
   -> immutable snapshot publication
-  -> search, graph, documentation, exports, HTTP, MCP, optional synthesis
+  -> search, graph, documentation, exports, HTTP, MCP, optional grounded answer
 ```
 
 ## Truth plane and presentation plane
@@ -65,11 +65,17 @@ pkg/graphpatch
 internal/snapshot + internal/cas
   filesystem reference snapshots and content-addressed objects
 
-internal/search + internal/graph
-  ranked lexical retrieval and bounded graph operations
+internal/search + internal/graph + internal/retrieval
+  lexical/vector indexes, qualified embedding adapter, hybrid ranking, and
+  bounded graph expansion
 
-internal/modelruntime
-  evidence packets, llama.cpp provider, memory policy, claim validation
+internal/answerapp + internal/groundedanswer
+  shared retrieval-to-answer orchestration, evidence bounding, citation and
+  claim validation, abstention, and answer provenance
+
+internal/modelassets + internal/modelruntime
+  exact qualified model/runtime binding, evidence packets, llama.cpp provider,
+  memory policy, and structured generation validation
 
 internal/export
   deterministic docs, normalized text, NotebookLM, static site, integrations
@@ -170,20 +176,53 @@ claims. The validator rejects unknown citations, unknown code identifiers,
 unsupported inference, malformed certainty, and excess output.
 
 Model results are written under `derived/` and cannot mutate `bundle.json`.
+The user-facing `rkc answer` path likewise writes only to standard output. It
+uses lexical retrieval plus bounded graph expansion, re-resolves every selected
+record against the canonical bundle, and either returns validated cited claims
+or abstains.
+
+Semantic and hybrid query modes use a vector index outside the verified atlas.
+They are fail-closed: the model lock, GGUF digest, Apache-2.0 qualification
+state, `llama.cpp` executable, and native-build receipt must identify the same
+approved embedding binding. Lexical retrieval remains the default. The
+committed lock intentionally names no generation or embedding default because
+its current lightweight candidates have not passed the qualification gate.
+
+## Self-catalogue boundary
+
+Self-cataloguing never scans the mutable checkout or a directory containing its
+own output:
+
+```text
+clean stage-zero Git index
+  -> verified private source copy
+  -> guarded RKC build and scan
+  -> disjoint dist/self-catalogue/atlas
+  -> manifest and canonical-file checksums
+```
+
+Every admitted byte is checked against its Git object before scanning. Links,
+submodules, special files, model weights, generated/runtime trees, and dirty
+worktrees are rejected. The output manifest records that model execution and
+generated-output ingestion were disabled.
 
 ## Interface boundary
 
-HTTP and MCP use the same in-memory dataset and graph/search services. The
-implemented HTTP routes are generated into `api/openapi.yaml`. The larger
-multi-repository service design is retained separately and must not be confused
-with the local daemon’s current surface.
+HTTP and MCP load the same immutable dataset model and expose compatible
+bounded lexical and graph projections. `rkc answer` uses the shared answer
+application service and grounded-answer validator; model answering is not
+currently an HTTP or MCP endpoint. The implemented HTTP routes are generated
+into `api/openapi.yaml`. The larger multi-repository service design is retained
+separately and must not be confused with the local daemon's current surface.
 
 ## Dependency direction rules
 
 - canonical model packages do not import storage or UI code;
 - plugins depend only on public contracts;
 - storage implements read/write interfaces rather than leaking SQL upward;
-- API and MCP handlers call shared application services;
+- interface handlers and commands consume read-only dataset, search, and graph
+  services;
+- grounded model answers pass through the shared answer application service;
 - model code receives read-only packets and cannot mutate graph state;
 - exporters receive immutable snapshot readers;
 - language adapters emit fragments or GraphPatch records;

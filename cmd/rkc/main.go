@@ -34,6 +34,8 @@ func run(args []string) error {
 		return runInit(args[1:])
 	case "query", "search":
 		return runQuery(args[1:])
+	case "answer", "ask":
+		return runAnswer(args[1:])
 	case "synthesize", "explain":
 		return runSynthesize(args[1:])
 	case "path":
@@ -69,6 +71,7 @@ Usage:
   rkc scan [flags] [repository]
   rkc check [flags]
   rkc query [flags] <query>
+  rkc answer [flags] <question>
   rkc synthesize [flags]
   rkc path [flags] --from <node-id> --to <node-id>
   rkc impact [flags] --node <node-id>
@@ -82,12 +85,12 @@ Usage:
 
 The reference build implements deterministic inventory, Python, Go, and
 JavaScript/TypeScript syntax analysis, framework and document extraction,
-evidence-backed graph export, ranked local search, bounded graph operations,
-semantic snapshot diffing, crash-safe snapshot persistence, bounded local-model
-evidence packets, a llama.cpp CLI provider, a static browser, and read-only HTTP
-and MCP interfaces. Compiler-grade semantic adapters, enforced WASM isolation,
-and PostgreSQL team mode remain explicit production milestones rather than
-imaginary check marks.
+evidence-backed graph export, ranked lexical/semantic/hybrid search, bounded
+graph operations, semantic snapshot diffing, crash-safe snapshot persistence,
+evidence-grounded local-model answers, a llama.cpp CLI provider, a static
+browser, and read-only HTTP and MCP interfaces. Model-backed commands fail
+closed until exact qualified assets and runtimes are supplied. Enforced WASM
+isolation and PostgreSQL team mode remain explicit production milestones.
 `)
 }
 

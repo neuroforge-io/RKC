@@ -34,7 +34,7 @@ func TestRunDispatchAndUsage(t *testing.T) {
 		t.Fatalf("unknown command error = %v", err)
 	}
 	for _, args := range [][]string{
-		{"query"}, {"search"}, {"path"}, {"impact"},
+		{"query"}, {"search"}, {"answer"}, {"ask"}, {"path"}, {"impact"},
 		{"snapshots"}, {"plugins"}, {"diff"},
 	} {
 		if err := run(args); err == nil {
