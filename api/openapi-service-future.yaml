@@ -1,0 +1,938 @@
+openapi: 3.1.2
+info:
+  title: Repository Knowledge Compiler API
+  version: 0.1.0
+  summary: Evidence-backed repository inventory, graph, documentation, search, export, and job API.
+  license:
+    name: Apache-2.0
+servers:
+  - url: http://127.0.0.1:8787/api/v1
+    description: Local daemon
+security:
+  - bearerAuth: []
+paths:
+  /health:
+    get:
+      operationId: getHealth
+      security: []
+      responses:
+        '200':
+          description: Process health and build information.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Health'
+  /workspaces:
+    get:
+      operationId: listWorkspaces
+      parameters:
+        - $ref: '#/components/parameters/Cursor'
+        - $ref: '#/components/parameters/Limit'
+      responses:
+        '200':
+          description: Workspace page.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WorkspacePage'
+    post:
+      operationId: createWorkspace
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateWorkspaceRequest'
+      responses:
+        '201':
+          description: Workspace created.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Workspace'
+        '409':
+          $ref: '#/components/responses/Conflict'
+  /workspaces/{workspaceId}:
+    parameters:
+      - $ref: '#/components/parameters/WorkspaceId'
+    get:
+      operationId: getWorkspace
+      responses:
+        '200':
+          description: Workspace.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Workspace'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /workspaces/{workspaceId}/repositories:
+    parameters:
+      - $ref: '#/components/parameters/WorkspaceId'
+    get:
+      operationId: listRepositories
+      parameters:
+        - $ref: '#/components/parameters/Cursor'
+        - $ref: '#/components/parameters/Limit'
+      responses:
+        '200':
+          description: Repository page.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RepositoryPage'
+    post:
+      operationId: registerRepository
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RegisterRepositoryRequest'
+      responses:
+        '202':
+          description: Registration or initial scan queued.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Job'
+  /repositories/{repositoryId}:
+    parameters:
+      - $ref: '#/components/parameters/RepositoryId'
+    get:
+      operationId: getRepository
+      responses:
+        '200':
+          description: Repository.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Repository'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /repositories/{repositoryId}/scans:
+    parameters:
+      - $ref: '#/components/parameters/RepositoryId'
+    post:
+      operationId: createScan
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateScanRequest'
+      responses:
+        '202':
+          description: Scan queued.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Job'
+  /repositories/{repositoryId}/snapshots:
+    parameters:
+      - $ref: '#/components/parameters/RepositoryId'
+    get:
+      operationId: listSnapshots
+      parameters:
+        - $ref: '#/components/parameters/Cursor'
+        - $ref: '#/components/parameters/Limit'
+        - name: status
+          in: query
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Snapshot page.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SnapshotPage'
+  /snapshots/{snapshotId}:
+    parameters:
+      - $ref: '#/components/parameters/SnapshotId'
+    get:
+      operationId: getSnapshot
+      responses:
+        '200':
+          description: Snapshot.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Snapshot'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /snapshots/{snapshotId}/coverage:
+    parameters:
+      - $ref: '#/components/parameters/SnapshotId'
+    get:
+      operationId: getCoverage
+      responses:
+        '200':
+          description: Coverage report.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Coverage'
+  /snapshots/{snapshotId}/nodes:
+    parameters:
+      - $ref: '#/components/parameters/SnapshotId'
+    get:
+      operationId: listNodes
+      parameters:
+        - $ref: '#/components/parameters/Cursor'
+        - $ref: '#/components/parameters/Limit'
+        - name: kind
+          in: query
+          schema:
+            type: array
+            items:
+              type: string
+          explode: true
+        - name: language
+          in: query
+          schema:
+            type: string
+        - name: artifact_id
+          in: query
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Node page.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/NodePage'
+  /snapshots/{snapshotId}/nodes/{nodeId}:
+    parameters:
+      - $ref: '#/components/parameters/SnapshotId'
+      - $ref: '#/components/parameters/NodeId'
+    get:
+      operationId: getNode
+      parameters:
+        - name: include
+          in: query
+          schema:
+            type: array
+            items:
+              enum: [evidence, incoming_edges, outgoing_edges, documents, source]
+          explode: true
+      responses:
+        '200':
+          description: Node with requested expansions.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/NodeDetail'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /snapshots/{snapshotId}/edges:
+    parameters:
+      - $ref: '#/components/parameters/SnapshotId'
+    get:
+      operationId: listEdges
+      parameters:
+        - $ref: '#/components/parameters/Cursor'
+        - $ref: '#/components/parameters/Limit'
+        - name: kind
+          in: query
+          schema:
+            type: array
+            items:
+              type: string
+          explode: true
+        - name: from
+          in: query
+          schema:
+            type: string
+        - name: to
+          in: query
+          schema:
+            type: string
+        - name: resolution
+          in: query
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Edge page.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EdgePage'
+  /snapshots/{snapshotId}/graph/neighborhood:
+    parameters:
+      - $ref: '#/components/parameters/SnapshotId'
+    post:
+      operationId: queryNeighborhood
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/NeighborhoodRequest'
+      responses:
+        '200':
+          description: Bounded graph neighborhood.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GraphSlice'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+  /snapshots/{snapshotId}/graph/impact:
+    parameters:
+      - $ref: '#/components/parameters/SnapshotId'
+    post:
+      operationId: queryImpact
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ImpactRequest'
+      responses:
+        '200':
+          description: Impact analysis with path explanations.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GraphSlice'
+  /snapshots/{snapshotId}/search:
+    parameters:
+      - $ref: '#/components/parameters/SnapshotId'
+    post:
+      operationId: searchSnapshot
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SearchRequest'
+      responses:
+        '200':
+          description: Ranked search result.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SearchResponse'
+  /snapshots/{snapshotId}/query:
+    parameters:
+      - $ref: '#/components/parameters/SnapshotId'
+    post:
+      operationId: answerRepositoryQuestion
+      description: Optional evidence-constrained model endpoint. It may be disabled by policy.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/QuestionRequest'
+      responses:
+        '200':
+          description: Answer and claim-level citations.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/QuestionResponse'
+        '501':
+          description: Model subsystem disabled.
+  /snapshots/{snapshotId}/exports:
+    parameters:
+      - $ref: '#/components/parameters/SnapshotId'
+    post:
+      operationId: createExport
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateExportRequest'
+      responses:
+        '202':
+          description: Export queued.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Job'
+  /snapshots/{snapshotId}/diff/{otherSnapshotId}:
+    parameters:
+      - $ref: '#/components/parameters/SnapshotId'
+      - name: otherSnapshotId
+        in: path
+        required: true
+        schema:
+          type: string
+    get:
+      operationId: diffSnapshots
+      responses:
+        '200':
+          description: Semantic and documentation diff.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SnapshotDiff'
+  /jobs/{jobId}:
+    parameters:
+      - $ref: '#/components/parameters/JobId'
+    get:
+      operationId: getJob
+      responses:
+        '200':
+          description: Job state.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Job'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /jobs/{jobId}/events:
+    parameters:
+      - $ref: '#/components/parameters/JobId'
+    get:
+      operationId: streamJobEvents
+      responses:
+        '200':
+          description: Server-sent event stream.
+          content:
+            text/event-stream:
+              schema:
+                type: string
+  /plugins:
+    get:
+      operationId: listPlugins
+      responses:
+        '200':
+          description: Installed plugins and capability grants.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Plugin'
+  /diagnostics:
+    get:
+      operationId: listDiagnostics
+      parameters:
+        - name: snapshot_id
+          in: query
+          schema:
+            type: string
+        - name: severity
+          in: query
+          schema:
+            type: string
+        - $ref: '#/components/parameters/Cursor'
+        - $ref: '#/components/parameters/Limit'
+      responses:
+        '200':
+          description: Diagnostic page.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DiagnosticPage'
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+  parameters:
+    WorkspaceId:
+      name: workspaceId
+      in: path
+      required: true
+      schema:
+        type: string
+    RepositoryId:
+      name: repositoryId
+      in: path
+      required: true
+      schema:
+        type: string
+    SnapshotId:
+      name: snapshotId
+      in: path
+      required: true
+      schema:
+        type: string
+    NodeId:
+      name: nodeId
+      in: path
+      required: true
+      schema:
+        type: string
+    JobId:
+      name: jobId
+      in: path
+      required: true
+      schema:
+        type: string
+    Cursor:
+      name: cursor
+      in: query
+      schema:
+        type: string
+    Limit:
+      name: limit
+      in: query
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 1000
+        default: 100
+  responses:
+    NotFound:
+      description: Resource not found.
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+    Conflict:
+      description: State conflict.
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+    ValidationError:
+      description: Invalid request.
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+  schemas:
+    Problem:
+      type: object
+      required: [type, title, status]
+      properties:
+        type: {type: string, format: uri-reference}
+        title: {type: string}
+        status: {type: integer}
+        detail: {type: string}
+        instance: {type: string, format: uri-reference}
+        errors:
+          type: array
+          items:
+            type: object
+            additionalProperties: true
+    Health:
+      type: object
+      required: [status, version, schema_version]
+      properties:
+        status: {const: ok}
+        version: {type: string}
+        schema_version: {type: string}
+        commit: {type: string}
+        uptime_seconds: {type: number}
+    Workspace:
+      type: object
+      required: [id, name, created_at]
+      properties:
+        id: {type: string}
+        name: {type: string}
+        created_at: {type: string, format: date-time}
+        policy: {type: object, additionalProperties: true}
+    CreateWorkspaceRequest:
+      type: object
+      required: [name]
+      properties:
+        name: {type: string, minLength: 1}
+        policy: {type: object, additionalProperties: true}
+      additionalProperties: false
+    WorkspacePage:
+      allOf:
+        - $ref: '#/components/schemas/Page'
+        - type: object
+          properties:
+            items:
+              type: array
+              items: {$ref: '#/components/schemas/Workspace'}
+    Repository:
+      type: object
+      required: [id, workspace_id, display_name, created_at]
+      properties:
+        id: {type: string}
+        workspace_id: {type: string}
+        display_name: {type: string}
+        origin: {type: string}
+        default_ref: {type: string}
+        created_at: {type: string, format: date-time}
+        latest_snapshot_id: {type: string}
+    RegisterRepositoryRequest:
+      type: object
+      required: [display_name, source]
+      properties:
+        display_name: {type: string}
+        source:
+          oneOf:
+            - type: object
+              required: [kind, path]
+              properties:
+                kind: {const: local}
+                path: {type: string}
+            - type: object
+              required: [kind, url]
+              properties:
+                kind: {const: git}
+                url: {type: string}
+                ref: {type: string}
+                credential_ref: {type: string}
+        scan_immediately: {type: boolean, default: true}
+      additionalProperties: false
+    RepositoryPage:
+      allOf:
+        - $ref: '#/components/schemas/Page'
+        - type: object
+          properties:
+            items:
+              type: array
+              items: {$ref: '#/components/schemas/Repository'}
+    Snapshot:
+      type: object
+      required: [id, repository_id, schema_version, content_digest, created_at, status]
+      properties:
+        id: {type: string}
+        repository_id: {type: string}
+        parent_snapshot_id: {type: string}
+        schema_version: {type: string}
+        content_digest: {type: string}
+        commit_sha: {type: string}
+        ref_name: {type: string}
+        dirty: {type: boolean}
+        created_at: {type: string, format: date-time}
+        status: {enum: [building, complete, failed, superseded]}
+        toolchain: {type: object, additionalProperties: true}
+    SnapshotPage:
+      allOf:
+        - $ref: '#/components/schemas/Page'
+        - type: object
+          properties:
+            items:
+              type: array
+              items: {$ref: '#/components/schemas/Snapshot'}
+    CreateScanRequest:
+      type: object
+      properties:
+        ref: {type: string}
+        config_override: {type: object, additionalProperties: true}
+        priority: {type: integer, default: 0}
+      additionalProperties: false
+    SourceRange:
+      type: object
+      required: [path]
+      properties:
+        path: {type: string}
+        start_byte: {type: integer, minimum: 0}
+        end_byte: {type: integer, minimum: 0}
+        start_line: {type: integer, minimum: 0}
+        start_column: {type: integer, minimum: 0}
+        end_line: {type: integer, minimum: 0}
+        end_column: {type: integer, minimum: 0}
+    Node:
+      type: object
+      required: [id, kind, name]
+      properties:
+        id: {type: string}
+        logical_id: {type: string}
+        kind: {type: string}
+        name: {type: string}
+        qualified_name: {type: string}
+        signature: {type: string}
+        language: {type: string}
+        visibility: {type: string}
+        artifact_id: {type: string}
+        source: {$ref: '#/components/schemas/SourceRange'}
+        evidence_ids:
+          type: array
+          items: {type: string}
+        attributes: {type: object, additionalProperties: true}
+    Edge:
+      type: object
+      required: [id, kind, from, to, resolution]
+      properties:
+        id: {type: string}
+        kind: {type: string}
+        from: {type: string}
+        to: {type: string}
+        resolution:
+          enum: [declared, compiler_resolved, syntax_inferred, runtime_observed, documentation_asserted, model_inferred, unresolved]
+        confidence: {type: number, minimum: 0, maximum: 1}
+        evidence_ids:
+          type: array
+          items: {type: string}
+        attributes: {type: object, additionalProperties: true}
+    Evidence:
+      type: object
+      required: [id, kind, method, confidence]
+      properties:
+        id: {type: string}
+        kind: {type: string}
+        method: {type: string}
+        confidence: {type: number, minimum: 0, maximum: 1}
+        source: {$ref: '#/components/schemas/SourceRange'}
+        tool: {type: string}
+        detail: {type: string}
+    Diagnostic:
+      type: object
+      required: [id, severity, code, message]
+      properties:
+        id: {type: string}
+        severity: {enum: [note, warning, error, fatal]}
+        code: {type: string}
+        message: {type: string}
+        source: {$ref: '#/components/schemas/SourceRange'}
+        stage: {type: string}
+        plugin: {type: string}
+    NodeDetail:
+      allOf:
+        - $ref: '#/components/schemas/Node'
+        - type: object
+          properties:
+            incoming_edges:
+              type: array
+              items: {$ref: '#/components/schemas/Edge'}
+            outgoing_edges:
+              type: array
+              items: {$ref: '#/components/schemas/Edge'}
+            evidence:
+              type: array
+              items: {$ref: '#/components/schemas/Evidence'}
+            documents:
+              type: array
+              items: {$ref: '#/components/schemas/Document'}
+            source_text: {type: string}
+    Document:
+      type: object
+      required: [id, kind, title, status]
+      properties:
+        id: {type: string}
+        kind: {type: string}
+        title: {type: string}
+        path: {type: string}
+        status: {enum: [draft, validated, rejected, published]}
+        content_sha256: {type: string}
+    Coverage:
+      type: object
+      required: [snapshot_id, inventory_accounting_ratio, symbol_evidence_ratio, edge_resolution_ratio]
+      properties:
+        snapshot_id: {type: string}
+        artifacts_inventoried: {type: integer}
+        artifacts_semantically_parsed: {type: integer}
+        symbols_total: {type: integer}
+        symbols_with_evidence: {type: integer}
+        edges_total: {type: integer}
+        resolved_edges: {type: integer}
+        unresolved_edges: {type: integer}
+        inventory_accounting_ratio: {type: number}
+        symbol_evidence_ratio: {type: number}
+        edge_resolution_ratio: {type: number}
+        diagnostics_by_severity: {type: object, additionalProperties: {type: integer}}
+    Page:
+      type: object
+      required: [items]
+      properties:
+        items: {type: array, items: {}}
+        next_cursor: {type: string}
+    NodePage:
+      allOf:
+        - $ref: '#/components/schemas/Page'
+        - type: object
+          properties:
+            items:
+              type: array
+              items: {$ref: '#/components/schemas/Node'}
+    EdgePage:
+      allOf:
+        - $ref: '#/components/schemas/Page'
+        - type: object
+          properties:
+            items:
+              type: array
+              items: {$ref: '#/components/schemas/Edge'}
+    DiagnosticPage:
+      allOf:
+        - $ref: '#/components/schemas/Page'
+        - type: object
+          properties:
+            items:
+              type: array
+              items: {$ref: '#/components/schemas/Diagnostic'}
+    NeighborhoodRequest:
+      type: object
+      required: [seed_node_ids]
+      properties:
+        seed_node_ids:
+          type: array
+          minItems: 1
+          maxItems: 100
+          items: {type: string}
+        direction: {enum: [incoming, outgoing, both], default: both}
+        max_hops: {type: integer, minimum: 0, maximum: 8, default: 2}
+        max_nodes: {type: integer, minimum: 1, maximum: 10000, default: 1000}
+        edge_kinds:
+          type: array
+          items: {type: string}
+        min_confidence: {type: number, minimum: 0, maximum: 1, default: 0}
+        resolutions:
+          type: array
+          items: {type: string}
+      additionalProperties: false
+    ImpactRequest:
+      type: object
+      required: [changed_node_ids]
+      properties:
+        changed_node_ids:
+          type: array
+          minItems: 1
+          maxItems: 1000
+          items: {type: string}
+        max_hops: {type: integer, minimum: 1, maximum: 12, default: 4}
+        include_tests: {type: boolean, default: true}
+        include_public_surfaces: {type: boolean, default: true}
+        edge_kinds:
+          type: array
+          items: {type: string}
+      additionalProperties: false
+    GraphSlice:
+      type: object
+      required: [nodes, edges, truncated]
+      properties:
+        nodes:
+          type: array
+          items: {$ref: '#/components/schemas/Node'}
+        edges:
+          type: array
+          items: {$ref: '#/components/schemas/Edge'}
+        paths:
+          type: array
+          items:
+            type: object
+            properties:
+              node_ids:
+                type: array
+                items: {type: string}
+              edge_ids:
+                type: array
+                items: {type: string}
+              explanation: {type: string}
+        truncated: {type: boolean}
+        continuation_token: {type: string}
+    SearchRequest:
+      type: object
+      required: [query]
+      properties:
+        query: {type: string, minLength: 1, maxLength: 4096}
+        modes:
+          type: array
+          items: {enum: [exact, lexical, fuzzy, semantic, graph]}
+          default: [exact, lexical, graph]
+        kinds:
+          type: array
+          items: {type: string}
+        languages:
+          type: array
+          items: {type: string}
+        limit: {type: integer, minimum: 1, maximum: 500, default: 50}
+        graph_hops: {type: integer, minimum: 0, maximum: 4, default: 1}
+      additionalProperties: false
+    SearchHit:
+      type: object
+      required: [object_type, object_id, score, title]
+      properties:
+        object_type: {type: string}
+        object_id: {type: string}
+        score: {type: number}
+        title: {type: string}
+        snippet: {type: string}
+        reasons:
+          type: array
+          items: {type: string}
+        source: {$ref: '#/components/schemas/SourceRange'}
+    SearchResponse:
+      type: object
+      required: [hits]
+      properties:
+        hits:
+          type: array
+          items: {$ref: '#/components/schemas/SearchHit'}
+        query_plan: {type: object, additionalProperties: true}
+        truncated: {type: boolean}
+    QuestionRequest:
+      type: object
+      required: [question]
+      properties:
+        question: {type: string, minLength: 1, maxLength: 16384}
+        model_profile: {type: string}
+        max_sources: {type: integer, minimum: 1, maximum: 200, default: 40}
+        require_compiler_resolved: {type: boolean, default: false}
+        allow_model_inference: {type: boolean, default: true}
+      additionalProperties: false
+    Claim:
+      type: object
+      required: [text, evidence_ids]
+      properties:
+        text: {type: string}
+        evidence_ids:
+          type: array
+          minItems: 1
+          items: {type: string}
+        certainty: {enum: [proven, strongly_supported, inferred, unresolved]}
+    QuestionResponse:
+      type: object
+      required: [answer_markdown, claims, sources, model]
+      properties:
+        answer_markdown: {type: string}
+        claims:
+          type: array
+          items: {$ref: '#/components/schemas/Claim'}
+        sources:
+          type: array
+          items: {$ref: '#/components/schemas/Evidence'}
+        unresolved_questions:
+          type: array
+          items: {type: string}
+        model: {type: object, additionalProperties: true}
+        retrieval_trace: {type: object, additionalProperties: true}
+    CreateExportRequest:
+      type: object
+      required: [format]
+      properties:
+        format:
+          enum: [markdown, notebooklm, static-site, jsonl, sqlite, graphml, dot, mermaid, sarif, spdx, cyclonedx, scip, mcp-bundle]
+        profile: {type: string}
+        options: {type: object, additionalProperties: true}
+      additionalProperties: false
+    Job:
+      type: object
+      required: [id, kind, state, created_at, updated_at]
+      properties:
+        id: {type: string}
+        kind: {type: string}
+        state: {enum: [queued, running, succeeded, failed, cancelled]}
+        progress: {type: number, minimum: 0, maximum: 1}
+        stage: {type: string}
+        created_at: {type: string, format: date-time}
+        updated_at: {type: string, format: date-time}
+        result: {type: object, additionalProperties: true}
+        error: {$ref: '#/components/schemas/Problem'}
+    Plugin:
+      type: object
+      required: [id, version, runtime, status]
+      properties:
+        id: {type: string}
+        version: {type: string}
+        runtime: {enum: [wasm-wasi, native-worker, builtin]}
+        status: {enum: [enabled, disabled, quarantined, incompatible]}
+        capabilities: {type: object, additionalProperties: true}
+        signature_verified: {type: boolean}
+        health: {type: object, additionalProperties: true}
+    SnapshotDiff:
+      type: object
+      required: [base_snapshot_id, target_snapshot_id, node_changes, edge_changes, document_changes]
+      properties:
+        base_snapshot_id: {type: string}
+        target_snapshot_id: {type: string}
+        node_changes: {type: array, items: {type: object, additionalProperties: true}}
+        edge_changes: {type: array, items: {type: object, additionalProperties: true}}
+        document_changes: {type: array, items: {type: object, additionalProperties: true}}
+        impact: {$ref: '#/components/schemas/GraphSlice'}

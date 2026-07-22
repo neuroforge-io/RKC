@@ -1,0 +1,106 @@
+package rkc:extractor@0.2.0;
+
+interface types {
+  record source-range {
+    path: string,
+    start-byte: option<u64>,
+    end-byte: option<u64>,
+    start-line: option<u32>,
+    start-column: option<u32>,
+    end-line: option<u32>,
+    end-column: option<u32>,
+  }
+
+  record artifact-ref {
+    id: string,
+    path: string,
+    language: option<string>,
+    media-type: option<string>,
+    size-bytes: u64,
+    sha256: option<string>,
+    status: string,
+  }
+
+  enum evidence-kind {
+    declared,
+    compiler-resolved,
+    syntax-inferred,
+    runtime-observed,
+    documentation-asserted,
+    model-inferred,
+    unresolved,
+  }
+
+  record evidence {
+    id: string,
+    kind: evidence-kind,
+    method: string,
+    confidence: float64,
+    source: option<source-range>,
+    detail: option<string>,
+  }
+
+  record node {
+    id: string,
+    kind: string,
+    name: string,
+    qualified-name: option<string>,
+    signature: option<string>,
+    language: option<string>,
+    visibility: option<string>,
+    artifact-id: option<string>,
+    source: option<source-range>,
+    evidence-ids: list<string>,
+    attributes-json: string,
+  }
+
+  record edge {
+    id: string,
+    kind: string,
+    from: string,
+    to: string,
+    resolution: evidence-kind,
+    evidence-ids: list<string>,
+    attributes-json: string,
+  }
+
+  record diagnostic {
+    id: string,
+    severity: string,
+    code: string,
+    message: string,
+    source: option<source-range>,
+    stage: option<string>,
+  }
+
+  variant operation {
+    upsert-node(node),
+    delete-node(string),
+    upsert-edge(edge),
+    delete-edge(string),
+    upsert-evidence(evidence),
+    upsert-diagnostic(diagnostic),
+  }
+
+  record request {
+    schema-version: string,
+    snapshot-id: string,
+    repository-root-token: string,
+    artifacts: list<artifact-ref>,
+    config-json: string,
+  }
+
+  record graph-patch {
+    schema-version: string,
+    operations: list<operation>,
+    statistics-json: string,
+  }
+}
+
+world extractor {
+  use types.{request, graph-patch};
+
+  export detect: func(request: request) -> result<string, string>;
+  export extract: func(request: request) -> result<graph-patch, string>;
+  export health: func() -> result<string, string>;
+}

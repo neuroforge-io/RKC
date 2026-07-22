@@ -1,0 +1,94 @@
+{
+  "$schema": "../schemas/config.schema.json",
+  "schema_version": "0.2.0",
+  "workspace": {
+    "name": "example",
+    "privacy_mode": "paths-relative",
+    "output": ".rkc"
+  },
+  "inventory": {
+    "max_file_bytes": 1073741824,
+    "max_text_bytes": 2097152,
+    "max_repository_bytes": 21474836480,
+    "max_files": 500000,
+    "follow_symlinks": false,
+    "include_git_ignored": false,
+    "exclude": [".git", ".rkc", ".rkc-state"],
+    "classify_vendor_directories": true,
+    "classify_generated_files": true
+  },
+  "analysis": {
+    "tiers": ["inventory", "syntax", "framework"],
+    "fail_closed_on_plugin_error": false,
+    "incremental": true,
+    "runtime_evidence": false
+  },
+  "plugins": {
+    "enabled": true,
+    "directories": ["./plugins"],
+    "allow_network": false,
+    "allow_process_spawn": false,
+    "native_worker_sandbox": "preferred",
+    "timeout_seconds": 60,
+    "memory_limit_mib": 1024,
+    "maximum_output_bytes": 67108864,
+    "python_ast": {
+      "enabled": true,
+      "interpreter": "python3",
+      "script": "builtin",
+      "timeout_seconds": 60
+    },
+    "go_ast": {"enabled": true},
+    "typescript_syntax": {"enabled": true}
+  },
+  "frameworks": {
+    "enabled": true,
+    "markdown": true,
+    "openapi_json": true,
+    "json_schema": true,
+    "package_manifests": true,
+    "environment_files": true
+  },
+  "security": {
+    "detect_secrets": true,
+    "redact_exports": true
+  },
+  "documentation": {
+    "deterministic_templates": true,
+    "model_synthesis": false,
+    "require_evidence_for_every_claim": true,
+    "reject_unknown_symbol_references": true
+  },
+  "model": {
+    "provider": "disabled",
+    "context_tokens": 4096,
+    "max_output_tokens": 768,
+    "temperature": 0,
+    "max_rss_mib": 3584
+  },
+  "search": {
+    "enabled": true,
+    "lexical": true,
+    "embeddings": false,
+    "graph_expansion_hops": 2
+  },
+  "exports": {
+    "normalized_sources": true,
+    "jsonl_graph": true,
+    "static_site": true,
+    "search_index": true,
+    "integrations": true,
+    "notebook_pack_bytes": 1000000,
+    "snapshot_store": ".rkc-state"
+  },
+  "quality_gates": {
+    "min_inventory_accounting": 1,
+    "min_symbol_evidence": 1,
+    "min_edge_resolution": 0.5,
+    "min_claim_citation": 1,
+    "max_error_diagnostics": 0,
+    "max_unresolved_edges": -1,
+    "max_high_confidence_secrets": 0,
+    "require_determinism": true
+  }
+}

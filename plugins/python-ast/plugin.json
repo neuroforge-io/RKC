@@ -1,0 +1,54 @@
+{
+  "$schema": "../../schemas/plugin-manifest.schema.json",
+  "schema_version": "1.0",
+  "plugin": {
+    "id": "rkc.python-ast",
+    "name": "RKC Python AST extractor",
+    "version": "0.2.0",
+    "api_version": "1.0",
+    "license": "Apache-2.0",
+    "description": "Dependency-free deterministic Python syntax extractor using the standard-library AST.",
+    "homepage": "https://github.com/repository-knowledge-compiler/rkc"
+  },
+  "runtime": {
+    "kind": "native-worker",
+    "entrypoint": "extractor.py",
+    "protocol": "json-stdio-fragment-v1",
+    "sha256": "a14ce44702749689e868c39177d0f01e38565a304cdf752495366947ed825efa"
+  },
+  "capabilities": {
+    "filesystem_read": ["repository:materialized-read-only"],
+    "filesystem_write": [],
+    "environment": [],
+    "network": [],
+    "process_spawn": [],
+    "clock": false,
+    "random": false
+  },
+  "inputs": {
+    "languages": ["python"],
+    "media_types": ["text/x-python", "text/plain"],
+    "globs": ["**/*.py", "**/*.pyi"],
+    "requires": ["python>=3.11"],
+    "capabilities": ["extract"]
+  },
+  "outputs": {
+    "node_kinds": ["module", "class", "function", "method", "test", "unresolved_symbol"],
+    "edge_kinds": ["contains", "declares", "imports", "inherits", "calls"],
+    "evidence_kinds": ["declared", "syntax_inferred"],
+    "diagnostic_codes": ["RKC-PY-1001", "RKC-PY-1002"]
+  },
+  "limits": {
+    "timeout_seconds": 60,
+    "memory_mib": 256,
+    "max_output_bytes": 67108864,
+    "max_parallelism": 1,
+    "open_files": 64,
+    "processes": 1
+  },
+  "determinism": {
+    "level": "toolchain-dependent",
+    "cache_inputs": ["artifact.sha256", "python.version", "plugin.sha256", "schema.version"]
+  },
+  "distribution": {}
+}

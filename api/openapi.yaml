@@ -1,0 +1,229 @@
+openapi: 3.1.0
+info:
+  title: Repository Knowledge Compiler Local Read API
+  version: 0.3.0-reference
+  description: |
+    Read-only API implemented by `rkc serve`. It exposes one exported RKC
+    dataset. The larger multi-repository service contract is retained in
+    `openapi-service-future.yaml` and is not falsely advertised as implemented.
+servers:
+  - url: http://127.0.0.1:8787
+paths:
+  /api/v1/health:
+    get:
+      operationId: health
+      responses:
+        '200':
+          description: Process and dataset health.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Health' }
+  /api/v1/manifest:
+    get:
+      operationId: getManifest
+      responses:
+        '200':
+          description: Snapshot manifest.
+          content:
+            application/json:
+              schema: { type: object, additionalProperties: true }
+  /api/v1/coverage:
+    get:
+      operationId: getCoverage
+      responses:
+        '200':
+          description: Auditable coverage report.
+          content:
+            application/json:
+              schema: { type: object, additionalProperties: true }
+  /api/v1/artifacts:
+    get:
+      operationId: listArtifacts
+      parameters:
+        - $ref: '#/components/parameters/Limit'
+        - { name: language, in: query, schema: { type: string } }
+        - { name: status, in: query, schema: { type: string } }
+      responses:
+        '200': { $ref: '#/components/responses/ItemPage' }
+  /api/v1/artifacts/{artifactID}:
+    get:
+      operationId: getArtifact
+      parameters:
+        - { name: artifactID, in: path, required: true, schema: { type: string } }
+      responses:
+        '200':
+          description: One artifact.
+          content:
+            application/json:
+              schema: { type: object, additionalProperties: true }
+        '404': { $ref: '#/components/responses/Problem' }
+  /api/v1/nodes:
+    get:
+      operationId: listNodes
+      parameters:
+        - $ref: '#/components/parameters/Limit'
+        - { name: kind, in: query, schema: { type: string } }
+        - { name: language, in: query, schema: { type: string } }
+        - { name: artifact_id, in: query, schema: { type: string } }
+      responses:
+        '200': { $ref: '#/components/responses/ItemPage' }
+  /api/v1/nodes/{nodeID}:
+    get:
+      operationId: getNode
+      parameters:
+        - { name: nodeID, in: path, required: true, schema: { type: string } }
+      responses:
+        '200':
+          description: Node plus incoming/outgoing edges and evidence.
+          content:
+            application/json:
+              schema: { type: object, additionalProperties: true }
+        '404': { $ref: '#/components/responses/Problem' }
+  /api/v1/edges:
+    get:
+      operationId: listEdges
+      parameters:
+        - $ref: '#/components/parameters/Limit'
+        - { name: kind, in: query, schema: { type: string } }
+        - { name: from, in: query, schema: { type: string } }
+        - { name: to, in: query, schema: { type: string } }
+        - { name: resolution, in: query, schema: { type: string } }
+      responses:
+        '200': { $ref: '#/components/responses/ItemPage' }
+  /api/v1/evidence/{evidenceID}:
+    get:
+      operationId: getEvidence
+      parameters:
+        - { name: evidenceID, in: path, required: true, schema: { type: string } }
+      responses:
+        '200':
+          description: One evidence record.
+          content:
+            application/json:
+              schema: { type: object, additionalProperties: true }
+        '404': { $ref: '#/components/responses/Problem' }
+  /api/v1/diagnostics:
+    get:
+      operationId: listDiagnostics
+      parameters:
+        - $ref: '#/components/parameters/Limit'
+        - { name: severity, in: query, schema: { type: string } }
+        - { name: code, in: query, schema: { type: string } }
+      responses:
+        '200': { $ref: '#/components/responses/ItemPage' }
+  /api/v1/search:
+    get:
+      operationId: search
+      parameters:
+        - { name: q, in: query, required: true, schema: { type: string, minLength: 1 } }
+        - $ref: '#/components/parameters/Limit'
+        - { name: kinds, in: query, schema: { type: string }, description: Comma-separated node kinds. }
+        - { name: languages, in: query, schema: { type: string }, description: Comma-separated languages. }
+        - { name: object_types, in: query, schema: { type: string }, description: Comma-separated object types. }
+        - { name: path_prefix, in: query, schema: { type: string } }
+      responses:
+        '200':
+          description: Ranked lexical results with retrieval trace fields.
+          content:
+            application/json:
+              schema: { type: object, additionalProperties: true }
+        '400': { $ref: '#/components/responses/Problem' }
+  /api/v1/graph/neighborhood:
+    get:
+      operationId: neighborhood
+      parameters:
+        - { name: node_id, in: query, required: true, schema: { type: string } }
+        - $ref: '#/components/parameters/Traversal'
+      responses:
+        '200':
+          description: Bounded graph neighbourhood.
+          content:
+            application/json:
+              schema: { type: object, additionalProperties: true }
+        '400': { $ref: '#/components/responses/Problem' }
+        '404': { $ref: '#/components/responses/Problem' }
+  /api/v1/graph/path:
+    get:
+      operationId: shortestPath
+      parameters:
+        - { name: from, in: query, required: true, schema: { type: string } }
+        - { name: to, in: query, required: true, schema: { type: string } }
+        - $ref: '#/components/parameters/Traversal'
+      responses:
+        '200':
+          description: Shortest bounded path.
+          content:
+            application/json:
+              schema: { type: object, additionalProperties: true }
+        '400': { $ref: '#/components/responses/Problem' }
+        '404': { $ref: '#/components/responses/Problem' }
+  /api/v1/graph/components:
+    get:
+      operationId: components
+      parameters:
+        - $ref: '#/components/parameters/Limit'
+        - { name: edge_kinds, in: query, schema: { type: string } }
+        - { name: cyclic, in: query, schema: { type: boolean } }
+      responses:
+        '200': { $ref: '#/components/responses/ItemPage' }
+  /api/v1/impact:
+    get:
+      operationId: impact
+      parameters:
+        - { name: node_id, in: query, required: true, schema: { type: string } }
+        - $ref: '#/components/parameters/Traversal'
+      responses:
+        '200':
+          description: Bounded reverse-impact traversal by default.
+          content:
+            application/json:
+              schema: { type: object, additionalProperties: true }
+        '400': { $ref: '#/components/responses/Problem' }
+        '404': { $ref: '#/components/responses/Problem' }
+components:
+  parameters:
+    Limit:
+      name: limit
+      in: query
+      schema: { type: integer, minimum: 1, maximum: 5000, default: 100 }
+    Traversal:
+      name: direction
+      in: query
+      schema: { type: string, enum: [incoming, outgoing, both], default: both }
+      description: Other supported traversal parameters are max_depth, hops, max_nodes, edge_kinds, resolutions, include_unresolved, and limit.
+  schemas:
+    Health:
+      type: object
+      required: [status]
+      properties:
+        status: { type: string }
+        snapshot_id: { type: string }
+        schema_version: { type: string }
+      additionalProperties: true
+    Problem:
+      type: object
+      required: [title, status]
+      properties:
+        title: { type: string }
+        status: { type: integer }
+        detail: { type: string }
+      additionalProperties: true
+    ItemPage:
+      type: object
+      required: [items]
+      properties:
+        items: { type: array, items: {} }
+        truncated: { type: boolean }
+        total: { type: integer }
+      additionalProperties: true
+  responses:
+    ItemPage:
+      description: A bounded result page.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ItemPage' }
+    Problem:
+      description: RFC 7807-style problem response.
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problem' }

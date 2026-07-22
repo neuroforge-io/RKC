@@ -1,0 +1,41 @@
+[plugin]
+id = "rkc.python-ast"
+name = "RKC Python AST extractor"
+version = "0.1.0"
+api_version = "0.1"
+license = "Apache-2.0"
+description = "Reference Python syntax extractor using the standard-library ast module."
+
+[runtime]
+kind = "native-worker"
+entrypoint = "extractor.py"
+protocol = "json-stdin-0.1"
+
+[capabilities]
+filesystem_read = ["repository"]
+filesystem_write = []
+environment = []
+network = []
+process_spawn = []
+clock = false
+random = false
+
+[inputs]
+languages = ["python"]
+globs = ["**/*.py", "**/*.pyi"]
+requires = []
+
+[outputs]
+node_kinds = ["module", "class", "function", "method", "test", "external_dependency", "unresolved_symbol"]
+edge_kinds = ["contains", "imports", "calls", "inherits"]
+diagnostic_codes = ["RKC-PY-1001"]
+
+[limits]
+timeout_seconds = 60
+memory_mb = 256
+max_output_bytes = 268435456
+max_parallelism = 1
+
+[determinism]
+level = "toolchain-dependent"
+cache_inputs = ["source_sha256", "python_version", "plugin_version", "schema_version"]

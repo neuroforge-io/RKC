@@ -1,0 +1,63 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://rkc.dev/schemas/graph-patch.schema.json",
+  "title": "RKC GraphPatch protocol 1.0",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "protocol_version",
+    "schema_version",
+    "snapshot_id",
+    "producer",
+    "fragment"
+  ],
+  "properties": {
+    "protocol_version": {
+      "const": "1.0"
+    },
+    "schema_version": {
+      "const": "0.2.0"
+    },
+    "snapshot_id": {
+      "type": "string"
+    },
+    "producer": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "plugin_id",
+        "version"
+      ],
+      "properties": {
+        "plugin_id": {
+          "type": "string"
+        },
+        "version": {
+          "type": "string"
+        },
+        "runtime": {
+          "type": "string"
+        },
+        "instance_id": {
+          "type": "string"
+        }
+      }
+    },
+    "generated_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "input_digest": {
+      "type": "string"
+    },
+    "fragment": {
+      "$ref": "rkc-bundle.schema.json#/$defs/fragment"
+    },
+    "metadata": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "string"
+      }
+    }
+  }
+}

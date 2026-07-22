@@ -1,0 +1,410 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://rkc.dev/schemas/plugin-manifest.schema.json",
+  "title": "RKC plugin manifest",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "plugin",
+    "runtime",
+    "capabilities",
+    "inputs",
+    "outputs",
+    "limits",
+    "determinism"
+  ],
+  "properties": {
+    "$schema": {
+      "type": "string"
+    },
+    "schema_version": {
+      "const": "1.0"
+    },
+    "plugin": {
+      "$ref": "#/$defs/identity"
+    },
+    "runtime": {
+      "$ref": "#/$defs/runtime"
+    },
+    "capabilities": {
+      "$ref": "#/$defs/capabilities"
+    },
+    "inputs": {
+      "$ref": "#/$defs/inputs"
+    },
+    "outputs": {
+      "$ref": "#/$defs/outputs"
+    },
+    "limits": {
+      "$ref": "#/$defs/limits"
+    },
+    "determinism": {
+      "$ref": "#/$defs/determinism"
+    },
+    "distribution": {
+      "$ref": "#/$defs/distribution"
+    }
+  },
+  "$defs": {
+    "stringArray": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "uniqueItems": true
+    },
+    "identity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "name",
+        "version",
+        "api_version",
+        "license"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[a-z0-9][a-z0-9._-]*$"
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "version": {
+          "type": "string",
+          "minLength": 1
+        },
+        "api_version": {
+          "type": "string",
+          "minLength": 1
+        },
+        "license": {
+          "type": "string",
+          "minLength": 1
+        },
+        "description": {
+          "type": "string"
+        },
+        "homepage": {
+          "type": "string"
+        }
+      }
+    },
+    "runtime": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "entrypoint",
+        "protocol"
+      ],
+      "properties": {
+        "kind": {
+          "enum": [
+            "builtin",
+            "wasm-wasi",
+            "native-worker"
+          ]
+        },
+        "entrypoint": {
+          "type": "string",
+          "minLength": 1
+        },
+        "protocol": {
+          "type": "string",
+          "minLength": 1
+        },
+        "sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        }
+      }
+    },
+    "capabilities": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "clock",
+        "random"
+      ],
+      "properties": {
+        "filesystem_read": {
+          "$ref": "#/$defs/stringArray"
+        },
+        "filesystem_write": {
+          "$ref": "#/$defs/stringArray"
+        },
+        "environment": {
+          "$ref": "#/$defs/stringArray"
+        },
+        "network": {
+          "$ref": "#/$defs/stringArray"
+        },
+        "process_spawn": {
+          "$ref": "#/$defs/stringArray"
+        },
+        "clock": {
+          "type": "boolean"
+        },
+        "random": {
+          "type": "boolean"
+        }
+      }
+    },
+    "inputs": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "languages": {
+          "$ref": "#/$defs/stringArray"
+        },
+        "media_types": {
+          "$ref": "#/$defs/stringArray"
+        },
+        "globs": {
+          "$ref": "#/$defs/stringArray"
+        },
+        "requires": {
+          "$ref": "#/$defs/stringArray"
+        },
+        "capabilities": {
+          "$ref": "#/$defs/stringArray"
+        }
+      }
+    },
+    "outputs": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "node_kinds": {
+          "type": "array",
+          "items": {
+            "enum": [
+              "repository",
+              "project",
+              "package",
+              "directory",
+              "file",
+              "symlink",
+              "special",
+              "archive",
+              "archive_member",
+              "notebook",
+              "notebook_cell",
+              "module",
+              "namespace",
+              "class",
+              "interface",
+              "trait",
+              "type",
+              "enum",
+              "enum_member",
+              "function",
+              "method",
+              "constructor",
+              "field",
+              "property",
+              "variable",
+              "constant",
+              "parameter",
+              "return_value",
+              "api_service",
+              "api_endpoint",
+              "api_operation",
+              "security_scheme",
+              "graphql_type",
+              "graphql_field",
+              "rpc_service",
+              "rpc_method",
+              "cli_command",
+              "cli_argument",
+              "cli_flag",
+              "config_key",
+              "environment_variable",
+              "secret",
+              "database",
+              "database_table",
+              "database_column",
+              "database_view",
+              "database_index",
+              "migration",
+              "schema",
+              "message",
+              "event",
+              "topic",
+              "queue",
+              "build_target",
+              "deployment",
+              "container_image",
+              "test",
+              "test_suite",
+              "fixture",
+              "document",
+              "document_section",
+              "external_dependency",
+              "license",
+              "owner",
+              "execution_path",
+              "unresolved_symbol"
+            ]
+          },
+          "uniqueItems": true
+        },
+        "edge_kinds": {
+          "type": "array",
+          "items": {
+            "enum": [
+              "contains",
+              "declares",
+              "imports",
+              "exports",
+              "references",
+              "calls",
+              "instantiates",
+              "inherits",
+              "implements",
+              "overrides",
+              "aliases",
+              "reads",
+              "writes",
+              "mutates",
+              "validates",
+              "serializes",
+              "deserializes",
+              "exposes",
+              "routes_to",
+              "handles",
+              "authenticates",
+              "authorizes",
+              "tests",
+              "covers",
+              "documents",
+              "configures",
+              "depends_on",
+              "builds",
+              "generates",
+              "packages",
+              "deploys",
+              "emits",
+              "subscribes",
+              "publishes",
+              "consumes",
+              "migrates",
+              "invoked_by",
+              "supersedes",
+              "owned_by",
+              "licensed_under",
+              "observed_with",
+              "derived_from",
+              "related_to"
+            ]
+          },
+          "uniqueItems": true
+        },
+        "evidence_kinds": {
+          "type": "array",
+          "items": {
+            "enum": [
+              "declared",
+              "compiler_resolved",
+              "syntax_inferred",
+              "runtime_observed",
+              "documentation_asserted",
+              "model_inferred",
+              "manifest",
+              "build_metadata",
+              "test_result",
+              "coverage",
+              "security_scan",
+              "user_asserted"
+            ]
+          },
+          "uniqueItems": true
+        },
+        "diagnostic_codes": {
+          "$ref": "#/$defs/stringArray"
+        }
+      }
+    },
+    "limits": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "timeout_seconds",
+        "memory_mib",
+        "max_output_bytes",
+        "max_parallelism"
+      ],
+      "properties": {
+        "timeout_seconds": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "memory_mib": {
+          "type": "integer",
+          "minimum": 16
+        },
+        "max_output_bytes": {
+          "type": "integer",
+          "minimum": 1024
+        },
+        "max_parallelism": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "open_files": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "processes": {
+          "type": "integer",
+          "minimum": 1
+        }
+      }
+    },
+    "determinism": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "level"
+      ],
+      "properties": {
+        "level": {
+          "enum": [
+            "deterministic",
+            "toolchain-dependent",
+            "environment-dependent",
+            "nondeterministic"
+          ]
+        },
+        "cache_inputs": {
+          "$ref": "#/$defs/stringArray"
+        }
+      }
+    },
+    "distribution": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "source_url": {
+          "type": "string"
+        },
+        "artifact_url": {
+          "type": "string"
+        },
+        "signature": {
+          "type": "string"
+        },
+        "certificate_identity": {
+          "type": "string"
+        },
+        "rekor_entry": {
+          "type": "string"
+        }
+      }
+    }
+  }
+}

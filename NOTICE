@@ -1,0 +1,7 @@
+Repository Knowledge Compiler (RKC)
+Copyright 2026 RKC contributors
+
+The reference implementation contains no bundled language models, language
+server binaries, compiler toolchains, or third-party grammar source. Production
+distributions must preserve the licenses and notices of any separately bundled
+components.

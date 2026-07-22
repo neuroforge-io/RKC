@@ -1,0 +1,1019 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://rkc.dev/schemas/rkc-bundle.schema.json",
+  "title": "Repository Knowledge Compiler canonical bundle",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "snapshot",
+    "artifacts",
+    "nodes",
+    "edges",
+    "evidence",
+    "diagnostics"
+  ],
+  "properties": {
+    "snapshot": {
+      "$ref": "#/$defs/snapshot"
+    },
+    "artifacts": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/artifact"
+      }
+    },
+    "nodes": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/node"
+      }
+    },
+    "edges": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/edge"
+      }
+    },
+    "evidence": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/evidence"
+      }
+    },
+    "diagnostics": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/diagnostic"
+      }
+    },
+    "conflicts": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/conflict"
+      }
+    },
+    "documents": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/document"
+      }
+    },
+    "claims": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/claim"
+      }
+    },
+    "execution_paths": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/executionPath"
+      }
+    }
+  },
+  "$defs": {
+    "sourceRange": {
+      "type": "object",
+      "required": [
+        "path"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "artifact_id": {
+          "type": "string"
+        },
+        "path": {
+          "type": "string"
+        },
+        "start_byte": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "end_byte": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "start_line": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "start_column": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "end_line": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "end_column": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "anchor": {
+          "type": "string"
+        }
+      }
+    },
+    "git": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "commit": {
+          "type": "string"
+        },
+        "branch": {
+          "type": "string"
+        },
+        "origin": {
+          "type": "string"
+        },
+        "dirty": {
+          "type": "boolean"
+        },
+        "working_tree_digest": {
+          "type": "string"
+        },
+        "unavailable": {
+          "type": "boolean"
+        }
+      }
+    },
+    "tool": {
+      "type": "object",
+      "required": [
+        "name",
+        "version"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "version": {
+          "type": "string"
+        },
+        "build": {
+          "type": "string"
+        },
+        "runtime": {
+          "type": "string"
+        },
+        "attributes": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "snapshot": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "id",
+        "created_at",
+        "root_name",
+        "root_path",
+        "content_digest",
+        "git",
+        "tool"
+      ],
+      "properties": {
+        "schema_version": {
+          "const": "0.2.0"
+        },
+        "id": {
+          "type": "string"
+        },
+        "repository_id": {
+          "type": "string"
+        },
+        "parent_snapshot_id": {
+          "type": "string"
+        },
+        "created_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "status": {
+          "enum": [
+            "building",
+            "validating",
+            "committed",
+            "failed",
+            "superseded"
+          ]
+        },
+        "root_name": {
+          "type": "string"
+        },
+        "root_path": {
+          "type": "string"
+        },
+        "content_digest": {
+          "type": "string"
+        },
+        "config_digest": {
+          "type": "string"
+        },
+        "policy_digest": {
+          "type": "string"
+        },
+        "plugin_lock_digest": {
+          "type": "string"
+        },
+        "toolchain_digest": {
+          "type": "string"
+        },
+        "git": {
+          "$ref": "#/$defs/git"
+        },
+        "tool": {
+          "$ref": "#/$defs/tool"
+        },
+        "policy": {
+          "type": "object",
+          "additionalProperties": true
+        },
+        "metadata": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "artifact": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "path",
+        "kind",
+        "text",
+        "status"
+      ],
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "logical_id": {
+          "type": "string"
+        },
+        "content_id": {
+          "type": "string"
+        },
+        "path": {
+          "type": "string"
+        },
+        "kind": {
+          "enum": [
+            "file",
+            "directory",
+            "symlink",
+            "special",
+            "archive",
+            "archive_member",
+            "notebook",
+            "notebook_cell",
+            "manifest",
+            "source",
+            "document",
+            "binary",
+            "generated",
+            "vendored"
+          ]
+        },
+        "language": {
+          "type": "string"
+        },
+        "media_type": {
+          "type": "string"
+        },
+        "encoding": {
+          "type": "string"
+        },
+        "newline": {
+          "type": "string"
+        },
+        "size_bytes": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "sha256": {
+          "type": "string"
+        },
+        "line_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "mode": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "text": {
+          "type": "boolean"
+        },
+        "executable": {
+          "type": "boolean"
+        },
+        "generated": {
+          "type": "boolean"
+        },
+        "vendored": {
+          "type": "boolean"
+        },
+        "status": {
+          "enum": [
+            "recorded",
+            "included",
+            "text",
+            "parsed",
+            "syntax_parsed",
+            "semantic_parsed",
+            "excluded",
+            "inventory_only",
+            "binary",
+            "vendored",
+            "generated",
+            "redacted",
+            "unreadable",
+            "unsupported",
+            "oversized"
+          ]
+        },
+        "disposition_reason": {
+          "type": "string"
+        },
+        "exclusion_reason": {
+          "type": "string"
+        },
+        "target": {
+          "type": "string"
+        },
+        "license_expression": {
+          "type": "string"
+        },
+        "attributes": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "node": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "kind",
+        "name"
+      ],
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "logical_id": {
+          "type": "string"
+        },
+        "kind": {
+          "enum": [
+            "repository",
+            "project",
+            "package",
+            "directory",
+            "file",
+            "symlink",
+            "special",
+            "archive",
+            "archive_member",
+            "notebook",
+            "notebook_cell",
+            "module",
+            "namespace",
+            "class",
+            "interface",
+            "trait",
+            "type",
+            "enum",
+            "enum_member",
+            "function",
+            "method",
+            "constructor",
+            "field",
+            "property",
+            "variable",
+            "constant",
+            "parameter",
+            "return_value",
+            "api_service",
+            "api_endpoint",
+            "api_operation",
+            "security_scheme",
+            "graphql_type",
+            "graphql_field",
+            "rpc_service",
+            "rpc_method",
+            "cli_command",
+            "cli_argument",
+            "cli_flag",
+            "config_key",
+            "environment_variable",
+            "secret",
+            "database",
+            "database_table",
+            "database_column",
+            "database_view",
+            "database_index",
+            "migration",
+            "schema",
+            "message",
+            "event",
+            "topic",
+            "queue",
+            "build_target",
+            "deployment",
+            "container_image",
+            "test",
+            "test_suite",
+            "fixture",
+            "document",
+            "document_section",
+            "external_dependency",
+            "license",
+            "owner",
+            "execution_path",
+            "unresolved_symbol"
+          ]
+        },
+        "name": {
+          "type": "string"
+        },
+        "qualified_name": {
+          "type": "string"
+        },
+        "signature": {
+          "type": "string"
+        },
+        "language": {
+          "type": "string"
+        },
+        "visibility": {
+          "type": "string"
+        },
+        "stability": {
+          "type": "string"
+        },
+        "public_surface": {
+          "type": "boolean"
+        },
+        "artifact_id": {
+          "type": "string"
+        },
+        "source": {
+          "$ref": "#/$defs/sourceRange"
+        },
+        "semantic_hash": {
+          "type": "string"
+        },
+        "evidence_ids": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "attributes": {
+          "type": "object",
+          "additionalProperties": true
+        }
+      }
+    },
+    "edge": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "kind",
+        "from",
+        "to",
+        "resolution"
+      ],
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "kind": {
+          "enum": [
+            "contains",
+            "declares",
+            "imports",
+            "exports",
+            "references",
+            "calls",
+            "instantiates",
+            "inherits",
+            "implements",
+            "overrides",
+            "aliases",
+            "reads",
+            "writes",
+            "mutates",
+            "validates",
+            "serializes",
+            "deserializes",
+            "exposes",
+            "routes_to",
+            "handles",
+            "authenticates",
+            "authorizes",
+            "tests",
+            "covers",
+            "documents",
+            "configures",
+            "depends_on",
+            "builds",
+            "generates",
+            "packages",
+            "deploys",
+            "emits",
+            "subscribes",
+            "publishes",
+            "consumes",
+            "migrates",
+            "invoked_by",
+            "supersedes",
+            "owned_by",
+            "licensed_under",
+            "observed_with",
+            "derived_from",
+            "related_to"
+          ]
+        },
+        "from": {
+          "type": "string"
+        },
+        "to": {
+          "type": "string"
+        },
+        "resolution": {
+          "enum": [
+            "declared",
+            "compiler_resolved",
+            "syntax_inferred",
+            "runtime_observed",
+            "documentation_asserted",
+            "model_inferred",
+            "unresolved"
+          ]
+        },
+        "confidence": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "producer": {
+          "type": "string"
+        },
+        "lifecycle": {
+          "type": "string"
+        },
+        "evidence_ids": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "attributes": {
+          "type": "object",
+          "additionalProperties": true
+        }
+      }
+    },
+    "evidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "kind",
+        "method",
+        "confidence"
+      ],
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "kind": {
+          "enum": [
+            "declared",
+            "compiler_resolved",
+            "syntax_inferred",
+            "runtime_observed",
+            "documentation_asserted",
+            "model_inferred",
+            "manifest",
+            "build_metadata",
+            "test_result",
+            "coverage",
+            "security_scan",
+            "user_asserted"
+          ]
+        },
+        "method": {
+          "type": "string"
+        },
+        "confidence": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "source": {
+          "$ref": "#/$defs/sourceRange"
+        },
+        "tool": {
+          "type": "string"
+        },
+        "tool_version": {
+          "type": "string"
+        },
+        "input_digest": {
+          "type": "string"
+        },
+        "observed_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "detail": {
+          "type": "string"
+        },
+        "attributes": {
+          "type": "object",
+          "additionalProperties": true
+        }
+      }
+    },
+    "diagnostic": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "severity",
+        "code",
+        "message"
+      ],
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "severity": {
+          "enum": [
+            "note",
+            "warning",
+            "error",
+            "fatal"
+          ]
+        },
+        "code": {
+          "type": "string"
+        },
+        "message": {
+          "type": "string"
+        },
+        "source": {
+          "$ref": "#/$defs/sourceRange"
+        },
+        "stage": {
+          "type": "string"
+        },
+        "plugin": {
+          "type": "string"
+        },
+        "help_uri": {
+          "type": "string"
+        },
+        "attributes": {
+          "type": "object",
+          "additionalProperties": true
+        }
+      }
+    },
+    "conflict": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "kind",
+        "subject_id"
+      ],
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "kind": {
+          "type": "string"
+        },
+        "subject_id": {
+          "type": "string"
+        },
+        "candidate_ids": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "preferred_id": {
+          "type": "string"
+        },
+        "resolution": {
+          "type": "string"
+        },
+        "evidence_ids": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "attributes": {
+          "type": "object",
+          "additionalProperties": true
+        }
+      }
+    },
+    "claim": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "subject_id",
+        "text",
+        "certainty",
+        "generator",
+        "evidence_ids",
+        "validation"
+      ],
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "subject_id": {
+          "type": "string"
+        },
+        "text": {
+          "type": "string"
+        },
+        "category": {
+          "type": "string"
+        },
+        "certainty": {
+          "enum": [
+            "supported",
+            "inferred",
+            "uncertain",
+            "contradicted"
+          ]
+        },
+        "generator": {
+          "type": "string"
+        },
+        "generator_version": {
+          "type": "string"
+        },
+        "evidence_ids": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "validation": {
+          "enum": [
+            "pending",
+            "accepted",
+            "rejected",
+            "inference",
+            "stale"
+          ]
+        },
+        "attributes": {
+          "type": "object",
+          "additionalProperties": true
+        }
+      }
+    },
+    "documentSection": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "ordinal",
+        "markdown"
+      ],
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "parent_id": {
+          "type": "string"
+        },
+        "ordinal": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "heading": {
+          "type": "string"
+        },
+        "markdown": {
+          "type": "string"
+        },
+        "plain_text": {
+          "type": "string"
+        },
+        "claim_ids": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "evidence_ids": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "attributes": {
+          "type": "object",
+          "additionalProperties": true
+        }
+      }
+    },
+    "document": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "kind",
+        "title",
+        "generator",
+        "status"
+      ],
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "logical_id": {
+          "type": "string"
+        },
+        "kind": {
+          "type": "string"
+        },
+        "title": {
+          "type": "string"
+        },
+        "path": {
+          "type": "string"
+        },
+        "subject_ids": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "generator": {
+          "type": "string"
+        },
+        "generator_version": {
+          "type": "string"
+        },
+        "content_sha256": {
+          "type": "string"
+        },
+        "status": {
+          "enum": [
+            "draft",
+            "validated",
+            "rejected",
+            "published",
+            "stale"
+          ]
+        },
+        "sections": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/documentSection"
+          }
+        },
+        "attributes": {
+          "type": "object",
+          "additionalProperties": true
+        }
+      }
+    },
+    "executionPath": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "name",
+        "entry_node_id",
+        "node_ids",
+        "edge_ids"
+      ],
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "entry_node_id": {
+          "type": "string"
+        },
+        "exit_node_id": {
+          "type": "string"
+        },
+        "node_ids": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "edge_ids": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "evidence_ids": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "attributes": {
+          "type": "object",
+          "additionalProperties": true
+        }
+      }
+    },
+    "fragment": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "artifacts": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/artifact"
+          }
+        },
+        "nodes": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/node"
+          }
+        },
+        "edges": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/edge"
+          }
+        },
+        "evidence": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/evidence"
+          }
+        },
+        "diagnostics": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/diagnostic"
+          }
+        },
+        "conflicts": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/conflict"
+          }
+        },
+        "documents": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/document"
+          }
+        },
+        "claims": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/claim"
+          }
+        },
+        "execution_paths": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/executionPath"
+          }
+        }
+      }
+    }
+  }
+}

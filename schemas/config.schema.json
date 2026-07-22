@@ -1,0 +1,517 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://rkc.dev/schemas/config.schema.json",
+  "title": "Repository Knowledge Compiler configuration",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "workspace",
+    "inventory",
+    "analysis",
+    "plugins",
+    "frameworks",
+    "security",
+    "documentation",
+    "model",
+    "search",
+    "exports",
+    "quality_gates"
+  ],
+  "properties": {
+    "$schema": {
+      "type": "string"
+    },
+    "schema_version": {
+      "const": "0.2.0"
+    },
+    "workspace": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "privacy_mode",
+        "output"
+      ],
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "privacy_mode": {
+          "enum": [
+            "full",
+            "paths-relative",
+            "redacted"
+          ]
+        },
+        "output": {
+          "type": "string"
+        }
+      }
+    },
+    "inventory": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "max_file_bytes",
+        "max_text_bytes",
+        "max_repository_bytes",
+        "max_files",
+        "follow_symlinks",
+        "include_git_ignored",
+        "exclude",
+        "classify_vendor_directories",
+        "classify_generated_files"
+      ],
+      "properties": {
+        "max_file_bytes": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "max_text_bytes": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "max_repository_bytes": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "max_files": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "follow_symlinks": {
+          "type": "boolean"
+        },
+        "include_git_ignored": {
+          "type": "boolean"
+        },
+        "exclude": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "uniqueItems": true
+        },
+        "classify_vendor_directories": {
+          "type": "boolean"
+        },
+        "classify_generated_files": {
+          "type": "boolean"
+        }
+      }
+    },
+    "analysis": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "tiers",
+        "fail_closed_on_plugin_error",
+        "incremental",
+        "runtime_evidence"
+      ],
+      "properties": {
+        "tiers": {
+          "type": "array",
+          "items": {
+            "enum": [
+              "inventory",
+              "syntax",
+              "semantic",
+              "framework",
+              "runtime"
+            ]
+          },
+          "uniqueItems": true
+        },
+        "fail_closed_on_plugin_error": {
+          "type": "boolean"
+        },
+        "incremental": {
+          "type": "boolean"
+        },
+        "runtime_evidence": {
+          "type": "boolean"
+        }
+      }
+    },
+    "plugins": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "enabled",
+        "directories",
+        "allow_network",
+        "allow_process_spawn",
+        "native_worker_sandbox",
+        "timeout_seconds",
+        "memory_limit_mib",
+        "maximum_output_bytes",
+        "python_ast",
+        "go_ast",
+        "typescript_syntax"
+      ],
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "directories": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "allow_network": {
+          "type": "boolean"
+        },
+        "allow_process_spawn": {
+          "type": "boolean"
+        },
+        "native_worker_sandbox": {
+          "enum": [
+            "required",
+            "preferred",
+            "disabled"
+          ]
+        },
+        "timeout_seconds": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "memory_limit_mib": {
+          "type": "integer",
+          "minimum": 16
+        },
+        "memory_limit_mb": {
+          "type": "integer",
+          "minimum": 16
+        },
+        "maximum_output_bytes": {
+          "type": "integer",
+          "minimum": 1024
+        },
+        "python_ast": {
+          "$ref": "#/$defs/pythonAST"
+        },
+        "go_ast": {
+          "$ref": "#/$defs/toggle"
+        },
+        "typescript_syntax": {
+          "$ref": "#/$defs/toggle"
+        }
+      }
+    },
+    "frameworks": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "enabled",
+        "markdown",
+        "openapi_json",
+        "json_schema",
+        "package_manifests",
+        "environment_files"
+      ],
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "markdown": {
+          "type": "boolean"
+        },
+        "openapi_json": {
+          "type": "boolean"
+        },
+        "json_schema": {
+          "type": "boolean"
+        },
+        "package_manifests": {
+          "type": "boolean"
+        },
+        "environment_files": {
+          "type": "boolean"
+        }
+      }
+    },
+    "security": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "detect_secrets",
+        "redact_exports"
+      ],
+      "properties": {
+        "detect_secrets": {
+          "type": "boolean"
+        },
+        "redact_exports": {
+          "type": "boolean"
+        }
+      }
+    },
+    "documentation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "deterministic_templates",
+        "model_synthesis",
+        "require_evidence_for_every_claim",
+        "reject_unknown_symbol_references"
+      ],
+      "properties": {
+        "deterministic_templates": {
+          "type": "boolean"
+        },
+        "model_synthesis": {
+          "type": "boolean"
+        },
+        "require_evidence_for_every_claim": {
+          "type": "boolean"
+        },
+        "reject_unknown_symbol_references": {
+          "type": "boolean"
+        }
+      }
+    },
+    "model": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "provider",
+        "context_tokens",
+        "max_output_tokens",
+        "temperature",
+        "max_rss_mib"
+      ],
+      "properties": {
+        "provider": {
+          "enum": [
+            "disabled",
+            "llama.cpp",
+            "ollama",
+            "openai-compatible"
+          ]
+        },
+        "endpoint": {
+          "type": "string"
+        },
+        "model": {
+          "type": "string"
+        },
+        "model_path": {
+          "type": "string"
+        },
+        "context_tokens": {
+          "type": "integer",
+          "minimum": 512
+        },
+        "max_output_tokens": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "temperature": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 2
+        },
+        "max_rss_mib": {
+          "type": "integer",
+          "minimum": 256
+        },
+        "peak_memory_limit_mb": {
+          "type": "integer",
+          "minimum": 256
+        }
+      }
+    },
+    "search": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "enabled",
+        "lexical",
+        "embeddings",
+        "graph_expansion_hops"
+      ],
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "lexical": {
+          "type": "boolean"
+        },
+        "embeddings": {
+          "type": "boolean"
+        },
+        "embedding_model": {
+          "type": "string"
+        },
+        "graph_expansion_hops": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 16
+        }
+      }
+    },
+    "exports": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "normalized_sources",
+        "jsonl_graph",
+        "static_site",
+        "search_index",
+        "integrations",
+        "notebook_pack_bytes"
+      ],
+      "properties": {
+        "normalized_sources": {
+          "type": "boolean"
+        },
+        "jsonl_graph": {
+          "type": "boolean"
+        },
+        "static_site": {
+          "type": "boolean"
+        },
+        "search_index": {
+          "type": "boolean"
+        },
+        "integrations": {
+          "type": "boolean"
+        },
+        "notebook_pack_bytes": {
+          "type": "integer",
+          "minimum": 1024
+        },
+        "snapshot_store": {
+          "type": "string"
+        },
+        "jsonl": {
+          "type": "boolean"
+        },
+        "sarif": {
+          "type": "boolean"
+        },
+        "markdown": {
+          "type": "boolean"
+        },
+        "sqlite": {
+          "type": "boolean"
+        },
+        "notebooklm": {
+          "type": "boolean"
+        },
+        "mcp": {
+          "type": "boolean"
+        }
+      }
+    },
+    "quality_gates": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "min_inventory_accounting",
+        "min_symbol_evidence",
+        "min_edge_resolution",
+        "min_claim_citation",
+        "max_error_diagnostics",
+        "max_unresolved_edges",
+        "max_high_confidence_secrets",
+        "require_determinism"
+      ],
+      "properties": {
+        "min_inventory_accounting": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "min_symbol_evidence": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "min_edge_resolution": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "min_claim_citation": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "max_error_diagnostics": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "max_unresolved_edges": {
+          "type": "integer",
+          "minimum": -1
+        },
+        "max_high_confidence_secrets": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "require_determinism": {
+          "type": "boolean"
+        },
+        "inventory_accounting": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "public_symbol_documentation": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "uncited_generated_claims": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "dangling_edges": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    }
+  },
+  "$defs": {
+    "toggle": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "enabled"
+      ],
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        }
+      }
+    },
+    "pythonAST": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "enabled",
+        "interpreter",
+        "script"
+      ],
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "interpreter": {
+          "type": "string"
+        },
+        "script": {
+          "type": "string"
+        },
+        "timeout_seconds": {
+          "type": "integer",
+          "minimum": 1
+        }
+      }
+    }
+  }
+}
