@@ -11,7 +11,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/repository-knowledge-compiler/rkc/internal/builtinplugins"
+	"github.com/neuroforge-io/RKC/internal/builtinplugins"
 )
 
 type doctorCheck struct {

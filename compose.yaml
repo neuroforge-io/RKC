@@ -3,6 +3,15 @@ services:
     build: .
     working_dir: /workspace
     read_only: true
+    cpus: 1.0
+    cpu_shares: 2
+    mem_limit: 2560m
+    mem_reservation: 2048m
+    memswap_limit: 2816m
+    pids_limit: 128
+    oom_score_adj: 750
+    blkio_config:
+      weight: 10
     tmpfs:
       - /tmp:size=256m,mode=1777
     volumes:
@@ -11,10 +20,13 @@ services:
       - rkc-state:/state
     command:
       - scan
+      # Alpine containers do not provide the required user-systemd sandbox.
+      # Keep Python disabled explicitly; never fall back to an unsandboxed worker.
+      - --no-python
       - --out
-      - /output
+      - /output/atlas
       - --state-dir
-      - /state
+      - /state/store
       - --force
       - /workspace
     security_opt:

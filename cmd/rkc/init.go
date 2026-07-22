@@ -18,6 +18,9 @@ func runInit(args []string) error {
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
+	if fs.NArg() != 0 {
+		return errors.New("init does not accept positional arguments")
+	}
 	cfg := defaultConfiguration()
 	data, err := json.MarshalIndent(cfg, "", "  ")
 	if err != nil {

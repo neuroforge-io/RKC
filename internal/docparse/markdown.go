@@ -5,14 +5,14 @@ package docparse
 import (
 	"bufio"
 	"fmt"
-	"os"
 	"path/filepath"
 	"regexp"
 	"sort"
 	"strings"
 
-	"github.com/repository-knowledge-compiler/rkc/pkg/pluginapi"
-	"github.com/repository-knowledge-compiler/rkc/pkg/rkcmodel"
+	"github.com/neuroforge-io/RKC/internal/sourcepath"
+	"github.com/neuroforge-io/RKC/pkg/pluginapi"
+	"github.com/neuroforge-io/RKC/pkg/rkcmodel"
 )
 
 const (
@@ -135,8 +135,7 @@ type parsedDocument struct {
 }
 
 func parseFile(root string, file pluginapi.FileRef) (parsedDocument, error) {
-	path := filepath.Join(root, filepath.FromSlash(file.Path))
-	input, err := os.Open(path)
+	input, err := sourcepath.OpenRegular(root, file.Path)
 	if err != nil {
 		return parsedDocument{}, fmt.Errorf("read Markdown %s: %w", file.Path, err)
 	}
@@ -216,15 +215,21 @@ func extractLinks(fragment *rkcmodel.Fragment, options Options, file pluginapi.F
 	seen := map[string]struct{}{}
 	for lineOffset, text := range item.lines {
 		for _, match := range link.FindAllStringSubmatch(text, -1) {
-			target := strings.TrimSpace(strings.Fields(match[1])[0])
+			fields := strings.Fields(match[1])
+			if len(fields) == 0 {
+				continue
+			}
+			target := strings.TrimSpace(fields[0])
 			target = strings.Trim(target, "<>")
 			if target == "" || strings.HasPrefix(target, "#") || strings.Contains(target, "://") || strings.HasPrefix(target, "mailto:") {
 				continue
 			}
 			pathPart := strings.SplitN(target, "#", 2)[0]
 			pathPart = strings.SplitN(pathPart, "?", 2)[0]
-			resolved := filepath.ToSlash(filepath.Clean(filepath.Join(base, filepath.FromSlash(pathPart))))
-			resolved = strings.TrimPrefix(resolved, "./")
+			resolved, err := sourcepath.ResolveRelative(base, pathPart)
+			if err != nil {
+				continue
+			}
 			artifactID := options.Artifacts[resolved]
 			if artifactID == "" {
 				continue

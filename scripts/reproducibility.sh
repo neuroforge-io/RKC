@@ -2,9 +2,10 @@
 set -eu
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 cd "$ROOT"
-A=${TMPDIR:-/tmp}/rkc-repro-a-$$
-B=${TMPDIR:-/tmp}/rkc-repro-b-$$
-trap 'rm -rf "$A" "$B"' EXIT INT TERM
+WORK=$(mktemp -d "${TMPDIR:-/tmp}/rkc-repro.XXXXXX")
+A=$WORK/a
+B=$WORK/b
+trap 'rm -rf "$WORK"' EXIT INT TERM
 ./bin/rkc scan --out "$A" --force examples >/dev/null
 ./bin/rkc scan --out "$B" --force examples >/dev/null
 cmp "$A/bundle.json" "$B/bundle.json"

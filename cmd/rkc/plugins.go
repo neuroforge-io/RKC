@@ -9,7 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/repository-knowledge-compiler/rkc/internal/pluginregistry"
+	"github.com/neuroforge-io/RKC/internal/pluginregistry"
 )
 
 func runPlugins(args []string) error {

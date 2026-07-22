@@ -6,10 +6,10 @@ import (
 	"strings"
 	"testing"
 
-	graphindex "github.com/repository-knowledge-compiler/rkc/internal/graph"
-	"github.com/repository-knowledge-compiler/rkc/internal/search"
-	"github.com/repository-knowledge-compiler/rkc/internal/server"
-	"github.com/repository-knowledge-compiler/rkc/pkg/rkcmodel"
+	graphindex "github.com/neuroforge-io/RKC/internal/graph"
+	"github.com/neuroforge-io/RKC/internal/search"
+	"github.com/neuroforge-io/RKC/internal/server"
+	"github.com/neuroforge-io/RKC/pkg/rkcmodel"
 )
 
 func TestInitializeAndSearch(t *testing.T) {

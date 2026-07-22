@@ -1,0 +1,451 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://rkc.dev/schemas/model-qualification.schema.json",
+  "title": "RKC local model qualification specification",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "$schema",
+    "schema_version",
+    "id",
+    "resource_policy",
+    "generation",
+    "embedding",
+    "promotion"
+  ],
+  "properties": {
+    "$schema": {
+      "const": "../../schemas/model-qualification.schema.json"
+    },
+    "schema_version": {
+      "const": "1.0.0"
+    },
+    "id": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9._-]{0,95}$"
+    },
+    "resource_policy": {
+      "$ref": "#/$defs/resourcePolicy"
+    },
+    "generation": {
+      "$ref": "#/$defs/generation"
+    },
+    "embedding": {
+      "$ref": "#/$defs/embedding"
+    },
+    "promotion": {
+      "$ref": "#/$defs/promotion"
+    }
+  },
+  "$defs": {
+    "identifier": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9._-]{0,95}$"
+    },
+    "rate": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1
+    },
+    "resourcePolicy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "cpu_cores",
+        "memory_high_bytes",
+        "memory_max_bytes",
+        "memory_swap_max_bytes",
+        "maximum_tasks",
+        "maximum_parallel_models",
+        "sequential_roles",
+        "require_erais_idle"
+      ],
+      "properties": {
+        "cpu_cores": {
+          "const": 1
+        },
+        "memory_high_bytes": {
+          "const": 2147483648
+        },
+        "memory_max_bytes": {
+          "const": 2684354560
+        },
+        "memory_swap_max_bytes": {
+          "const": 268435456
+        },
+        "maximum_tasks": {
+          "const": 128
+        },
+        "maximum_parallel_models": {
+          "const": 1
+        },
+        "sequential_roles": {
+          "const": true
+        },
+        "require_erais_idle": {
+          "const": true
+        }
+      }
+    },
+    "thresholds": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "case_pass_rate",
+        "schema_valid_rate",
+        "citation_valid_rate",
+        "required_fact_recall",
+        "unsupported_claim_rate",
+        "injection_canary_rate",
+        "maximum_peak_rss_bytes"
+      ],
+      "properties": {
+        "case_pass_rate": {
+          "$ref": "#/$defs/rate"
+        },
+        "schema_valid_rate": {
+          "$ref": "#/$defs/rate"
+        },
+        "citation_valid_rate": {
+          "$ref": "#/$defs/rate"
+        },
+        "required_fact_recall": {
+          "$ref": "#/$defs/rate"
+        },
+        "unsupported_claim_rate": {
+          "$ref": "#/$defs/rate"
+        },
+        "injection_canary_rate": {
+          "$ref": "#/$defs/rate"
+        },
+        "maximum_peak_rss_bytes": {
+          "type": "integer",
+          "minimum": 1
+        }
+      }
+    },
+    "evidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "text"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/identifier"
+        },
+        "text": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4096
+        }
+      }
+    },
+    "expectation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "required_evidence_ids",
+        "required_terms",
+        "forbidden_terms",
+        "minimum_claims",
+        "maximum_claims",
+        "minimum_unresolved_questions"
+      ],
+      "properties": {
+        "required_evidence_ids": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/identifier"
+          }
+        },
+        "required_terms": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128
+          }
+        },
+        "forbidden_terms": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128
+          }
+        },
+        "minimum_claims": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 8
+        },
+        "maximum_claims": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 8
+        },
+        "minimum_unresolved_questions": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 8
+        }
+      }
+    },
+    "generationCase": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "question",
+        "evidence",
+        "padding_characters",
+        "expect"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/identifier"
+        },
+        "question": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 1024
+        },
+        "evidence": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 32,
+          "items": {
+            "$ref": "#/$defs/evidence"
+          }
+        },
+        "padding_characters": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 2097152
+        },
+        "target_input_tokens": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 32704,
+          "description": "Optional exact llama.cpp chat-tokenizer count. The locked stress case sets this to context_tokens minus maximum_output_tokens."
+        },
+        "expect": {
+          "$ref": "#/$defs/expectation"
+        }
+      }
+    },
+    "generation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "asset_id",
+        "runtime_profile",
+        "context_tokens",
+        "maximum_output_tokens",
+        "temperature",
+        "seed",
+        "repetitions",
+        "thresholds",
+        "cases"
+      ],
+      "properties": {
+        "asset_id": {
+          "$ref": "#/$defs/identifier"
+        },
+        "runtime_profile": {
+          "enum": [
+            "portable",
+            "native"
+          ]
+        },
+        "context_tokens": {
+          "const": 32768
+        },
+        "maximum_output_tokens": {
+          "type": "integer",
+          "minimum": 64,
+          "maximum": 1024
+        },
+        "temperature": {
+          "const": 0
+        },
+        "seed": {
+          "type": "integer"
+        },
+        "repetitions": {
+          "type": "integer",
+          "minimum": 2,
+          "maximum": 5
+        },
+        "thresholds": {
+          "$ref": "#/$defs/thresholds"
+        },
+        "cases": {
+          "type": "array",
+          "minItems": 6,
+          "maxItems": 32,
+          "items": {
+            "$ref": "#/$defs/generationCase"
+          }
+        }
+      }
+    },
+    "embeddingCase": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "query",
+        "positive",
+        "negatives"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/identifier"
+        },
+        "query": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 1024
+        },
+        "positive": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4096
+        },
+        "negatives": {
+          "type": "array",
+          "minItems": 2,
+          "maxItems": 8,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 4096
+          }
+        }
+      }
+    },
+    "embedding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "asset_id",
+        "runtime_profile",
+        "context_tokens",
+        "pooling",
+        "query_instruction",
+        "expected_dimensions",
+        "thresholds",
+        "cases"
+      ],
+      "properties": {
+        "asset_id": {
+          "$ref": "#/$defs/identifier"
+        },
+        "runtime_profile": {
+          "enum": [
+            "portable",
+            "native"
+          ]
+        },
+        "context_tokens": {
+          "type": "integer",
+          "minimum": 4096,
+          "maximum": 32768
+        },
+        "pooling": {
+          "const": "last"
+        },
+        "query_instruction": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 1024
+        },
+        "expected_dimensions": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 8192
+        },
+        "thresholds": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "recall_at_1",
+            "minimum_cosine_margin",
+            "maximum_norm_error",
+            "maximum_peak_rss_bytes"
+          ],
+          "properties": {
+            "recall_at_1": {
+              "$ref": "#/$defs/rate"
+            },
+            "minimum_cosine_margin": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 2
+            },
+            "maximum_norm_error": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1
+            },
+            "maximum_peak_rss_bytes": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        },
+        "cases": {
+          "type": "array",
+          "minItems": 6,
+          "maxItems": 64,
+          "items": {
+            "$ref": "#/$defs/embeddingCase"
+          }
+        }
+      }
+    },
+    "promotion": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "automatic",
+        "require_generation_and_embedding",
+        "require_manual_receipt_review",
+        "default_on_failure",
+        "required_artifacts"
+      ],
+      "properties": {
+        "automatic": {
+          "const": false
+        },
+        "require_generation_and_embedding": {
+          "const": true
+        },
+        "require_manual_receipt_review": {
+          "const": true
+        },
+        "default_on_failure": {
+          "type": "null"
+        },
+        "required_artifacts": {
+          "type": "array",
+          "minItems": 4,
+          "maxItems": 16,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128
+          }
+        }
+      }
+    }
+  }
+}

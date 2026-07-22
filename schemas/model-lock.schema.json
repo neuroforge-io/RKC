@@ -1,0 +1,323 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://rkc.dev/schemas/model-lock.schema.json",
+  "title": "RKC local model supply-chain lock",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "$schema",
+    "schema_version",
+    "default_generation_model",
+    "default_embedding_model",
+    "llama_cpp",
+    "assets"
+  ],
+  "properties": {
+    "$schema": {
+      "const": "../schemas/model-lock.schema.json"
+    },
+    "schema_version": {
+      "const": "1.0.0"
+    },
+    "default_generation_model": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "pattern": "^[a-z0-9][a-z0-9._-]{0,95}$"
+    },
+    "default_embedding_model": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "pattern": "^[a-z0-9][a-z0-9._-]{0,95}$"
+    },
+    "llama_cpp": {
+      "$ref": "#/$defs/llamaCpp"
+    },
+    "assets": {
+      "type": "array",
+      "minItems": 3,
+      "maxItems": 32,
+      "items": {
+        "$ref": "#/$defs/asset"
+      }
+    }
+  },
+  "$defs": {
+    "sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "revision": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{40}$"
+    },
+    "httpsURL": {
+      "type": "string",
+      "format": "uri",
+      "pattern": "^https://"
+    },
+    "cmakeOption": {
+      "type": "string",
+      "pattern": "^-D[A-Z0-9_]+=[A-Za-z0-9_.:+/-]+$"
+    },
+    "llamaCpp": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "repository",
+        "tag",
+        "commit",
+        "license_spdx",
+        "license_url",
+        "source_asset_id",
+        "cmake"
+      ],
+      "properties": {
+        "repository": {
+          "const": "https://github.com/ggml-org/llama.cpp"
+        },
+        "tag": {
+          "type": "string",
+          "pattern": "^b[0-9]+$"
+        },
+        "commit": {
+          "$ref": "#/$defs/revision"
+        },
+        "license_spdx": {
+          "const": "MIT"
+        },
+        "license_url": {
+          "$ref": "#/$defs/httpsURL"
+        },
+        "source_asset_id": {
+          "type": "string",
+          "pattern": "^[a-z0-9][a-z0-9._-]{0,95}$"
+        },
+        "cmake": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "minimum_version",
+            "generator",
+            "build_type",
+            "parallel_jobs",
+            "targets",
+            "common_options",
+            "profiles"
+          ],
+          "properties": {
+            "minimum_version": {
+              "type": "string",
+              "pattern": "^[0-9]+\\.[0-9]+$"
+            },
+            "generator": {
+              "enum": [
+                "Ninja",
+                "Unix Makefiles"
+              ]
+            },
+            "build_type": {
+              "const": "Release"
+            },
+            "parallel_jobs": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 2
+            },
+            "targets": {
+              "type": "array",
+              "minItems": 4,
+              "maxItems": 8,
+              "uniqueItems": true,
+              "items": {
+                "type": "string",
+                "pattern": "^[a-z0-9][a-z0-9-]{0,63}$"
+              },
+              "allOf": [
+                {
+                  "contains": {
+                    "const": "llama-cli"
+                  }
+                },
+                {
+                  "contains": {
+                    "const": "llama-server"
+                  }
+                },
+                {
+                  "contains": {
+                    "const": "llama-embedding"
+                  }
+                },
+                {
+                  "contains": {
+                    "const": "llama-bench"
+                  }
+                }
+              ]
+            },
+            "common_options": {
+              "type": "array",
+              "minItems": 1,
+              "maxItems": 64,
+              "uniqueItems": true,
+              "items": {
+                "$ref": "#/$defs/cmakeOption"
+              }
+            },
+            "profiles": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "portable",
+                "native"
+              ],
+              "properties": {
+                "portable": {
+                  "$ref": "#/$defs/cmakeOptions"
+                },
+                "native": {
+                  "$ref": "#/$defs/cmakeOptions"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "cmakeOptions": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 32,
+      "uniqueItems": true,
+      "items": {
+        "$ref": "#/$defs/cmakeOption"
+      }
+    },
+    "asset": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "kind",
+        "status",
+        "default_eligible",
+        "repository",
+        "revision",
+        "filename",
+        "url",
+        "allowed_hosts",
+        "sha256",
+        "size_bytes",
+        "license_spdx",
+        "license_url",
+        "redistribution",
+        "quantization",
+        "native_context_tokens",
+        "qualification_spec",
+        "extraction_root"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[a-z0-9][a-z0-9._-]{0,95}$"
+        },
+        "kind": {
+          "enum": [
+            "source-archive",
+            "generation-model",
+            "embedding-model"
+          ]
+        },
+        "status": {
+          "enum": [
+            "runtime-pinned",
+            "unqualified",
+            "qualified",
+            "rejected"
+          ]
+        },
+        "default_eligible": {
+          "type": "boolean"
+        },
+        "repository": {
+          "$ref": "#/$defs/httpsURL"
+        },
+        "revision": {
+          "$ref": "#/$defs/revision"
+        },
+        "filename": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 160,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$"
+        },
+        "url": {
+          "$ref": "#/$defs/httpsURL"
+        },
+        "allowed_hosts": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 8,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "pattern": "^(?:[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?)(?:\\.[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?)*$|^\\.(?:[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?)(?:\\.[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?)*$"
+          }
+        },
+        "sha256": {
+          "$ref": "#/$defs/sha256"
+        },
+        "size_bytes": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 8589934592
+        },
+        "license_spdx": {
+          "enum": [
+            "Apache-2.0",
+            "MIT"
+          ]
+        },
+        "license_url": {
+          "$ref": "#/$defs/httpsURL"
+        },
+        "redistribution": {
+          "const": "not-bundled-download-on-demand"
+        },
+        "quantization": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "pattern": "^[A-Za-z0-9_.-]{1,32}$"
+        },
+        "native_context_tokens": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 1,
+          "maximum": 1048576
+        },
+        "qualification_spec": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "pattern": "^models/qualification/[A-Za-z0-9._/-]+\\.json$"
+        },
+        "extraction_root": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,159}$"
+        }
+      }
+    }
+  }
+}

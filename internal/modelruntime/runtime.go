@@ -11,7 +11,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/repository-knowledge-compiler/rkc/pkg/rkcmodel"
+	"github.com/neuroforge-io/RKC/pkg/rkcmodel"
 )
 
 var (
@@ -36,6 +36,12 @@ type ModelDescriptor struct {
 	WeightBytes      int64  `json:"weight_bytes"`
 	ContextLimit     int    `json:"context_limit"`
 	Tokenizer        string `json:"tokenizer,omitempty"`
+	Digest           string `json:"digest,omitempty"`
+	Revision         string `json:"revision,omitempty"`
+	License          string `json:"license,omitempty"`
+	Runtime          string `json:"runtime,omitempty"`
+	RuntimeDigest    string `json:"runtime_digest,omitempty"`
+	RuntimeRevision  string `json:"runtime_revision,omitempty"`
 }
 
 type InferenceOptions struct {
@@ -82,14 +88,21 @@ func EstimateMemory(model ModelDescriptor, options InferenceOptions, promptBytes
 	if options.RuntimeOverheadBytes <= 0 {
 		options.RuntimeOverheadBytes = 256 * 1024 * 1024
 	}
+	weights := model.WeightBytes
+	if weights < 0 {
+		weights = maxSignedInt64
+	}
+	if promptBytes < 0 {
+		promptBytes = maxSignedInt64
+	}
 	estimate := Estimate{
-		WeightsBytes: model.WeightBytes,
-		KVCacheBytes: int64(options.ContextTokens) * options.KVBytesPerToken * int64(options.Parallel),
+		WeightsBytes: weights,
+		KVCacheBytes: saturatingMultiply(saturatingMultiply(int64(options.ContextTokens), options.KVBytesPerToken), int64(options.Parallel)),
 		RuntimeBytes: options.RuntimeOverheadBytes,
 		PromptBytes:  promptBytes,
-		OutputBytes:  int64(options.MaxOutputTokens) * 8,
+		OutputBytes:  saturatingMultiply(int64(options.MaxOutputTokens), 8),
 	}
-	estimate.EstimatedPeakBytes = estimate.WeightsBytes + estimate.KVCacheBytes + estimate.RuntimeBytes + estimate.PromptBytes + estimate.OutputBytes + budget.SafetyMarginBytes
+	estimate.EstimatedPeakBytes = saturatingSum(estimate.WeightsBytes, estimate.KVCacheBytes, estimate.RuntimeBytes, estimate.PromptBytes, estimate.OutputBytes, budget.SafetyMarginBytes)
 	estimate.Allowed = budget.MaximumRSSBytes <= 0 || estimate.EstimatedPeakBytes <= budget.MaximumRSSBytes
 	if !estimate.Allowed {
 		estimate.Reasons = append(estimate.Reasons, fmt.Sprintf("estimated peak %d exceeds budget %d", estimate.EstimatedPeakBytes, budget.MaximumRSSBytes))
@@ -99,6 +112,29 @@ func EstimateMemory(model ModelDescriptor, options InferenceOptions, promptBytes
 		estimate.Reasons = append(estimate.Reasons, "requested context exceeds model context limit")
 	}
 	return estimate
+}
+
+const maxSignedInt64 = int64(^uint64(0) >> 1)
+
+func saturatingMultiply(left, right int64) int64 {
+	if left < 0 || right < 0 {
+		return maxSignedInt64
+	}
+	if left != 0 && right > maxSignedInt64/left {
+		return maxSignedInt64
+	}
+	return left * right
+}
+
+func saturatingSum(values ...int64) int64 {
+	var total int64
+	for _, value := range values {
+		if value < 0 || value > maxSignedInt64-total {
+			return maxSignedInt64
+		}
+		total += value
+	}
+	return total
 }
 
 type EvidencePacket struct {
@@ -198,6 +234,10 @@ func ValidateResponse(packet EvidencePacket, response Response, generatorVersion
 		maxClaims = 12
 	}
 	validation := ClaimValidation{}
+	allowedCategories := map[string]struct{}{}
+	for _, category := range packet.AllowedClaimCategories {
+		allowedCategories[category] = struct{}{}
+	}
 	for index, draft := range response.Claims {
 		var reasons []string
 		if index >= maxClaims {
@@ -206,10 +246,26 @@ func ValidateResponse(packet EvidencePacket, response Response, generatorVersion
 		if strings.TrimSpace(draft.Text) == "" {
 			reasons = append(reasons, "empty claim")
 		}
+		if len([]rune(draft.Text)) > 2000 {
+			reasons = append(reasons, "claim exceeds character limit")
+		}
+		if containsUnsafeMarkup(draft.Text) {
+			reasons = append(reasons, "claim contains unsafe markup")
+		}
+		if len(allowedCategories) > 0 {
+			if _, ok := allowedCategories[draft.Category]; !ok {
+				reasons = append(reasons, "claim category is not allowed: "+draft.Category)
+			}
+		}
 		if packet.Policy.RequireCitations && len(draft.EvidenceIDs) == 0 {
 			reasons = append(reasons, "claim is uncited")
 		}
+		seenEvidence := map[string]struct{}{}
 		for _, evidenceID := range draft.EvidenceIDs {
+			if _, duplicate := seenEvidence[evidenceID]; duplicate {
+				reasons = append(reasons, "duplicate evidence citation: "+evidenceID)
+			}
+			seenEvidence[evidenceID] = struct{}{}
 			if _, ok := allowedEvidence[evidenceID]; !ok {
 				reasons = append(reasons, "evidence outside packet: "+evidenceID)
 			}
@@ -217,8 +273,10 @@ func ValidateResponse(packet EvidencePacket, response Response, generatorVersion
 		if draft.Certainty == "inferred" && !packet.Policy.AllowInference {
 			reasons = append(reasons, "inference is disabled")
 		}
-		if draft.Certainty == "" {
-			reasons = append(reasons, "certainty is required")
+		if _, ok := rkcmodel.ClaimCertaintyStates[draft.Certainty]; !ok {
+			reasons = append(reasons, "certainty is invalid: "+draft.Certainty)
+		} else if draft.Certainty == "uncertain" || draft.Certainty == "contradicted" {
+			reasons = append(reasons, "certainty is not publishable: "+draft.Certainty)
 		}
 		if mentionsImpossibleIdentifier(draft.Text, knownTerms) {
 			reasons = append(reasons, "claim appears to mention an unknown code identifier")
@@ -239,17 +297,19 @@ func ValidateResponse(packet EvidencePacket, response Response, generatorVersion
 	}
 	summary := strings.TrimSpace(response.Summary)
 	if summary != "" {
+		// Response.Summary has no claim-level evidence mapping in protocol v1.
+		// Accepting it merely because some unrelated claim survived validation
+		// would publish uncited model prose. Keep it in the audit record, but never
+		// promote it to an accepted or rendered field.
+		validation.SummaryRejectedReasons = append(validation.SummaryRejectedReasons, "free-form summary lacks claim-level evidence binding")
+		if containsUnsafeMarkup(summary) {
+			validation.SummaryRejectedReasons = append(validation.SummaryRejectedReasons, "summary contains unsafe markup")
+		}
 		if packet.Policy.MaximumSummaryCharacters > 0 && len([]rune(summary)) > packet.Policy.MaximumSummaryCharacters {
 			validation.SummaryRejectedReasons = append(validation.SummaryRejectedReasons, "summary exceeds packet character limit")
 		}
 		if mentionsImpossibleIdentifier(summary, knownTerms) {
 			validation.SummaryRejectedReasons = append(validation.SummaryRejectedReasons, "summary appears to mention an unknown code identifier")
-		}
-		if packet.Policy.RequireCitations && len(validation.Accepted) == 0 {
-			validation.SummaryRejectedReasons = append(validation.SummaryRejectedReasons, "summary has no accepted cited claims")
-		}
-		if len(validation.SummaryRejectedReasons) == 0 {
-			validation.AcceptedSummary = summary
 		}
 	}
 	for _, rejected := range validation.Rejected {
@@ -268,6 +328,11 @@ func ValidateResponse(packet EvidencePacket, response Response, generatorVersion
 		})
 	}
 	return validation
+}
+
+func containsUnsafeMarkup(value string) bool {
+	lower := strings.ToLower(value)
+	return strings.ContainsAny(value, "<>") || strings.Contains(lower, "javascript:") || strings.Contains(lower, "data:text/html")
 }
 
 func identifierTerms(value string) []string {

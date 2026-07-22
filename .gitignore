@@ -2,8 +2,41 @@
 /dist/
 /.rkc/
 /.rkc-*/
+/.venv/
+/.rkc-models/
+/.rkc-runtime/
+/.rkc-downloads/
 *.test
 *.out
+.coverage
+coverage.xml
 __pycache__/
 *.py[cod]
 .DS_Store
+
+# Model weights, checkpoints, and compiled native runtimes are never admitted to
+# source or release packages implicitly. Reviewed fixtures must be force-added
+# and added to the release license inventory deliberately.
+*.gguf
+*.ggml
+*.safetensors
+*.ckpt
+*.pt
+*.pth
+*.onnx
+*.tflite
+*.h5
+*.hdf5
+*.weights
+pytorch_model*.bin
+model*.bin
+consolidated*.pth
+*.so
+*.dylib
+*.dll
+*.exe
+*.a
+*.lib
+*.o
+*.obj
+*.wasm

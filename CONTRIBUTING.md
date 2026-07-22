@@ -17,7 +17,7 @@ and small interfaces over clever coupling.
 ## Local checks
 
 ```bash
-make test
+make safe-coverage
 make smoke
 ```
 
@@ -29,7 +29,12 @@ Use:
 git commit -s
 ```
 
-The sign-off certifies the Developer Certificate of Origin.
+The sign-off certifies the repository's [Developer Certificate of
+Origin](DCO). Every non-merge commit contributed after the initial repository
+import must carry a parsed `Signed-off-by:` trailer whose name and email exactly
+match the commit author. Merge commits are excluded from this per-contribution
+check. A lookalike line in the message body or a different identity does not
+satisfy the gate.
 
 ## Adapter contributions
 

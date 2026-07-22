@@ -9,21 +9,49 @@ permissions:
 
 jobs:
   verify:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          go-version: '1.23.x'
-          cache: true
-      - uses: actions/setup-python@v5
+          fetch-depth: 0
+      - name: Verify contribution sign-off
+        env:
+          RKC_DCO_BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
+        run: sh scripts/validate-dco.sh "$RKC_DCO_BASE" HEAD
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: '1.26.5'
+          # RKC currently has no external Go modules and therefore no go.sum.
+          cache: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: '3.11'
           cache: pip
+          cache-dependency-path: requirements-dev.txt
       - name: Install offline-contract validators
-        run: python -m pip install --disable-pip-version-check jsonschema PyYAML
-      - name: Verify source, contracts, docs, plugins, determinism and interfaces
+        run: python -m pip install --disable-pip-version-check -r requirements-dev.txt
+      - name: Provision fail-closed user-systemd runtime
+        shell: bash
+        run: |
+          set -euo pipefail
+          user_id="$(id -u)"
+          user_name="$(id -un)"
+          runtime_dir="/run/user/${user_id}"
+          sudo loginctl enable-linger "$user_name"
+          sudo systemctl start "user@${user_id}.service"
+          sudo systemctl set-property --runtime "user@${user_id}.service" 'Delegate=cpu io memory pids'
+          test -S "${runtime_dir}/bus"
+          {
+            printf 'XDG_RUNTIME_DIR=%s\n' "$runtime_dir"
+            printf 'DBUS_SESSION_BUS_ADDRESS=unix:path=%s/bus\n' "$runtime_dir"
+          } >> "$GITHUB_ENV"
+      - name: Verify delegated resource guard
+        env:
+          RKC_RESOURCE_GUARD_MODE: service
+          RKC_REQUIRE_IO_CONTROLLER: '1'
+        run: sh scripts/verify-resource-guard.sh
+      - name: Verify source, contracts, docs, live plugin sandbox, determinism and interfaces
         run: make verify
       - name: Race detector
         run: make test-race
@@ -31,8 +59,38 @@ jobs:
         run: make demo
       - name: Docker build
         run: docker build -t rkc:ci .
+      - name: Docker runtime smoke (explicit portable no-Python profile)
+        shell: bash
+        run: |
+          set -euo pipefail
+          volume="rkc-ci-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          resource_limits=(
+            --cpus 1
+            --cpu-shares 2
+            --memory 2560m
+            --memory-reservation 2048m
+            --memory-swap 2816m
+            --pids-limit 128
+            --oom-score-adj 750
+            --blkio-weight 10
+          )
+          docker volume create "$volume" >/dev/null
+          trap 'docker volume rm -f "$volume" >/dev/null' EXIT
+          docker run --rm "${resource_limits[@]}" \
+            --read-only \
+            --tmpfs /tmp:size=256m,mode=1777 \
+            --security-opt no-new-privileges:true \
+            --cap-drop ALL \
+            -v "$GITHUB_WORKSPACE/examples:/workspace:ro" \
+            -v "$volume:/output" \
+            rkc:ci scan --no-python --out /output/atlas --force /workspace
+          docker run --rm "${resource_limits[@]}" \
+            --read-only \
+            --entrypoint /bin/sh \
+            -v "$volume:/output:ro" \
+            rkc:ci -c 'test -s /output/atlas/bundle.json && test -s /output/atlas/coverage.json'
       - name: Upload demonstration atlas
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: rkc-demo
           path: |

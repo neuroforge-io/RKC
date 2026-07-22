@@ -1,18 +1,18 @@
 [plugin]
 id = "rkc.python-ast"
 name = "RKC Python AST extractor"
-version = "0.1.0"
-api_version = "0.1"
+version = "0.2.0"
+api_version = "1.0"
 license = "Apache-2.0"
 description = "Reference Python syntax extractor using the standard-library ast module."
 
 [runtime]
 kind = "native-worker"
 entrypoint = "extractor.py"
-protocol = "json-stdin-0.1"
+protocol = "json-stdio-fragment-v1"
 
 [capabilities]
-filesystem_read = ["repository"]
+filesystem_read = ["repository:materialized-read-only"]
 filesystem_write = []
 environment = []
 network = []
@@ -23,19 +23,19 @@ random = false
 [inputs]
 languages = ["python"]
 globs = ["**/*.py", "**/*.pyi"]
-requires = []
+requires = ["python>=3.11"]
 
 [outputs]
-node_kinds = ["module", "class", "function", "method", "test", "external_dependency", "unresolved_symbol"]
-edge_kinds = ["contains", "imports", "calls", "inherits"]
-diagnostic_codes = ["RKC-PY-1001"]
+node_kinds = ["module", "class", "function", "method", "test", "unresolved_symbol"]
+edge_kinds = ["contains", "declares", "imports", "inherits", "calls"]
+diagnostic_codes = ["RKC-PY-1001", "RKC-PY-1002"]
 
 [limits]
 timeout_seconds = 60
-memory_mb = 256
-max_output_bytes = 268435456
+memory_mib = 256
+max_output_bytes = 67108864
 max_parallelism = 1
 
 [determinism]
 level = "toolchain-dependent"
-cache_inputs = ["source_sha256", "python_version", "plugin_version", "schema_version"]
+cache_inputs = ["artifact.sha256", "python.version", "plugin.sha256", "schema.version"]

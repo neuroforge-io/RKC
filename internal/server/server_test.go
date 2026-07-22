@@ -6,9 +6,9 @@ import (
 	"testing"
 	"time"
 
-	graphindex "github.com/repository-knowledge-compiler/rkc/internal/graph"
-	"github.com/repository-knowledge-compiler/rkc/internal/model"
-	"github.com/repository-knowledge-compiler/rkc/internal/search"
+	graphindex "github.com/neuroforge-io/RKC/internal/graph"
+	"github.com/neuroforge-io/RKC/internal/model"
+	"github.com/neuroforge-io/RKC/internal/search"
 )
 
 func testDataset() *Dataset {

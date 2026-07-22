@@ -57,7 +57,6 @@
         "max_repository_bytes",
         "max_files",
         "follow_symlinks",
-        "include_git_ignored",
         "exclude",
         "classify_vendor_directories",
         "classify_generated_files"
@@ -82,10 +81,8 @@
         "follow_symlinks": {
           "type": "boolean"
         },
-        "include_git_ignored": {
-          "type": "boolean"
-        },
         "exclude": {
+          "description": "Exact repository-relative paths to exclude, including each path's descendants. Git-ignore and glob syntax are not interpreted.",
           "type": "array",
           "items": {
             "type": "string"
@@ -179,7 +176,18 @@
         },
         "memory_limit_mib": {
           "type": "integer",
-          "minimum": 16
+          "minimum": 16,
+          "maximum": 2048
+        },
+        "memory_swap_limit_mib": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 512
+        },
+        "process_limit": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 1
         },
         "memory_limit_mb": {
           "type": "integer",
@@ -286,13 +294,8 @@
         "provider": {
           "enum": [
             "disabled",
-            "llama.cpp",
-            "ollama",
-            "openai-compatible"
+            "llama.cpp"
           ]
-        },
-        "endpoint": {
-          "type": "string"
         },
         "model": {
           "type": "string"
@@ -302,11 +305,13 @@
         },
         "context_tokens": {
           "type": "integer",
-          "minimum": 512
+          "minimum": 512,
+          "maximum": 262144
         },
         "max_output_tokens": {
           "type": "integer",
-          "minimum": 1
+          "minimum": 1,
+          "maximum": 262144
         },
         "temperature": {
           "type": "number",
@@ -315,7 +320,8 @@
         },
         "max_rss_mib": {
           "type": "integer",
-          "minimum": 256
+          "minimum": 256,
+          "maximum": 2560
         },
         "peak_memory_limit_mb": {
           "type": "integer",
@@ -505,7 +511,7 @@
           "type": "string"
         },
         "script": {
-          "type": "string"
+          "const": "builtin"
         },
         "timeout_seconds": {
           "type": "integer",

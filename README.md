@@ -54,7 +54,7 @@ The highest-value unfinished work is:
    C/C++, Rust, Java/Kotlin, and C#;
 5. add SQL, protobuf, GraphQL, Terraform, Kubernetes, CI, and richer build packs;
 6. build the paginated TypeScript browser and editor integrations;
-7. benchmark a real quantized GGUF model below the 3.5 GiB configured ceiling;
+7. benchmark a real quantized GGUF model below the 2.5 GiB guarded ceiling;
 8. implement PostgreSQL/object-storage team mode, authentication, authorization,
    queues, audit retention, backups, and operational telemetry;
 9. publish signed binaries, containers, SBOMs, provenance, and measured adapter
@@ -83,7 +83,8 @@ The exact ordered work, interfaces, migrations, tests, and exit gates are in
 
 ## Requirements
 
-- Go 1.23 or later;
+- a supported Go toolchain (CI and release images pin Go 1.26.5; the module
+  retains Go 1.23 language compatibility);
 - Python 3.11 or later for the Python analyzer and validation scripts;
 - Git for repository metadata and remote acquisition;
 - `jsonschema` and `PyYAML` for offline contract validation;
@@ -95,15 +96,19 @@ No third-party Go modules are required by the reference implementation.
 
 ```sh
 python3 -m pip install jsonschema PyYAML
-make verify
-make test-race
+make safe-verify
+make safe-test-race
 ```
 
 The full logged release sequence is:
 
 ```sh
-make release-verify
+make safe-release-verify
 ```
+
+The `safe-*` targets run local builds and tests at nice level 19 and idle I/O
+priority inside a fail-closed user cgroup capped at one CPU core and 2.5 GiB RAM.
+CI uses the ordinary targets inside its disposable runner.
 
 ## Scan and browse
 
@@ -128,6 +133,12 @@ make build
 ./bin/rkc serve --dir /tmp/rkc-output --addr 127.0.0.1:8787
 ```
 
+Snapshot state directories carry a bounded `.rkc-snapshot-store.json`
+ownership marker. RKC initializes a missing or empty state directory, but
+refuses to adopt a nonempty unmarked directory. Recovery deletes only building
+directories whose exact inode, bounded marker, and bounded building record
+still agree at the deletion boundary.
+
 Open `http://127.0.0.1:8787`.
 
 ## Query and inspect graph relationships
@@ -151,8 +162,16 @@ Open `http://127.0.0.1:8787`.
   --force
 ```
 
-Running a real local model additionally requires a compatible `llama-cli` and a
-GGUF model. Model weights are not bundled.
+Unless `--out` is supplied, synthesis is published to the deterministic sibling
+`/tmp/rkc-output.rkc-derived/synthesis/<profile>`. RKC rejects the atlas itself
+and every descendant of it as a synthesis destination, including paths that
+reach the atlas through a symlinked parent.
+
+Running a real local model additionally requires `llama.cpp` and a GGUF model.
+The repository provides a checksum-pinned CPU-only source bootstrap, defensive
+on-demand downloads, and a guarded qualification corpus; model weights remain
+unbundled and no candidate is a default until it passes the published gate. See
+[`docs/MODEL_RUNTIME.md`](docs/MODEL_RUNTIME.md).
 
 ## Output layout
 
@@ -168,8 +187,10 @@ GGUF model. Model weights are not bundled.
 ├── integrations/               SARIF, GraphML, Mermaid, and CSV
 ├── search/                     persisted lexical index
 ├── site/                       static repository atlas
-└── derived/                    optional model packets and validated prose
 ```
+
+Optional model packets and citation-linked prose are kept outside that verified
+tree under `/tmp/rkc-output.rkc-derived/synthesis/<profile>/` by default.
 
 ## Configuration
 
@@ -183,6 +204,15 @@ The schema is [`schemas/config.schema.json`](schemas/config.schema.json), and a
 maintained example is [`config/rkc.example.json`](config/rkc.example.json).
 Configuration affecting repository truth enters the snapshot digest. Display,
 server-address, and derived-model settings do not silently change source truth.
+
+The reference inventory does not interpret `.gitignore`. Each
+`inventory.exclude` entry is one exact repository-relative path and excludes
+that path plus its descendants; glob syntax is not supported. Safe defaults
+explicitly omit `.venv`, `venv`, RKC model/runtime/download/generated trees
+(including `.rkc-coverage`), `bin`, `dist`, and named root-level coverage and
+cache outputs. Additional paths
+can be supplied with repeated `--exclude` flags and remain visible as explicit
+exclusion records in the atlas.
 
 ## API and MCP
 
@@ -209,19 +239,34 @@ The manifest schema is [`schemas/plugin-manifest.schema.json`](schemas/plugin-ma
 the mutation contract is [`schemas/graph-patch.schema.json`](schemas/graph-patch.schema.json),
 and the WASI component draft is [`plugins/plugin.wit`](plugins/plugin.wit).
 
-Plugin capabilities are validated and locked today. Enforced WASI and native
-worker containment remain production blockers documented in the remainder plan.
+Plugin capabilities are validated and locked today. The built-in Python worker
+has the narrow fail-closed Linux guard described below; WASI and general
+third-party native-worker containment remain production blockers documented in
+the remainder plan.
 
 ## Container use
 
 ```sh
 docker build -t rkc:local .
-docker run --rm -v "$PWD:/workspace:ro" -v rkc-output:/output \
-  rkc:local scan --out /output --force /workspace
+docker run --rm \
+  --cpus 1 --cpu-shares 2 \
+  --memory 2560m --memory-reservation 2048m --memory-swap 2816m \
+  --pids-limit 128 --oom-score-adj 750 --blkio-weight 10 \
+  --read-only --tmpfs /tmp:size=256m,mode=1777 \
+  --security-opt no-new-privileges:true --cap-drop ALL \
+  -v "$PWD:/workspace:ro" -v rkc-output:/output \
+  rkc:local scan --no-python --out /output/atlas --force /workspace
 ```
 
-The Compose file additionally applies a read-only root filesystem,
-`no-new-privileges`, and drops Linux capabilities.
+The Alpine image intentionally has no user-systemd manager and therefore cannot
+enforce the host Python-worker sandbox. Container scans must pass `--no-python`
+explicitly; RKC never falls back to unsandboxed Python. The Compose file encodes
+that portable profile and additionally applies a one-core quota, 2 GiB memory
+reservation, 2.5 GiB hard memory limit, 256 MiB swap allowance, 128-process
+limit, minimum CPU/block-I/O weights, high OOM-kill preference, a read-only root
+filesystem, `no-new-privileges`, and dropped Linux capabilities. Scheduling
+weights are subject to host-kernel support. Use a supported Linux host with
+user-systemd when Python AST extraction is required.
 
 ## Build the complete release archive
 
@@ -236,12 +281,17 @@ demonstration output, release logs, checksums, contracts, and all plans.
 
 Repositories are treated as hostile input. The reference build avoids project
 code execution and redacts likely secrets from normalized exports by default.
-The current native Python worker still runs with the invoking user’s OS
-permissions. Do not deploy untrusted third-party plugins or expose the local
-server as a multi-tenant internet service. The production isolation work is a
-release gate, not optional varnish.
+The only executable Python adapter is the digest-pinned built-in worker. On
+Linux it runs under hard cgroup limits with a cleared environment, network-I/O
+syscalls denied, one task, and whole-unit cancellation; it still runs as the
+invoking user and does not claim a mount/filesystem namespace. Third-party
+Python/native workers are disabled. Do not expose the local server as a
+multi-tenant internet service; full worker isolation remains a production gate.
 
 ## License
 
-Apache-2.0. Third-party compilers, parsers, language servers, grammars, plugins,
-and model weights retain their own licenses and are not bundled by this project.
+RKC-owned work is Apache-2.0 and may be used in commercial products and
+derivative works subject to the license's notice and attribution requirements;
+retain [`LICENSE`](LICENSE) and [`NOTICE`](NOTICE) as required by Section 4.
+Third-party compilers, parsers, language servers, grammars, plugins, and model
+weights retain their own licenses and are not bundled by this project.

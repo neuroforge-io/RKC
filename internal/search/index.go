@@ -14,7 +14,7 @@ import (
 	"strings"
 	"unicode"
 
-	"github.com/repository-knowledge-compiler/rkc/pkg/rkcmodel"
+	"github.com/neuroforge-io/RKC/pkg/rkcmodel"
 )
 
 const IndexVersion = "1"
@@ -86,6 +86,10 @@ type termFields struct {
 
 func BuildFromBundle(bundle rkcmodel.Bundle) *Index {
 	documents := make([]Document, 0, len(bundle.Nodes)+len(bundle.Artifacts)+len(bundle.Documents))
+	artifactPaths := make(map[string]string, len(bundle.Artifacts))
+	for _, artifact := range bundle.Artifacts {
+		artifactPaths[artifact.ID] = artifact.Path
+	}
 	for _, node := range bundle.Nodes {
 		bodyParts := []string{}
 		if node.Attributes != nil {
@@ -98,6 +102,8 @@ func BuildFromBundle(bundle rkcmodel.Bundle) *Index {
 		path := ""
 		if node.Source != nil {
 			path = node.Source.Path
+		} else {
+			path = artifactPaths[node.ArtifactID]
 		}
 		documents = append(documents, Document{
 			ID: node.ID, ObjectType: "node", Kind: node.Kind, Language: node.Language,
@@ -195,18 +201,7 @@ func buildDocument(document Document) builderDoc {
 
 func (index *Index) Search(query Query) Response {
 	text, parsed := parseQuery(query.Text)
-	if query.Kinds == nil {
-		query.Kinds = parsed.kinds
-	}
-	if query.Languages == nil {
-		query.Languages = parsed.languages
-	}
-	if query.ObjectTypes == nil {
-		query.ObjectTypes = parsed.objectTypes
-	}
-	if query.PathPrefix == "" {
-		query.PathPrefix = parsed.pathPrefix
-	}
+	query = applyParsedFilters(query, parsed)
 	terms := tokenize(text)
 	if query.Limit <= 0 {
 		query.Limit = 50
@@ -290,6 +285,30 @@ func (index *Index) Search(query Query) Response {
 		hits = hits[:query.Limit]
 	}
 	return Response{Query: query.Text, Hits: hits, Truncated: truncated, Mode: "embedded-bm25-lexical", IndexVersion: index.Version}
+}
+
+// MatchesQuery applies the same explicit and inline kind/language/type/path
+// filters as lexical search. Retrieval layers use this when adding graph
+// neighbors so graph expansion cannot bypass a caller's requested scope.
+func MatchesQuery(document Document, query Query) bool {
+	_, parsed := parseQuery(query.Text)
+	return matchesFilters(document, applyParsedFilters(query, parsed))
+}
+
+func applyParsedFilters(query Query, parsed parsedQuery) Query {
+	if query.Kinds == nil {
+		query.Kinds = parsed.kinds
+	}
+	if query.Languages == nil {
+		query.Languages = parsed.languages
+	}
+	if query.ObjectTypes == nil {
+		query.ObjectTypes = parsed.objectTypes
+	}
+	if query.PathPrefix == "" {
+		query.PathPrefix = parsed.pathPrefix
+	}
+	return query
 }
 
 func (index *Index) Save(path string) error {

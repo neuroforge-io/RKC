@@ -5,13 +5,12 @@ package secretpack
 
 import (
 	"fmt"
-	"os"
-	"path/filepath"
 	"sort"
 
-	"github.com/repository-knowledge-compiler/rkc/internal/security/secrets"
-	"github.com/repository-knowledge-compiler/rkc/pkg/pluginapi"
-	"github.com/repository-knowledge-compiler/rkc/pkg/rkcmodel"
+	"github.com/neuroforge-io/RKC/internal/security/secrets"
+	"github.com/neuroforge-io/RKC/internal/sourcepath"
+	"github.com/neuroforge-io/RKC/pkg/pluginapi"
+	"github.com/neuroforge-io/RKC/pkg/rkcmodel"
 )
 
 const (
@@ -29,7 +28,7 @@ func Extract(options Options) (rkcmodel.Fragment, error) {
 	sort.Slice(files, func(i, j int) bool { return files[i].Path < files[j].Path })
 	fragment := rkcmodel.Fragment{}
 	for _, file := range files {
-		data, err := os.ReadFile(filepath.Join(options.Root, filepath.FromSlash(file.Path)))
+		data, err := sourcepath.ReadFile(options.Root, file.Path)
 		if err != nil {
 			fragment.Diagnostics = append(fragment.Diagnostics, rkcmodel.Diagnostic{
 				ID: rkcmodel.StableID("diagnostic", PluginID, file.Path, err.Error()), Severity: "error", Code: "RKC-SEC-1001",

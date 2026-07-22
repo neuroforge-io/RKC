@@ -2,10 +2,10 @@
 set -eu
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 cd "$ROOT"
-TMP=${TMPDIR:-/tmp}/rkc-git-smoke-$$
-REPO=$TMP/source
-OUT=$TMP/output
-trap 'rm -rf "$TMP"' EXIT INT TERM
+WORK=$(mktemp -d "${TMPDIR:-/tmp}/rkc-git-smoke.XXXXXX")
+REPO=$WORK/source
+OUT=$WORK/output
+trap 'rm -rf "$WORK"' EXIT INT TERM
 mkdir -p "$REPO"
 cp -R examples/sample-go/. "$REPO/"
 git -C "$REPO" init -q

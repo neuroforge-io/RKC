@@ -1,16 +1,18 @@
 package modelruntime
 
 import (
-	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"sort"
 	"strings"
 
-	"github.com/repository-knowledge-compiler/rkc/internal/security/secrets"
-	"github.com/repository-knowledge-compiler/rkc/pkg/rkcmodel"
+	"github.com/neuroforge-io/RKC/internal/security/secrets"
+	"github.com/neuroforge-io/RKC/pkg/rkcmodel"
 )
 
 // PacketBuildOptions bounds repository material supplied to a model. The graph
@@ -62,6 +64,10 @@ func BuildEvidencePacket(bundle rkcmodel.Bundle, subjectID string, options Packe
 	evidenceByID := make(map[string]rkcmodel.Evidence, len(bundle.Evidence))
 	for _, evidence := range bundle.Evidence {
 		evidenceByID[evidence.ID] = evidence
+	}
+	artifactByID := make(map[string]rkcmodel.Artifact, len(bundle.Artifacts))
+	for _, artifact := range bundle.Artifacts {
+		artifactByID[artifact.ID] = artifact
 	}
 	subject, ok := nodeByID[subjectID]
 	if !ok {
@@ -161,7 +167,7 @@ func BuildEvidencePacket(bundle rkcmodel.Bundle, subjectID string, options Packe
 		}
 	}
 
-	excerpts, sourceStats := buildSourceExcerpts(evidence, options)
+	excerpts, sourceStats := buildSourceExcerpts(evidence, artifactByID, options)
 	report.IncludedSourceBytes = sourceStats.includedBytes
 	report.RedactedSecretFindings = sourceStats.redactions
 	report.MissingSourceArtifacts = sourceStats.missing
@@ -229,7 +235,7 @@ type sourceBuildStats struct {
 	truncated     bool
 }
 
-func buildSourceExcerpts(evidence []rkcmodel.Evidence, options PacketBuildOptions) ([]SourceExcerpt, sourceBuildStats) {
+func buildSourceExcerpts(evidence []rkcmodel.Evidence, artifacts map[string]rkcmodel.Artifact, options PacketBuildOptions) ([]SourceExcerpt, sourceBuildStats) {
 	if strings.TrimSpace(options.RepositoryRoot) == "" {
 		return nil, sourceBuildStats{}
 	}
@@ -244,7 +250,17 @@ func buildSourceExcerpts(evidence []rkcmodel.Evidence, options PacketBuildOption
 		if item.Source == nil || item.Source.Path == "" {
 			continue
 		}
-		key := item.Source.ArtifactID + "\x00" + item.Source.Path + "\x00" + fmt.Sprint(item.Source.StartByte) + "\x00" + fmt.Sprint(item.Source.EndByte)
+		key := strings.Join([]string{
+			item.Source.ArtifactID,
+			item.Source.Path,
+			fmt.Sprint(item.Source.StartByte),
+			fmt.Sprint(item.Source.EndByte),
+			fmt.Sprint(item.Source.StartLine),
+			fmt.Sprint(item.Source.EndLine),
+			fmt.Sprint(item.Source.StartColumn),
+			fmt.Sprint(item.Source.EndColumn),
+			item.Source.Anchor,
+		}, "\x00")
 		if _, duplicate := seen[key]; duplicate {
 			continue
 		}
@@ -258,7 +274,12 @@ func buildSourceExcerpts(evidence []rkcmodel.Evidence, options PacketBuildOption
 		if maximum > remaining {
 			maximum = remaining
 		}
-		text, truncated, err := readSourceRange(root, *item.Source, maximum)
+		artifact, exists := artifacts[item.Source.ArtifactID]
+		if !exists || strings.TrimSpace(item.Source.ArtifactID) == "" {
+			stats.missing = append(stats.missing, item.Source.Path+": source artifact is not present in the inventory")
+			continue
+		}
+		text, truncated, err := readSourceRange(root, artifact, *item.Source, maximum)
 		if err != nil {
 			stats.missing = append(stats.missing, item.Source.Path+": "+err.Error())
 			continue
@@ -268,6 +289,10 @@ func buildSourceExcerpts(evidence []rkcmodel.Evidence, options PacketBuildOption
 			stats.redactions += len(findings)
 			text = secrets.Redact(text, findings)
 		}
+		if len(text) > maximum {
+			text = text[:maximum]
+			truncated = true
+		}
 		stats.includedBytes += len(text)
 		stats.truncated = stats.truncated || truncated
 		excerpts = append(excerpts, SourceExcerpt{EvidenceID: item.ID, Source: *item.Source, Text: string(text), Truncated: truncated})
@@ -276,54 +301,211 @@ func buildSourceExcerpts(evidence []rkcmodel.Evidence, options PacketBuildOption
 	return excerpts, stats
 }
 
-func readSourceRange(root string, source rkcmodel.SourceRange, maximum int) ([]byte, bool, error) {
+func readSourceRange(root string, artifact rkcmodel.Artifact, source rkcmodel.SourceRange, maximum int) ([]byte, bool, error) {
 	if maximum <= 0 {
 		return nil, true, nil
 	}
-	candidate := filepath.Join(root, filepath.FromSlash(source.Path))
-	absolute, err := filepath.Abs(candidate)
+	if source.ArtifactID == "" || artifact.ID != source.ArtifactID {
+		return nil, false, errors.New("source range does not identify its inventoried artifact")
+	}
+	if artifact.Path == "" || artifact.Path != source.Path {
+		return nil, false, errors.New("source path does not match its inventoried artifact")
+	}
+	if !artifact.Text {
+		return nil, false, errors.New("source artifact was not inventoried as text")
+	}
+	if artifact.SizeBytes < 0 {
+		return nil, false, errors.New("source artifact has an invalid inventoried size")
+	}
+	expectedDigest, err := hex.DecodeString(artifact.SHA256)
+	if err != nil || len(expectedDigest) != sha256.Size {
+		return nil, false, errors.New("source artifact has no valid inventoried SHA-256")
+	}
+
+	absolute, pathInfo, err := resolvePacketSource(root, source.Path)
 	if err != nil {
 		return nil, false, err
 	}
-	relative, err := filepath.Rel(root, absolute)
-	if err != nil || relative == ".." || strings.HasPrefix(relative, ".."+string(filepath.Separator)) || filepath.IsAbs(relative) {
-		return nil, false, errors.New("source path escapes repository root")
-	}
-	data, err := os.ReadFile(absolute)
+	file, err := os.Open(absolute)
 	if err != nil {
 		return nil, false, err
 	}
-	var excerpt []byte
-	if source.EndByte > source.StartByte && source.StartByte >= 0 && source.EndByte <= int64(len(data)) {
-		excerpt = append([]byte(nil), data[source.StartByte:source.EndByte]...)
-	} else if source.StartLine > 0 {
-		excerpt = sliceLines(data, source.StartLine, source.EndLine)
+	defer file.Close()
+	openedInfo, err := file.Stat()
+	if err != nil {
+		return nil, false, fmt.Errorf("stat opened source: %w", err)
+	}
+	if !openedInfo.Mode().IsRegular() || !os.SameFile(pathInfo, openedInfo) {
+		return nil, false, errors.New("source path identity changed while opening")
+	}
+	if openedInfo.Size() != artifact.SizeBytes {
+		return nil, false, errors.New("source size changed after inventory")
+	}
+
+	useBytes := source.StartByte != 0 || source.EndByte != 0
+	// Byte offsets are authoritative when both machine offsets and human line
+	// coordinates are present. Invalid offsets fail closed instead of falling
+	// back to a broader line range.
+	useLines := !useBytes && (source.StartLine != 0 || source.EndLine != 0)
+	if useBytes {
+		if source.StartByte < 0 || source.EndByte <= source.StartByte || source.EndByte > artifact.SizeBytes {
+			return nil, false, errors.New("source byte range is outside its inventoried artifact")
+		}
+	} else if useLines {
+		if source.StartLine < 1 {
+			return nil, false, errors.New("source start line must be positive")
+		}
+		if source.EndLine == 0 {
+			source.EndLine = source.StartLine
+		}
+		if source.EndLine < source.StartLine {
+			return nil, false, errors.New("source line range is inverted")
+		}
 	} else {
-		excerpt = append([]byte(nil), data...)
+		return nil, false, errors.New("source range has no bounded byte or line span")
 	}
-	truncated := false
-	if len(excerpt) > maximum {
-		excerpt = excerpt[:maximum]
-		truncated = true
+
+	hash := sha256.New()
+	excerpt := make([]byte, 0, maximum)
+	buffer := make([]byte, 32*1024)
+	var offset int64
+	line := 1
+	lastByte := byte(0)
+	selectedBytes := 0
+	for {
+		n, readErr := file.Read(buffer)
+		if n > 0 {
+			chunk := buffer[:n]
+			lastByte = chunk[n-1]
+			if _, err := hash.Write(chunk); err != nil {
+				return nil, false, fmt.Errorf("hash source artifact: %w", err)
+			}
+			if useBytes {
+				chunkStart := offset
+				chunkEnd := offset + int64(n)
+				start := maxInt64(source.StartByte, chunkStart)
+				end := minInt64(source.EndByte, chunkEnd)
+				if start < end {
+					selection := chunk[start-chunkStart : end-chunkStart]
+					selectedBytes += len(selection)
+					excerpt = appendBounded(excerpt, selection, maximum)
+				}
+			} else {
+				for _, value := range chunk {
+					if line >= source.StartLine && line <= source.EndLine {
+						selectedBytes++
+						if len(excerpt) < maximum {
+							excerpt = append(excerpt, value)
+						}
+					}
+					if value == '\n' {
+						line++
+					}
+				}
+			}
+			offset += int64(n)
+		}
+		if readErr == io.EOF {
+			break
+		}
+		if readErr != nil {
+			return nil, false, fmt.Errorf("read source artifact: %w", readErr)
+		}
+		if n == 0 {
+			return nil, false, io.ErrNoProgress
+		}
 	}
-	return excerpt, truncated, nil
+	if offset != artifact.SizeBytes {
+		return nil, false, errors.New("source size changed while verifying content")
+	}
+	if !strings.EqualFold(hex.EncodeToString(hash.Sum(nil)), artifact.SHA256) {
+		return nil, false, errors.New("source content changed after inventory")
+	}
+	if useLines {
+		lastLine := line
+		if offset == 0 {
+			lastLine = 0
+		} else if lastByte == '\n' {
+			lastLine--
+		}
+		if source.StartLine > lastLine || source.EndLine > lastLine {
+			return nil, false, errors.New("source line range is outside its inventoried artifact")
+		}
+	}
+	finalInfo, err := file.Stat()
+	if err != nil {
+		return nil, false, fmt.Errorf("restat source artifact: %w", err)
+	}
+	if !os.SameFile(openedInfo, finalInfo) || finalInfo.Size() != artifact.SizeBytes || !finalInfo.ModTime().Equal(openedInfo.ModTime()) {
+		return nil, false, errors.New("source identity changed while verifying content")
+	}
+	return excerpt, selectedBytes > maximum, nil
 }
 
-func sliceLines(data []byte, start, end int) []byte {
-	if start < 1 {
-		start = 1
+func resolvePacketSource(root, sourcePath string) (string, os.FileInfo, error) {
+	rootInfo, err := os.Lstat(root)
+	if err != nil {
+		return "", nil, fmt.Errorf("inspect repository root: %w", err)
 	}
-	if end < start {
-		end = start
+	if rootInfo.Mode()&os.ModeSymlink != 0 || !rootInfo.IsDir() {
+		return "", nil, errors.New("repository root must be a real directory, not a symlink")
 	}
-	lines := bytes.SplitAfter(data, []byte("\n"))
-	if start > len(lines) {
-		return nil
+	clean := filepath.Clean(filepath.FromSlash(sourcePath))
+	if sourcePath == "" || clean == "." || filepath.IsAbs(clean) || filepath.ToSlash(clean) != sourcePath {
+		return "", nil, errors.New("source path is not canonical and repository-relative")
 	}
-	if end > len(lines) {
-		end = len(lines)
+	relative, err := filepath.Rel(root, filepath.Join(root, clean))
+	if err != nil || relative == ".." || strings.HasPrefix(relative, ".."+string(filepath.Separator)) || filepath.IsAbs(relative) {
+		return "", nil, errors.New("source path escapes repository root")
 	}
-	return bytes.Join(lines[start-1:end], nil)
+	current := root
+	parts := strings.Split(filepath.ToSlash(clean), "/")
+	var info os.FileInfo
+	for index, part := range parts {
+		if part == "" || part == "." || part == ".." {
+			return "", nil, errors.New("source path contains an unsafe component")
+		}
+		current = filepath.Join(current, filepath.FromSlash(part))
+		info, err = os.Lstat(current)
+		if err != nil {
+			return "", nil, err
+		}
+		if info.Mode()&os.ModeSymlink != 0 {
+			return "", nil, errors.New("source path contains a symlink")
+		}
+		if index < len(parts)-1 && !info.IsDir() {
+			return "", nil, errors.New("source path contains a non-directory component")
+		}
+	}
+	if info == nil || !info.Mode().IsRegular() {
+		return "", nil, errors.New("source path is not a regular file")
+	}
+	return current, info, nil
+}
+
+func appendBounded(target, source []byte, maximum int) []byte {
+	remaining := maximum - len(target)
+	if remaining <= 0 {
+		return target
+	}
+	if len(source) > remaining {
+		source = source[:remaining]
+	}
+	return append(target, source...)
+}
+
+func minInt64(left, right int64) int64 {
+	if left < right {
+		return left
+	}
+	return right
+}
+
+func maxInt64(left, right int64) int64 {
+	if left > right {
+		return left
+	}
+	return right
 }
 
 func allowedCategories(task Task) []string {

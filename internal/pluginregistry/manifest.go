@@ -17,7 +17,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/repository-knowledge-compiler/rkc/pkg/rkcmodel"
+	"github.com/neuroforge-io/RKC/pkg/rkcmodel"
 )
 
 const ManifestVersion = "1.0"
@@ -192,6 +192,8 @@ func Validate(manifest Manifest, policy Policy) error {
 	}
 	if manifest.Runtime.Entrypoint == "" {
 		failures = append(failures, "runtime.entrypoint is required")
+	} else if !validEntrypoint(manifest.Runtime.Entrypoint) {
+		failures = append(failures, "runtime.entrypoint must be a canonical relative path contained by the plugin directory")
 	}
 	if manifest.Runtime.Protocol == "" {
 		failures = append(failures, "runtime.protocol is required")
@@ -442,7 +444,27 @@ func VerifyLock(root string, lock Lockfile, manifests []Manifest, manifestPaths 
 			failures = append(failures, fmt.Errorf("plugin %s runtime digest differs between manifest and lock", key))
 		}
 		if index < len(manifestPaths) && manifest.Runtime.Entrypoint != "" && manifest.Runtime.Kind != "builtin" {
-			artifactPath := filepath.Join(filepath.Dir(manifestPaths[index]), filepath.FromSlash(manifest.Runtime.Entrypoint))
+			pluginDirectory, err := filepath.Abs(filepath.Dir(manifestPaths[index]))
+			if err != nil {
+				failures = append(failures, fmt.Errorf("plugin %s resolve plugin directory: %w", key, err))
+				continue
+			}
+			pluginDirectory, err = filepath.EvalSymlinks(pluginDirectory)
+			if err != nil {
+				failures = append(failures, fmt.Errorf("plugin %s resolve plugin directory symlinks: %w", key, err))
+				continue
+			}
+			artifactPath := filepath.Join(pluginDirectory, filepath.FromSlash(manifest.Runtime.Entrypoint))
+			resolvedArtifact, err := filepath.EvalSymlinks(artifactPath)
+			if err != nil {
+				failures = append(failures, fmt.Errorf("plugin %s resolve runtime artifact %s: %w", key, relativePath(root, artifactPath), err))
+				continue
+			}
+			if !pathContainedBy(pluginDirectory, resolvedArtifact) {
+				failures = append(failures, fmt.Errorf("plugin %s runtime artifact escapes plugin directory", key))
+				continue
+			}
+			artifactPath = resolvedArtifact
 			data, err := os.ReadFile(artifactPath)
 			if err != nil {
 				failures = append(failures, fmt.Errorf("plugin %s read runtime artifact %s: %w", key, relativePath(root, artifactPath), err))
@@ -462,6 +484,19 @@ func VerifyLock(root string, lock Lockfile, manifests []Manifest, manifestPaths 
 	}
 	sort.Slice(failures, func(i, j int) bool { return failures[i].Error() < failures[j].Error() })
 	return failures
+}
+
+func validEntrypoint(value string) bool {
+	if value == "" || strings.Contains(value, "\\") || !filepath.IsLocal(filepath.FromSlash(value)) {
+		return false
+	}
+	cleaned := filepath.ToSlash(filepath.Clean(filepath.FromSlash(value)))
+	return cleaned == value && cleaned != "."
+}
+
+func pathContainedBy(root, candidate string) bool {
+	relative, err := filepath.Rel(root, candidate)
+	return err == nil && relative != ".." && !strings.HasPrefix(relative, ".."+string(filepath.Separator))
 }
 
 func relativePath(root, path string) string {

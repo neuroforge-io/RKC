@@ -6,7 +6,7 @@ package semanticdiff
 import (
 	"sort"
 
-	"github.com/repository-knowledge-compiler/rkc/pkg/rkcmodel"
+	"github.com/neuroforge-io/RKC/pkg/rkcmodel"
 )
 
 type Severity string

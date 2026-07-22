@@ -6,14 +6,14 @@ package envkeys
 import (
 	"bufio"
 	"fmt"
-	"os"
 	"path/filepath"
 	"regexp"
 	"sort"
 	"strings"
 
-	"github.com/repository-knowledge-compiler/rkc/pkg/pluginapi"
-	"github.com/repository-knowledge-compiler/rkc/pkg/rkcmodel"
+	"github.com/neuroforge-io/RKC/internal/sourcepath"
+	"github.com/neuroforge-io/RKC/pkg/pluginapi"
+	"github.com/neuroforge-io/RKC/pkg/rkcmodel"
 )
 
 const (
@@ -35,7 +35,7 @@ func Extract(options Options) (rkcmodel.Fragment, error) {
 	sort.Slice(files, func(i, j int) bool { return files[i].Path < files[j].Path })
 	seen := map[string]struct{}{}
 	for _, file := range files {
-		input, err := os.Open(filepath.Join(options.Root, filepath.FromSlash(file.Path)))
+		input, err := sourcepath.OpenRegular(options.Root, file.Path)
 		if err != nil {
 			fragment.Diagnostics = append(fragment.Diagnostics, diagnostic(file, "RKC-CFG-1001", err.Error()))
 			continue

@@ -11,14 +11,14 @@ import (
 	"go/parser"
 	"go/printer"
 	"go/token"
-	"os"
 	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
 
-	"github.com/repository-knowledge-compiler/rkc/pkg/pluginapi"
-	"github.com/repository-knowledge-compiler/rkc/pkg/rkcmodel"
+	"github.com/neuroforge-io/RKC/internal/sourcepath"
+	"github.com/neuroforge-io/RKC/pkg/pluginapi"
+	"github.com/neuroforge-io/RKC/pkg/rkcmodel"
 )
 
 const (
@@ -76,8 +76,16 @@ func Extract(options Options) (rkcmodel.Fragment, error) {
 }
 
 func (extractor *extractor) extractFile(file pluginapi.FileRef) {
-	absolute := filepath.Join(extractor.root, filepath.FromSlash(file.Path))
-	parsed, err := parser.ParseFile(extractor.fileset, absolute, nil, parser.ParseComments|parser.AllErrors)
+	input, err := sourcepath.OpenRegular(extractor.root, file.Path)
+	if err != nil {
+		extractor.fragment.Diagnostics = append(extractor.fragment.Diagnostics, rkcmodel.Diagnostic{
+			ID: rkcmodel.StableID("diagnostic", PluginID, file.Path, err.Error()), Severity: "error", Code: "RKC-GO-1001",
+			Message: err.Error(), Source: &rkcmodel.SourceRange{ArtifactID: file.ArtifactID, Path: file.Path}, Stage: "syntax_parse", Plugin: PluginID + "@" + PluginVersion,
+		})
+		return
+	}
+	parsed, err := parser.ParseFile(extractor.fileset, file.Path, input, parser.ParseComments|parser.AllErrors)
+	_ = input.Close()
 	if err != nil {
 		extractor.fragment.Diagnostics = append(extractor.fragment.Diagnostics, rkcmodel.Diagnostic{
 			ID: rkcmodel.StableID("diagnostic", PluginID, file.Path, err.Error()), Severity: "error", Code: "RKC-GO-1001",
@@ -385,7 +393,7 @@ func (extractor *extractor) render(node ast.Node) string {
 }
 
 func readModulePath(root string) string {
-	data, err := os.ReadFile(filepath.Join(root, "go.mod"))
+	data, err := sourcepath.ReadFile(root, "go.mod")
 	if err != nil {
 		return ""
 	}

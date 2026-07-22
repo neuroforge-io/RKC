@@ -3,7 +3,7 @@
 ## 1. Install prerequisites
 
 ```sh
-go version       # 1.23 or newer
+go version       # use a currently supported release; CI pins 1.26.5
 python3 --version # 3.11 or newer
 git --version
 python3 -m pip install jsonschema PyYAML
@@ -12,7 +12,7 @@ python3 -m pip install jsonschema PyYAML
 ## 2. Verify the checkout
 
 ```sh
-make verify
+make safe-verify
 ```
 
 This runs formatting, vetting, Go and Python tests, contract validation,
@@ -23,14 +23,14 @@ acquisition tests.
 Run the race detector separately or use the logged release sequence:
 
 ```sh
-make test-race
-make release-verify
+make safe-test-race
+make safe-release-verify
 ```
 
 ## 3. Build
 
 ```sh
-make build
+make safe-build
 ./bin/rkc version
 ./bin/rkc doctor
 ```
@@ -44,6 +44,13 @@ make build
 Edit `rkc.json`, then pass it with `--config rkc.json`. Omit the option to use
 safe local defaults.
 
+`inventory.exclude` values are exact repository-relative paths, not globs. Each
+value excludes that path and its descendants. RKC does not claim to interpret
+`.gitignore`; its generated configuration instead lists explicit safe defaults
+for virtual environments, local RKC model/runtime outputs, `bin`, `dist`, and
+named root-level coverage/cache outputs. Add another exact path with a repeated
+`--exclude` flag when scanning.
+
 ## 5. Scan a repository
 
 ```sh
@@ -54,6 +61,10 @@ safe local defaults.
   --force \
   /path/to/repository
 ```
+
+`--state-dir` must be missing, empty, or already marked as an RKC snapshot
+store. RKC refuses to adopt arbitrary nonempty directories as transaction
+state.
 
 Remote Git repositories are materialized without prompts or hooks:
 
@@ -123,7 +134,23 @@ Packet-only mode is useful even without a model:
   --force
 ```
 
+The default destination is the deterministic sibling
+`/tmp/my-atlas.rkc-derived/synthesis/<profile>`, never a directory inside the
+verified atlas. An explicit `--out` must also resolve outside the atlas.
+
 With `llama.cpp`:
+
+```sh
+make model-lock-check
+make model-runtime-native
+make model-fetch-generation
+```
+
+These explicit commands use the checked-in byte/digest/license lock and the
+low-priority resource guard. They do not make the locked generation candidate a
+default; a real guarded qualification and manual receipt review are still
+required. See [`MODEL_RUNTIME.md`](MODEL_RUNTIME.md) for the portable build,
+embedding candidate, and qualification commands.
 
 ```sh
 ./bin/rkc synthesize \
@@ -134,13 +161,18 @@ With `llama.cpp`:
   --llama-cli /usr/local/bin/llama-cli \
   --context 4096 \
   --max-output 768 \
-  --max-rss-mib 3584 \
+  --max-rss-mib 2560 \
   --limit 5 \
   --force
 ```
 
 RKC rejects claims that cite unavailable evidence, reference unknown code
 identifiers, omit certainty, or violate packet policy.
+
+On Linux, model execution additionally fails closed unless it can enter a
+low-priority user cgroup. It is CPU-only by default, limited to one CPU core at
+the cgroup boundary, runs at nice level 19 with idle I/O priority, and receives
+a hard memory limit derived from `--max-rss-mib`.
 
 ## 10. Compare snapshots
 

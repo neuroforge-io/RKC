@@ -7,7 +7,7 @@ import (
 	"errors"
 	"sort"
 
-	"github.com/repository-knowledge-compiler/rkc/pkg/rkcmodel"
+	"github.com/neuroforge-io/RKC/pkg/rkcmodel"
 )
 
 var ErrNodeNotFound = errors.New("graph node not found")

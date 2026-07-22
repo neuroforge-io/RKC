@@ -8,13 +8,13 @@ import (
 	"path/filepath"
 	"time"
 
-	rkcexport "github.com/repository-knowledge-compiler/rkc/internal/export"
-	"github.com/repository-knowledge-compiler/rkc/internal/snapshot"
+	rkcexport "github.com/neuroforge-io/RKC/internal/export"
+	"github.com/neuroforge-io/RKC/internal/snapshot"
 )
 
 func runSnapshots(args []string) error {
 	if len(args) == 0 {
-		return errors.New("snapshots requires list, show, export, or recover")
+		return errors.New("snapshots requires list, show, export, recover, or set-current")
 	}
 	switch args[0] {
 	case "list":
@@ -25,9 +25,37 @@ func runSnapshots(args []string) error {
 		return runSnapshotsExport(args[1:])
 	case "recover":
 		return runSnapshotsRecover(args[1:])
+	case "set-current":
+		return runSnapshotsSetCurrent(args[1:])
 	default:
 		return fmt.Errorf("unknown snapshots command %q", args[0])
 	}
+}
+
+func runSnapshotsSetCurrent(args []string) error {
+	fs := flag.NewFlagSet("snapshots set-current", flag.ContinueOnError)
+	fs.SetOutput(os.Stderr)
+	stateDir := fs.String("state-dir", ".rkc-state", "snapshot store directory")
+	jsonOutput := fs.Bool("json", false, "print JSON")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if fs.NArg() != 1 {
+		return errors.New("set-current requires exactly one snapshot ID")
+	}
+	store, err := snapshot.Open(*stateDir)
+	if err != nil {
+		return err
+	}
+	id := fs.Arg(0)
+	if err := store.SetCurrent(id); err != nil {
+		return err
+	}
+	if *jsonOutput {
+		return writeJSONStdout(map[string]any{"current": id})
+	}
+	fmt.Printf("Current snapshot: %s\n", id)
+	return nil
 }
 
 func runSnapshotsList(args []string) error {
@@ -154,7 +182,7 @@ func runSnapshotsRecover(args []string) error {
 	fs := flag.NewFlagSet("snapshots recover", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
 	stateDir := fs.String("state-dir", ".rkc-state", "snapshot store directory")
-	olderThan := fs.Duration("older-than", 0, "remove abandoned builds older than this; zero removes all")
+	olderThan := fs.Duration("older-than", 0, "remove unlocked abandoned builds older than this; zero removes unlocked builds of any age")
 	jsonOutput := fs.Bool("json", false, "print JSON")
 	if err := fs.Parse(args); err != nil {
 		return err

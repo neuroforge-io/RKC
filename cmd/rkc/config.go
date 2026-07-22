@@ -12,9 +12,14 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	rkcplugin "github.com/neuroforge-io/RKC/internal/plugin"
 )
 
-const configurationSchemaVersion = "0.2.0"
+const (
+	configurationSchemaVersion = "0.2.0"
+	modelMaximumRSSMiB         = int64(2560)
+)
 
 type Configuration struct {
 	SchemaURI     string              `json:"$schema,omitempty"`
@@ -44,7 +49,6 @@ type InventoryConfig struct {
 	MaxRepositoryBytes        int64    `json:"max_repository_bytes"`
 	MaxFiles                  int      `json:"max_files"`
 	FollowSymlinks            bool     `json:"follow_symlinks"`
-	IncludeGitIgnored         bool     `json:"include_git_ignored"`
 	Exclude                   []string `json:"exclude"`
 	ClassifyVendorDirectories bool     `json:"classify_vendor_directories"`
 	ClassifyGeneratedFiles    bool     `json:"classify_generated_files"`
@@ -76,6 +80,8 @@ type PluginsConfig struct {
 	NativeWorkerSandbox string               `json:"native_worker_sandbox"`
 	TimeoutSeconds      int                  `json:"timeout_seconds"`
 	MemoryLimitMiB      int64                `json:"memory_limit_mib"`
+	MemorySwapLimitMiB  int64                `json:"memory_swap_limit_mib"`
+	ProcessLimit        int                  `json:"process_limit"`
 	LegacyMemoryLimitMB int64                `json:"memory_limit_mb,omitempty"`
 	MaximumOutputBytes  int64                `json:"maximum_output_bytes"`
 	PythonAST           PythonASTConfig      `json:"python_ast"`
@@ -106,7 +112,6 @@ type DocumentationConfig struct {
 
 type ModelConfig struct {
 	Provider            string  `json:"provider"`
-	Endpoint            string  `json:"endpoint,omitempty"`
 	ModelName           string  `json:"model,omitempty"`
 	ModelPath           string  `json:"model_path,omitempty"`
 	ContextTokens       int     `json:"context_tokens"`
@@ -161,16 +166,46 @@ func defaultConfiguration() Configuration {
 	return Configuration{
 		SchemaURI: "../schemas/config.schema.json", SchemaVersion: configurationSchemaVersion,
 		Workspace:     WorkspaceConfig{PrivacyMode: "paths-relative", Output: ".rkc"},
-		Inventory:     InventoryConfig{MaxFileBytes: 1 << 30, MaxTextBytes: 2 << 20, MaxRepositoryBytes: 20 << 30, MaxFiles: 500000, Exclude: []string{".git", ".rkc", ".rkc-state"}, ClassifyVendorDirectories: true, ClassifyGeneratedFiles: true},
-		Analysis:      AnalysisConfig{Tiers: []string{"inventory", "syntax", "framework"}, Incremental: true},
-		Plugins:       PluginsConfig{Enabled: true, Directories: []string{"./plugins"}, NativeWorkerSandbox: "preferred", TimeoutSeconds: 60, MemoryLimitMiB: 1024, MaximumOutputBytes: 64 << 20, PythonAST: PythonASTConfig{Enabled: true, Interpreter: "python3", Script: "builtin", TimeoutSeconds: 60}, GoAST: AnalyzerToggleConfig{Enabled: true}, TypeScriptSyntax: AnalyzerToggleConfig{Enabled: true}},
+		Inventory:     InventoryConfig{MaxFileBytes: 1 << 30, MaxTextBytes: 2 << 20, MaxRepositoryBytes: 20 << 30, MaxFiles: 500000, Exclude: defaultInventoryExclusions(), ClassifyVendorDirectories: true, ClassifyGeneratedFiles: true},
+		Analysis:      AnalysisConfig{Tiers: []string{"inventory", "syntax", "framework"}, FailClosedOnPluginError: true, Incremental: true},
+		Plugins:       PluginsConfig{Enabled: true, Directories: []string{"./plugins"}, NativeWorkerSandbox: "required", TimeoutSeconds: 60, MemoryLimitMiB: 1024, MemorySwapLimitMiB: 128, ProcessLimit: 1, MaximumOutputBytes: 64 << 20, PythonAST: PythonASTConfig{Enabled: true, Interpreter: "python3", Script: "builtin", TimeoutSeconds: 60}, GoAST: AnalyzerToggleConfig{Enabled: true}, TypeScriptSyntax: AnalyzerToggleConfig{Enabled: true}},
 		Frameworks:    FrameworksConfig{Enabled: true, Markdown: true, OpenAPIJSON: true, JSONSchema: true, PackageManifests: true, EnvironmentFiles: true},
 		Security:      SecurityConfig{DetectSecrets: true, RedactExports: true},
 		Documentation: DocumentationConfig{DeterministicTemplates: true, RequireEvidenceForEveryClaim: true, RejectUnknownSymbolReferences: true},
-		Model:         ModelConfig{Provider: "disabled", ContextTokens: 4096, MaxOutputTokens: 768, Temperature: 0, MaxRSSMiB: 3584},
+		Model:         ModelConfig{Provider: "disabled", ContextTokens: 4096, MaxOutputTokens: 768, Temperature: 0, MaxRSSMiB: 2560},
 		Search:        SearchConfig{Enabled: true, Lexical: true, Embeddings: false, GraphExpansionHops: 2},
 		Exports:       ExportsConfig{NormalizedSources: true, JSONLGraph: true, StaticSite: true, SearchIndex: true, Integrations: true, NotebookPackBytes: 1000000},
 		QualityGates:  QualityGatesConfig{MinInventoryAccounting: 1, MinSymbolEvidence: 1, MinEdgeResolution: 0, MinClaimCitation: 1, MaxErrorDiagnostics: 0, MaxUnresolvedEdges: -1, MaxHighConfidenceSecrets: 0, RequireDeterminism: true},
+	}
+}
+
+// defaultInventoryExclusions lists only exact repository-relative paths. The
+// inventory engine treats each value as that path plus its descendants; it does
+// not interpret Git ignore files or glob metacharacters.
+func defaultInventoryExclusions() []string {
+	return []string{
+		".cache",
+		".coverage",
+		".git",
+		".mypy_cache",
+		".pytest_cache",
+		".rkc",
+		".rkc-coverage",
+		".rkc-downloads",
+		".rkc-models",
+		".rkc-runtime",
+		".rkc-state",
+		".rkc.rkc-derived",
+		".ruff_cache",
+		".venv",
+		"__pycache__",
+		"bin",
+		"coverage",
+		"coverage.out",
+		"coverage.xml",
+		"dist",
+		"htmlcov",
+		"venv",
 	}
 }
 
@@ -253,6 +288,14 @@ func (cfg Configuration) Validate() error {
 	}
 	if cfg.Plugins.MemoryLimitMiB < 16 {
 		failures = append(failures, "plugins.memory_limit_mib must be at least 16")
+	} else if cfg.Plugins.MemoryLimitMiB > rkcplugin.MaximumMemoryMiB {
+		failures = append(failures, "plugins.memory_limit_mib exceeds the enforced safety ceiling")
+	}
+	if cfg.Plugins.MemorySwapLimitMiB < 0 || cfg.Plugins.MemorySwapLimitMiB > rkcplugin.MaximumSwapMiB || cfg.Plugins.MemorySwapLimitMiB > cfg.Plugins.MemoryLimitMiB {
+		failures = append(failures, "plugins.memory_swap_limit_mib is outside the enforced safety policy")
+	}
+	if cfg.Plugins.ProcessLimit != rkcplugin.MaximumProcesses {
+		failures = append(failures, "plugins.process_limit must be 1 while process spawning is disabled")
 	}
 	if cfg.Plugins.PythonAST.Interpreter == "" {
 		failures = append(failures, "plugins.python_ast.interpreter is required")
@@ -267,19 +310,37 @@ func (cfg Configuration) Validate() error {
 	default:
 		failures = append(failures, "plugins.native_worker_sandbox is invalid")
 	}
+	if cfg.Plugins.Enabled && cfg.Plugins.NativeWorkerSandbox != "required" {
+		failures = append(failures, "plugins.native_worker_sandbox must be required while plugins are enabled")
+	}
+	if cfg.Plugins.AllowNetwork {
+		failures = append(failures, "plugins.allow_network is unsupported; plugin network access must remain disabled")
+	}
+	if cfg.Plugins.AllowProcessSpawn {
+		failures = append(failures, "plugins.allow_process_spawn is unsupported; plugin process spawning must remain disabled")
+	}
+	if script := strings.TrimSpace(cfg.Plugins.PythonAST.Script); script != "" && script != "builtin" {
+		failures = append(failures, "plugins.python_ast.script must be builtin; external Python plugins are disabled")
+	}
 	switch cfg.Model.Provider {
-	case "disabled", "llama.cpp", "ollama", "openai-compatible", "":
+	case "disabled", "llama.cpp", "":
 	default:
-		failures = append(failures, "model.provider is invalid")
+		failures = append(failures, "model.provider must be disabled or llama.cpp")
 	}
 	if cfg.Model.ContextTokens < 512 {
 		failures = append(failures, "model.context_tokens must be at least 512")
+	} else if cfg.Model.ContextTokens > 262144 {
+		failures = append(failures, "model.context_tokens must not exceed 262144")
 	}
 	if cfg.Model.MaxOutputTokens <= 0 {
 		failures = append(failures, "model.max_output_tokens must be positive")
+	} else if cfg.Model.MaxOutputTokens > cfg.Model.ContextTokens {
+		failures = append(failures, "model.max_output_tokens cannot exceed model.context_tokens")
 	}
 	if cfg.Model.MaxRSSMiB < 256 {
 		failures = append(failures, "model.max_rss_mib must be at least 256")
+	} else if cfg.Model.MaxRSSMiB > modelMaximumRSSMiB {
+		failures = append(failures, "model.max_rss_mib must not exceed the 2560 MiB safety ceiling")
 	}
 	if cfg.Search.Embeddings {
 		failures = append(failures, "search.embeddings is not implemented in this reference build")
@@ -311,8 +372,11 @@ func (cfg Configuration) Digest() string {
 	normalized := cfg
 	normalized.normalize()
 	normalized.Workspace.Output = ""
-	normalized.Model.Endpoint = ""
 	normalized.Exports.SnapshotStore = ""
+	// Model execution is a derived, post-scan operation. Local model paths and
+	// inference settings must not change the canonical repository snapshot.
+	normalized.Model = ModelConfig{}
+	normalized.Documentation.ModelSynthesis = false
 	return digestJSON(normalized)
 }
 func (cfg Configuration) PolicyDigest() string {

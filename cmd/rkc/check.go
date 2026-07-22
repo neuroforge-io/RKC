@@ -12,7 +12,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/repository-knowledge-compiler/rkc/pkg/rkcmodel"
+	"github.com/neuroforge-io/RKC/pkg/rkcmodel"
 )
 
 func runCheck(args []string) error {

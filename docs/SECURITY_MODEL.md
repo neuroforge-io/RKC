@@ -57,13 +57,40 @@ No downstream component treats repository text as instructions.
 - Docker reference deployment is read-only, drops capabilities, and applies
   `no-new-privileges`.
 
+### Generated-output publication
+
+RKC binds every destructive replacement to the exact directory inode, marker,
+manifest, file path identities, sizes, and SHA-256 digests that it validated.
+On Linux, replacement requires `renameat2(RENAME_EXCHANGE)`, and first
+publication uses `RENAME_NOREPLACE`; RKC fails closed if either the kernel or
+backing filesystem cannot provide that primitive. The target pathname therefore
+has no `ENOENT` interval during Linux force replacement. A durable, owner-only
+sibling `.rkc-quarantine-*/journal.json` records both directory identities and
+snapshot bindings before exchange. A later publication performs a bounded scan
+and completes only an unambiguous, fully revalidated interrupted transaction.
+Ambiguous state is retained for operator inspection rather than deleted.
+
+On non-Linux systems, no portable standard-library directory-exchange primitive
+exists. RKC retains and fully revalidates the prior output in quarantine until
+the exact staged inode is published and verified, but the two portable renames
+necessarily create a bounded target-name absence interval. The exported
+`safeoutput.ReplacementPlatformDescription` reports this residual. It is an
+availability limitation, not authorization to delete an unverified path; all
+identity and manifest checks remain fail closed.
+
 ## Current limitations
 
-The Python AST worker runs as the invoking OS user. Its manifest describes
-capabilities, but the current host does not enforce those capabilities through a
-WASI runtime or OS sandbox. The local HTTP server has no authentication and is
-intended for loopback use. The secret scanner is high-signal pattern detection,
-not a complete data-loss-prevention product.
+The digest-pinned built-in Python AST worker still runs as the invoking OS user.
+On Linux its cgroup, environment, network-syscall, task-count, and cancellation
+limits are enforced fail closed, but it does not yet have a mount/filesystem
+namespace. External Python/native workers are disabled. The local HTTP server
+has no authentication and is intended for loopback use. The secret scanner is
+high-signal pattern detection, not a complete data-loss-prevention product.
+
+The Alpine reference container has no user-systemd manager. Its documented
+portable scan profile therefore disables Python explicitly with `--no-python`;
+it does not weaken the worker policy or silently execute Python without a
+sandbox. Python AST extraction currently requires a supported Linux host.
 
 These limitations prohibit describing the reference release as a hardened
 multi-tenant service.

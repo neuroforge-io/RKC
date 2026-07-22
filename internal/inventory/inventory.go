@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"io"
 	"io/fs"
@@ -15,7 +16,8 @@ import (
 	"strings"
 	"unicode/utf8"
 
-	"github.com/repository-knowledge-compiler/rkc/internal/model"
+	"github.com/neuroforge-io/RKC/internal/model"
+	"github.com/neuroforge-io/RKC/internal/safeoutput"
 )
 
 type Options struct {
@@ -37,6 +39,20 @@ func Scan(opts Options) (Result, error) {
 	root, err := filepath.Abs(opts.Root)
 	if err != nil {
 		return Result{}, fmt.Errorf("resolve root: %w", err)
+	}
+	rootInfo, err := os.Stat(root)
+	if err != nil {
+		return Result{}, fmt.Errorf("stat repository root: %w", err)
+	}
+	if !rootInfo.IsDir() {
+		return Result{}, fmt.Errorf("repository root is not a directory: %s", root)
+	}
+	marked, err := hasReservedMarker(root)
+	if err != nil {
+		return Result{}, fmt.Errorf("inspect reserved RKC marker at repository root: %w", err)
+	}
+	if marked {
+		return Result{}, errors.New("refusing to inventory an RKC-generated output tree")
 	}
 	if opts.MaxTextBytes <= 0 {
 		opts.MaxTextBytes = 2 * 1024 * 1024
@@ -75,7 +91,9 @@ func Scan(opts Options) (Result, error) {
 			}
 			return nil
 		}
-
+		// Only caller-supplied exclusions are authoritative. Repository markers
+		// are hostile input and cannot silently suppress an otherwise inventoried
+		// subtree. Known output paths are explicitly excluded by the caller.
 		if reason, excluded := exclusionReason(rel, excludes); excluded {
 			kind := "file"
 			if entry.IsDir() {
@@ -93,6 +111,18 @@ func Scan(opts Options) (Result, error) {
 				return fs.SkipDir
 			}
 			return nil
+		}
+		if entry.Name() == safeoutput.MarkerName {
+			return fmt.Errorf("reserved RKC marker appeared in untrusted repository subtree %q; explicitly exclude a known generated output", rel)
+		}
+		if entry.IsDir() {
+			marked, markerErr := hasReservedMarker(path)
+			if markerErr != nil {
+				return fmt.Errorf("inspect reserved RKC marker in untrusted repository subtree %q: %w", rel, markerErr)
+			}
+			if marked {
+				return fmt.Errorf("reserved RKC marker appeared in untrusted repository subtree %q; explicitly exclude a known generated output", rel)
+			}
 		}
 
 		info, err := entry.Info()
@@ -153,6 +183,17 @@ func Scan(opts Options) (Result, error) {
 	}
 	sum := sha256.Sum256([]byte(digestInput.String()))
 	return Result{Artifacts: artifacts, Diagnostics: diagnostics, Digest: hex.EncodeToString(sum[:])}, nil
+}
+
+func hasReservedMarker(root string) (bool, error) {
+	_, err := os.Lstat(filepath.Join(root, safeoutput.MarkerName))
+	if err == nil {
+		return true, nil
+	}
+	if os.IsNotExist(err) {
+		return false, nil
+	}
+	return false, err
 }
 
 func inspectFile(absPath, relPath string, size, maxFileBytes, maxTextBytes int64) (model.Artifact, *model.Diagnostic) {

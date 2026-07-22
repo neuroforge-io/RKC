@@ -8,9 +8,9 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/repository-knowledge-compiler/rkc/internal/graph"
-	"github.com/repository-knowledge-compiler/rkc/internal/server"
-	"github.com/repository-knowledge-compiler/rkc/pkg/rkcmodel"
+	"github.com/neuroforge-io/RKC/internal/graph"
+	"github.com/neuroforge-io/RKC/internal/server"
+	"github.com/neuroforge-io/RKC/pkg/rkcmodel"
 )
 
 type stringList []string
@@ -62,10 +62,13 @@ func resolveNode(dataset *server.Dataset, reference string) (rkcmodel.Node, erro
 }
 
 func splitSet(value string) map[string]struct{} {
-	result := map[string]struct{}{}
+	var result map[string]struct{}
 	for _, item := range strings.Split(value, ",") {
 		item = strings.TrimSpace(item)
 		if item != "" {
+			if result == nil {
+				result = map[string]struct{}{}
+			}
 			result[item] = struct{}{}
 		}
 	}

@@ -16,7 +16,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/repository-knowledge-compiler/rkc/pkg/rkcmodel"
+	"github.com/neuroforge-io/RKC/pkg/rkcmodel"
 )
 
 type Client struct {
@@ -181,12 +181,24 @@ func (client *Client) Impact(ctx context.Context, nodeID string, options ImpactO
 		values.Set("limit", strconv.Itoa(options.Limit))
 	}
 	var output ImpactResponse
-	return output, client.get(ctx, "/api/v1/graph/impact", values, &output)
+	return output, client.get(ctx, "/api/v1/impact", values, &output)
 }
 
 func (client *Client) get(ctx context.Context, endpoint string, query url.Values, output any) error {
 	requestURL := *client.baseURL
-	requestURL.Path = path.Join(strings.TrimSuffix(client.baseURL.Path, "/"), endpoint)
+	escapedPath := path.Join(strings.TrimSuffix(client.baseURL.Path, "/"), endpoint)
+	decodedPath, err := url.PathUnescape(escapedPath)
+	if err != nil {
+		return fmt.Errorf("decode RKC endpoint path: %w", err)
+	}
+	requestURL.Path = decodedPath
+	if escapedPath != decodedPath {
+		// Preserve escaped slashes inside opaque node IDs. Assigning an already
+		// escaped value to URL.Path would encode '%' a second time.
+		requestURL.RawPath = escapedPath
+	} else {
+		requestURL.RawPath = ""
+	}
 	requestURL.RawQuery = query.Encode()
 	request, err := http.NewRequestWithContext(ctx, http.MethodGet, requestURL.String(), nil)
 	if err != nil {

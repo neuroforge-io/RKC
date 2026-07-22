@@ -7,7 +7,7 @@ import (
 	"os"
 	"strings"
 
-	"github.com/repository-knowledge-compiler/rkc/internal/graph"
+	"github.com/neuroforge-io/RKC/internal/graph"
 )
 
 func runPath(args []string) error {

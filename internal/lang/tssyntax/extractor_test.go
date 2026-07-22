@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/repository-knowledge-compiler/rkc/pkg/pluginapi"
+	"github.com/neuroforge-io/RKC/pkg/pluginapi"
 )
 
 func TestExtractsTypeScriptDeclarationsImportsCallsAndRoutes(t *testing.T) {
@@ -164,5 +164,29 @@ export async function load(id: string): Promise<Item> {
 	}
 	if !relativeImportUnresolved {
 		t.Fatalf("expected relative import to remain unresolved: %+v", fragment.Edges)
+	}
+}
+
+func TestExtractRejectsTypeScriptPathOutsideRoot(t *testing.T) {
+	parent := t.TempDir()
+	root := filepath.Join(parent, "repository")
+	if err := os.Mkdir(root, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(parent, "outside.ts"), []byte("export const outside = true;\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	fragment, err := Extract(Options{Root: root, Files: []pluginapi.FileRef{{
+		ArtifactID: "artifact:outside", Path: "../outside.ts", Language: "typescript", SHA256: "hash",
+	}}})
+	if err != nil {
+		t.Fatalf("Extract() error = %v", err)
+	}
+	if len(fragment.Nodes) != 0 || len(fragment.Edges) != 0 || len(fragment.Evidence) != 0 {
+		t.Fatalf("outside-root path was parsed: nodes=%d edges=%d evidence=%d", len(fragment.Nodes), len(fragment.Edges), len(fragment.Evidence))
+	}
+	if len(fragment.Diagnostics) != 1 || fragment.Diagnostics[0].Code != "RKC-TS-1001" {
+		t.Fatalf("diagnostics = %#v, want one RKC-TS-1001", fragment.Diagnostics)
 	}
 }

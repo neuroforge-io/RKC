@@ -2,7 +2,11 @@ package pipeline
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -10,18 +14,19 @@ import (
 	"strings"
 	"time"
 
-	"github.com/repository-knowledge-compiler/rkc/internal/docparse"
-	"github.com/repository-knowledge-compiler/rkc/internal/framework/envkeys"
-	"github.com/repository-knowledge-compiler/rkc/internal/framework/jsonschema"
-	"github.com/repository-knowledge-compiler/rkc/internal/framework/manifest"
-	"github.com/repository-knowledge-compiler/rkc/internal/framework/openapi"
-	"github.com/repository-knowledge-compiler/rkc/internal/framework/secretpack"
-	"github.com/repository-knowledge-compiler/rkc/internal/inventory"
-	"github.com/repository-knowledge-compiler/rkc/internal/lang/goast"
-	"github.com/repository-knowledge-compiler/rkc/internal/lang/tssyntax"
-	"github.com/repository-knowledge-compiler/rkc/internal/plugin"
-	"github.com/repository-knowledge-compiler/rkc/pkg/pluginapi"
-	"github.com/repository-knowledge-compiler/rkc/pkg/rkcmodel"
+	"github.com/neuroforge-io/RKC/internal/docparse"
+	"github.com/neuroforge-io/RKC/internal/framework/envkeys"
+	"github.com/neuroforge-io/RKC/internal/framework/jsonschema"
+	"github.com/neuroforge-io/RKC/internal/framework/manifest"
+	"github.com/neuroforge-io/RKC/internal/framework/openapi"
+	"github.com/neuroforge-io/RKC/internal/framework/secretpack"
+	"github.com/neuroforge-io/RKC/internal/inventory"
+	"github.com/neuroforge-io/RKC/internal/lang/goast"
+	"github.com/neuroforge-io/RKC/internal/lang/tssyntax"
+	"github.com/neuroforge-io/RKC/internal/plugin"
+	"github.com/neuroforge-io/RKC/internal/security/secrets"
+	"github.com/neuroforge-io/RKC/pkg/pluginapi"
+	"github.com/neuroforge-io/RKC/pkg/rkcmodel"
 )
 
 type Options struct {
@@ -32,11 +37,20 @@ type Options struct {
 	MaxFiles           int
 	Excludes           []string
 
-	PythonInterpreter string
-	PythonPlugin      string
-	PluginTimeout     time.Duration
-	PluginMaxOutput   int64
-	PluginMaxStderr   int64
+	PythonInterpreter       string
+	PythonPlugin            string
+	PluginTimeout           time.Duration
+	PluginMaxOutput         int64
+	PluginMaxStderr         int64
+	PluginMemoryMiB         int64
+	PluginSwapMiB           int64
+	PluginProcessLimit      int
+	PluginSandboxRequired   bool
+	PluginDenyNetwork       bool
+	PluginDenyProcessSpawn  bool
+	PythonPluginBuiltin     bool
+	PythonPluginSHA256      string
+	FailClosedOnPluginError bool
 
 	DisablePlugins    bool
 	DisablePythonAST  bool
@@ -106,6 +120,10 @@ func Scan(ctx context.Context, opts Options) (rkcmodel.Bundle, rkcmodel.Coverage
 		}
 	}
 	sort.Slice(files, func(i, j int) bool { return files[i].Path < files[j].Path })
+	secretLiterals, sourceIdentities, err := collectSensitiveLiteralsAndIdentity(root, files)
+	if err != nil {
+		return rkcmodel.Bundle{}, rkcmodel.Coverage{}, err
+	}
 	parsed := map[string]struct{}{}
 
 	if !opts.DisablePlugins {
@@ -116,9 +134,19 @@ func Scan(ctx context.Context, opts Options) (rkcmodel.Bundle, rkcmodel.Coverage
 				for _, file := range pythonFiles {
 					legacy = append(legacy, plugin.FileRef{ID: file.ArtifactID, Path: file.Path, Language: file.Language, SHA256: file.SHA256})
 				}
-				fragment, runErr := plugin.RunPython(ctx, plugin.Request{SchemaVersion: rkcmodel.SchemaVersion, SnapshotID: snapshotID, Root: root, Files: legacy}, plugin.PythonOptions{Interpreter: opts.PythonInterpreter, Script: opts.PythonPlugin, Timeout: opts.PluginTimeout, MaxOutputBytes: opts.PluginMaxOutput, MaxStderrBytes: opts.PluginMaxStderr})
+				fragment, runErr := plugin.RunPython(ctx, plugin.Request{SchemaVersion: rkcmodel.SchemaVersion, SnapshotID: snapshotID, Root: root, Files: legacy}, plugin.PythonOptions{
+					Interpreter: opts.PythonInterpreter, Script: opts.PythonPlugin, Timeout: opts.PluginTimeout,
+					MaxOutputBytes: opts.PluginMaxOutput, MaxStderrBytes: opts.PluginMaxStderr,
+					MemoryLimitMiB: opts.PluginMemoryMiB, SwapLimitMiB: opts.PluginSwapMiB, ProcessLimit: opts.PluginProcessLimit,
+					RequireSandbox: opts.PluginSandboxRequired, DenyNetwork: opts.PluginDenyNetwork,
+					DenyProcessSpawn: opts.PluginDenyProcessSpawn, Builtin: opts.PythonPluginBuiltin,
+					ExpectedScriptSHA256: opts.PythonPluginSHA256,
+				})
 				if runErr != nil {
 					bundle.Diagnostics = append(bundle.Diagnostics, adapterError("RKC-PY-2001", "rkc.python-ast", runErr))
+					if opts.FailClosedOnPluginError {
+						return rkcmodel.Bundle{}, rkcmodel.Coverage{}, fmt.Errorf("Python adapter failed closed: %w", runErr)
+					}
 				} else {
 					mergeFragment(&bundle, fragment)
 					markParsed(parsed, pythonFiles)
@@ -190,6 +218,9 @@ func Scan(ctx context.Context, opts Options) (rkcmodel.Bundle, rkcmodel.Coverage
 		fragment, extractErr := secretpack.Extract(secretpack.Options{Root: root, Files: files})
 		handleFragment(&bundle, fragment, extractErr, "RKC-SEC-2001", secretpack.PluginID)
 	}
+	if err := reverifyInventoriedSources(root, files, sourceIdentities); err != nil {
+		return rkcmodel.Bundle{}, rkcmodel.Coverage{}, err
+	}
 
 	for i := range bundle.Artifacts {
 		if _, ok := parsed[bundle.Artifacts[i].ID]; ok && bundle.Artifacts[i].Status == "text" {
@@ -200,12 +231,173 @@ func Scan(ctx context.Context, opts Options) (rkcmodel.Bundle, rkcmodel.Coverage
 	dedupeBundle(&bundle)
 	resolveHeuristicEdges(&bundle)
 	dedupeBundle(&bundle)
+	secrets.SanitizeBundle(&bundle, secretLiterals)
 	report := rkcmodel.ValidateBundle(bundle, rkcmodel.ValidationOptions{StrictVocabulary: true, RequireEvidence: true})
 	bundle.Diagnostics = append(bundle.Diagnostics, report.Diagnostics...)
 	dedupeBundle(&bundle)
 	rkcmodel.SortBundle(&bundle)
+	if report.HasErrors() {
+		errorCount := 0
+		for _, diagnostic := range report.Diagnostics {
+			if diagnostic.Severity == "error" || diagnostic.Severity == "fatal" {
+				errorCount++
+			}
+		}
+		return rkcmodel.Bundle{}, rkcmodel.Coverage{}, fmt.Errorf("canonical bundle validation failed with %d error diagnostic(s)", errorCount)
+	}
 	coverage := rkcmodel.BuildCoverage(bundle)
 	return bundle, coverage, nil
+}
+
+type sourceFileIdentity struct {
+	info os.FileInfo
+}
+
+func collectSensitiveLiterals(root string, files []pluginapi.FileRef) ([]string, error) {
+	values, _, err := collectSensitiveLiteralsAndIdentity(root, files)
+	return values, err
+}
+
+func collectSensitiveLiteralsAndIdentity(root string, files []pluginapi.FileRef) ([]string, map[string]sourceFileIdentity, error) {
+	seen := map[string]struct{}{}
+	identities := make(map[string]sourceFileIdentity, len(files))
+	for _, file := range files {
+		data, info, err := readInventoriedSource(root, file)
+		if err != nil {
+			return nil, nil, fmt.Errorf("read source for canonical redaction %s: source changed after inventory or is unsafe: %w", file.Path, err)
+		}
+		identities[sourceIdentityKey(file)] = sourceFileIdentity{info: info}
+		for _, literal := range secrets.SensitiveLiterals(data, secrets.Scan(data)) {
+			seen[literal] = struct{}{}
+		}
+	}
+	values := make([]string, 0, len(seen))
+	for value := range seen {
+		values = append(values, value)
+	}
+	sort.Slice(values, func(i, j int) bool {
+		if len(values[i]) == len(values[j]) {
+			return values[i] < values[j]
+		}
+		return len(values[i]) > len(values[j])
+	})
+	return values, identities, nil
+}
+
+func reverifyInventoriedSources(root string, files []pluginapi.FileRef, identities map[string]sourceFileIdentity) error {
+	for _, file := range files {
+		baseline, exists := identities[sourceIdentityKey(file)]
+		if !exists || baseline.info == nil {
+			return fmt.Errorf("source changed after adapters: missing baseline identity for %s", file.Path)
+		}
+		_, current, err := readInventoriedSource(root, file)
+		if err != nil {
+			return fmt.Errorf("source changed after adapters: %s: %w", file.Path, err)
+		}
+		if !os.SameFile(baseline.info, current) {
+			return fmt.Errorf("source changed after adapters: identity replaced for %s", file.Path)
+		}
+	}
+	return nil
+}
+
+func readInventoriedSource(root string, file pluginapi.FileRef) ([]byte, os.FileInfo, error) {
+	if file.SizeBytes < 0 || file.SizeBytes == int64(^uint64(0)>>1) {
+		return nil, nil, errors.New("inventoried source has an invalid size")
+	}
+	expectedDigest, err := hex.DecodeString(file.SHA256)
+	if err != nil || len(expectedDigest) != sha256.Size {
+		return nil, nil, errors.New("inventoried source has no valid SHA-256")
+	}
+	absolute, pathInfo, err := resolveInventoriedSource(root, file.Path)
+	if err != nil {
+		return nil, nil, err
+	}
+	if file.Materialized != "" {
+		materialized, err := filepath.Abs(file.Materialized)
+		if err != nil || materialized != absolute {
+			return nil, nil, errors.New("materialized source path does not match its inventory path")
+		}
+	}
+	source, err := os.Open(absolute)
+	if err != nil {
+		return nil, nil, err
+	}
+	defer source.Close()
+	openedInfo, err := source.Stat()
+	if err != nil {
+		return nil, nil, fmt.Errorf("stat opened source: %w", err)
+	}
+	if !openedInfo.Mode().IsRegular() || !os.SameFile(pathInfo, openedInfo) {
+		return nil, nil, errors.New("source identity changed while opening")
+	}
+	if openedInfo.Size() != file.SizeBytes {
+		return nil, nil, errors.New("source size does not match inventory")
+	}
+	data, err := io.ReadAll(io.LimitReader(source, file.SizeBytes+1))
+	if err != nil {
+		return nil, nil, fmt.Errorf("read source: %w", err)
+	}
+	if int64(len(data)) != file.SizeBytes {
+		return nil, nil, errors.New("source size changed while reading")
+	}
+	digest := sha256.Sum256(data)
+	if !strings.EqualFold(hex.EncodeToString(digest[:]), file.SHA256) {
+		return nil, nil, errors.New("source content does not match inventory")
+	}
+	finalInfo, err := source.Stat()
+	if err != nil {
+		return nil, nil, fmt.Errorf("restat source: %w", err)
+	}
+	if !os.SameFile(openedInfo, finalInfo) || finalInfo.Size() != file.SizeBytes || !finalInfo.ModTime().Equal(openedInfo.ModTime()) {
+		return nil, nil, errors.New("source identity changed while reading")
+	}
+	return data, finalInfo, nil
+}
+
+func resolveInventoriedSource(root, sourcePath string) (string, os.FileInfo, error) {
+	rootInfo, err := os.Lstat(root)
+	if err != nil {
+		return "", nil, fmt.Errorf("inspect repository root: %w", err)
+	}
+	if rootInfo.Mode()&os.ModeSymlink != 0 || !rootInfo.IsDir() {
+		return "", nil, errors.New("repository root must be a real directory, not a symlink")
+	}
+	clean := filepath.Clean(filepath.FromSlash(sourcePath))
+	if sourcePath == "" || clean == "." || filepath.IsAbs(clean) || filepath.ToSlash(clean) != sourcePath {
+		return "", nil, errors.New("source path is not canonical and repository-relative")
+	}
+	relative, err := filepath.Rel(root, filepath.Join(root, clean))
+	if err != nil || relative == ".." || strings.HasPrefix(relative, ".."+string(filepath.Separator)) || filepath.IsAbs(relative) {
+		return "", nil, errors.New("source path escapes repository root")
+	}
+	current := root
+	parts := strings.Split(filepath.ToSlash(clean), "/")
+	var info os.FileInfo
+	for index, part := range parts {
+		if part == "" || part == "." || part == ".." {
+			return "", nil, errors.New("source path contains an unsafe component")
+		}
+		current = filepath.Join(current, filepath.FromSlash(part))
+		info, err = os.Lstat(current)
+		if err != nil {
+			return "", nil, err
+		}
+		if info.Mode()&os.ModeSymlink != 0 {
+			return "", nil, errors.New("source path contains a symlink")
+		}
+		if index < len(parts)-1 && !info.IsDir() {
+			return "", nil, errors.New("source path contains a non-directory component")
+		}
+	}
+	if info == nil || !info.Mode().IsRegular() {
+		return "", nil, errors.New("source path is not a regular file")
+	}
+	return current, info, nil
+}
+
+func sourceIdentityKey(file pluginapi.FileRef) string {
+	return file.ArtifactID + "\x00" + file.Path
 }
 
 func artifactNode(artifact rkcmodel.Artifact) rkcmodel.Node {

@@ -5,7 +5,7 @@ package pluginapi
 import (
 	"time"
 
-	"github.com/repository-knowledge-compiler/rkc/pkg/graphpatch"
+	"github.com/neuroforge-io/RKC/pkg/graphpatch"
 )
 
 const ProtocolVersion = "1.0"

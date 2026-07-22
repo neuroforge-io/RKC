@@ -6,16 +6,18 @@ import (
 	"bufio"
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
-	"os"
+	"io"
 	"path/filepath"
 	"regexp"
 	"sort"
 	"strings"
 
-	"github.com/repository-knowledge-compiler/rkc/internal/security/secrets"
-	"github.com/repository-knowledge-compiler/rkc/pkg/pluginapi"
-	"github.com/repository-knowledge-compiler/rkc/pkg/rkcmodel"
+	"github.com/neuroforge-io/RKC/internal/security/secrets"
+	"github.com/neuroforge-io/RKC/internal/sourcepath"
+	"github.com/neuroforge-io/RKC/pkg/pluginapi"
+	"github.com/neuroforge-io/RKC/pkg/rkcmodel"
 )
 
 const (
@@ -58,15 +60,13 @@ func Extract(options Options) (rkcmodel.Fragment, error) {
 }
 
 func (c *collector) packageJSON(root string, file pluginapi.FileRef) {
-	data, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(file.Path)))
+	data, err := sourcepath.ReadFile(root, file.Path)
 	if err != nil {
 		c.error(file, "RKC-MAN-1001", err.Error())
 		return
 	}
 	var document map[string]any
-	decoder := json.NewDecoder(bytes.NewReader(data))
-	decoder.UseNumber()
-	if err := decoder.Decode(&document); err != nil {
+	if err := decodeJSONObject(data, &document); err != nil {
 		c.error(file, "RKC-MAN-1002", "invalid package.json: "+err.Error())
 		return
 	}
@@ -111,8 +111,23 @@ func (c *collector) packageJSON(root string, file pluginapi.FileRef) {
 	}
 }
 
+func decodeJSONObject(data []byte, document *map[string]any) error {
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.UseNumber()
+	if err := decoder.Decode(document); err != nil {
+		return err
+	}
+	var trailing any
+	if err := decoder.Decode(&trailing); err == nil {
+		return errors.New("multiple JSON values")
+	} else if !errors.Is(err, io.EOF) {
+		return fmt.Errorf("invalid trailing data: %w", err)
+	}
+	return nil
+}
+
 func (c *collector) goMod(root string, file pluginapi.FileRef) {
-	data, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(file.Path)))
+	data, err := sourcepath.ReadFile(root, file.Path)
 	if err != nil {
 		c.error(file, "RKC-MAN-1101", err.Error())
 		return
@@ -154,13 +169,15 @@ func (c *collector) goMod(root string, file pluginapi.FileRef) {
 		if len(fields) == 0 {
 			continue
 		}
+		requireLine := inRequire
 		if fields[0] == "require" {
 			fields = fields[1:]
+			requireLine = true
 		} else if fields[0] == "replace" {
 			fields = fields[1:]
 			inReplace = true
 		}
-		if inRequire && len(fields) >= 2 {
+		if requireLine && len(fields) >= 2 {
 			dependencyID := c.dependency(file, "go", fields[0], fields[1], fmt.Sprintf("line:%d", index+1))
 			c.addEdge("depends_on", projectID, dependencyID, "declared", file, "go.mod.require", fmt.Sprintf("line:%d", index+1), map[string]any{"constraint": fields[1], "indirect": strings.Contains(raw, "// indirect")})
 		}
@@ -180,7 +197,7 @@ func (c *collector) goMod(root string, file pluginapi.FileRef) {
 var requirementName = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]*`)
 
 func (c *collector) requirements(root string, file pluginapi.FileRef) {
-	input, err := os.Open(filepath.Join(root, filepath.FromSlash(file.Path)))
+	input, err := sourcepath.OpenRegular(root, file.Path)
 	if err != nil {
 		c.error(file, "RKC-MAN-1201", err.Error())
 		return
@@ -215,7 +232,7 @@ func (c *collector) requirements(root string, file pluginapi.FileRef) {
 }
 
 func (c *collector) dockerfile(root string, file pluginapi.FileRef) {
-	input, err := os.Open(filepath.Join(root, filepath.FromSlash(file.Path)))
+	input, err := sourcepath.OpenRegular(root, file.Path)
 	if err != nil {
 		c.error(file, "RKC-MAN-1301", err.Error())
 		return

@@ -2,6 +2,9 @@ openapi: 3.1.0
 info:
   title: Repository Knowledge Compiler Local Read API
   version: 0.3.0-reference
+  license:
+    name: Apache-2.0
+    identifier: Apache-2.0
   description: |
     Read-only API implemented by `rkc serve`. It exposes one exported RKC
     dataset. The larger multi-repository service contract is retained in

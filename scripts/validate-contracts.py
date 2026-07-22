@@ -11,6 +11,41 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 ERRORS: list[str] = []
 CHECKS: list[dict[str, object]] = []
+SAFE_DEFAULT_EXCLUSIONS = frozenset(
+    {
+        ".cache",
+        ".coverage",
+        ".git",
+        ".mypy_cache",
+        ".pytest_cache",
+        ".rkc",
+        ".rkc-coverage",
+        ".rkc-downloads",
+        ".rkc-models",
+        ".rkc-runtime",
+        ".rkc-state",
+        ".rkc.rkc-derived",
+        ".ruff_cache",
+        ".venv",
+        "__pycache__",
+        "bin",
+        "coverage",
+        "coverage.out",
+        "coverage.xml",
+        "dist",
+        "htmlcov",
+        "venv",
+    }
+)
+SELF_BENCHMARK_EXCLUSIONS = SAFE_DEFAULT_EXCLUSIONS | frozenset(
+    {
+        ".rkc-smoke",
+        ".rkc-smoke.rkc-derived",
+        ".rkc-state-smoke",
+        "plugins/python-ast/__pycache__",
+        "scripts/__pycache__",
+    }
+)
 
 
 def record(name: str, ok: bool, detail: str = "") -> None:
@@ -74,6 +109,63 @@ if Draft202012Validator is not None:
     config = load_json(ROOT / "config" / "rkc.example.json")
     if config is not None:
         validate(config, "config.schema.json", "example configuration")
+        inventory = config.get("inventory", {})
+        exclusions = inventory.get("exclude", []) if isinstance(inventory, dict) else []
+        exclusion_set = (
+            {value for value in exclusions if isinstance(value, str)}
+            if isinstance(exclusions, list)
+            else set()
+        )
+        missing = sorted(SAFE_DEFAULT_EXCLUSIONS - exclusion_set)
+        fake_globs = sorted(
+            value
+            for value in exclusion_set
+            if isinstance(value, str) and any(character in value for character in "*?[")
+        )
+        record(
+            "example explicit safe exclusions",
+            not missing and not fake_globs,
+            f"missing={missing}, unsupported_glob_paths={fake_globs}",
+        )
+        schema_inventory = schemas["config.schema.json"]["properties"]["inventory"]
+        record(
+            "Git-ignore toggle is not advertised",
+            "include_git_ignored" not in inventory
+            and "include_git_ignored" not in schema_inventory.get("properties", {})
+            and "include_git_ignored" not in schema_inventory.get("required", []),
+            "inventory.include_git_ignored is not implemented",
+        )
+
+    model_lock = load_json(ROOT / "models" / "models.lock.json")
+    if model_lock is not None:
+        validate(model_lock, "model-lock.schema.json", "model supply-chain lock")
+
+    for path in sorted((ROOT / "models" / "qualification").glob("*.json")):
+        qualification = load_json(path)
+        if qualification is not None:
+            validate(
+                qualification,
+                "model-qualification.schema.json",
+                f"model qualification {path.name}",
+            )
+
+    benchmark_source = (ROOT / "scripts" / "benchmark-reference.sh").read_text(
+        encoding="utf-8"
+    )
+    benchmark_exclusions = set(
+        re.findall(r"--exclude[ \t]+([^\s\\]+)", benchmark_source)
+    )
+    benchmark_missing = sorted(SELF_BENCHMARK_EXCLUSIONS - benchmark_exclusions)
+    benchmark_fake_globs = sorted(
+        value
+        for value in benchmark_exclusions
+        if any(character in value for character in "*?[")
+    )
+    record(
+        "self-benchmark explicit safe exclusions",
+        not benchmark_missing and not benchmark_fake_globs,
+        f"missing={benchmark_missing}, unsupported_glob_paths={benchmark_fake_globs}",
+    )
 
     for path in sorted((ROOT / "plugins").glob("*/plugin.json")):
         instance = load_json(path)
@@ -102,12 +194,6 @@ if Draft202012Validator is not None:
         "fragment": {}
     }
     validate(minimal_patch, "graph-patch.schema.json", "minimal GraphPatch")
-
-    smoke_bundle = ROOT / ".rkc-smoke" / "bundle.json"
-    if smoke_bundle.exists():
-        instance = load_json(smoke_bundle)
-        if instance is not None:
-            validate(instance, "rkc-bundle.schema.json", "smoke canonical bundle")
 
 if yaml is not None:
     for name in ("openapi.yaml", "openapi-service-future.yaml"):

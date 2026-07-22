@@ -4,12 +4,13 @@
 package graphpatch
 
 import (
+	"encoding/json"
 	"fmt"
 	"sort"
 	"strings"
 	"time"
 
-	"github.com/repository-knowledge-compiler/rkc/pkg/rkcmodel"
+	"github.com/neuroforge-io/RKC/pkg/rkcmodel"
 )
 
 const ProtocolVersion = "1.0"
@@ -217,24 +218,43 @@ func Apply(bundle *rkcmodel.Bundle, patch Patch, options ValidationOptions) Vali
 		return report
 	}
 
-	bundle.Artifacts = append(bundle.Artifacts, patch.Fragment.Artifacts...)
-	bundle.Nodes = append(bundle.Nodes, patch.Fragment.Nodes...)
-	bundle.Edges = append(bundle.Edges, patch.Fragment.Edges...)
-	bundle.Evidence = append(bundle.Evidence, patch.Fragment.Evidence...)
-	bundle.Diagnostics = append(bundle.Diagnostics, patch.Fragment.Diagnostics...)
-	bundle.Conflicts = append(bundle.Conflicts, patch.Fragment.Conflicts...)
-	bundle.Documents = append(bundle.Documents, patch.Fragment.Documents...)
-	bundle.Claims = append(bundle.Claims, patch.Fragment.Claims...)
-	bundle.Paths = append(bundle.Paths, patch.Fragment.Paths...)
-	rkcmodel.SortBundle(bundle)
+	// Build and validate an isolated candidate. A top-level slice copy is not
+	// enough: canonical sorting also mutates nested slices and maps. Round-trip
+	// the complete candidate through the canonical JSON representation before
+	// sorting so neither a rejected host bundle nor the caller's patch aliases
+	// any mutable storage used during validation.
+	candidateInput := *bundle
+	candidateInput.Artifacts = append(append([]rkcmodel.Artifact(nil), bundle.Artifacts...), patch.Fragment.Artifacts...)
+	candidateInput.Nodes = append(append([]rkcmodel.Node(nil), bundle.Nodes...), patch.Fragment.Nodes...)
+	candidateInput.Edges = append(append([]rkcmodel.Edge(nil), bundle.Edges...), patch.Fragment.Edges...)
+	candidateInput.Evidence = append(append([]rkcmodel.Evidence(nil), bundle.Evidence...), patch.Fragment.Evidence...)
+	candidateInput.Diagnostics = append(append([]rkcmodel.Diagnostic(nil), bundle.Diagnostics...), patch.Fragment.Diagnostics...)
+	candidateInput.Conflicts = append(append([]rkcmodel.Conflict(nil), bundle.Conflicts...), patch.Fragment.Conflicts...)
+	candidateInput.Documents = append(append([]rkcmodel.Document(nil), bundle.Documents...), patch.Fragment.Documents...)
+	candidateInput.Claims = append(append([]rkcmodel.Claim(nil), bundle.Claims...), patch.Fragment.Claims...)
+	candidateInput.Paths = append(append([]rkcmodel.ExecutionPath(nil), bundle.Paths...), patch.Fragment.Paths...)
+	encoded, err := json.Marshal(candidateInput)
+	if err != nil {
+		report.add("error", "RKC-PATCH-031", "candidate is not representable as canonical JSON: "+err.Error(), "")
+		return report
+	}
+	var candidate rkcmodel.Bundle
+	if err := json.Unmarshal(encoded, &candidate); err != nil {
+		report.add("error", "RKC-PATCH-032", "candidate canonical JSON could not be decoded: "+err.Error(), "")
+		return report
+	}
+	rkcmodel.SortBundle(&candidate)
 
-	hostReport := rkcmodel.ValidateBundle(*bundle, rkcmodel.ValidationOptions{StrictVocabulary: options.StrictVocabulary, RequireEvidence: options.RequireEvidence})
+	hostReport := rkcmodel.ValidateBundle(candidate, rkcmodel.ValidationOptions{StrictVocabulary: options.StrictVocabulary, RequireEvidence: options.RequireEvidence})
 	for _, diagnostic := range hostReport.Diagnostics {
 		severity := diagnostic.Severity
 		if severity == "fatal" {
 			severity = "error"
 		}
 		report.add(severity, diagnostic.Code, diagnostic.Message, diagnostic.ID)
+	}
+	if report.Accepted {
+		*bundle = candidate
 	}
 	return report
 }

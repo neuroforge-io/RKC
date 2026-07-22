@@ -2,7 +2,7 @@
 // predate the public canonical model. New code should import pkg/rkcmodel.
 package model
 
-import "github.com/repository-knowledge-compiler/rkc/pkg/rkcmodel"
+import "github.com/neuroforge-io/RKC/pkg/rkcmodel"
 
 const SchemaVersion = rkcmodel.SchemaVersion
 const ResolutionUnresolved = rkcmodel.ResolutionUnresolved

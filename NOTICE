@@ -1,7 +1,9 @@
 Repository Knowledge Compiler (RKC)
 Copyright 2026 RKC contributors
 
-The reference implementation contains no bundled language models, language
-server binaries, compiler toolchains, or third-party grammar source. Production
-distributions must preserve the licenses and notices of any separately bundled
-components.
+This product includes software developed by the NeuroForge project
+(https://github.com/neuroforge-io/RKC).
+
+RKC is licensed under the Apache License, Version 2.0. Redistributions and
+derivative works must preserve this NOTICE where Section 4(d) of that license
+applies.

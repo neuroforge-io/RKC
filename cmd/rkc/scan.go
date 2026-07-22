@@ -8,19 +8,31 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"time"
 
-	"github.com/repository-knowledge-compiler/rkc/internal/acquire"
-	"github.com/repository-knowledge-compiler/rkc/internal/builtinplugins"
-	rkcexport "github.com/repository-knowledge-compiler/rkc/internal/export"
-	"github.com/repository-knowledge-compiler/rkc/internal/pipeline"
-	"github.com/repository-knowledge-compiler/rkc/internal/snapshot"
-	"github.com/repository-knowledge-compiler/rkc/pkg/rkcmodel"
+	"github.com/neuroforge-io/RKC/internal/acquire"
+	"github.com/neuroforge-io/RKC/internal/builtinplugins"
+	rkcexport "github.com/neuroforge-io/RKC/internal/export"
+	"github.com/neuroforge-io/RKC/internal/pipeline"
+	"github.com/neuroforge-io/RKC/internal/safeoutput"
+	"github.com/neuroforge-io/RKC/internal/snapshot"
+	"github.com/neuroforge-io/RKC/pkg/rkcmodel"
 )
 
 func runScan(args []string) error {
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	return runScanContext(ctx, args)
+}
+
+func runScanContext(ctx context.Context, args []string) error {
+	if err := scanCancellation(ctx); err != nil {
+		return err
+	}
 	configPath := discoverFlagValue(args, "config")
 	cfg, err := loadConfiguration(configPath)
 	if err != nil {
@@ -30,8 +42,9 @@ func runScan(args []string) error {
 	fs := flag.NewFlagSet("scan", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
 	configFlag := fs.String("config", configPath, "JSON configuration file; omitted uses built-in defaults")
-	out := fs.String("out", ".rkc", "generated output directory")
+	out := fs.String("out", cfg.Workspace.Output, "generated output directory")
 	stateDir := fs.String("state-dir", cfg.Exports.SnapshotStore, "optional immutable snapshot store directory")
+	maxFile := fs.Int64("max-file-bytes", cfg.Inventory.MaxFileBytes, "largest individual regular file hashed or parsed; 0 disables")
 	maxText := fs.Int64("max-text-bytes", cfg.Inventory.MaxTextBytes, "largest text file parsed or normalized")
 	maxRepository := fs.Int64("max-repository-bytes", cfg.Inventory.MaxRepositoryBytes, "maximum encountered repository bytes; 0 disables")
 	maxFiles := fs.Int("max-files", cfg.Inventory.MaxFiles, "maximum encountered paths; 0 disables")
@@ -83,8 +96,6 @@ func runScan(args []string) error {
 	if fs.NArg() == 1 {
 		source = fs.Arg(0)
 	}
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
 	acquired, err := acquire.Open(ctx, source, acquire.Options{
 		GitExecutable: *gitExecutable, Ref: *gitRef, Depth: *cloneDepth, Submodules: *submodules,
 		Timeout: *gitTimeout, TemporaryRoot: *acquireTemp, KeepMaterialized: *keepMaterialized,
@@ -95,33 +106,37 @@ func runScan(args []string) error {
 	}
 	defer func() { _ = acquired.Cleanup() }()
 	rootAbs := acquired.Root
-	outAbs, err := filepath.Abs(*out)
+	outAbs, err := safeoutput.ResolveTarget(*out, rootAbs)
 	if err != nil {
 		return err
-	}
-	if rootAbs == outAbs {
-		return errors.New("output directory cannot be the repository root")
 	}
 	if rel, err := filepath.Rel(rootAbs, outAbs); err == nil && rel != "." && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
 		excludes = append(excludes, filepath.ToSlash(rel))
 	}
 	if *stateDir != "" {
-		stateAbs, err := filepath.Abs(*stateDir)
+		stateAbs, err := safeoutput.ResolveTarget(*stateDir, rootAbs)
 		if err != nil {
 			return err
+		}
+		outInsideState, err := pathIsWithin(stateAbs, outAbs)
+		if err != nil {
+			return fmt.Errorf("compare output and snapshot store: %w", err)
+		}
+		stateInsideOut, err := pathIsWithin(outAbs, stateAbs)
+		if err != nil {
+			return fmt.Errorf("compare output and snapshot store: %w", err)
+		}
+		if outInsideState || stateInsideOut {
+			return fmt.Errorf("%w: output and snapshot store must be disjoint directories", safeoutput.ErrUnsafeTarget)
 		}
 		if rel, err := filepath.Rel(rootAbs, stateAbs); err == nil && rel != "." && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
 			excludes = append(excludes, filepath.ToSlash(rel))
 		}
 		*stateDir = stateAbs
 	}
-	if _, err := os.Stat(outAbs); err == nil && !*force {
-		return fmt.Errorf("output directory exists: %s; use --force to replace it", outAbs)
-	} else if err != nil && !os.IsNotExist(err) {
-		return err
-	}
-
 	pluginPath := strings.TrimSpace(*pythonPlugin)
+	pythonPluginBuiltin := false
+	pythonPluginSHA256 := ""
 	cleanup := func() {}
 	if !*noPlugins && !*noPython && (pluginPath == "" || pluginPath == "builtin") {
 		temp, err := os.MkdirTemp("", "rkc-python-plugin-")
@@ -134,9 +149,12 @@ func runScan(args []string) error {
 			cleanup()
 			return err
 		}
+		pythonPluginBuiltin = true
+		pythonPluginSHA256 = builtinplugins.PythonSHA256()
 	}
 	defer cleanup()
 
+	cfg.Inventory.MaxFileBytes = *maxFile
 	cfg.Inventory.MaxTextBytes = *maxText
 	cfg.Inventory.MaxRepositoryBytes = *maxRepository
 	cfg.Inventory.MaxFiles = *maxFiles
@@ -172,10 +190,15 @@ func runScan(args []string) error {
 		sourceReference = acquired.RedactedSource
 	}
 	bundle, coverage, err := pipeline.Scan(ctx, pipeline.Options{
-		Root: rootAbs, MaxTextBytes: *maxText, MaxRepositoryBytes: *maxRepository, MaxFiles: *maxFiles,
+		Root: rootAbs, MaxFileBytes: *maxFile, MaxTextBytes: *maxText, MaxRepositoryBytes: *maxRepository, MaxFiles: *maxFiles,
 		Excludes: excludes, PythonInterpreter: *python, PythonPlugin: pluginPath, PluginTimeout: *pluginTimeout,
 		PluginMaxOutput: *pluginOutput, PluginMaxStderr: 2 * 1024 * 1024,
-		DisablePlugins: *noPlugins, DisablePythonAST: *noPython, DisableGoAST: *noGo, DisableTypeScript: *noTypeScript,
+		PluginMemoryMiB: cfg.Plugins.MemoryLimitMiB, PluginSwapMiB: cfg.Plugins.MemorySwapLimitMiB,
+		PluginProcessLimit: cfg.Plugins.ProcessLimit, PluginSandboxRequired: cfg.Plugins.NativeWorkerSandbox == "required",
+		PluginDenyNetwork: !cfg.Plugins.AllowNetwork, PluginDenyProcessSpawn: !cfg.Plugins.AllowProcessSpawn,
+		PythonPluginBuiltin: pythonPluginBuiltin, PythonPluginSHA256: pythonPluginSHA256,
+		FailClosedOnPluginError: cfg.Analysis.FailClosedOnPluginError,
+		DisablePlugins:          *noPlugins, DisablePythonAST: *noPython, DisableGoAST: *noGo, DisableTypeScript: *noTypeScript,
 		DisableFrameworks: *noFrameworks, DisableMarkdown: *noMarkdown, DisableOpenAPI: *noOpenAPI,
 		DisableJSONSchema: *noJSONSchema, DisableManifests: *noManifests, DisableEnvKeys: *noEnvKeys, DisableSecretScan: *noSecretScan,
 		ToolVersion: version, SourceReference: sourceReference, ConfigDigest: cfg.Digest(), PolicyDigest: cfg.PolicyDigest(),
@@ -184,20 +207,39 @@ func runScan(args []string) error {
 	if err != nil {
 		return err
 	}
+	if err := scanCancellation(ctx); err != nil {
+		return err
+	}
+	if *failOnErrors && coverage.DiagnosticsBySeverity["error"] > 0 {
+		return fmt.Errorf("scan rejected before publication with %d error diagnostic(s)", coverage.DiagnosticsBySeverity["error"])
+	}
 
-	if err := publishExport(rootAbs, outAbs, *force, bundle, coverage, rkcexport.Options{
+	publication, err := prepareExport(rootAbs, outAbs, *force, bundle, coverage, rkcexport.Options{
 		Root: rootAbs, NotebookMaxSize: *notebookPackBytes, IncludeSources: *includeSources,
 		DisableStaticSite: *noStaticSite, DisableJSONLGraph: *noJSONLGraph,
 		DisableSearchIndex: *noSearchIndex, DisableIntegrations: *noIntegrations,
 		UnsafeIncludeSecrets: *unsafeIncludeSecrets,
-	}); err != nil {
+	})
+	if err != nil {
+		return err
+	}
+	defer func() { _ = publication.Abort() }()
+
+	if err := scanCancellation(ctx); err != nil {
+		return err
+	}
+	if err := publication.Commit(bundle.Snapshot.ID); err != nil {
 		return err
 	}
 
+	// Publish the self-contained atlas before advancing the optional snapshot
+	// store. A failed atlas rename must never leave CURRENT pointing at state
+	// whose declared export was not installed. If the later store commit fails,
+	// the already-published atlas remains complete and independently usable.
 	if *stateDir != "" {
 		store, err := snapshot.Open(*stateDir)
 		if err != nil {
-			return err
+			return fmt.Errorf("atlas published at %s but snapshot store could not be opened: %w", outAbs, err)
 		}
 		stateMetadata := map[string]string{"repository_source": acquired.RedactedSource, "export_root": outAbs}
 		if !acquired.Temporary {
@@ -205,22 +247,22 @@ func runScan(args []string) error {
 		}
 		transaction, err := store.Begin(bundle.Snapshot.ID, stateMetadata)
 		if err != nil {
-			return err
+			return fmt.Errorf("atlas published at %s but snapshot transaction could not start: %w", outAbs, err)
 		}
 		committed := false
 		defer func() {
 			if !committed {
-				_ = transaction.Abort("scan command did not commit")
+				_ = transaction.Abort("atlas published but snapshot store did not commit")
 			}
 		}()
 		if err := transaction.WriteBundle(bundle); err != nil {
-			return err
+			return fmt.Errorf("atlas published at %s but snapshot bundle write failed: %w", outAbs, err)
 		}
 		if err := transaction.WriteCoverage(coverage); err != nil {
-			return err
+			return fmt.Errorf("atlas published at %s but snapshot coverage write failed: %w", outAbs, err)
 		}
 		if err := transaction.Commit(); err != nil {
-			return err
+			return fmt.Errorf("atlas published at %s but snapshot store commit failed: %w", outAbs, err)
 		}
 		committed = true
 	}
@@ -250,41 +292,36 @@ func runScan(args []string) error {
 		fmt.Printf("Snapshot store: %s\n", *stateDir)
 	}
 	fmt.Printf("Browse: rkc serve --dir %s\n", outAbs)
-	if *failOnErrors && coverage.DiagnosticsBySeverity["error"] > 0 {
-		return fmt.Errorf("scan completed with %d error diagnostic(s)", coverage.DiagnosticsBySeverity["error"])
+	return nil
+}
+
+func scanCancellation(ctx context.Context) error {
+	if err := ctx.Err(); err != nil {
+		return fmt.Errorf("scan cancelled; staged output was not published: %w", err)
 	}
 	return nil
 }
 
 func publishExport(root, output string, force bool, bundle rkcmodel.Bundle, coverage rkcmodel.Coverage, options rkcexport.Options) error {
-	parent := filepath.Dir(output)
-	if err := os.MkdirAll(parent, 0o755); err != nil {
-		return err
-	}
-	temp, err := os.MkdirTemp(parent, ".rkc-build-")
+	publication, err := prepareExport(root, output, force, bundle, coverage, options)
 	if err != nil {
 		return err
 	}
-	committed := false
-	defer func() {
-		if !committed {
-			_ = os.RemoveAll(temp)
-		}
-	}()
-	options.Output = temp
+	defer func() { _ = publication.Abort() }()
+	return publication.Commit(bundle.Snapshot.ID)
+}
+
+func prepareExport(root, output string, force bool, bundle rkcmodel.Bundle, coverage rkcmodel.Coverage, options rkcexport.Options) (*safeoutput.Transaction, error) {
+	publication, err := safeoutput.Begin(output, root, force, "atlas")
+	if err != nil {
+		return nil, err
+	}
+	options.Output = publication.Staging
 	if err := rkcexport.WriteAll(bundle, coverage, options); err != nil {
-		return err
+		_ = publication.Abort()
+		return nil, err
 	}
-	if force {
-		if err := os.RemoveAll(output); err != nil {
-			return fmt.Errorf("remove old output: %w", err)
-		}
-	}
-	if err := os.Rename(temp, output); err != nil {
-		return fmt.Errorf("publish output directory: %w", err)
-	}
-	committed = true
-	return nil
+	return publication, nil
 }
 
 func discoverFlagValue(args []string, name string) string {

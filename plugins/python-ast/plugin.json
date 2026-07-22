@@ -8,7 +8,7 @@
     "api_version": "1.0",
     "license": "Apache-2.0",
     "description": "Dependency-free deterministic Python syntax extractor using the standard-library AST.",
-    "homepage": "https://github.com/repository-knowledge-compiler/rkc"
+    "homepage": "https://github.com/neuroforge-io/RKC"
   },
   "runtime": {
     "kind": "native-worker",

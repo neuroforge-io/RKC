@@ -72,8 +72,10 @@ of truth for one generated output directory. Record-family JSONL is a canonical
 export. Documentation, the static site, NotebookLM pack, search index, SARIF,
 GraphML, Mermaid, and CSV are derived products.
 
-Model packets and responses live under `derived/`. The synthesis command tests
-that `bundle.json` is unchanged after derived output is written.
+Model packets and responses live in a separate sibling output tree
+(`<atlas>.rkc-derived/synthesis/<profile>` by default). The synthesis command
+rejects explicit atlas descendants and tests that `bundle.json` is unchanged
+after derived output is written.
 
 ## Current storage
 
@@ -113,10 +115,21 @@ The normal scan does not execute project code or package-manager hooks. Remote
 Git acquisition disables prompts and hooks. Normalized source is redacted by
 default.
 
-The Python worker still executes as the invoking operating-system user. Plugin
-manifests and lockfiles are enforced at selection and digest level, but no WASI
-host or namespace/seccomp native-worker sandbox is present yet. Do not run
-untrusted third-party workers.
+External Python and native-worker execution is disabled. On Linux, the
+digest-pinned built-in Python adapter fails closed unless it can start as a
+transient user-systemd service with a one-core/lowest-priority cgroup, hard
+memory/swap/task limits, a cleared worker environment, network-I/O syscall
+denial, a one-task ceiling that prevents child processes, and control-group-wide
+cancellation. The current user-service path does not claim a mount/filesystem
+namespace; this is deliberately a narrow built-in adapter guard, not a general
+third-party plugin sandbox. On platforms without that Linux enforcement path
+the Python adapter fails closed; the in-process Go and TypeScript analyzers
+remain available.
+
+The Alpine reference image cannot provide this user-systemd boundary. Its
+container and Compose examples select `--no-python` explicitly and continue to
+exercise the in-process analyzers. No container path silently downgrades to an
+unsandboxed Python worker.
 
 ## Verification
 

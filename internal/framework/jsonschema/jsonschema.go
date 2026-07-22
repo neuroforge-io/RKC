@@ -5,14 +5,16 @@ package jsonschema
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
-	"os"
+	"io"
 	"path/filepath"
 	"sort"
 	"strings"
 
-	"github.com/repository-knowledge-compiler/rkc/pkg/pluginapi"
-	"github.com/repository-knowledge-compiler/rkc/pkg/rkcmodel"
+	"github.com/neuroforge-io/RKC/internal/sourcepath"
+	"github.com/neuroforge-io/RKC/pkg/pluginapi"
+	"github.com/neuroforge-io/RKC/pkg/rkcmodel"
 )
 
 const (
@@ -37,15 +39,13 @@ func Extract(options Options) (rkcmodel.Fragment, error) {
 	files := append([]pluginapi.FileRef(nil), options.Files...)
 	sort.Slice(files, func(i, j int) bool { return files[i].Path < files[j].Path })
 	for _, file := range files {
-		data, err := os.ReadFile(filepath.Join(options.Root, filepath.FromSlash(file.Path)))
+		data, err := sourcepath.ReadFile(options.Root, file.Path)
 		if err != nil {
 			fragment.Diagnostics = append(fragment.Diagnostics, diagnostic(file, "RKC-SCH-1001", err.Error()))
 			continue
 		}
 		var document map[string]any
-		decoder := json.NewDecoder(bytes.NewReader(data))
-		decoder.UseNumber()
-		if err := decoder.Decode(&document); err != nil {
+		if err := decodeJSONObject(data, &document); err != nil {
 			if likelySchemaPath(file.Path) {
 				fragment.Diagnostics = append(fragment.Diagnostics, diagnostic(file, "RKC-SCH-1002", "invalid JSON Schema: "+err.Error()))
 			}
@@ -63,6 +63,21 @@ func Extract(options Options) (rkcmodel.Fragment, error) {
 	}
 	rkcmodel.SortFragment(&fragment)
 	return fragment, nil
+}
+
+func decodeJSONObject(data []byte, document *map[string]any) error {
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.UseNumber()
+	if err := decoder.Decode(document); err != nil {
+		return err
+	}
+	var trailing any
+	if err := decoder.Decode(&trailing); err == nil {
+		return errors.New("multiple JSON values")
+	} else if !errors.Is(err, io.EOF) {
+		return fmt.Errorf("invalid trailing data: %w", err)
+	}
+	return nil
 }
 
 func (c *collector) document(document map[string]any) {

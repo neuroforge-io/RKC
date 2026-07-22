@@ -54,7 +54,7 @@ The labels below mean:
 | FTS5 runtime search | Planned | depends on SQLite runtime writer |
 | graph paths, impact, SCCs | Implemented | bounded in-memory graph operations |
 | semantic diff | Implemented | conservative logical/signature comparison |
-| embeddings | Planned | configuration rejects unsupported enablement |
+| embeddings | Planned | exact Apache-2.0 candidate and qualification corpus locked; runtime integration pending |
 
 ## Model subsystem
 
@@ -62,9 +62,10 @@ The labels below mean:
 |---|---|---|
 | bounded evidence packets | Implemented | coherent truncation and redaction |
 | `llama.cpp` CLI provider | Implemented | fake-executable integration tested |
-| estimated and observed RSS policy | Partial | Linux monitoring path implemented |
+| pinned native `llama.cpp` bootstrap | Implemented | exact source digest, CPU-only portable/native profiles, guarded build |
+| cgroup, priority, CPU-only and RSS policy | Partial | guarded Linux path implemented; portable non-Linux hard limits pending |
 | claim/summary validation | Implemented | citations and identifiers checked |
-| real GGUF benchmark below 3.5 GiB | Planned | no model weights bundled |
+| real GGUF benchmark below 2.5 GiB | Planned | generation and embedding candidates are unqualified and not defaults |
 | remote model providers | Planned | policy/egress controls required |
 
 ## Interfaces
@@ -89,7 +90,7 @@ The labels below mean:
 | bounded plugin stdout/stderr and timeout | Implemented |
 | plugin manifests and lock digests | Implemented |
 | WASI capability enforcement | Planned |
-| native-worker OS sandbox | Planned |
+| native-worker OS sandbox | Partial | fail-closed Linux guard for the digest-pinned built-in Python adapter only; third-party execution disabled |
 | OIDC/RBAC/tenancy/audit retention | Planned |
 | signed binaries, SBOM, provenance | Planned |
 | Docker and CI reference files | Implemented |

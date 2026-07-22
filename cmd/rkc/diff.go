@@ -7,7 +7,7 @@ import (
 	"os"
 	"strings"
 
-	"github.com/repository-knowledge-compiler/rkc/internal/semanticdiff"
+	"github.com/neuroforge-io/RKC/internal/semanticdiff"
 )
 
 func runDiff(args []string) error {

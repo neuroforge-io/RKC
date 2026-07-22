@@ -7,15 +7,15 @@ package tssyntax
 
 import (
 	"fmt"
-	"os"
 	"path/filepath"
 	"sort"
 	"strings"
 	"unicode"
 	"unicode/utf8"
 
-	"github.com/repository-knowledge-compiler/rkc/pkg/pluginapi"
-	"github.com/repository-knowledge-compiler/rkc/pkg/rkcmodel"
+	"github.com/neuroforge-io/RKC/internal/sourcepath"
+	"github.com/neuroforge-io/RKC/pkg/pluginapi"
+	"github.com/neuroforge-io/RKC/pkg/rkcmodel"
 )
 
 const (
@@ -82,8 +82,7 @@ func Extract(options Options) (rkcmodel.Fragment, error) {
 }
 
 func (e *extractor) extractFile(file pluginapi.FileRef) {
-	path := filepath.Join(e.root, filepath.FromSlash(file.Path))
-	data, err := os.ReadFile(path)
+	data, err := sourcepath.ReadFile(e.root, file.Path)
 	if err != nil {
 		e.error(file, "RKC-TS-1001", err.Error(), 1, 0)
 		return
@@ -374,6 +373,9 @@ func (p *parser) parseClass(i, end int, parentID, parentQualified string, export
 		}
 		if p.tokens[i].text == "implements" {
 			implements, i = p.readTypeList(i+1, end)
+			if i >= end {
+				break
+			}
 		}
 		if p.tokens[i].text == "{" {
 			bodyStart = i
@@ -515,6 +517,8 @@ func (p *parser) parseEnum(i, end int, parentID, parentQualified string, exporte
 				if depth > 0 {
 					depth--
 				}
+			case ">>":
+				depth = max(0, depth-2)
 			}
 		}
 		if !atEnd && !(depth == 0 && p.tokens[j].text == ",") {
@@ -779,6 +783,8 @@ func (p *parser) parameters(start, end int) []any {
 				if depth > 0 {
 					depth--
 				}
+			case ">>":
+				depth = max(0, depth-2)
 			}
 		}
 		if atEnd || (depth == 0 && p.tokens[i].text == ",") {
@@ -832,6 +838,12 @@ func (p *parser) matching(start, end int, open, close string) int {
 		if p.tokens[i].text == open {
 			depth++
 		}
+		if open == "<" && close == ">" && p.tokens[i].text == ">>" {
+			depth -= 2
+			if depth <= 0 {
+				return i
+			}
+		}
 		if p.tokens[i].text == close {
 			depth--
 			if depth == 0 {
@@ -882,6 +894,8 @@ func (p *parser) untilBodyOrTerminator(start, end int) int {
 			if depth > 0 {
 				depth--
 			}
+		case ">>":
+			depth = max(0, depth-2)
 		case "{", ";", "=>":
 			if depth == 0 {
 				return i
@@ -908,7 +922,7 @@ func (p *parser) renderCompact(start, end int) string {
 }
 func (p *parser) readTypeName(start, end int) string {
 	finish := start
-	for finish < end && (p.tokens[finish].kind == tokenIdentifier || p.tokens[finish].text == "." || p.tokens[finish].text == "<" || p.tokens[finish].text == ">" || p.tokens[finish].text == ",") {
+	for finish < end && (p.tokens[finish].kind == tokenIdentifier || p.tokens[finish].text == "." || p.tokens[finish].text == "<" || p.tokens[finish].text == ">" || p.tokens[finish].text == ">>" || p.tokens[finish].text == ",") {
 		if p.tokens[finish].text == "," {
 			break
 		}
@@ -929,6 +943,8 @@ func (p *parser) readTypeList(start, end int) ([]string, int) {
 			if depth > 0 {
 				depth--
 			}
+		case ">>":
+			depth = max(0, depth-2)
 		case ",":
 			if depth == 0 {
 				out = append(out, p.renderCompact(segment, i))
@@ -942,6 +958,9 @@ func (p *parser) readTypeList(start, end int) ([]string, int) {
 				return cleanStrings(out), i
 			}
 		}
+	}
+	if segment < end {
+		out = append(out, p.renderCompact(segment, end))
 	}
 	return cleanStrings(out), i
 }
@@ -1140,7 +1159,7 @@ func moduleQualifiedName(packageName, path string) string {
 	return packageName + "/" + path
 }
 func readPackageName(root string) string {
-	data, err := os.ReadFile(filepath.Join(root, "package.json"))
+	data, err := sourcepath.ReadFile(root, "package.json")
 	if err != nil {
 		return ""
 	}

@@ -12,14 +12,36 @@
     "max_repository_bytes": 21474836480,
     "max_files": 500000,
     "follow_symlinks": false,
-    "include_git_ignored": false,
-    "exclude": [".git", ".rkc", ".rkc-state"],
+    "exclude": [
+      ".cache",
+      ".coverage",
+      ".git",
+      ".mypy_cache",
+      ".pytest_cache",
+      ".rkc",
+      ".rkc-coverage",
+      ".rkc-downloads",
+      ".rkc-models",
+      ".rkc-runtime",
+      ".rkc-state",
+      ".rkc.rkc-derived",
+      ".ruff_cache",
+      ".venv",
+      "__pycache__",
+      "bin",
+      "coverage",
+      "coverage.out",
+      "coverage.xml",
+      "dist",
+      "htmlcov",
+      "venv"
+    ],
     "classify_vendor_directories": true,
     "classify_generated_files": true
   },
   "analysis": {
     "tiers": ["inventory", "syntax", "framework"],
-    "fail_closed_on_plugin_error": false,
+    "fail_closed_on_plugin_error": true,
     "incremental": true,
     "runtime_evidence": false
   },
@@ -28,9 +50,11 @@
     "directories": ["./plugins"],
     "allow_network": false,
     "allow_process_spawn": false,
-    "native_worker_sandbox": "preferred",
+    "native_worker_sandbox": "required",
     "timeout_seconds": 60,
     "memory_limit_mib": 1024,
+    "memory_swap_limit_mib": 128,
+    "process_limit": 1,
     "maximum_output_bytes": 67108864,
     "python_ast": {
       "enabled": true,
@@ -64,7 +88,7 @@
     "context_tokens": 4096,
     "max_output_tokens": 768,
     "temperature": 0,
-    "max_rss_mib": 3584
+    "max_rss_mib": 2560
   },
   "search": {
     "enabled": true,

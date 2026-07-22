@@ -10,42 +10,50 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 	"unicode"
 
-	"github.com/repository-knowledge-compiler/rkc/internal/modelruntime"
-	"github.com/repository-knowledge-compiler/rkc/internal/search"
-	"github.com/repository-knowledge-compiler/rkc/internal/server"
-	"github.com/repository-knowledge-compiler/rkc/pkg/rkcmodel"
+	"github.com/neuroforge-io/RKC/internal/modelassets"
+	"github.com/neuroforge-io/RKC/internal/modelruntime"
+	"github.com/neuroforge-io/RKC/internal/safeoutput"
+	"github.com/neuroforge-io/RKC/internal/search"
+	"github.com/neuroforge-io/RKC/internal/server"
+	"github.com/neuroforge-io/RKC/pkg/rkcmodel"
 )
 
 type synthesisManifest struct {
-	SchemaVersion       string                        `json:"schema_version"`
-	SnapshotID          string                        `json:"snapshot_id"`
-	Profile             string                        `json:"profile"`
-	Task                modelruntime.Task             `json:"task"`
-	PacketOnly          bool                          `json:"packet_only"`
-	Provider            string                        `json:"provider"`
-	Model               modelruntime.ModelDescriptor  `json:"model,omitempty"`
-	Options             modelruntime.InferenceOptions `json:"options"`
-	Budget              modelruntime.Budget           `json:"budget"`
-	SubjectsRequested   int                           `json:"subjects_requested"`
-	PacketsWritten      int                           `json:"packets_written"`
-	ResponsesReceived   int                           `json:"responses_received"`
-	AcceptedClaims      int                           `json:"accepted_claims"`
-	RejectedClaims      int                           `json:"rejected_claims"`
-	AcceptedSummaries   int                           `json:"accepted_summaries"`
-	RejectedSummaries   int                           `json:"rejected_summaries"`
-	RedactedFindings    int                           `json:"redacted_secret_findings"`
-	SourceBytesIncluded int                           `json:"source_bytes_included"`
-	StartedAt           time.Time                     `json:"started_at"`
-	FinishedAt          time.Time                     `json:"finished_at"`
-	DurationMillis      int64                         `json:"duration_millis"`
-	Files               []synthesisFile               `json:"files"`
+	SchemaVersion        string                         `json:"schema_version"`
+	Status               string                         `json:"status"`
+	SnapshotID           string                         `json:"snapshot_id"`
+	Profile              string                         `json:"profile"`
+	Task                 modelruntime.Task              `json:"task"`
+	PacketOnly           bool                           `json:"packet_only"`
+	Provider             string                         `json:"provider"`
+	Model                modelruntime.ModelDescriptor   `json:"model,omitempty"`
+	ModelBinding         *modelassets.GenerationBinding `json:"model_binding,omitempty"`
+	ResponseSchemaSHA256 string                         `json:"response_schema_sha256,omitempty"`
+	Options              modelruntime.InferenceOptions  `json:"options"`
+	Budget               modelruntime.Budget            `json:"budget"`
+	SubjectsRequested    int                            `json:"subjects_requested"`
+	PacketsWritten       int                            `json:"packets_written"`
+	ResponsesReceived    int                            `json:"responses_received"`
+	AcceptedClaims       int                            `json:"accepted_claims"`
+	RejectedClaims       int                            `json:"rejected_claims"`
+	AcceptedSummaries    int                            `json:"accepted_summaries"`
+	RejectedSummaries    int                            `json:"rejected_summaries"`
+	FailedSubjects       int                            `json:"failed_subjects"`
+	RedactedFindings     int                            `json:"redacted_secret_findings"`
+	SourceBytesIncluded  int                            `json:"source_bytes_included"`
+	StartedAt            time.Time                      `json:"started_at"`
+	FinishedAt           time.Time                      `json:"finished_at"`
+	DurationMillis       int64                          `json:"duration_millis"`
+	Files                []synthesisFile                `json:"files"`
 }
 
 type synthesisFile struct {
@@ -62,7 +70,60 @@ type synthesisRecord struct {
 	Error      string                       `json:"error,omitempty"`
 }
 
+// qualifiedClaimResponseSchema matches the generation response contract used
+// by models/qualification/rkc-local-model-v1.json. It deliberately permits only
+// evidence-bound supported claims; inferred prose is not part of the qualified
+// production profile.
+const qualifiedClaimResponseSchema = `{"type":"object","additionalProperties":false,"required":["claims","unresolved_questions"],"properties":{"claims":{"type":"array","maxItems":8,"items":{"type":"object","additionalProperties":false,"required":["text","category","certainty","evidence_ids"],"properties":{"text":{"type":"string","maxLength":1200},"category":{"type":"string","enum":["purpose","signature","error","relationship","constraint"]},"certainty":{"const":"supported"},"evidence_ids":{"type":"array","minItems":1,"maxItems":8,"uniqueItems":true,"items":{"type":"string"}}}}},"unresolved_questions":{"type":"array","maxItems":8,"items":{"type":"string","maxLength":500}}}}`
+
+func qualifiedStructuredGenerationArguments() []string {
+	return []string{
+		"--json-schema", qualifiedClaimResponseSchema,
+		"--conversation", "--single-turn", "--jinja",
+		"--chat-template-kwargs", `{"enable_thinking":false}`,
+		"--reasoning", "off", "--reasoning-format", "none", "--reasoning-budget", "0",
+		"--offline", "--no-perf", "--poll", "0", "--poll-batch", "0",
+	}
+}
+
+func qualifiedResponseSchemaSHA256() string {
+	digest := sha256.Sum256([]byte(qualifiedClaimResponseSchema))
+	return hex.EncodeToString(digest[:])
+}
+
+func defaultSynthesisModelLockPath() string {
+	executable, err := os.Executable()
+	if err != nil {
+		return ""
+	}
+	executable, err = filepath.EvalSymlinks(executable)
+	if err != nil {
+		return ""
+	}
+	binDirectory := filepath.Dir(executable)
+	candidates := []string{
+		filepath.Join(filepath.Dir(binDirectory), "models", "models.lock.json"),
+		filepath.Join(filepath.Dir(binDirectory), "share", "rkc", "models", "models.lock.json"),
+	}
+	for _, candidate := range candidates {
+		info, err := os.Lstat(candidate)
+		if err == nil && info.Mode().IsRegular() && info.Mode()&os.ModeSymlink == 0 {
+			return candidate
+		}
+	}
+	return ""
+}
+
 func runSynthesize(args []string) error {
+	modelContext, stopModel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stopModel()
+	return runSynthesizeContext(modelContext, args)
+}
+
+func runSynthesizeContext(modelContext context.Context, args []string) error {
+	if err := synthesisCancellation(modelContext); err != nil {
+		return err
+	}
 	configPath := discoverFlagValue(args, "config")
 	cfg, err := loadConfiguration(configPath)
 	if err != nil {
@@ -73,7 +134,7 @@ func runSynthesize(args []string) error {
 	_ = fs.String("config", configPath, "JSON configuration file")
 	dir := fs.String("dir", ".rkc", "generated RKC output directory")
 	repositoryRoot := fs.String("repo-root", "", "repository source root used for evidence excerpts")
-	output := fs.String("out", "", "derived synthesis output directory")
+	output := fs.String("out", "", "synthesis output directory outside the verified dataset")
 	var nodeRefs stringList
 	fs.Var(&nodeRefs, "node", "subject node ID, logical ID, name, or qualified name; repeatable")
 	query := fs.String("query", "", "select subject nodes using the local search index")
@@ -82,8 +143,12 @@ func runSynthesize(args []string) error {
 	limit := fs.Int("limit", 25, "maximum subject nodes")
 	taskValue := fs.String("task", string(modelruntime.TaskSymbolSummary), "symbol_summary, module_summary, execution_explanation, or documentation_gap_analysis")
 	packetOnly := fs.Bool("packet-only", false, "write bounded evidence packets without running a model")
+	providerType := fs.String("provider", cfg.Model.Provider, "model provider: llama.cpp")
 	modelPath := fs.String("model", cfg.Model.ModelPath, "GGUF model file")
 	llamaCLI := fs.String("llama-cli", "llama-cli", "llama.cpp CLI executable")
+	modelLock := fs.String("model-lock", defaultSynthesisModelLockPath(), "trusted RKC model supply-chain lock")
+	modelAsset := fs.String("model-asset", "", "qualified generation asset ID; defaults to the lock default")
+	runtimeReceipt := fs.String("runtime-receipt", "", "llama.cpp build receipt; derived from a standard runtime layout when empty")
 	contextTokens := fs.Int("context", cfg.Model.ContextTokens, "model context tokens")
 	maxOutputTokens := fs.Int("max-output", cfg.Model.MaxOutputTokens, "maximum generated tokens")
 	maxRSSMiB := fs.Int64("max-rss-mib", cfg.Model.MaxRSSMiB, "estimated and observed process RSS limit")
@@ -105,6 +170,21 @@ func runSynthesize(args []string) error {
 	if *limit <= 0 || *limit > 10000 {
 		return errors.New("limit must be between 1 and 10000")
 	}
+	if *contextTokens < 512 || *contextTokens > 262144 {
+		return errors.New("context must be between 512 and 262144 tokens")
+	}
+	if *maxOutputTokens < 1 || *maxOutputTokens > *contextTokens {
+		return errors.New("max-output must be positive and no larger than context")
+	}
+	if *maxRSSMiB < 256 || *maxRSSMiB > modelMaximumRSSMiB {
+		return errors.New("max-rss-mib must be between 256 and the 2560 MiB safety ceiling")
+	}
+	if *threads < 0 || *threads > 64 {
+		return errors.New("threads must be between 0 and 64")
+	}
+	if *batchSize < 1 || *batchSize > 4096 {
+		return errors.New("batch-size must be between 1 and 4096")
+	}
 	task := modelruntime.Task(strings.TrimSpace(*taskValue))
 	if !validModelTask(task) {
 		return fmt.Errorf("invalid model task %q", *taskValue)
@@ -124,47 +204,95 @@ func runSynthesize(args []string) error {
 	var provider modelruntime.Provider
 	providerName := "packet-only"
 	var descriptor modelruntime.ModelDescriptor
+	var generationBinding *modelassets.GenerationBinding
+	responseSchemaDigest := ""
 	budget := modelruntime.Budget{MaximumRSSBytes: *maxRSSMiB * 1024 * 1024, SafetyMarginBytes: 128 * 1024 * 1024}
 	inferenceOptions := modelruntime.InferenceOptions{ContextTokens: *contextTokens, MaxOutputTokens: *maxOutputTokens, Threads: *threads, BatchSize: *batchSize, Parallel: 1}
 	if !*packetOnly {
-		if strings.TrimSpace(*modelPath) == "" {
-			return errors.New("--model is required unless --packet-only is used")
+		selectedProvider := strings.TrimSpace(*providerType)
+		if selectedProvider == "" || selectedProvider == "disabled" {
+			if strings.TrimSpace(*modelPath) != "" {
+				selectedProvider = "llama.cpp"
+			} else {
+				return errors.New("model provider is disabled; choose --provider or use --packet-only")
+			}
 		}
-		localProvider, err := modelruntime.NewLlamaCPPProvider(modelruntime.LlamaCPPConfig{
-			Executable: *llamaCLI, ModelPath: *modelPath, ContextLimit: maxIntCLI(*contextTokens, 8192),
-			Threads: *threads, BatchSize: *batchSize, Timeout: *timeout, Budget: budget,
-		})
-		if err != nil {
-			return err
+		switch selectedProvider {
+		case "llama.cpp":
+			if strings.TrimSpace(*modelPath) == "" {
+				return errors.New("--model is required for the llama.cpp provider")
+			}
+			if cfg.Model.Temperature != 0 {
+				return errors.New("model.temperature must be 0 for deterministic qualified synthesis")
+			}
+			if *allowInference {
+				return errors.New("--allow-inference is incompatible with the qualified supported-claim response contract")
+			}
+			binding, err := modelassets.ResolveGeneration(modelassets.GenerationRequest{
+				LockPath: *modelLock, RuntimeReceiptPath: *runtimeReceipt,
+				ExecutablePath: *llamaCLI, ModelPath: *modelPath, AssetID: *modelAsset,
+			})
+			if err != nil {
+				return err
+			}
+			if *contextTokens > binding.NativeContextTokens {
+				return fmt.Errorf("requested context %d exceeds locked model context %d", *contextTokens, binding.NativeContextTokens)
+			}
+			localProvider, err := modelruntime.NewLlamaCPPProvider(modelruntime.LlamaCPPConfig{
+				Executable: binding.ExecutablePath, ModelPath: binding.ModelPath,
+				ExpectedExecutableSHA256: binding.RuntimeSHA256, ExpectedModelSHA256: binding.ModelSHA256,
+				ModelID: binding.AssetID, ModelRevision: binding.ModelRevision, ModelLicense: binding.ModelLicense,
+				RuntimeRevision: binding.RuntimeRevision, ContextLimit: binding.NativeContextTokens,
+				QuantizationBits: binding.QuantizationBits, Threads: *threads, BatchSize: *batchSize,
+				Seed: 1, Temperature: 0, Timeout: *timeout, Budget: budget,
+				AdditionalArguments: qualifiedStructuredGenerationArguments(),
+			})
+			if err != nil {
+				return err
+			}
+			provider = localProvider
+			providerName = "llamacpp-cli"
+			generationBinding = &binding
+			responseSchemaDigest = qualifiedResponseSchemaSHA256()
+		default:
+			return fmt.Errorf("provider %q is not implemented by synthesize", selectedProvider)
 		}
-		provider = localProvider
 		defer provider.Close()
 		descriptor = provider.Descriptor()
-		providerName = "llamacpp-cli"
+		if generationBinding != nil {
+			if err := validateSynthesisDescriptor(*generationBinding, descriptor); err != nil {
+				return err
+			}
+		}
 	}
 	profile := profileName(providerName, descriptor.ID, task)
-	outputRoot := *output
-	if strings.TrimSpace(outputRoot) == "" {
-		outputRoot = filepath.Join(dataset.Root, "derived", "synthesis", profile)
-	}
-	outputRoot, err = filepath.Abs(outputRoot)
+	finalOutput, err := resolveSynthesisOutput(*output, dataset.Root, *repositoryRoot, profile)
 	if err != nil {
 		return err
 	}
-	if info, statErr := os.Stat(outputRoot); statErr == nil && info.IsDir() {
-		if !*force {
-			return fmt.Errorf("synthesis output already exists: %s; use --force to replace it", outputRoot)
-		}
-		if err := os.RemoveAll(outputRoot); err != nil {
-			return err
-		}
-	}
-	if err := os.MkdirAll(outputRoot, 0o755); err != nil {
+	publication, err := safeoutput.Begin(finalOutput, dataset.Root, *force, "synthesis")
+	if err != nil {
 		return err
 	}
+	recheckedOutput, recheckErr := resolveSynthesisOutput(publication.Target, dataset.Root, *repositoryRoot, profile)
+	if recheckErr != nil || recheckedOutput != publication.Target {
+		abortErr := publication.Abort()
+		if recheckErr != nil {
+			if abortErr != nil {
+				return fmt.Errorf("recheck synthesis output boundary: %w; staging cleanup failed: %v", recheckErr, abortErr)
+			}
+			return fmt.Errorf("recheck synthesis output boundary: %w", recheckErr)
+		}
+		if abortErr != nil {
+			return fmt.Errorf("synthesis output parent changed during setup; staging cleanup failed: %w", abortErr)
+		}
+		return fmt.Errorf("%w: synthesis output parent changed during setup", safeoutput.ErrUnsafeTarget)
+	}
+	defer func() { _ = publication.Abort() }()
+	finalOutput = publication.Target
+	outputRoot := publication.Staging
 	started := time.Now().UTC()
-	manifest := synthesisManifest{SchemaVersion: rkcmodel.SchemaVersion, SnapshotID: dataset.Manifest.ID, Profile: profile, Task: task, PacketOnly: *packetOnly, Provider: providerName, Model: descriptor, Options: inferenceOptions, Budget: budget, SubjectsRequested: len(subjects), StartedAt: started}
-
+	manifest := synthesisManifest{SchemaVersion: rkcmodel.SchemaVersion, SnapshotID: dataset.Manifest.ID, Profile: profile, Task: task, PacketOnly: *packetOnly, Provider: providerName, Model: descriptor, ModelBinding: generationBinding, ResponseSchemaSHA256: responseSchemaDigest, Options: inferenceOptions, Budget: budget, SubjectsRequested: len(subjects), StartedAt: started}
 	claimsPath := filepath.Join(outputRoot, "claims.jsonl")
 	diagnosticsPath := filepath.Join(outputRoot, "diagnostics.jsonl")
 	recordsPath := filepath.Join(outputRoot, "records.jsonl")
@@ -189,12 +317,19 @@ func runSynthesize(args []string) error {
 	defer recordsWriter.Flush()
 
 	for _, subject := range subjects {
+		if err := synthesisCancellation(modelContext); err != nil {
+			return err
+		}
 		report, buildErr := modelruntime.BuildEvidencePacket(dataset.Bundle, subject.ID, modelruntime.PacketBuildOptions{
 			RepositoryRoot: *repositoryRoot, Task: task, MaximumRelatedNodes: *maximumRelated,
 			MaximumEdges: *maximumEdges, MaximumEvidence: *maximumEvidence, MaximumExcerptBytes: *maximumExcerptBytes,
 			MaximumTotalSourceBytes: *maximumSourceBytes, AllowInference: *allowInference, RedactSecrets: true,
 		})
 		if buildErr != nil {
+			if err := synthesisCancellation(modelContext); err != nil {
+				return err
+			}
+			manifest.FailedSubjects++
 			if !*continueOnError {
 				return buildErr
 			}
@@ -206,6 +341,9 @@ func runSynthesize(args []string) error {
 		}
 		manifest.RedactedFindings += report.RedactedSecretFindings
 		manifest.SourceBytesIncluded += report.IncludedSourceBytes
+		if err := synthesisCancellation(modelContext); err != nil {
+			return err
+		}
 		packetPath := filepath.Join(outputRoot, "packets", safeFileKey(subject.ID)+".json")
 		if err := writePrettyJSONFile(packetPath, report); err != nil {
 			return err
@@ -219,8 +357,12 @@ func runSynthesize(args []string) error {
 		}
 
 		requestID := rkcmodel.StableID("model_request", report.Packet.PacketID, descriptor.ID, string(task))
-		response, generationErr := provider.Generate(context.Background(), modelruntime.Request{RequestID: requestID, Task: task, Packet: report.Packet, Options: inferenceOptions})
+		response, generationErr := provider.Generate(modelContext, modelruntime.Request{RequestID: requestID, Task: task, Packet: report.Packet, Options: inferenceOptions})
+		if err := synthesisCancellation(modelContext); err != nil {
+			return err
+		}
 		if generationErr != nil {
+			manifest.FailedSubjects++
 			record := synthesisRecord{SubjectID: subject.ID, PacketID: report.Packet.PacketID, Error: generationErr.Error()}
 			if err := writeJSONLine(recordsWriter, record); err != nil {
 				return err
@@ -263,6 +405,9 @@ func runSynthesize(args []string) error {
 			}
 		}
 	}
+	if err := synthesisCancellation(modelContext); err != nil {
+		return err
+	}
 	if err := claimsWriter.Flush(); err != nil {
 		return err
 	}
@@ -281,9 +426,26 @@ func runSynthesize(args []string) error {
 	if err := recordsFile.Sync(); err != nil {
 		return err
 	}
+	if err := claimsFile.Close(); err != nil {
+		return err
+	}
+	if err := diagnosticsFile.Close(); err != nil {
+		return err
+	}
+	if err := recordsFile.Close(); err != nil {
+		return err
+	}
 	finished := time.Now().UTC()
 	manifest.FinishedAt = finished
 	manifest.DurationMillis = finished.Sub(started).Milliseconds()
+	manifest.Status = "completed"
+	if *packetOnly && manifest.PacketsWritten == 0 {
+		manifest.Status = "failed"
+	} else if !*packetOnly && (manifest.ResponsesReceived == 0 || manifest.AcceptedClaims+manifest.AcceptedSummaries == 0) {
+		manifest.Status = "rejected"
+	} else if manifest.FailedSubjects > 0 {
+		manifest.Status = "partial"
+	}
 	files, err := inventorySynthesisFiles(outputRoot)
 	if err != nil {
 		return err
@@ -292,8 +454,17 @@ func runSynthesize(args []string) error {
 	if err := writePrettyJSONFile(filepath.Join(outputRoot, "manifest.json"), manifest); err != nil {
 		return err
 	}
+	if err := synthesisCancellation(modelContext); err != nil {
+		return err
+	}
+	if err := publication.Commit(manifest.SnapshotID); err != nil {
+		return err
+	}
+	if manifest.Status == "rejected" || manifest.Status == "failed" {
+		return fmt.Errorf("synthesis produced no publishable output; audit retained at %s", finalOutput)
+	}
 
-	summary := map[string]any{"snapshot_id": manifest.SnapshotID, "profile": profile, "output": outputRoot, "packet_only": *packetOnly, "packets": manifest.PacketsWritten, "responses": manifest.ResponsesReceived, "accepted_claims": manifest.AcceptedClaims, "rejected_claims": manifest.RejectedClaims, "redacted_findings": manifest.RedactedFindings}
+	summary := map[string]any{"snapshot_id": manifest.SnapshotID, "status": manifest.Status, "profile": profile, "output": finalOutput, "packet_only": *packetOnly, "packets": manifest.PacketsWritten, "responses": manifest.ResponsesReceived, "accepted_claims": manifest.AcceptedClaims, "rejected_claims": manifest.RejectedClaims, "failed_subjects": manifest.FailedSubjects, "redacted_findings": manifest.RedactedFindings}
 	if *jsonSummary {
 		return writeJSONStdout(summary)
 	}
@@ -301,8 +472,92 @@ func runSynthesize(args []string) error {
 	fmt.Printf("Snapshot: %s\n", manifest.SnapshotID)
 	fmt.Printf("Packets: %d; responses: %d; accepted claims: %d; rejected claims: %d\n", manifest.PacketsWritten, manifest.ResponsesReceived, manifest.AcceptedClaims, manifest.RejectedClaims)
 	fmt.Printf("Source excerpts: %d bytes; redacted secret findings: %d\n", manifest.SourceBytesIncluded, manifest.RedactedFindings)
-	fmt.Printf("Output: %s\n", outputRoot)
+	fmt.Printf("Output: %s\n", finalOutput)
 	return nil
+}
+
+func validateSynthesisDescriptor(binding modelassets.GenerationBinding, descriptor modelruntime.ModelDescriptor) error {
+	if descriptor.ID != binding.AssetID || descriptor.Architecture != "gguf" || descriptor.WeightBytes != binding.ModelSizeBytes ||
+		descriptor.ContextLimit != binding.NativeContextTokens || descriptor.QuantizationBits != binding.QuantizationBits ||
+		descriptor.Digest != "sha256:"+binding.ModelSHA256 || descriptor.Revision != binding.ModelRevision || descriptor.License != binding.ModelLicense ||
+		descriptor.Runtime != "llama.cpp-cli" || descriptor.RuntimeDigest != "sha256:"+binding.RuntimeSHA256 || descriptor.RuntimeRevision != binding.RuntimeRevision {
+		return errors.New("llama.cpp provider descriptor does not match the resolved model/runtime binding")
+	}
+	return nil
+}
+
+func synthesisCancellation(ctx context.Context) error {
+	if err := ctx.Err(); err != nil {
+		return fmt.Errorf("synthesis cancelled; staged output was not published: %w", err)
+	}
+	return nil
+}
+
+// resolveSynthesisOutput keeps model-authored and packet-derived files outside
+// the verified dataset tree. That separation is a hard trust boundary: a later
+// RKC load or self-scan must not mistake generated prose for verified input.
+func resolveSynthesisOutput(requested, datasetRoot, repositoryRoot, profile string) (string, error) {
+	if strings.TrimSpace(datasetRoot) == "" {
+		return "", errors.New("verified dataset root is empty")
+	}
+	target := strings.TrimSpace(requested)
+	if target == "" {
+		datasetAbsolute, err := filepath.Abs(datasetRoot)
+		if err != nil {
+			return "", fmt.Errorf("resolve verified dataset root: %w", err)
+		}
+		datasetAbsolute = filepath.Clean(datasetAbsolute)
+		target = filepath.Join(
+			filepath.Dir(datasetAbsolute),
+			filepath.Base(datasetAbsolute)+".rkc-derived",
+			"synthesis",
+			profile,
+		)
+	}
+
+	resolved, err := safeoutput.ResolveTarget(target, datasetRoot)
+	if err != nil {
+		return "", err
+	}
+	datasetResolved, err := filepath.EvalSymlinks(datasetRoot)
+	if err != nil {
+		return "", fmt.Errorf("resolve verified dataset root: %w", err)
+	}
+	datasetResolved, err = filepath.Abs(datasetResolved)
+	if err != nil {
+		return "", fmt.Errorf("resolve verified dataset root: %w", err)
+	}
+	inside, err := pathIsWithin(datasetResolved, resolved)
+	if err != nil {
+		return "", fmt.Errorf("compare synthesis output with verified dataset: %w", err)
+	}
+	if inside {
+		return "", fmt.Errorf("%w: synthesis output must be outside verified dataset %s", safeoutput.ErrUnsafeTarget, datasetResolved)
+	}
+	if strings.TrimSpace(repositoryRoot) != "" {
+		resolved, err = safeoutput.ResolveTarget(resolved, repositoryRoot)
+		if err != nil {
+			return "", err
+		}
+		// ResolveTarget may canonicalize another existing parent. Recheck the
+		// dataset boundary after every canonicalization step.
+		inside, err = pathIsWithin(datasetResolved, resolved)
+		if err != nil {
+			return "", fmt.Errorf("compare synthesis output with verified dataset: %w", err)
+		}
+		if inside {
+			return "", fmt.Errorf("%w: synthesis output must be outside verified dataset %s", safeoutput.ErrUnsafeTarget, datasetResolved)
+		}
+	}
+	return resolved, nil
+}
+
+func pathIsWithin(parent, candidate string) (bool, error) {
+	relative, err := filepath.Rel(filepath.Clean(parent), filepath.Clean(candidate))
+	if err != nil {
+		return false, err
+	}
+	return relative == "." || (relative != ".." && !strings.HasPrefix(relative, ".."+string(filepath.Separator))), nil
 }
 
 func selectSynthesisSubjects(dataset *server.Dataset, references []string, query string, kinds map[string]struct{}, publicOnly bool, limit int) ([]rkcmodel.Node, error) {
@@ -456,16 +711,17 @@ func writeSynthesisMarkdown(path string, subject rkcmodel.Node, packet modelrunt
 		name = subject.Name
 	}
 	var builder strings.Builder
-	fmt.Fprintf(&builder, "---\nrkc_snapshot_id: %q\nrkc_node_id: %q\nrkc_packet_id: %q\nmodel_id: %q\nvalidated: true\n---\n\n", packet.SnapshotID, subject.ID, packet.PacketID, descriptor.ID)
-	fmt.Fprintf(&builder, "# %s\n\n", name)
+	fmt.Fprintf(&builder, "---\nrkc_snapshot_id: %q\nrkc_node_id: %q\nrkc_packet_id: %q\nmodel_id: %q\nvalidation: %q\n---\n\n", packet.SnapshotID, subject.ID, packet.PacketID, descriptor.ID, "structure-and-citations-checked")
+	fmt.Fprintf(&builder, "# %s\n\n", markdownPlain(name))
+	builder.WriteString("> Model-authored text below passed structural and citation-link checks. A citation is a trace to evidence, not deterministic proof that the evidence entails the statement.\n\n")
 	if validation.AcceptedSummary != "" {
-		builder.WriteString(validation.AcceptedSummary)
+		builder.WriteString(markdownPlain(validation.AcceptedSummary))
 		builder.WriteString("\n\n")
 	}
 	if len(validation.Accepted) > 0 {
-		builder.WriteString("## Accepted evidence-backed claims\n\n")
+		builder.WriteString("## Structurally accepted, citation-linked claims\n\n")
 		for _, claim := range validation.Accepted {
-			fmt.Fprintf(&builder, "- %s\n", claim.Text)
+			fmt.Fprintf(&builder, "- %s\n", markdownPlain(claim.Text))
 			fmt.Fprintf(&builder, "  - Evidence: `%s`\n", strings.Join(claim.EvidenceIDs, "`, `"))
 			fmt.Fprintf(&builder, "  - Certainty: `%s`; category: `%s`\n", claim.Certainty, claim.Category)
 		}
@@ -482,13 +738,21 @@ func writeSynthesisMarkdown(path string, subject rkcmodel.Node, packet modelrunt
 	return os.WriteFile(path, []byte(builder.String()), 0o644)
 }
 
+func markdownPlain(value string) string {
+	value = strings.Join(strings.Fields(value), " ")
+	return strings.NewReplacer(
+		"\\", "\\\\", "`", "\\`", "*", "\\*", "_", "\\_",
+		"[", "\\[", "]", "\\]", "<", "&lt;", ">", "&gt;",
+	).Replace(value)
+}
+
 func inventorySynthesisFiles(root string) ([]synthesisFile, error) {
 	var files []synthesisFile
 	err := filepath.WalkDir(root, func(path string, entry os.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
-		if entry.IsDir() || filepath.Base(path) == "manifest.json" {
+		if entry.IsDir() || filepath.Base(path) == "manifest.json" || entry.Name() == safeoutput.MarkerName {
 			return nil
 		}
 		data, err := os.ReadFile(path)

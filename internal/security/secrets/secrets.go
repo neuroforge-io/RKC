@@ -8,6 +8,7 @@ import (
 	"encoding/hex"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 )
 
@@ -128,7 +129,10 @@ func Redact(data []byte, findings []Finding) []byte {
 func makeFinding(data []byte, start, end int, kind string, confidence float64, key string) Finding {
 	startLine, startColumn := lineColumn(data, start)
 	endLine, endColumn := lineColumn(data, end)
-	digest := sha256.Sum256(data[start:end])
+	// Fingerprints identify a finding location; they deliberately do not hash
+	// the credential value, which would permit offline confirmation of
+	// low-entropy passwords from public output.
+	digest := sha256.Sum256([]byte(kind + ":" + strconv.Itoa(start) + ":" + strconv.Itoa(end)))
 	return Finding{Kind: kind, Confidence: confidence, StartByte: start, EndByte: end, StartLine: startLine, StartColumn: startColumn, EndLine: endLine, EndColumn: endColumn, Fingerprint: hex.EncodeToString(digest[:8]), KeyName: key}
 }
 

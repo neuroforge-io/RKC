@@ -75,6 +75,16 @@ func IsKnownArtifactKind(value string) bool   { _, ok := ArtifactKinds[value]; r
 func IsKnownArtifactStatus(value string) bool { _, ok := ArtifactStatuses[value]; return ok }
 func IsKnownEvidenceKind(value string) bool   { _, ok := EvidenceKinds[value]; return ok }
 func IsKnownSeverity(value string) bool       { _, ok := DiagnosticSeverities[value]; return ok }
+func IsKnownDocumentStatus(value string) bool { _, ok := DocumentStatuses[value]; return ok }
+func IsKnownClaimValidation(value string) bool {
+	_, ok := ClaimValidationStates[value]
+	return ok
+}
+func IsKnownClaimCertainty(value string) bool {
+	_, ok := ClaimCertaintyStates[value]
+	return ok
+}
+func IsKnownSnapshotStatus(value string) bool { _, ok := SnapshotStatuses[value]; return ok }
 
 func NormalizeResolution(value string) string {
 	value = strings.TrimSpace(strings.ToLower(value))

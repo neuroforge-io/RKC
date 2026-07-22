@@ -11,7 +11,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/repository-knowledge-compiler/rkc/internal/model"
+	"github.com/neuroforge-io/RKC/internal/model"
 )
 
 func writeIntegrations(bundle model.Bundle, opts Options) error {
