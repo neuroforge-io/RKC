@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -30,8 +31,16 @@ func TestRunDispatchAndUsage(t *testing.T) {
 			t.Fatalf("run(%q): output=%q err=%v", arg, output, err)
 		}
 	}
+	for _, args := range [][]string{{"version", "extra"}, {"help", "scan"}} {
+		if err := run(args); err == nil {
+			t.Fatalf("run(%v) accepted unexpected arguments", args)
+		}
+	}
 	if err := run([]string{"definitely-unknown"}); err == nil || !strings.Contains(err.Error(), "unknown command") {
 		t.Fatalf("unknown command error = %v", err)
+	}
+	if err := run([]string{"scan", "--help"}); err != nil {
+		t.Fatalf("command help should succeed: %v", err)
 	}
 	for _, args := range [][]string{
 		{"query"}, {"search"}, {"answer"}, {"ask"}, {"path"}, {"impact"},
@@ -55,6 +64,9 @@ func TestInitCommandStdoutCreateAndForce(t *testing.T) {
 	if err := cfg.Validate(); err != nil {
 		t.Fatalf("stdout configuration invalid: %v", err)
 	}
+	if cfg.SchemaURI != configurationSchemaURI {
+		t.Fatalf("stdout configuration schema URI = %q, want %q", cfg.SchemaURI, configurationSchemaURI)
+	}
 
 	path := filepath.Join(t.TempDir(), "nested", "rkc.json")
 	output, err = captureStdout(t, func() error { return runInit([]string{"--path", path}) })
@@ -76,6 +88,57 @@ func TestInitCommandStdoutCreateAndForce(t *testing.T) {
 	}
 	if err := runInit([]string{"unexpected"}); err == nil {
 		t.Fatal("init accepted a positional argument")
+	}
+
+	aliasPath := filepath.Join(t.TempDir(), "alias.json")
+	if _, err := captureStdout(t, func() error { return runInit([]string{"--out", aliasPath}) }); err != nil {
+		t.Fatalf("compatibility --out alias: %v", err)
+	}
+	if _, err := loadConfiguration(aliasPath); err != nil {
+		t.Fatalf("configuration written through --out is invalid: %v", err)
+	}
+	if err := runInit([]string{"--path", "one.json", "--out", "two.json"}); err == nil || !strings.Contains(err.Error(), "different files") {
+		t.Fatalf("conflicting init destinations = %v", err)
+	}
+	if err := runInit([]string{"--stdout", "--path", "ignored.json"}); err == nil || !strings.Contains(err.Error(), "cannot be combined") {
+		t.Fatalf("ambiguous stdout destination = %v", err)
+	}
+	if got, err := resolveInitPath("./rkc.json", "rkc.json"); err != nil || got != "./rkc.json" {
+		t.Fatalf("equivalent init destinations: got=%q err=%v", got, err)
+	}
+	if runtime.GOOS != "windows" {
+		symlinkRoot := t.TempDir()
+		target := filepath.Join(symlinkRoot, "elsewhere.json")
+		link := filepath.Join(symlinkRoot, "rkc.json")
+		if err := os.Symlink(target, link); err != nil {
+			t.Fatal(err)
+		}
+		if err := writeInitConfiguration(link, []byte("unsafe"), true); err == nil || !strings.Contains(err.Error(), "symbolic link") {
+			t.Fatalf("symlink configuration target = %v", err)
+		}
+		if _, err := os.Lstat(target); !os.IsNotExist(err) {
+			t.Fatalf("configuration symlink target was created: %v", err)
+		}
+	}
+}
+
+func TestInitFallsBackWhenHardLinksAreUnavailable(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "portable.json")
+	original := linkInitConfiguration
+	linkInitConfiguration = func(string, string) error {
+		return errors.New("hard links are unavailable")
+	}
+	t.Cleanup(func() { linkInitConfiguration = original })
+
+	data := []byte("portable\n")
+	if err := writeInitConfiguration(path, data, false); err != nil {
+		t.Fatalf("portable fallback: %v", err)
+	}
+	if got, err := os.ReadFile(path); err != nil || string(got) != string(data) {
+		t.Fatalf("portable fallback content = %q, %v", got, err)
+	}
+	if err := writeInitConfiguration(path, []byte("replacement"), false); err == nil || !strings.Contains(err.Error(), "use --force") {
+		t.Fatalf("portable fallback replaced an existing file: %v", err)
 	}
 }
 
@@ -112,6 +175,43 @@ func TestDoctorCommandReportsPassAndFatalFailure(t *testing.T) {
 	check := executableCheck("missing", "rkc-command-that-cannot-exist", "--version", false)
 	if check.Status != "fail" || check.Fatal {
 		t.Fatalf("missing executable check = %+v", check)
+	}
+	disabled := defaultConfiguration()
+	disabled.Plugins.PythonAST.Enabled = false
+	isolation := pythonIsolationCheck(disabled, nil)
+	if isolation.Status != "pass" || !strings.Contains(isolation.Detail, "portable") {
+		t.Fatalf("disabled Python isolation check = %+v", isolation)
+	}
+	if err := runDoctor([]string{"unexpected"}); err == nil || !strings.Contains(err.Error(), "does not accept positional") {
+		t.Fatalf("doctor positional argument = %v", err)
+	}
+	for input, want := range map[string]bool{
+		"Python 3.11.0": true,
+		"Python 3.13.2": true,
+		"Python 3.10.9": false,
+		"Python 2.7.18": false,
+	} {
+		got, err := pythonVersionSupported(input)
+		if err != nil || got != want {
+			t.Fatalf("pythonVersionSupported(%q) = %t, %v; want %t", input, got, err, want)
+		}
+	}
+	if _, err := pythonVersionSupported("not-python"); err == nil {
+		t.Fatal("malformed Python version was accepted")
+	}
+	strictConfig := defaultConfiguration()
+	strictConfig.Plugins.PythonAST.Interpreter = "rkc-python-that-cannot-exist"
+	strictData, err := json.Marshal(strictConfig)
+	if err != nil {
+		t.Fatal(err)
+	}
+	strictPath := filepath.Join(repository, "strict.json")
+	writeTestFile(t, strictPath, string(strictData))
+	strictOutput, strictErr := captureStdout(t, func() error {
+		return runDoctor([]string{"--config", strictPath, "--repository", repository, "--strict", "--json"})
+	})
+	if strictErr == nil || !strings.Contains(strictErr.Error(), "strict mode") || !strings.Contains(strictOutput, `"strict": true`) {
+		t.Fatalf("strict doctor: output=%q err=%v", strictOutput, strictErr)
 	}
 }
 

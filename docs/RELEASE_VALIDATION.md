@@ -1,25 +1,35 @@
 # Release validation
 
 The complete package is built only after `scripts/verify-release.sh` succeeds.
-That verifier materializes a clean detached copy of exact `HEAD`, runs the full
-sequence only inside the immutable checkout, confirms that its tracked and
+That verifier first rejects any tracked or non-ignored untracked source changes,
+selects a Python 3.11+ interpreter with every required distribution at the
+version pinned in `requirements-dev.txt`, materializes
+a clean detached copy of exact `HEAD`, runs the full sequence only inside the
+immutable checkout, confirms that its tracked and
 untracked source state stayed clean, and preserves the prior evidence until the
 complete validation and benchmark inventory can replace `dist/evidence` with one
 atomic directory exchange. Logs and the machine-readable summary are under
 `dist/evidence/validation`; raw benchmark outputs are under
 `dist/evidence/benchmark`.
 
+This package-version check catches validator dependency drift. It does not
+claim that a mutable local virtual environment is hermetic, reject unrelated
+installed distributions, or attest interpreter/package bytes. Release source
+and publication helpers are separately executed from immutable Git checkouts;
+cryptographic build provenance remains a planned release gate.
+
 ## Verification sequence
 
 | Step | Command | Purpose |
 |---|---|---|
 | Go modules | `make go-mod-verify` | download checksum-locked modules and verify cached source |
+| Python requirements | `make python-env-check` | require Python 3.11+ and each validation distribution at its pinned `requirements-dev.txt` version |
 | format | `make format-check` | canonical Go formatting |
 | vet | `make vet` | static Go diagnostics |
 | coverage gate | `make coverage` | all Go tests plus Python line/branch tests, inventory, and policy floors |
 | contracts | `make contracts` | schemas, examples, OpenAPI parity, WIT, SQLite |
 | docs | `make docs-check` | local links and code fences |
-| licenses | `python3 scripts/validate-licenses.py` | Apache and third-party notice boundaries |
+| licenses | `make licenses` | Apache and third-party notice boundaries using the version-checked validation interpreter |
 | model lock | `make model-lock-check` | optional runtime/model identities, hashes, licenses, and null-default policy |
 | build | `make build` | CGO-disabled `rkc` and `rkc-mcp` |
 | plugins | `make plugins` | manifest and lock digest verification |

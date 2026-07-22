@@ -1068,8 +1068,16 @@ class CompletePackageTests(unittest.TestCase):
         binaries = (scripts / "build-release-binaries.sh").read_text(encoding="utf-8")
         self.assertIn('export GOCACHE="$lane_go_cache"', reproducible)
         self.assertIn('export GOMODCACHE="$lane_module_cache"', reproducible)
+        self.assertIn(
+            'find "$WORK" -type d -exec chmod u+rwx {} +', reproducible
+        )
         self.assertIn("export GOFLAGS='-p=1 -modcacherw'", demo)
         self.assertIn("export GOFLAGS='-p=1 -modcacherw'", binaries)
+        for release_builder in (demo, binaries):
+            self.assertIn('TOOLCHAIN=$(awk', release_builder)
+            self.assertIn("export GOTOOLCHAIN=$TOOLCHAIN", release_builder)
+            self.assertIn('case "$(go version)" in', release_builder)
+            self.assertNotIn("GOTOOLCHAIN=local", release_builder)
         self.assertIn("-mod=readonly", demo)
         self.assertIn("-mod=readonly", binaries)
         self.assertIn("go mod verify", binaries)
@@ -1077,6 +1085,31 @@ class CompletePackageTests(unittest.TestCase):
         self.assertIn('mv "$WORK/evidence" "$RELEASE_STAGE/evidence"', reproducible)
         self.assertIn('--destination "$ROOT/dist/evidence"', verifier)
         self.assertIn("prior evidence is unchanged", verifier)
+        self.assertIn('"$ROOT/.venv/bin/python"', verifier)
+        self.assertIn("RKC_VALIDATION_PYTHON", verifier)
+        self.assertIn("python-environment", verifier)
+        self.assertIn('PYTHON="$VALIDATION_PYTHON"', verifier)
+        for script in (reproducible, verifier, demo, binaries):
+            self.assertIn("git_source_guard.py", script)
+            self.assertIn("publication", script)
+        self.assertIn('"$SOURCE/scripts/publish_directory.py"', verifier)
+        self.assertIn('"$TOOLS_SOURCE/scripts/publish_directory.py"', reproducible)
+        self.assertIn('--repository-root "$ROOT"', verifier)
+        self.assertIn('--repository-root "$ROOT"', reproducible)
+        self.assertIn('"$SOURCE/scripts/publish_file.py"', demo)
+        self.assertIn('"$SOURCE/scripts/publish_file.py"', binaries)
+
+    def test_package_script_can_run_directly_outside_repository(self) -> None:
+        script = Path(__file__).with_name("package-complete.py").resolve()
+        completed = subprocess.run(
+            [sys.executable, str(script), "--help"],
+            cwd=self.temporary.name,
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        self.assertIn("usage: package-complete.py", completed.stdout)
 
     def test_build_package_orchestrates_only_expected_inputs(self) -> None:
         for relative in PACKAGE.REQUIRED_INPUTS:
@@ -1144,6 +1177,8 @@ class CompletePackageTests(unittest.TestCase):
         output.write_bytes(b"zip")
         argv = ["package-complete.py", "--output", str(output), "--force"]
         with mock.patch.object(sys, "argv", argv), mock.patch.object(
+            PACKAGE, "require_clean_worktree"
+        ), mock.patch.object(
             PACKAGE, "prepare_output", return_value=output
         ), mock.patch.object(PACKAGE, "build_package"), mock.patch(
             "sys.stdout", new=io.StringIO()
@@ -1151,8 +1186,16 @@ class CompletePackageTests(unittest.TestCase):
             PACKAGE.main()
             self.assertEqual(json.loads(stdout.getvalue())["size_bytes"], 3)
         with mock.patch.object(sys, "argv", argv), mock.patch.object(
+            PACKAGE, "require_clean_worktree"
+        ), mock.patch.object(
             PACKAGE, "prepare_output", side_effect=PACKAGE.PackageError("no")
         ), self.assertRaisesRegex(SystemExit, "package error"):
+            PACKAGE.main()
+        with mock.patch.object(sys, "argv", argv), mock.patch.object(
+            PACKAGE,
+            "require_clean_worktree",
+            side_effect=PACKAGE.SourceGuardError("dirty source"),
+        ), self.assertRaisesRegex(SystemExit, "dirty source"):
             PACKAGE.main()
 
 

@@ -16,6 +16,12 @@ import (
 	"github.com/neuroforge-io/RKC/pkg/rkcmodel"
 )
 
+func TestScanRejectsNilContext(t *testing.T) {
+	if _, _, err := Scan(nil, Options{Root: t.TempDir()}); err == nil || !strings.Contains(err.Error(), "context is required") {
+		t.Fatalf("Scan nil context error = %v", err)
+	}
+}
+
 func TestScanRedactsCanonicalMarkdownAndIsDeterministic(t *testing.T) {
 	root := t.TempDir()
 	secret := "super-secret-value-7f4b60b17f"

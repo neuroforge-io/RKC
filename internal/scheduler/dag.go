@@ -72,6 +72,9 @@ type Options struct {
 
 func Execute(ctx context.Context, stages []Stage, options Options) (Report, error) {
 	started := time.Now()
+	if ctx == nil {
+		return Report{}, errors.New("scheduler context is required")
+	}
 	normalized, err := validateAndNormalize(stages)
 	if err != nil {
 		return Report{}, err
@@ -156,7 +159,10 @@ func executeStage(ctx context.Context, stage Stage, prior map[string]Result, opt
 		dependencyResults[dependency] = result
 		dependencyDigests = append(dependencyDigests, result.ObjectDigest)
 	}
-	key := CacheKey(stage.ID, stage.Version, append(stage.InputDigests, dependencyDigests...), stage.Configuration)
+	key, err := CacheKey(stage.ID, stage.Version, append(stage.InputDigests, dependencyDigests...), stage.Configuration)
+	if err != nil {
+		return Result{}, fmt.Errorf("compute cache key: %w", err)
+	}
 	if options.Cache != nil {
 		cached, ok, err := options.Cache.Load(ctx, key)
 		if err != nil {
@@ -186,7 +192,7 @@ func executeStage(ctx context.Context, stage Stage, prior map[string]Result, opt
 	return result, nil
 }
 
-func CacheKey(stageID, version string, inputDigests []string, configuration any) string {
+func CacheKey(stageID, version string, inputDigests []string, configuration any) (string, error) {
 	digests := append([]string(nil), inputDigests...)
 	sort.Strings(digests)
 	payload := struct {
@@ -195,9 +201,12 @@ func CacheKey(stageID, version string, inputDigests []string, configuration any)
 		InputDigests  []string `json:"input_digests"`
 		Configuration any      `json:"configuration,omitempty"`
 	}{stageID, version, digests, configuration}
-	data, _ := json.Marshal(payload)
+	data, err := json.Marshal(payload)
+	if err != nil {
+		return "", fmt.Errorf("encode stage cache-key inputs: %w", err)
+	}
 	sum := sha256.Sum256(data)
-	return "stage:" + hex.EncodeToString(sum[:])
+	return "stage:" + hex.EncodeToString(sum[:]), nil
 }
 
 func validateAndNormalize(stages []Stage) ([]Stage, error) {

@@ -73,6 +73,9 @@ type Options struct {
 }
 
 func Scan(ctx context.Context, opts Options) (rkcmodel.Bundle, rkcmodel.Coverage, error) {
+	if ctx == nil {
+		return rkcmodel.Bundle{}, rkcmodel.Coverage{}, errors.New("pipeline scan context is required")
+	}
 	root, err := filepath.Abs(opts.Root)
 	if err != nil {
 		return rkcmodel.Bundle{}, rkcmodel.Coverage{}, fmt.Errorf("resolve root: %w", err)

@@ -38,6 +38,13 @@ func TestIdentifiersAndDigestsAreStable(t *testing.T) {
 	if got := DigestJSON(make(chan int)); got != "" {
 		t.Fatalf("DigestJSON unsupported value = %q, want empty", got)
 	}
+	invalidBundle := Bundle{Nodes: []Node{{ID: "invalid", Attributes: map[string]any{"channel": make(chan int)}}}}
+	if _, err := CanonicalJSON(invalidBundle); err == nil || !strings.Contains(err.Error(), "encode canonical bundle") {
+		t.Fatalf("CanonicalJSON unsupported value error = %v", err)
+	}
+	if got := CanonicalDigest(invalidBundle); got != "" {
+		t.Fatalf("CanonicalDigest unsupported value = %q, want empty", got)
+	}
 }
 
 func TestSortBundleCanonicalizesEveryCollection(t *testing.T) {

@@ -12,6 +12,12 @@ import (
 	"time"
 )
 
+func TestOpenRejectsNilContext(t *testing.T) {
+	if _, err := Open(nil, t.TempDir(), Options{}); err == nil || !strings.Contains(err.Error(), "context is required") {
+		t.Fatalf("Open nil context error = %v", err)
+	}
+}
+
 func fakeGitExecutable(t *testing.T, failCall int) (string, string) {
 	t.Helper()
 	root := t.TempDir()

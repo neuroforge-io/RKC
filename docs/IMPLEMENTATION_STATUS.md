@@ -108,32 +108,42 @@ The labels below mean:
 `make release-verify` runs:
 
 1. checksum-locked Go module download and cache verification;
-2. Go formatting check;
-3. `go vet`;
-4. Go tests;
-5. Python analyzer tests;
-6. JSON Schema, OpenAPI, WIT, immutable SQLite migration, and lockfile validation;
-7. local Markdown-link and code-fence checks;
-8. model/runtime supply-chain lock validation;
-9. CGO-disabled binary builds;
-10. plugin manifest/lock validation;
-11. mixed-language scan and quality gate;
-12. deterministic duplicate scan comparison;
-13. HTTP API smoke test;
-14. MCP smoke test;
-15. constrained remote-Git acquisition test;
-16. Go race detector;
-17. self-analysis benchmark.
+2. Python 3.11+ and exact required validation-distribution version checks;
+3. Go formatting check;
+4. `go vet`;
+5. Go tests;
+6. Python analyzer tests;
+7. JSON Schema, OpenAPI, WIT, immutable SQLite migration, and lockfile validation;
+8. local Markdown-link and code-fence checks;
+9. model/runtime supply-chain lock validation;
+10. CGO-disabled binary builds;
+11. plugin manifest/lock validation;
+12. mixed-language scan and quality gate;
+13. deterministic duplicate scan comparison;
+14. HTTP API smoke test;
+15. MCP smoke test;
+16. constrained remote-Git acquisition test;
+17. Go race detector;
+18. self-analysis benchmark.
 
 `make safe-complete-package` runs that logged sequence inside the mandatory
-resource guard. Validation itself executes inside an immutable private checkout
-and atomically replaces `dist/evidence` only after the complete validation and
-benchmark inventory passes. Packaging then rebuilds binaries, SBOMs, and
+resource guard. Commit-bound release commands reject tracked or untracked source
+changes instead of silently validating an older `HEAD`. Validation itself uses
+the required distribution versions in `requirements-dev.txt`, executes inside
+an immutable private checkout, and atomically replaces `dist/evidence` only
+after the complete validation and benchmark inventory passes. Packaging then
+rebuilds binaries, SBOMs, and
 deterministic demo inputs in two detached checkouts with lane-private Go build
 and module caches, validates the exact successful raw evidence inventory, uses
 stored ZIP entries, and requires byte equality of the final commit/tree-bound
 archives. It publishes the ZIP, binaries, demo, and exact receipt-bound raw
 evidence with one atomic `dist/release` generation swap.
+
+The Python check is a dependency-version consistency gate, not a claim that a
+mutable local virtual environment is hermetic: it does not reject unrelated
+installed distributions or attest Python/package bytes. Release source and
+publishing helpers are commit-bound; interpreter isolation and artifact signing
+remain separate provenance work.
 
 CI runs the complete release/package path and `make self-catalogue` inside the
 delegated resource guard, then uploads the single `dist/release` generation and

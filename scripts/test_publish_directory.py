@@ -285,6 +285,21 @@ class PublishDirectoryTests(unittest.TestCase):
             self.assertEqual(PUBLISH.main(), 1)
             self.assertIn("publish directory: blocked", stderr.getvalue())
 
+    @unittest.skipUnless(sys.platform.startswith("linux"), "renameat2 requires Linux")
+    def test_explicit_repository_root_supports_immutable_helper(self) -> None:
+        outer = PUBLISH.ROOT / "outer"
+        (outer / "dist").mkdir(parents=True)
+        source = outer / "dist" / ".rkc-fixture.explicit" / "release"
+        source.mkdir(parents=True)
+        (source / "value.txt").write_text("explicit", encoding="utf-8")
+        destination = outer / "dist" / "release"
+        self.assertEqual(
+            PUBLISH.publish(source, destination, repository_root=outer), "created"
+        )
+        self.assertEqual(
+            (destination / "value.txt").read_text(encoding="utf-8"), "explicit"
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

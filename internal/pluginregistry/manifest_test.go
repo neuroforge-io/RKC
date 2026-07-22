@@ -283,8 +283,12 @@ func TestManifestAndLockDigestsAreDeterministic(t *testing.T) {
 	}
 	digest := LockDigest(lock)
 	reversed := Lockfile{SchemaVersion: lock.SchemaVersion, Plugins: []LockedPlugin{lock.Plugins[2], lock.Plugins[0], lock.Plugins[1]}}
+	originalOrder := []string{reversed.Plugins[0].ID + "@" + reversed.Plugins[0].Version, reversed.Plugins[1].ID + "@" + reversed.Plugins[1].Version, reversed.Plugins[2].ID + "@" + reversed.Plugins[2].Version}
 	if digest != LockDigest(reversed) || len(digest) != 64 {
 		t.Fatalf("LockDigest is not deterministic: %q vs %q", digest, LockDigest(reversed))
+	}
+	if got := []string{reversed.Plugins[0].ID + "@" + reversed.Plugins[0].Version, reversed.Plugins[1].ID + "@" + reversed.Plugins[1].Version, reversed.Plugins[2].ID + "@" + reversed.Plugins[2].Version}; !reflect.DeepEqual(got, originalOrder) {
+		t.Fatalf("LockDigest mutated caller order: %v != %v", got, originalOrder)
 	}
 }
 

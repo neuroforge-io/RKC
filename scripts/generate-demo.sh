@@ -2,6 +2,9 @@
 set -eu
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 cd "$ROOT"
+python3 scripts/git_source_guard.py \
+  --root "$ROOT" \
+  --operation "release demo generation"
 SOURCE_COMMIT=$(git rev-parse --verify 'HEAD^{commit}')
 SOURCE_TREE=$(git rev-parse --verify "${SOURCE_COMMIT}^{tree}")
 OUT=dist/demo
@@ -22,12 +25,27 @@ if [ "$(git -C "$SOURCE" rev-parse 'HEAD^{tree}')" != "$SOURCE_TREE" ] ||
   exit 1
 fi
 VERSION=$(tr -d '\n' < "$SOURCE/VERSION")
+TOOLCHAIN=$(awk '$1 == "toolchain" && NF == 2 { print $2 }' "$SOURCE/go.mod")
+case "$TOOLCHAIN" in
+  go[0-9]*.[0-9]*.[0-9]*) ;;
+  *)
+    echo "demo: go.mod must declare one exact Go toolchain" >&2
+    exit 1
+    ;;
+esac
 export GOENV=off
 export GOFLAGS='-p=1 -modcacherw'
 export GOFIPS140=off
-export GOTOOLCHAIN=local
+export GOTOOLCHAIN=$TOOLCHAIN
 export GOWORK=off
 unset GOEXPERIMENT GOAMD64 GOARM64
+case "$(go version)" in
+  "go version $TOOLCHAIN "*) ;;
+  *)
+    echo "demo: resolved Go executable does not match $TOOLCHAIN" >&2
+    exit 1
+    ;;
+esac
 (
   cd "$SOURCE"
   CGO_ENABLED=0 go build -mod=readonly -buildvcs=true -trimpath \
@@ -38,9 +56,13 @@ run_and_publish() {
   shift
   temporary="$WORK/$destination"
   "$@" >"$temporary"
-  python3 scripts/publish_file.py \
+  python3 "$SOURCE/scripts/git_source_guard.py" \
+    --root "$ROOT" \
+    --operation "release demo publication"
+  python3 "$SOURCE/scripts/publish_file.py" \
     --source "$temporary" \
     --destination "dist/$destination" \
+    --repository-root "$ROOT" \
     --mode 0644
 }
 run_and_publish demo-scan.txt "$WORK/rkc" scan --out "$OUT" --force "$SOURCE/examples"

@@ -133,6 +133,15 @@ class PublishFileTests(unittest.TestCase):
             self.assertEqual(PUBLISHER.main(), 1)
             self.assertIn("blocked", errors.getvalue())
 
+    def test_explicit_repository_root_supports_immutable_helper(self) -> None:
+        outer = Path(self.temporary.name) / "outer"
+        (outer / "dist").mkdir(parents=True)
+        source = PUBLISHER.ROOT / "source-explicit"
+        source.write_bytes(b"immutable helper")
+        destination = outer / "dist" / "result.txt"
+        PUBLISHER.publish(source, destination, 0o644, repository_root=outer)
+        self.assertEqual(destination.read_bytes(), b"immutable helper")
+
 
 if __name__ == "__main__":
     unittest.main()

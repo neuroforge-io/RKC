@@ -3,6 +3,7 @@ package mcpserver
 import (
 	"bytes"
 	"context"
+	"io"
 	"strings"
 	"testing"
 
@@ -25,5 +26,31 @@ func TestInitializeAndSearch(t *testing.T) {
 	text := output.String()
 	if !strings.Contains(text, ProtocolVersion) || !strings.Contains(text, "auth.Login") {
 		t.Fatalf("unexpected response: %s", text)
+	}
+}
+
+func TestServeRejectsInvalidRuntimeDependencies(t *testing.T) {
+	dataset := &server.Dataset{}
+	tests := []struct {
+		name   string
+		server *Server
+		ctx    context.Context
+		input  io.Reader
+		output io.Writer
+		want   string
+	}{
+		{name: "nil context", server: New(dataset, "test"), input: strings.NewReader(""), output: io.Discard, want: "context is required"},
+		{name: "nil input", server: New(dataset, "test"), ctx: context.Background(), output: io.Discard, want: "input is required"},
+		{name: "nil output", server: New(dataset, "test"), ctx: context.Background(), input: strings.NewReader(""), want: "output is required"},
+		{name: "nil server", ctx: context.Background(), input: strings.NewReader(""), output: io.Discard, want: "dataset is required"},
+		{name: "nil dataset", server: New(nil, "test"), ctx: context.Background(), input: strings.NewReader(""), output: io.Discard, want: "dataset is required"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			err := test.server.Serve(test.ctx, test.input, test.output)
+			if err == nil || !strings.Contains(err.Error(), test.want) {
+				t.Fatalf("Serve error = %v, want %q", err, test.want)
+			}
+		})
 	}
 }

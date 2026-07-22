@@ -17,6 +17,13 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
 
+try:
+    from scripts.git_source_guard import SourceGuardError, require_clean_worktree
+except ModuleNotFoundError as exc:
+    if exc.name not in {"scripts", "scripts.git_source_guard"}:
+        raise
+    from git_source_guard import SourceGuardError, require_clean_worktree
+
 ROOT = Path(__file__).resolve().parents[1]
 DIST = ROOT / "dist"
 TOP = "repository-knowledge-compiler-complete"
@@ -28,6 +35,7 @@ REQUIRED_INPUTS = (
 )
 RELEASE_STEPS = (
     "go-modules",
+    "python-environment",
     "format",
     "vet",
     "coverage",
@@ -1594,8 +1602,11 @@ def main() -> None:
     )
     args = parser.parse_args()
     try:
+        require_clean_worktree(ROOT, "complete package creation")
         output = prepare_output(args.output, args.force)
         build_package(output, args.force)
+    except SourceGuardError as exc:
+        raise SystemExit(f"package error: {exc}") from exc
     except PackageError as exc:
         raise SystemExit(f"package error: {exc}") from exc
     print(
