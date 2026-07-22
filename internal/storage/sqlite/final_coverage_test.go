@@ -392,7 +392,8 @@ func TestFinalReaderPointListAndCursorIntegrity(t *testing.T) {
 	})
 
 	t.Run("absent read-only cursor key", func(t *testing.T) {
-		database, path := productionReaderFixture(t)
+		database, _ := productionReaderFixture(t)
+		path := database.path
 		productionExec(t, database, "DELETE FROM schema_meta WHERE key = ?", readerCursorKeyName)
 		if err := database.Close(); err != nil {
 			t.Fatal(err)
