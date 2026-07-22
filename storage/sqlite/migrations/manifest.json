@@ -1,0 +1,20 @@
+{
+  "schema_version": "1.0",
+  "database_schema_version": "0.2.0",
+  "migrations": [
+    {
+      "version": 1,
+      "name": "initial",
+      "target_schema_version": "0.1.0",
+      "sha256": "648b7797e44c1346342959ec872ba3f210cac73d389b5c829f265b0c0cf91150",
+      "minimum_rkc": "0.3.0-reference"
+    },
+    {
+      "version": 2,
+      "name": "claims_conflicts_paths",
+      "target_schema_version": "0.2.0",
+      "sha256": "4a8f0853f4fc5fd3c2e1d5a3b5f17ad66c34b8585b892f46281d5b0fcaa105d2",
+      "minimum_rkc": "0.3.0-reference"
+    }
+  ]
+}
