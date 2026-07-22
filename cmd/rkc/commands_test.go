@@ -311,7 +311,7 @@ func TestSQLiteScanQueryAndIdempotentReplay(t *testing.T) {
 	database := filepath.Join(root, "rkc.sqlite")
 	output := filepath.Join(root, "atlas")
 	args := []string{
-		"--database", database, "--out", output, "--json", "--no-plugins", "--no-frameworks",
+		"--database", database, "--out", output, "--json", "--no-python", "--no-typescript", "--no-frameworks",
 		"--no-static-site", "--no-jsonl-graph", "--no-search-index", "--no-integrations", repository,
 	}
 	firstOutput, err := captureStdout(t, func() error { return runScan(args) })
