@@ -377,8 +377,8 @@ func TestProductionAbortAndRecoveryContracts(t *testing.T) {
 		}
 		result, err := database.Recover(ctx)
 		productionRequireError(t, err, rkcstore.ErrResourceExhausted)
-		if len(result.AbortedBuilds) != rkcstore.DefaultMemoryOptions().MaxOpenBuilds+1 {
-			t.Fatalf("bounded recovery catalogue = %v", result.AbortedBuilds)
+		if len(result.AbortedBuilds) != 0 {
+			t.Fatalf("failed recovery leaked an uncommitted result: %v", result.AbortedBuilds)
 		}
 		if got := productionCount(t, database, "SELECT COUNT(*) FROM builds WHERE state = 'open'"); got != rkcstore.DefaultMemoryOptions().MaxOpenBuilds+1 {
 			t.Fatalf("failed recovery mutated open build count to %d", got)
