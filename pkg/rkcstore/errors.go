@@ -22,6 +22,10 @@ const (
 	CodeCoverageMismatch  Code = "coverage_mismatch"
 	CodeResourceExhausted Code = "resource_exhausted"
 	CodeCanceled          Code = "canceled"
+	// CodeInternal reports a storage or operating-system failure that is not a
+	// caller validation error, transaction conflict, or cancellation. Callers
+	// must not reinterpret it as a safe compare-and-swap retry.
+	CodeInternal Code = "internal"
 )
 
 var (
@@ -38,6 +42,7 @@ var (
 	ErrCoverageMismatch  = errors.New("rkcstore: coverage mismatch")
 	ErrResourceExhausted = errors.New("rkcstore: resource exhausted")
 	ErrCanceled          = errors.New("rkcstore: operation canceled")
+	ErrInternal          = errors.New("rkcstore: internal storage failure")
 )
 
 var sentinelByCode = map[Code]error{
@@ -54,6 +59,7 @@ var sentinelByCode = map[Code]error{
 	CodeCoverageMismatch:  ErrCoverageMismatch,
 	CodeResourceExhausted: ErrResourceExhausted,
 	CodeCanceled:          ErrCanceled,
+	CodeInternal:          ErrInternal,
 }
 
 // ValidationFailure preserves the complete deterministic validation result.

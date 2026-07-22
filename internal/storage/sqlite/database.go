@@ -69,14 +69,15 @@ func DefaultOptions() Options {
 
 // Database owns a verified RKC SQLite database and its bounded connection pool.
 type Database struct {
-	db        *sql.DB
-	path      string
-	options   Options
-	closed    atomic.Bool
-	closeOne  sync.Once
-	closeErr  error
-	binding   *pathBinding
-	lifecycle sync.RWMutex
+	db           *sql.DB
+	path         string
+	options      Options
+	closed       atomic.Bool
+	closeOne     sync.Once
+	closeErr     error
+	binding      *pathBinding
+	writerLeases *writerLeaseManager
+	lifecycle    sync.RWMutex
 }
 
 // Open validates the path and immutable migration assets, opens SQLite with
@@ -102,16 +103,25 @@ func Open(ctx context.Context, options Options) (*Database, error) {
 	if err != nil {
 		return nil, err
 	}
+	writerLeases, err := openWriterLeaseManager(path)
+	if err != nil {
+		_ = binding.Close()
+		return nil, err
+	}
 
 	dsn := sqliteURI(normalized)
 	pool, err := sql.Open("sqlite", dsn)
 	if err != nil {
+		_ = writerLeases.close()
 		_ = binding.Close()
 		return nil, operationError("open driver", path, ErrCheckFailed, err)
 	}
 	pool.SetMaxOpenConns(normalized.ReadConnections + 1)
 	pool.SetMaxIdleConns(normalized.ReadConnections + 1)
-	database := &Database{db: pool, path: path, options: normalized, binding: binding}
+	database := &Database{
+		db: pool, path: path, options: normalized, binding: binding,
+		writerLeases: writerLeases,
+	}
 	fail := func(openErr error) (*Database, error) {
 		_ = database.Close()
 		return nil, openErr
@@ -176,6 +186,11 @@ func (d *Database) Close() error {
 		d.closed.Store(true)
 		if d.db != nil {
 			d.closeErr = d.db.Close()
+		}
+		if d.writerLeases != nil {
+			if err := d.writerLeases.close(); d.closeErr == nil {
+				d.closeErr = err
+			}
 		}
 		if d.binding != nil {
 			if err := d.binding.Close(); d.closeErr == nil {
