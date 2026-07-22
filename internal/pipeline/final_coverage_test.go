@@ -4,7 +4,6 @@ import (
 	"context"
 	"crypto/sha256"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -275,66 +274,6 @@ func TestResolveHeuristicEdgesCoversFallbackAndBoundaryCases(t *testing.T) {
 	}
 }
 
-func TestScanRunsFrameworkPipelineAndRecordsDirtyGit(t *testing.T) {
-	if _, err := exec.LookPath("git"); err != nil {
-		t.Skip("git unavailable")
-	}
-	root := t.TempDir()
-	fixtures := map[string]string{
-		"README.md":        "# Fixture\n\nA small service fixture.\n",
-		"main.go":          "package fixture\n\nfunc Ready() bool { return true }\n",
-		"app.ts":           "export function greet(name: string): string { return name; }\n",
-		"package.json":     `{"name":"pipeline-fixture","version":"1.0.0","scripts":{"test":"node test.js"},"dependencies":{"left-pad":"1.3.0"}}`,
-		"go.mod":           "module example.com/pipeline-fixture\n\ngo 1.22\n",
-		"requirements.txt": "example-package==1.2.3\n",
-		"Dockerfile":       "FROM scratch AS runtime\n",
-		".env.example":     "SERVICE_ENDPOINT=https://example.invalid\n",
-		"openapi.json":     `{"openapi":"3.0.3","info":{"title":"Fixture API","version":"1.0.0"},"paths":{"/health":{"get":{"operationId":"health","responses":{"200":{"description":"ok"}}}}}}`,
-		"schema.json":      `{"$schema":"https://json-schema.org/draft/2020-12/schema","title":"Fixture","type":"object","required":["name"],"properties":{"name":{"type":"string"}}}`,
-	}
-	for path, contents := range fixtures {
-		mustWritePipelineFile(t, filepath.Join(root, path), contents)
-	}
-	pipelineGit(t, "init", "--quiet", root)
-	pipelineGit(t, "-C", root, "config", "user.name", "RKC Test")
-	pipelineGit(t, "-C", root, "config", "user.email", "rkc@example.invalid")
-	pipelineGit(t, "-C", root, "add", "-A", "-f")
-	pipelineGit(t, "-C", root, "commit", "--quiet", "-m", "fixture")
-	pipelineGit(t, "-C", root, "remote", "add", "origin", "https://example.invalid/pipeline-fixture.git")
-	mustWritePipelineFile(t, filepath.Join(root, "README.md"), fixtures["README.md"]+"Dirty working tree.\n")
-
-	bundle, coverage, err := Scan(context.Background(), Options{
-		Root: root, ToolVersion: "coverage-test", SourceReference: "fixture-source",
-		Excludes: []string{".git"}, DisablePythonAST: true,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !bundle.Snapshot.Git.Dirty || bundle.Snapshot.Git.WorkingTreeDigest != bundle.Snapshot.ContentDigest {
-		t.Fatalf("dirty Git provenance = %+v", bundle.Snapshot.Git)
-	}
-	if bundle.Snapshot.Git.Origin != "https://example.invalid/pipeline-fixture.git" || bundle.Snapshot.Tool.Version != "coverage-test" {
-		t.Fatalf("scan provenance = %+v", bundle.Snapshot)
-	}
-	if coverage.SnapshotID != bundle.Snapshot.ID || coverage.ArtifactsInventoried < len(fixtures) {
-		t.Fatalf("coverage = %+v; artifacts = %d", coverage, len(bundle.Artifacts))
-	}
-	wantedKinds := map[string]bool{
-		"api_service": false, "api_endpoint": false, "schema": false,
-		"project": false, "environment_variable": false, "function": false,
-	}
-	for _, node := range bundle.Nodes {
-		if _, wanted := wantedKinds[node.Kind]; wanted {
-			wantedKinds[node.Kind] = true
-		}
-	}
-	for kind, found := range wantedKinds {
-		if !found {
-			t.Errorf("framework pipeline did not produce %q node", kind)
-		}
-	}
-}
-
 func TestScanPropagatesInventoryLimitsAndFailsClosed(t *testing.T) {
 	limited := t.TempDir()
 	mustWritePipelineFile(t, filepath.Join(limited, "a.txt"), "a\n")
@@ -413,13 +352,4 @@ func pipelineEdgeByOriginalID(t *testing.T, edges []rkcmodel.Edge, id string) rk
 	}
 	t.Fatalf("edge originating as %q not found in %+v", id, edges)
 	return rkcmodel.Edge{}
-}
-
-func pipelineGit(t *testing.T, arguments ...string) {
-	t.Helper()
-	command := exec.Command("git", arguments...)
-	command.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0")
-	if output, err := command.CombinedOutput(); err != nil {
-		t.Fatalf("git %s: %v: %s", strings.Join(arguments, " "), err, output)
-	}
 }

@@ -14,6 +14,7 @@ import (
 	"testing"
 	"time"
 
+	rkcexport "github.com/neuroforge-io/RKC/internal/export"
 	"github.com/neuroforge-io/RKC/internal/modelruntime"
 	"github.com/neuroforge-io/RKC/internal/safeoutput"
 	"github.com/neuroforge-io/RKC/pkg/rkcmodel"
@@ -125,45 +126,51 @@ func TestFinalHeadroomCheckCanonicalAndFilesystemFailures(t *testing.T) {
 }
 
 func TestFinalHeadroomSemanticDiffFailurePolicies(t *testing.T) {
-	repository, before, _ := makeScannedFixture(t)
-	root := filepath.Dir(repository)
-	writeTestFile(t, filepath.Join(repository, "main.go"), `package fixture
-
-// Alpha calls Beta.
-func Alpha() string { return Beta() }
-
-// Beta returns a changed value.
-func Beta() string { return "changed" }
-`)
-	riskOutput := filepath.Join(root, "risk-atlas")
-	if _, err := captureStdout(t, func() error {
-		return runScan([]string{
-			"--out", riskOutput, "--state-dir", "",
-			"--no-python", "--no-typescript", "--no-frameworks",
-			"--no-static-site", "--no-integrations", repository,
-		})
-	}); err != nil {
-		t.Fatalf("scan risk fixture: %v", err)
+	_, before, _ := makeScannedFixture(t)
+	baseline, err := loadDataset(before)
+	if err != nil {
+		t.Fatal(err)
 	}
-	err := runDiff([]string{"--fail-on-risk", before, riskOutput})
+
+	riskBundle := baseline.Bundle
+	riskBundle.Nodes = append([]rkcmodel.Node(nil), baseline.Bundle.Nodes...)
+	riskChanged := false
+	for index := range riskBundle.Nodes {
+		if riskBundle.Nodes[index].LogicalID != "" && riskBundle.Nodes[index].QualifiedName != "" {
+			riskBundle.Nodes[index].QualifiedName += ".renamed"
+			riskChanged = true
+			break
+		}
+	}
+	if !riskChanged {
+		t.Fatal("fixture has no node suitable for a logical-name risk change")
+	}
+	riskOutput := filepath.Join(t.TempDir(), "risk-atlas")
+	if err := rkcexport.WriteAll(riskBundle, rkcmodel.BuildCoverage(riskBundle), rkcexport.Options{Output: riskOutput}); err != nil {
+		t.Fatalf("write risk fixture: %v", err)
+	}
+	err = runDiff([]string{"--fail-on-risk", before, riskOutput})
 	if err == nil || !strings.Contains(err.Error(), "risk change") {
 		t.Fatalf("risk diff policy = %v", err)
 	}
 
-	writeTestFile(t, filepath.Join(repository, "main.go"), `package fixture
-
-// Alpha no longer calls the removed public Beta symbol.
-func Alpha() string { return "alpha" }
-`)
-	breakingOutput := filepath.Join(root, "breaking-atlas")
-	if _, err := captureStdout(t, func() error {
-		return runScan([]string{
-			"--out", breakingOutput, "--state-dir", "",
-			"--no-python", "--no-typescript", "--no-frameworks",
-			"--no-static-site", "--no-integrations", repository,
-		})
-	}); err != nil {
-		t.Fatalf("scan breaking fixture: %v", err)
+	breakingBundle := baseline.Bundle
+	breakingBundle.Nodes = append([]rkcmodel.Node(nil), baseline.Bundle.Nodes...)
+	breakingChanged := false
+	for index := range breakingBundle.Nodes {
+		node := &breakingBundle.Nodes[index]
+		if node.PublicSurface || node.Visibility == "public" || node.Visibility == "exported" {
+			node.Signature += " changed"
+			breakingChanged = true
+			break
+		}
+	}
+	if !breakingChanged {
+		t.Fatal("fixture has no public node suitable for a breaking signature change")
+	}
+	breakingOutput := filepath.Join(t.TempDir(), "breaking-atlas")
+	if err := rkcexport.WriteAll(breakingBundle, rkcmodel.BuildCoverage(breakingBundle), rkcexport.Options{Output: breakingOutput}); err != nil {
+		t.Fatalf("write breaking fixture: %v", err)
 	}
 	err = runDiff([]string{"--fail-on-breaking", before, breakingOutput})
 	if err == nil || !strings.Contains(err.Error(), "breaking change") {

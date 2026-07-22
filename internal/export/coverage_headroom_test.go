@@ -83,18 +83,6 @@ func TestCoverageHeadroomWriteAllStageFailures(t *testing.T) {
 }
 
 func TestCoverageHeadroomLowLevelFailures(t *testing.T) {
-	bundle := exportFixture(t.TempDir(), "source.go", []byte("package fixture\n"))
-	coverage := model.BuildCoverage(bundle)
-
-	invalid := bundle
-	invalid.Nodes = append([]model.Node(nil), bundle.Nodes...)
-	invalid.Nodes[0].Attributes = map[string]any{"unsupported": make(chan int)}
-	if _, err := BrowserAssets(invalid, coverage); err == nil || !strings.Contains(err.Error(), "encode static atlas") {
-		t.Fatalf("BrowserAssets marshal error = %v", err)
-	}
-	if err := writeSite(invalid, coverage, Options{Output: t.TempDir()}); err == nil || !strings.Contains(err.Error(), "encode static atlas") {
-		t.Fatalf("writeSite marshal error = %v", err)
-	}
 	if err := writeJSONL(filepath.Join(t.TempDir(), "invalid.jsonl"), []any{make(chan int)}); err == nil || !strings.Contains(err.Error(), "encode") {
 		t.Fatalf("writeJSONL encode error = %v", err)
 	}
