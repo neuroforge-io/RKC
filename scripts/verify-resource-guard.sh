@@ -35,14 +35,38 @@ sh scripts/with-rkc-limits.sh sh -c '
         echo "rkc resource guard verification: $*" >&2
         exit 1
     }
-    relative=$(awk -F: '\''$1 == "0" { print $3 }'\'' /proc/self/cgroup)
+    relative=
+    while IFS=: read -r hierarchy controllers path; do
+        [ "$hierarchy" = 0 ] && relative=$path
+    done < /proc/self/cgroup
     [ -n "$relative" ] || fail "guarded process has no unified cgroup path"
     unit=${relative##*/}
     case "$unit" in
         rkc-low-*.scope|rkc-low-*.service) ;;
-        *) fail "guarded process is not inside an RKC unit: $unit" ;;
+        *)
+            # A hosted runner may place the transient service in a cgroup
+            # namespace whose visible root is `/`. In that case, prove the
+            # exact service identity through both its injected name and
+            # systemd MainPID instead of trusting a hidden host-relative path.
+            [ "$relative" = / ] || fail "guarded process is not inside an RKC unit: $unit"
+            unit=${RKC_RESOURCE_GUARD_UNIT:-}
+            case "$unit" in
+                rkc-low-*.service) ;;
+                *) fail "guarded cgroup namespace has no bound RKC service identity" ;;
+            esac
+            main_pid=$(systemctl --user show --property=MainPID --value "$unit")
+            [ "$main_pid" = "$$" ] || fail "guarded service MainPID does not match the probe"
+            ;;
     esac
     cgroup=/sys/fs/cgroup$relative
+control_group=$(systemctl --user show --property=ControlGroup --value "$unit")
+case "$control_group" in
+    */"$unit") ;;
+    *) fail "systemd control group is not bound to the guarded unit: $control_group" ;;
+esac
+if [ "$relative" = / ] && [ -d "/sys/fs/cgroup$control_group" ]; then
+    cgroup=/sys/fs/cgroup$control_group
+fi
     [ -d "$cgroup" ] || fail "guard cgroup is unavailable: $cgroup"
 
     [ "$(cat "$cgroup/cpu.weight")" = "1" ] || fail "CPUWeight is not 1"

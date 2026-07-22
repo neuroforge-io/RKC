@@ -69,7 +69,9 @@ case "$mode" in
             --scope \
             --collect \
             --quiet \
+            --expand-environment=no \
             --unit "$unit" \
+            --setenv="RKC_RESOURCE_GUARD_UNIT=$unit" \
             --property CPUWeight=1 \
             --property IOWeight=1 \
             --property CPUQuota=100% \
@@ -92,11 +94,13 @@ case "$mode" in
             --quiet \
             --service-type=exec \
             --same-dir \
+            --expand-environment=no \
             --unit "$unit" \
             --setenv="HOME=${HOME:-/nonexistent}" \
             --setenv="PATH=$PATH" \
             --setenv="XDG_RUNTIME_DIR=$XDG_RUNTIME_DIR" \
             --setenv="DBUS_SESSION_BUS_ADDRESS=$DBUS_SESSION_BUS_ADDRESS" \
+            --setenv="RKC_RESOURCE_GUARD_UNIT=$unit" \
             --property CPUWeight=1 \
             --property IOWeight=1 \
             --property CPUQuota=100% \
