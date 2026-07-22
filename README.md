@@ -180,15 +180,24 @@ asset; RKC does not silently download, select, or trust a model.
 
 ## Ask a grounded repository question
 
-`rkc answer` combines bounded lexical retrieval and graph expansion with the
-grounded-answer validator. The model receives only a size-limited canonical
-evidence packet. Output is either citation-backed claims or an explicit
-abstention, and it is written to standard output rather than fed back into the
-atlas:
+`rkc answer` combines bounded lexical, semantic, or hybrid retrieval and graph
+expansion with the grounded-answer validator. Lexical remains the zero-model
+default; semantic and hybrid modes reuse the same qualified, corpus-bound
+vector path documented above. The generation model receives only a
+size-limited canonical evidence packet. Output is either citation-backed claims
+or an explicit abstention, and it is written to standard output rather than fed
+back into the atlas:
 
 ```sh
 ./bin/rkc answer \
   --dir /tmp/rkc-output \
+  --mode hybrid \
+  --vector-index /tmp/rkc-output.rkc-derived/search/<embedding-asset-id>/vector-index.json \
+  --embedding-model-lock models/models.lock.json \
+  --embedding-asset '<qualified-embedding-asset-id>' \
+  --embedding-model /path/to/embedding-model.gguf \
+  --llama-embedding /path/to/llama-embedding \
+  --embedding-runtime-receipt /path/to/build-receipt.json \
   --graph-hops 1 \
   --model-lock models/models.lock.json \
   --model-asset '<qualified-generation-asset-id>' \
@@ -198,9 +207,10 @@ atlas:
   'How does snapshot publication fail closed?'
 ```
 
-The same exact model/runtime qualification boundary applies here. With the
-committed lock's current null default, the command intentionally refuses model
-execution rather than presenting an unqualified answer.
+The same exact model/runtime qualification boundary applies to both retrieval
+and generation. With the committed lock's current null defaults, the command
+intentionally refuses model execution rather than presenting an unqualified
+answer.
 
 ## Build evidence packets without running a model
 

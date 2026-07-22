@@ -177,9 +177,11 @@ unsupported inference, malformed certainty, and excess output.
 
 Model results are written under `derived/` and cannot mutate `bundle.json`.
 The user-facing `rkc answer` path likewise writes only to standard output. It
-uses lexical retrieval plus bounded graph expansion, re-resolves every selected
-record against the canonical bundle, and either returns validated cited claims
-or abstains.
+uses lexical, semantic, or hybrid retrieval plus bounded graph expansion,
+re-resolves every selected record against the canonical bundle, and either
+returns validated cited claims or abstains. Lexical remains the zero-model
+default; model-backed modes require exact qualified retrieval and generation
+bindings.
 
 Semantic and hybrid query modes use a vector index outside the verified atlas.
 They are fail-closed: the model lock, GGUF digest, Apache-2.0 qualification

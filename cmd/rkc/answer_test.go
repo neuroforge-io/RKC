@@ -26,6 +26,27 @@ type cliAnswerProvider struct {
 	closed     int
 }
 
+type cliAnswerEmbedder struct {
+	descriptor search.EmbeddingDescriptor
+	calls      int
+}
+
+func (embedder *cliAnswerEmbedder) Descriptor() search.EmbeddingDescriptor {
+	return embedder.descriptor
+}
+
+func (embedder *cliAnswerEmbedder) Embed(ctx context.Context, texts []string) ([][]float32, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	embedder.calls++
+	result := make([][]float32, len(texts))
+	for index := range result {
+		result[index] = []float32{1, 0}
+	}
+	return result, nil
+}
+
 func (provider *cliAnswerProvider) Descriptor() modelruntime.ModelDescriptor {
 	return provider.descriptor
 }
@@ -126,6 +147,179 @@ func TestRunAnswerReturnsProviderCloseFailure(t *testing.T) {
 	}
 }
 
+func TestRunAnswerUsesQualifiedSemanticSessionAndClosesIt(t *testing.T) {
+	bundle := cliAnswerBundle()
+	lexical := search.BuildFromBundle(bundle)
+	embedder := &cliAnswerEmbedder{descriptor: search.EmbeddingDescriptor{
+		Provider: "test", Model: "qualified-embedding", Digest: "sha256:embedding", Dimensions: 2,
+	}}
+	closeCalls := 0
+	provider := &cliAnswerProvider{descriptor: modelruntime.ModelDescriptor{ID: "qualified-test-model"}}
+	var output bytes.Buffer
+	var prepared semanticQueryOptions
+	dependencies := answerDependencies{
+		loadDataset: func(string) (*server.Dataset, error) {
+			return &server.Dataset{
+				Root: t.TempDir(), Bundle: bundle, Search: lexical,
+				Graph: graph.Build(bundle.Nodes, bundle.Edges),
+			}, nil
+		},
+		prepareSemantic: func(_ context.Context, _ string, actual *search.Index, options semanticQueryOptions) (*answerSemanticSession, error) {
+			if actual != lexical {
+				t.Fatal("semantic preparation did not receive the canonical lexical index")
+			}
+			prepared = options
+			return &answerSemanticSession{
+				Vector: cliAnswerVectorIndex(lexical, embedder.descriptor), Embedder: embedder,
+				close: func() error { closeCalls++; return nil },
+			}, nil
+		},
+		openProvider: func(qualifiedGenerationRequest) (*qualifiedGenerationSession, error) {
+			return &qualifiedGenerationSession{Provider: provider}, nil
+		},
+		stdout: &output,
+		now:    time.Now,
+	}
+	err := runAnswerContext(context.Background(), []string{
+		"--mode", "hybrid", "--vector-index", "/tmp/rkc-answer-vector.json",
+		"--embedding-model", "/models/qualified.gguf", "--embedding-asset", "embedding-v1",
+		"--embedding-runtime-receipt", "/runtime/receipt.json", "--objects", "node",
+		"--graph-hops", "1", "--json", "What", "is", "Alpha?",
+	}, dependencies)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if closeCalls != 1 || provider.closed != 1 || embedder.calls != 1 {
+		t.Fatalf("semantic closes=%d provider closes=%d embedding calls=%d", closeCalls, provider.closed, embedder.calls)
+	}
+	if prepared.VectorIndexPath != "/tmp/rkc-answer-vector.json" || prepared.ModelPath != "/models/qualified.gguf" ||
+		prepared.AssetID != "embedding-v1" || prepared.RuntimeReceiptPath != "/runtime/receipt.json" {
+		t.Fatalf("semantic options = %+v", prepared)
+	}
+	var result groundedanswer.Result
+	if err := json.Unmarshal(output.Bytes(), &result); err != nil {
+		t.Fatal(err)
+	}
+	if result.Status != groundedanswer.StatusAnswered || result.Provenance.Retrieval.Mode != "hybrid-rrf+graph" {
+		t.Fatalf("semantic answer = %+v", result)
+	}
+}
+
+func TestRunAnswerSemanticSetupCancellationAndFailuresCloseResources(t *testing.T) {
+	bundle := cliAnswerBundle()
+	lexical := search.BuildFromBundle(bundle)
+	embedder := &cliAnswerEmbedder{descriptor: search.EmbeddingDescriptor{Dimensions: 2}}
+	newSession := func(closeCalls *int, closeErr error) *answerSemanticSession {
+		return &answerSemanticSession{
+			Vector: cliAnswerVectorIndex(lexical, embedder.descriptor), Embedder: embedder,
+			close: func() error { *closeCalls++; return closeErr },
+		}
+	}
+	base := func() answerDependencies {
+		return answerDependencies{
+			loadDataset: func(string) (*server.Dataset, error) {
+				return &server.Dataset{
+					Root: t.TempDir(), Bundle: bundle, Search: lexical,
+					Graph: graph.Build(bundle.Nodes, bundle.Edges),
+				}, nil
+			},
+			stdout: &bytes.Buffer{}, now: time.Now,
+		}
+	}
+	t.Run("cancelled after setup", func(t *testing.T) {
+		ctx, cancel := context.WithCancel(context.Background())
+		closeCalls, providerCalls := 0, 0
+		dependencies := base()
+		dependencies.prepareSemantic = func(context.Context, string, *search.Index, semanticQueryOptions) (*answerSemanticSession, error) {
+			cancel()
+			return newSession(&closeCalls, nil), nil
+		}
+		dependencies.openProvider = func(qualifiedGenerationRequest) (*qualifiedGenerationSession, error) {
+			providerCalls++
+			return nil, errors.New("must not open")
+		}
+		err := runAnswerContext(ctx, []string{"--mode", "semantic", "question"}, dependencies)
+		if !errors.Is(err, context.Canceled) || closeCalls != 1 || providerCalls != 0 {
+			t.Fatalf("error=%v semantic closes=%d provider calls=%d", err, closeCalls, providerCalls)
+		}
+	})
+	t.Run("preparer returns session and error", func(t *testing.T) {
+		closeCalls, providerCalls := 0, 0
+		dependencies := base()
+		dependencies.prepareSemantic = func(context.Context, string, *search.Index, semanticQueryOptions) (*answerSemanticSession, error) {
+			return newSession(&closeCalls, errors.New("close failed")), errors.New("prepare failed")
+		}
+		dependencies.openProvider = func(qualifiedGenerationRequest) (*qualifiedGenerationSession, error) {
+			providerCalls++
+			return nil, nil
+		}
+		err := runAnswerContext(context.Background(), []string{"--mode", "semantic", "question"}, dependencies)
+		if err == nil || !strings.Contains(err.Error(), "prepare failed") || !strings.Contains(err.Error(), "close failed") || closeCalls != 1 || providerCalls != 0 {
+			t.Fatalf("error=%v semantic closes=%d provider calls=%d", err, closeCalls, providerCalls)
+		}
+	})
+	t.Run("generation setup fails", func(t *testing.T) {
+		closeCalls := 0
+		dependencies := base()
+		dependencies.prepareSemantic = func(context.Context, string, *search.Index, semanticQueryOptions) (*answerSemanticSession, error) {
+			return newSession(&closeCalls, errors.New("embedding close failed")), nil
+		}
+		dependencies.openProvider = func(qualifiedGenerationRequest) (*qualifiedGenerationSession, error) {
+			return nil, errors.New("generation setup failed")
+		}
+		err := runAnswerContext(context.Background(), []string{"--mode", "semantic", "question"}, dependencies)
+		if err == nil || !strings.Contains(err.Error(), "generation setup failed") || !strings.Contains(err.Error(), "embedding close failed") || closeCalls != 1 {
+			t.Fatalf("error=%v semantic closes=%d", err, closeCalls)
+		}
+	})
+}
+
+func TestRunAnswerSemanticOptionsFailClosedBeforeLoading(t *testing.T) {
+	loadCalls := 0
+	dependencies := answerDependencies{
+		loadDataset:  func(string) (*server.Dataset, error) { loadCalls++; return nil, errors.New("must not load") },
+		openProvider: func(qualifiedGenerationRequest) (*qualifiedGenerationSession, error) { return nil, nil },
+		stdout:       &bytes.Buffer{}, now: time.Now,
+	}
+	for _, args := range [][]string{
+		{"--embedding-model", "/model.gguf", "question"},
+		{"--mode", "semantic", "question"},
+		{"--mode", "remote", "question"},
+	} {
+		err := runAnswerContext(context.Background(), args, dependencies)
+		if err == nil {
+			t.Fatalf("args %v unexpectedly succeeded", args)
+		}
+	}
+	if loadCalls != 0 {
+		t.Fatalf("invalid semantic options loaded dataset %d times", loadCalls)
+	}
+}
+
+func TestAnswerSemanticSessionCloseIsIdempotentAndCancellationIsEarly(t *testing.T) {
+	closeCalls := 0
+	session := &answerSemanticSession{close: func() error { closeCalls++; return errors.New("closed") }}
+	if err := session.Close(); err == nil || err.Error() != "closed" {
+		t.Fatalf("first close error = %v", err)
+	}
+	if err := session.Close(); err == nil || closeCalls != 1 {
+		t.Fatalf("second close error=%v calls=%d", err, closeCalls)
+	}
+	if err := (*answerSemanticSession)(nil).Close(); err != nil {
+		t.Fatalf("nil close error = %v", err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	_, err := prepareQualifiedAnswerSemantic(ctx, "", nil, semanticQueryOptions{})
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("cancelled semantic preparation = %v", err)
+	}
+	_, err = prepareQualifiedAnswerSemantic(nil, "", nil, semanticQueryOptions{})
+	if err == nil || !strings.Contains(err.Error(), "context is required") {
+		t.Fatalf("nil semantic context = %v", err)
+	}
+}
+
 func TestQualifiedGenerationDefaultsFailClosed(t *testing.T) {
 	_, err := openQualifiedGenerationProvider(qualifiedGenerationRequest{
 		Provider: "disabled", ContextTokens: 4096, MaximumOutputTokens: 256,
@@ -198,5 +392,16 @@ func cliAnswerBundle() rkcmodel.Bundle {
 		Evidence: []rkcmodel.Evidence{{
 			ID: "e-alpha", Kind: "syntax", Method: "ast", Confidence: 1, Detail: "Alpha declaration.",
 		}},
+	}
+}
+
+func cliAnswerVectorIndex(lexical *search.Index, descriptor search.EmbeddingDescriptor) *search.VectorIndex {
+	records := make([]search.VectorRecord, 0, len(lexical.Documents))
+	for id := range lexical.Documents {
+		records = append(records, search.VectorRecord{DocumentID: id, Values: []float32{1, 0}})
+	}
+	return &search.VectorIndex{
+		Version: search.VectorIndexVersion, Descriptor: descriptor,
+		Documents: lexical.Documents, Vectors: records,
 	}
 }

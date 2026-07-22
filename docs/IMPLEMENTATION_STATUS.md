@@ -67,7 +67,7 @@ The labels below mean:
 | pinned native `llama.cpp` bootstrap | Implemented | exact source digest, CPU-only portable/native profiles, guarded build |
 | cgroup, priority, CPU-only and RSS policy | Partial | guarded Linux path implemented; portable non-Linux hard limits pending |
 | claim/summary validation | Implemented | citations and identifiers checked |
-| grounded repository answers | Implemented | CLI uses bounded lexical/graph evidence, canonical re-resolution, validation, and abstention; qualified generation binding required |
+| grounded repository answers | Implemented | CLI uses bounded lexical/semantic/hybrid plus graph evidence, canonical re-resolution, validation, and abstention; qualified embedding/generation bindings required for model-backed modes |
 | real GGUF benchmark below 2.5 GiB | Planned | generation and embedding candidates are unqualified and not defaults |
 | remote model providers | Planned | policy/egress controls required |
 

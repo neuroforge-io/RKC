@@ -111,8 +111,11 @@ func newCommand(ctx context.Context, config Config, priorityCheck func() error) 
 		return nil, errors.New("resource guard unit prefix contains unsupported characters")
 	}
 	unit := fmt.Sprintf("%s-%d-%d.service", prefix, os.Getpid(), time.Now().UnixNano())
+	// Receipt-bound executable and model arguments are opaque bytes. Prevent
+	// systemd-run from treating dollar-prefixed substrings as environment
+	// references and silently changing the command after validation.
 	arguments := []string{
-		"--user", "--wait", "--pipe", "--collect", "--quiet", "--service-type=exec", "--unit", unit,
+		"--user", "--wait", "--pipe", "--collect", "--quiet", "--expand-environment=no", "--service-type=exec", "--unit", unit,
 		"--property", "CPUWeight=1",
 		"--property", "IOWeight=1",
 		"--property", "CPUQuota=100%",

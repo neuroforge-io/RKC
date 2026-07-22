@@ -31,6 +31,7 @@ var ErrInvalidRequest = errors.New("invalid answer request")
 // provenance, and the displayed question cannot describe different requests.
 type Request struct {
 	Question       string
+	RetrievalMode  retrieval.Mode
 	Kinds          map[string]struct{}
 	Languages      map[string]struct{}
 	ObjectTypes    map[string]struct{}
@@ -68,8 +69,11 @@ func New(
 	return &Service{bundle: bundle, retrieval: engine, grounder: grounder}, nil
 }
 
-// Answer performs lexical retrieval with optional bounded graph expansion and
-// then re-resolves every hit from the canonical bundle before generation.
+// Answer performs the requested retrieval with optional bounded graph
+// expansion and then re-resolves every hit from the canonical bundle before
+// generation. An omitted mode deliberately defaults to lexical retrieval;
+// semantic and hybrid modes fail closed unless the service was configured with
+// both a vector index and an embedding provider.
 func (service *Service) Answer(ctx context.Context, request Request) (groundedanswer.Result, error) {
 	if service == nil || service.retrieval == nil || service.grounder == nil {
 		return groundedanswer.Result{}, errors.New("answer service is not configured")
@@ -96,6 +100,15 @@ func (service *Service) Answer(ctx context.Context, request Request) (groundedan
 	if request.GraphNodeLimit < 1 || request.GraphNodeLimit > maximumGraphNodeLimit {
 		return groundedanswer.Result{}, fmt.Errorf("%w: graph node limit must be between 1 and %d", ErrInvalidRequest, maximumGraphNodeLimit)
 	}
+	mode := request.RetrievalMode
+	if mode == "" {
+		mode = retrieval.ModeLexical
+	}
+	switch mode {
+	case retrieval.ModeLexical, retrieval.ModeSemantic, retrieval.ModeHybrid:
+	default:
+		return groundedanswer.Result{}, fmt.Errorf("%w: unsupported retrieval mode %q", ErrInvalidRequest, mode)
+	}
 
 	retrieved, err := service.retrieval.Search(ctx, search.Query{
 		Text:        question,
@@ -105,7 +118,7 @@ func (service *Service) Answer(ctx context.Context, request Request) (groundedan
 		PathPrefix:  request.PathPrefix,
 		Limit:       request.Limit,
 	}, retrieval.Options{
-		Mode:           retrieval.ModeLexical,
+		Mode:           mode,
 		GraphHops:      request.GraphHops,
 		GraphNodeLimit: request.GraphNodeLimit,
 	})

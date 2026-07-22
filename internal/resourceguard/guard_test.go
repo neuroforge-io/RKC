@@ -233,13 +233,14 @@ func TestConfigEnvironmentAndGuardArguments(t *testing.T) {
 	}
 	if runtime.GOOS == "linux" {
 		command, err := newCommand(context.Background(), Config{
-			Executable: "/bin/true", Environment: SanitizedModelEnvironment(nil), MaximumRSSBytes: 128 << 20, UnitPrefix: "rkc-test",
+			Executable: "/bin/true", Arguments: []string{"literal-$RKC_MODEL", "literal-${RKC_MODEL}"},
+			Environment: SanitizedModelEnvironment(nil), MaximumRSSBytes: 128 << 20, UnitPrefix: "rkc-test",
 		}, func() error { return nil })
 		if err != nil {
 			t.Fatal(err)
 		}
 		arguments := strings.Join(command.cmd.Args, " ")
-		for _, required := range []string{"CPUWeight=1", "IOWeight=1", "CPUQuota=100%", "MemoryHigh=", "MemoryMax=134217728", "MemorySwapMax=", "TasksMax=128", "OOMPolicy=stop", "choom -n 750", "ionice -c 3", "nice -n 19", "env -i"} {
+		for _, required := range []string{"--expand-environment=no", "CPUWeight=1", "IOWeight=1", "CPUQuota=100%", "MemoryHigh=", "MemoryMax=134217728", "MemorySwapMax=", "TasksMax=128", "OOMPolicy=stop", "choom -n 750", "ionice -c 3", "nice -n 19", "env -i", "literal-$RKC_MODEL", "literal-${RKC_MODEL}"} {
 			if !strings.Contains(arguments, required) {
 				t.Errorf("guard arguments missing %q: %s", required, arguments)
 			}

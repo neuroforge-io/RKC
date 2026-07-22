@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/signal"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 	"unicode"
@@ -18,14 +19,70 @@ import (
 	"github.com/neuroforge-io/RKC/internal/groundedanswer"
 	"github.com/neuroforge-io/RKC/internal/modelruntime"
 	"github.com/neuroforge-io/RKC/internal/retrieval"
+	"github.com/neuroforge-io/RKC/internal/search"
 	"github.com/neuroforge-io/RKC/internal/server"
 )
 
 type answerDependencies struct {
-	loadDataset  func(string) (*server.Dataset, error)
-	openProvider func(qualifiedGenerationRequest) (*qualifiedGenerationSession, error)
-	stdout       io.Writer
-	now          func() time.Time
+	loadDataset     func(string) (*server.Dataset, error)
+	openProvider    func(qualifiedGenerationRequest) (*qualifiedGenerationSession, error)
+	prepareSemantic func(context.Context, string, *search.Index, semanticQueryOptions) (*answerSemanticSession, error)
+	stdout          io.Writer
+	now             func() time.Time
+}
+
+// answerSemanticSession owns the embedding process used for one answer. Close
+// is idempotent so every error and cancellation path can release it safely.
+type answerSemanticSession struct {
+	Vector    *search.VectorIndex
+	Embedder  search.EmbeddingProvider
+	close     func() error
+	closeOnce sync.Once
+	closeErr  error
+}
+
+func (session *answerSemanticSession) Close() error {
+	if session == nil {
+		return nil
+	}
+	session.closeOnce.Do(func() {
+		if session.close != nil {
+			session.closeErr = session.close()
+		}
+	})
+	return session.closeErr
+}
+
+func prepareQualifiedAnswerSemantic(
+	ctx context.Context,
+	datasetRoot string,
+	lexical *search.Index,
+	options semanticQueryOptions,
+) (*answerSemanticSession, error) {
+	if ctx == nil {
+		return nil, errors.New("semantic answer context is required")
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	vector, embedder, err := prepareSemanticQuery(ctx, datasetRoot, lexical, options)
+	if err != nil {
+		return nil, err
+	}
+	if vector == nil || embedder == nil {
+		if embedder != nil {
+			return nil, errors.Join(
+				errors.New("semantic query preparation returned incomplete resources"),
+				embedder.Close(),
+			)
+		}
+		return nil, errors.New("semantic query preparation returned incomplete resources")
+	}
+	session := &answerSemanticSession{Vector: vector, Embedder: embedder, close: embedder.Close}
+	if err := ctx.Err(); err != nil {
+		return nil, errors.Join(err, session.Close())
+	}
+	return session, nil
 }
 
 func runAnswer(args []string) error {
@@ -33,7 +90,8 @@ func runAnswer(args []string) error {
 	defer stop()
 	return runAnswerContext(ctx, args, answerDependencies{
 		loadDataset: loadDataset, openProvider: openQualifiedGenerationProvider,
-		stdout: os.Stdout, now: time.Now,
+		prepareSemantic: prepareQualifiedAnswerSemantic,
+		stdout:          os.Stdout, now: time.Now,
 	})
 }
 
@@ -63,6 +121,14 @@ func runAnswerContext(ctx context.Context, args []string, dependencies answerDep
 	limit := fs.Int("limit", 20, "maximum lexical retrieval results")
 	graphHops := fs.Int("graph-hops", cfg.Search.GraphExpansionHops, "bounded graph expansion hops after lexical retrieval")
 	graphNodeLimit := fs.Int("graph-node-limit", 500, "maximum graph nodes inspected during expansion")
+	modeValue := fs.String("mode", "lexical", "retrieval mode: lexical, semantic, or hybrid")
+	vectorIndexPath := fs.String("vector-index", "", "persisted semantic vector-index JSON (outside the verified atlas)")
+	buildVectorIndex := fs.Bool("build-vector-index", false, "build and publish a new vector index before answering")
+	embeddingModel := fs.String("embedding-model", "", "qualified GGUF embedding model")
+	embeddingExecutable := fs.String("llama-embedding", "llama-embedding", "path to the receipt-bound llama-embedding executable")
+	embeddingModelLock := fs.String("embedding-model-lock", defaultSynthesisModelLockPath(), "checksum-pinned embedding model lock")
+	embeddingAsset := fs.String("embedding-asset", "", "qualified embedding asset ID; defaults to the lock default")
+	embeddingRuntimeReceipt := fs.String("embedding-runtime-receipt", "", "llama.cpp embedding runtime build receipt")
 	taskValue := fs.String("task", string(modelruntime.TaskModuleSummary), "module_summary, execution_explanation, symbol_summary, or documentation_gap_analysis")
 	providerType := fs.String("provider", cfg.Model.Provider, "model provider: llama.cpp")
 	modelPath := fs.String("model", cfg.Model.ModelPath, "qualified GGUF generation model file")
@@ -91,6 +157,23 @@ func runAnswerContext(ctx context.Context, args []string, dependencies answerDep
 	}
 	if fs.NArg() == 0 {
 		return errors.New("question text is required")
+	}
+	mode, err := parseQueryRetrievalMode(*modeValue)
+	if err != nil {
+		return err
+	}
+	semanticOptionSet := false
+	fs.Visit(func(option *flag.Flag) {
+		switch option.Name {
+		case "vector-index", "build-vector-index", "embedding-model", "llama-embedding", "embedding-model-lock", "embedding-asset", "embedding-runtime-receipt":
+			semanticOptionSet = true
+		}
+	})
+	if mode == retrieval.ModeLexical && semanticOptionSet {
+		return errors.New("embedding and vector-index options require --mode semantic or --mode hybrid")
+	}
+	if mode != retrieval.ModeLexical && dependencies.prepareSemantic == nil {
+		return errors.New("answer semantic dependency is unavailable")
 	}
 	question := strings.TrimSpace(strings.Join(fs.Args(), " "))
 	if question == "" {
@@ -130,6 +213,39 @@ func runAnswerContext(ctx context.Context, args []string, dependencies answerDep
 	if err := ctx.Err(); err != nil {
 		return err
 	}
+	engine := &retrieval.Engine{Lexical: dataset.Search, Graph: dataset.Graph}
+	var semantic *answerSemanticSession
+	if mode != retrieval.ModeLexical {
+		semantic, err = dependencies.prepareSemantic(ctx, dataset.Root, dataset.Search, semanticQueryOptions{
+			VectorIndexPath: *vectorIndexPath, BuildVectorIndex: *buildVectorIndex,
+			ModelPath: *embeddingModel, ExecutablePath: *embeddingExecutable,
+			ModelLockPath: *embeddingModelLock, AssetID: *embeddingAsset,
+			RuntimeReceiptPath: *embeddingRuntimeReceipt,
+		})
+		if err != nil {
+			if semantic != nil {
+				err = errors.Join(err, semantic.Close())
+			}
+			return err
+		}
+		if semantic == nil || semantic.Vector == nil || semantic.Embedder == nil {
+			incompleteErr := errors.New("semantic answer preparation returned an incomplete session")
+			if semantic != nil {
+				incompleteErr = errors.Join(incompleteErr, semantic.Close())
+			}
+			return incompleteErr
+		}
+		defer func() {
+			if closeErr := semantic.Close(); closeErr != nil {
+				returnErr = errors.Join(returnErr, fmt.Errorf("close answer embedding provider: %w", closeErr))
+			}
+		}()
+		engine.Vector = semantic.Vector
+		engine.Embedder = semantic.Embedder
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+	}
 	generation, err := dependencies.openProvider(qualifiedGenerationRequest{
 		Provider: *providerType, ModelPath: *modelPath, LlamaCLI: *llamaCLI,
 		ModelLock: *modelLock, ModelAsset: *modelAsset, RuntimeReceipt: *runtimeReceipt,
@@ -153,7 +269,7 @@ func runAnswerContext(ctx context.Context, args []string, dependencies answerDep
 	}
 	service, err := answerapp.New(
 		dataset.Bundle,
-		&retrieval.Engine{Lexical: dataset.Search, Graph: dataset.Graph},
+		engine,
 		generation.Provider,
 		groundingOptions,
 	)
@@ -165,7 +281,8 @@ func runAnswerContext(ctx context.Context, args []string, dependencies answerDep
 		Question: question, Kinds: splitSet(*kinds), Languages: splitSet(*languages),
 		ObjectTypes: splitSet(*objects), PathPrefix: strings.TrimSpace(*pathPrefix),
 		Limit: *limit, GraphHops: *graphHops, GraphNodeLimit: *graphNodeLimit,
-		Task: task, Inference: generation.Inference, Deadline: &deadline,
+		RetrievalMode: mode,
+		Task:          task, Inference: generation.Inference, Deadline: &deadline,
 	})
 	if err != nil {
 		return err
