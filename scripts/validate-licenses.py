@@ -59,6 +59,14 @@ EXPECTED_EXPLICIT_REQUIREMENTS = {
     "modernc.org/libc": "v1.74.1",
     "modernc.org/sqlite": "v1.54.0",
 }
+# Go retains the checksum of a transitive module's older go.mod when that
+# metadata participates in minimal-version selection. It is not a resolved or
+# shipped module version, so govern it separately from the reviewed build list.
+EXPECTED_GO_MOD_COMPATIBILITY_SUMS = {
+    ("golang.org/x/sys", "v0.6.0/go.mod"): (
+        "h1:oPkhp1MJrh7nUepCBck5+mAzfO9JrbApNNgaTdGDITg="
+    ),
+}
 EXPECTED_MODULES: dict[str, dict[str, object]] = {
     "github.com/dustin/go-humanize": {
         "version": "v1.0.1",
@@ -705,7 +713,9 @@ def validate_dependency_boundary() -> None:
 
     sum_entries, go_sum_failures = parse_go_sum(go_sum)
     failures.extend(go_sum_failures)
-    expected_sum_entries: dict[tuple[str, str], str] = {}
+    expected_sum_entries: dict[tuple[str, str], str] = dict(
+        EXPECTED_GO_MOD_COMPATIBILITY_SUMS
+    )
     for path, expected in EXPECTED_MODULES.items():
         version = expected["version"]
         module_sum = expected["module_sum"]

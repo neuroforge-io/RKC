@@ -192,6 +192,7 @@ class LicenseValidationTests(unittest.TestCase):
         self,
         expected_modules: dict[str, dict[str, object]],
         roots: dict[str, str],
+        compatibility_sums: dict[tuple[str, str], str] | None = None,
     ) -> dict[str, object]:
         """Run dependency validation with the fixture's pinned policy."""
         LICENSES.ERRORS.clear()
@@ -206,6 +207,7 @@ class LicenseValidationTests(unittest.TestCase):
                 "example.test/lib": "v1.2.3",
                 "example.test/sqlite": "v4.5.6",
             },
+            EXPECTED_GO_MOD_COMPATIBILITY_SUMS=(compatibility_sums or {}),
             EXPECTED_MODULES=expected_modules,
         ):
             LICENSES.validate_dependency_boundary()
@@ -433,6 +435,39 @@ class LicenseValidationTests(unittest.TestCase):
         result = self.validate_dependency_fixture(expected, roots)
         self.assertFalse(result["ok"])
         self.assertIn("missing or unreadable", str(result["detail"]))
+
+    def test_dependency_boundary_go_mod_compatibility_sum_is_exact(self) -> None:
+        expected, roots = self.dependency_fixture()
+        key = ("example.test/legacy", "v0.1.0/go.mod")
+        digest = "h1:oPkhp1MJrh7nUepCBck5+mAzfO9JrbApNNgaTdGDITg="
+        path = LICENSES.ROOT / "go.sum"
+        lines = path.read_text(encoding="utf-8").splitlines()
+        lines.append(f"{key[0]} {key[1]} {digest}")
+        path.write_text("\n".join(sorted(lines)) + "\n", encoding="utf-8")
+
+        result = self.validate_dependency_fixture(
+            expected, roots, compatibility_sums={key: digest}
+        )
+        self.assertTrue(result["ok"], result)
+
+        path.write_text(
+            path.read_text(encoding="utf-8").replace(digest, "h1:" + "A" * 43 + "="),
+            encoding="utf-8",
+        )
+        result = self.validate_dependency_fixture(
+            expected, roots, compatibility_sums={key: digest}
+        )
+        self.assertFalse(result["ok"])
+        self.assertIn("checksum drift", str(result["detail"]))
+
+        expected, roots = self.dependency_fixture()
+        path = LICENSES.ROOT / "go.sum"
+        lines = path.read_text(encoding="utf-8").splitlines()
+        lines.append(f"{key[0]} {key[1]} {digest}")
+        path.write_text("\n".join(sorted(lines)) + "\n", encoding="utf-8")
+        result = self.validate_dependency_fixture(expected, roots)
+        self.assertFalse(result["ok"])
+        self.assertIn("unknown module entry", str(result["detail"]))
 
     def test_dependency_boundary_rejects_license_hash_path_and_absence(self) -> None:
         expected, roots = self.dependency_fixture()
