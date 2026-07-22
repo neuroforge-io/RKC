@@ -8,6 +8,7 @@ import io
 import json
 import runpy
 import shutil
+import sqlite3
 import tempfile
 import unittest
 from contextlib import contextmanager, redirect_stdout
@@ -94,10 +95,117 @@ class ValidateContractsTests(unittest.TestCase):
         namespace = self.validator_namespace()
         validate = namespace["validate_sqlite_migrations"]
         detail = validate()  # type: ignore[operator]
-        self.assertEqual(detail["migration_count"], 2)
-        self.assertEqual(detail["database_schema_version"], "0.2.0")
+        self.assertEqual(detail["migration_count"], 3)
+        self.assertEqual(detail["database_schema_version"], "0.3.0")
         self.assertRegex(detail["manifest_sha256"], r"^[0-9a-f]{64}$")
         self.assertRegex(detail["catalog_sha256"], r"^[0-9a-f]{64}$")
+        self.assertEqual(
+            detail["publication_contract"],
+            {
+                "contract": "transactional-canonical-v1",
+                "journal_migration_count": 3,
+                "canonical_status": "committed",
+                "legacy_projection_status": "complete",
+                "legacy_v02_upgrade_policy": "empty-only-explicit-backfill-required",
+            },
+        )
+
+    def test_sqlite_publication_contract_helpers_fail_closed(self) -> None:
+        namespace = self.validator_namespace()
+        error = namespace["MigrationContractError"]
+        validate_publication = namespace["validate_sqlite_publication_contract"]
+        expect_rejection = namespace["expect_sqlite_integrity_rejection"]
+
+        connection = sqlite3.connect(":memory:")
+        try:
+            with self.assertRaisesRegex(error, "publication columns drifted"):
+                validate_publication(connection)  # type: ignore[operator]
+            with self.assertRaisesRegex(error, "admitted a successful statement"):
+                expect_rejection(  # type: ignore[operator]
+                    connection,
+                    "SELECT 1",
+                    (),
+                    "a successful statement",
+                )
+        finally:
+            connection.close()
+
+    def test_sqlite_v03_upgrade_rejects_populated_legacy_catalogues(self) -> None:
+        namespace = self.validator_namespace()
+        error = namespace["MigrationContractError"]
+        validate_eligibility = namespace["validate_sqlite_v03_upgrade_eligibility"]
+        migrations = ROOT / "storage" / "sqlite" / "migrations"
+
+        connection = sqlite3.connect(":memory:")
+        try:
+            connection.executescript(
+                (migrations / "0001_initial.sql").read_text(encoding="utf-8")
+            )
+            connection.executescript(
+                (migrations / "0002_claims_conflicts_paths.sql").read_text(
+                    encoding="utf-8"
+                )
+            )
+            validate_eligibility(connection)  # type: ignore[operator]
+            connection.execute(
+                """
+                INSERT INTO repositories(
+                  repository_id, display_name, created_at, metadata_json
+                ) VALUES (?, ?, ?, ?)
+                """,
+                ("legacy-repository", "legacy", "2026-01-01T00:00:00Z", "{}"),
+            )
+            connection.commit()
+
+            with self.assertRaisesRegex(error, "requires an explicit lossless backfill"):
+                validate_eligibility(connection)  # type: ignore[operator]
+            with self.assertRaises(sqlite3.IntegrityError):
+                connection.executescript(
+                    (
+                        migrations / "0003_transactional_publication.sql"
+                    ).read_text(encoding="utf-8")
+                )
+            connection.rollback()
+            self.assertEqual(
+                connection.execute(
+                    "SELECT value FROM schema_meta WHERE key = 'schema_version'"
+                ).fetchone(),
+                ("0.2.0",),
+            )
+            self.assertIsNone(
+                connection.execute(
+                    "SELECT 1 FROM sqlite_schema WHERE name = 'builds'"
+                ).fetchone()
+            )
+            connection.execute(
+                "DELETE FROM repositories WHERE repository_id = ?",
+                ("legacy-repository",),
+            )
+            connection.execute(
+                """
+                INSERT INTO search_fts(
+                  snapshot_id, object_type, object_id, title,
+                  qualified_name, signature, body
+                ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                ("legacy", "node", "node", "title", "name", "sig", "body"),
+            )
+            connection.commit()
+            with self.assertRaisesRegex(error, "search_fts"):
+                validate_eligibility(connection)  # type: ignore[operator]
+            with self.assertRaises(sqlite3.IntegrityError):
+                connection.executescript(
+                    (
+                        migrations / "0003_transactional_publication.sql"
+                    ).read_text(encoding="utf-8")
+                )
+            connection.rollback()
+            self.assertEqual(
+                connection.execute("SELECT COUNT(*) FROM search_fts").fetchone(),
+                (1,),
+            )
+        finally:
+            connection.close()
 
     def test_sqlite_migrations_fail_closed_on_file_and_manifest_drift(self) -> None:
         namespace = self.validator_namespace()
@@ -130,6 +238,16 @@ class ValidateContractsTests(unittest.TestCase):
             with self.assertRaisesRegex(error, "directory entries drifted"):
                 validate(root)  # type: ignore[operator]
 
+        with sqlite_contract_fixture() as root:
+
+            def rewrite_shipped_history(document: dict[str, object]) -> None:
+                migrations = document["migrations"]
+                migrations[0]["name"] = "rewritten_initial"  # type: ignore[index]
+
+            expected = rewrite_manifest(root, rewrite_shipped_history)
+            with self.assertRaisesRegex(error, "immutable migration history drifted"):
+                validate(root, expected)  # type: ignore[operator]
+
     def test_sqlite_migrations_fail_closed_on_order_and_version_drift(self) -> None:
         namespace = self.validator_namespace()
         validate = namespace["validate_sqlite_migrations"]
@@ -156,7 +274,7 @@ class ValidateContractsTests(unittest.TestCase):
         with sqlite_contract_fixture() as root:
 
             def drift_final(document: dict[str, object]) -> None:
-                document["database_schema_version"] = "0.3.0"
+                document["database_schema_version"] = "0.4.0"
 
             expected = rewrite_manifest(root, drift_final)
             with self.assertRaisesRegex(error, "final migration target"):
@@ -229,13 +347,19 @@ class ValidateContractsTests(unittest.TestCase):
         error = namespace["MigrationContractError"]
 
         with sqlite_contract_fixture() as root:
-            path = root / "storage" / "sqlite" / "migrations" / "0001_initial.sql"
+            path = (
+                root
+                / "storage"
+                / "sqlite"
+                / "migrations"
+                / "0003_transactional_publication.sql"
+            )
             path.write_bytes(path.read_bytes().replace(b"\n", b"\r\n"))
             digest = hashlib.sha256(path.read_bytes()).hexdigest()
 
             def replace_digest(document: dict[str, object]) -> None:
                 migrations = document["migrations"]
-                migrations[0]["sha256"] = digest  # type: ignore[index]
+                migrations[2]["sha256"] = digest  # type: ignore[index]
 
             expected = rewrite_manifest(root, replace_digest)
             with self.assertRaisesRegex(error, "not canonical UTF-8/LF"):
@@ -252,19 +376,31 @@ class ValidateContractsTests(unittest.TestCase):
                 validate(root)  # type: ignore[operator]
 
         with sqlite_contract_fixture() as root:
+            schema = root / "storage" / "sqlite" / "schema.sql"
+            schema.write_text(
+                schema.read_text(encoding="utf-8").replace(
+                    "'transactional_publication',\n    '0.3.0',",
+                    "'transactional_publication_drift',\n    '0.3.0',",
+                ),
+                encoding="utf-8",
+            )
+            with self.assertRaisesRegex(error, "migration journal history drifted"):
+                validate(root)  # type: ignore[operator]
+
+        with sqlite_contract_fixture() as root:
             path = (
                 root
                 / "storage"
                 / "sqlite"
                 / "migrations"
-                / "0002_claims_conflicts_paths.sql"
+                / "0003_transactional_publication.sql"
             )
             path.write_text("THIS IS NOT SQL;\n", encoding="utf-8")
             digest = hashlib.sha256(path.read_bytes()).hexdigest()
 
             def replace_digest(document: dict[str, object]) -> None:
                 migrations = document["migrations"]
-                migrations[1]["sha256"] = digest  # type: ignore[index]
+                migrations[2]["sha256"] = digest  # type: ignore[index]
 
             expected = rewrite_manifest(root, replace_digest)
             with self.assertRaisesRegex(error, "SQLite migration execution failed"):

@@ -1,6 +1,6 @@
 {
   "schema_version": "1.0",
-  "database_schema_version": "0.2.0",
+  "database_schema_version": "0.3.0",
   "migrations": [
     {
       "version": 1,
@@ -14,6 +14,13 @@
       "name": "claims_conflicts_paths",
       "target_schema_version": "0.2.0",
       "sha256": "4a8f0853f4fc5fd3c2e1d5a3b5f17ad66c34b8585b892f46281d5b0fcaa105d2",
+      "minimum_rkc": "0.3.0-reference"
+    },
+    {
+      "version": 3,
+      "name": "transactional_publication",
+      "target_schema_version": "0.3.0",
+      "sha256": "340a18941b1db769620a364e8893669636b96cbc966f2750739d1f93bacbe2cc",
       "minimum_rkc": "0.3.0-reference"
     }
   ]

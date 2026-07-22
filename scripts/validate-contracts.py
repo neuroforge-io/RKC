@@ -48,7 +48,135 @@ SELF_BENCHMARK_EXCLUSIONS = SAFE_DEFAULT_EXCLUSIONS | frozenset(
     }
 )
 SQLITE_MIGRATION_MANIFEST_SHA256 = (
-    "d5bbcec6025773be9f8dfe23da4b43e3a0dbf1092fdfc6b51ad0911e7910ffb4"
+    "1f260e2d4a63278d372e3c172e22aac6035c9fc92b73cd283cdaf69643b225d0"
+)
+SQLITE_IMMUTABLE_MIGRATION_HISTORY = {
+    1: (
+        "initial",
+        "648b7797e44c1346342959ec872ba3f210cac73d389b5c829f265b0c0cf91150",
+    ),
+    2: (
+        "claims_conflicts_paths",
+        "4a8f0853f4fc5fd3c2e1d5a3b5f17ad66c34b8585b892f46281d5b0fcaa105d2",
+    ),
+}
+SQLITE_REFERENCE_MIGRATION_APPLIED_AT = "2026-07-22T00:00:00Z"
+SQLITE_V02_CONTENT_TABLES = (
+    "repositories",
+    "snapshots",
+    "artifacts",
+    "logical_entities",
+    "nodes",
+    "evidence",
+    "node_evidence",
+    "edges",
+    "edge_evidence",
+    "documents",
+    "document_sections",
+    "section_evidence",
+    "chunks",
+    "embeddings",
+    "diagnostics",
+    "tool_runs",
+    "jobs",
+    "cache_entries",
+    "audit_events",
+    "search_fts",
+    "conflicts",
+    "claims",
+    "execution_paths",
+    "coverage_records",
+)
+SQLITE_PUBLICATION_TABLE_COLUMNS = {
+    "repositories": (
+        "repository_id",
+        "canonical_origin",
+        "display_name",
+        "created_at",
+        "metadata_json",
+        "current_snapshot_id",
+    ),
+    "schema_migrations": (
+        "version",
+        "name",
+        "target_schema_version",
+        "sha256",
+        "applied_at",
+    ),
+    "builds": (
+        "build_id",
+        "repository_id",
+        "base_current_snapshot_id",
+        "parent_snapshot_id",
+        "expected_schema",
+        "state",
+        "metadata_json",
+        "recovery_state",
+        "recovery_owner",
+        "recovery_started_at",
+        "recovery_json",
+        "abort_reason",
+        "committed_snapshot_id",
+        "created_at",
+        "updated_at",
+        "validated_at",
+        "finished_at",
+    ),
+    "staged_canonical_records": (
+        "build_id",
+        "record_family",
+        "record_id",
+        "ordinal",
+        "canonical_record_json",
+        "canonical_record_sha256",
+    ),
+    "canonical_snapshots": (
+        "snapshot_id",
+        "repository_id",
+        "parent_snapshot_id",
+        "build_id",
+        "schema_version",
+        "publication_status",
+        "legacy_projection_status",
+        "canonical_snapshot_json",
+        "canonical_bundle_json",
+        "canonical_digest",
+        "published_at",
+        "metadata_json",
+    ),
+    "canonical_snapshot_records": (
+        "snapshot_id",
+        "record_family",
+        "record_id",
+        "ordinal",
+        "canonical_record_json",
+        "canonical_record_sha256",
+    ),
+}
+SQLITE_PUBLICATION_SCHEMA_OBJECTS = frozenset(
+    {
+        ("index", "idx_builds_recovery"),
+        ("index", "idx_builds_repository_state"),
+        ("index", "idx_canonical_snapshots_repository_published"),
+        ("trigger", "builds_closed_delete_guard"),
+        ("trigger", "builds_closed_update_guard"),
+        ("trigger", "builds_close_staging_guard"),
+        ("trigger", "builds_commit_snapshot_guard"),
+        ("trigger", "builds_initial_state_guard"),
+        ("trigger", "builds_state_transition_guard"),
+        ("trigger", "canonical_snapshot_records_delete_guard"),
+        ("trigger", "canonical_snapshot_records_insert_guard"),
+        ("trigger", "canonical_snapshot_records_update_guard"),
+        ("trigger", "canonical_snapshots_build_open_insert_guard"),
+        ("trigger", "canonical_snapshots_delete_guard"),
+        ("trigger", "canonical_snapshots_update_guard"),
+        ("trigger", "repositories_current_snapshot_insert_guard"),
+        ("trigger", "repositories_current_snapshot_committed_guard"),
+        ("trigger", "repositories_current_snapshot_repository_guard"),
+        ("trigger", "staged_canonical_records_delete_guard"),
+        ("trigger", "staged_canonical_records_insert_guard"),
+        ("trigger", "staged_canonical_records_update_guard"),
+    }
 )
 SQLITE_MIGRATION_MANIFEST_KEYS = frozenset(
     {"schema_version", "database_schema_version", "migrations"}
@@ -105,6 +233,504 @@ def sqlite_catalog(connection: sqlite3.Connection) -> list[tuple[str, str, str, 
         ORDER BY type, name, tbl_name, sql
         """
     ).fetchall()
+
+
+def expect_sqlite_integrity_rejection(
+    connection: sqlite3.Connection,
+    statement: str,
+    parameters: tuple[object, ...],
+    label: str,
+) -> None:
+    try:
+        connection.execute(statement, parameters)
+    except sqlite3.IntegrityError:
+        return
+    raise MigrationContractError(f"SQLite publication contract admitted {label}")
+
+
+def validate_sqlite_v03_upgrade_eligibility(
+    connection: sqlite3.Connection,
+) -> None:
+    """Fail closed when a v0.2 database requires an explicit lossless backfill."""
+    populated = [
+        table
+        for table in SQLITE_V02_CONTENT_TABLES
+        if connection.execute(f'SELECT 1 FROM "{table}" LIMIT 1').fetchone()
+        is not None
+    ]
+    migration_require(
+        not populated,
+        "populated SQLite v0.2 database requires an explicit lossless backfill: "
+        + ", ".join(populated),
+    )
+
+
+def validate_sqlite_publication_contract(
+    connection: sqlite3.Connection,
+) -> dict[str, object]:
+    """Probe the v0.3 lossless transactional publication schema."""
+    for table, expected_columns in SQLITE_PUBLICATION_TABLE_COLUMNS.items():
+        observed_columns = tuple(
+            row[1]
+            for row in connection.execute(f"PRAGMA table_xinfo('{table}')").fetchall()
+        )
+        migration_require(
+            observed_columns == expected_columns,
+            f"SQLite publication columns drifted for {table}: "
+            f"expected {expected_columns}, observed {observed_columns}",
+        )
+
+    expected_object_names = sorted(
+        name for _object_type, name in SQLITE_PUBLICATION_SCHEMA_OBJECTS
+    )
+    object_placeholders = ",".join("?" for _name in expected_object_names)
+    observed_objects = set(
+        connection.execute(
+            f"""
+            SELECT type, name
+            FROM sqlite_schema
+            WHERE name IN ({object_placeholders})
+            """,
+            expected_object_names,
+        ).fetchall()
+    )
+    migration_require(
+        observed_objects == SQLITE_PUBLICATION_SCHEMA_OBJECTS,
+        "SQLite publication indexes or trigger drifted",
+    )
+
+    expected_history = (
+        (
+            1,
+            "initial",
+            "0.1.0",
+            SQLITE_IMMUTABLE_MIGRATION_HISTORY[1][1],
+            None,
+        ),
+        (
+            2,
+            "claims_conflicts_paths",
+            "0.2.0",
+            SQLITE_IMMUTABLE_MIGRATION_HISTORY[2][1],
+            None,
+        ),
+        (
+            3,
+            "transactional_publication",
+            "0.3.0",
+            "340a18941b1db769620a364e8893669636b96cbc966f2750739d1f93bacbe2cc",
+            SQLITE_REFERENCE_MIGRATION_APPLIED_AT,
+        ),
+    )
+    observed_history = tuple(
+        connection.execute(
+            """
+            SELECT version, name, target_schema_version, sha256, applied_at
+            FROM schema_migrations
+            ORDER BY version
+            """
+        ).fetchall()
+    )
+    migration_require(
+        observed_history == expected_history,
+        "SQLite migration journal history drifted",
+    )
+
+    snapshot_json = (
+        '{"id":"snapshot-contract","repository_id":"repository-contract",'
+        '"schema_version":"0.2.0","status":"committed"}'
+    )
+    bundle_json = (
+        '{"snapshot":'
+        + snapshot_json
+        + ',"artifacts":[],'
+        + ('"nodes":[],"edges":[],"evidence":[],"diagnostics":[]}')
+    )
+    record_json = '{"id":"artifact-contract","path":"source.go"}'
+    record_digest = hashlib.sha256(record_json.encode("utf-8")).hexdigest()
+
+    connection.execute("SAVEPOINT rkc_publication_contract_probe")
+    try:
+        expect_sqlite_integrity_rejection(
+            connection,
+            """
+            INSERT INTO schema_migrations(
+              version, name, target_schema_version, sha256, applied_at
+            ) VALUES (?, ?, ?, ?, ?)
+            """,
+            (4, "runtime_entry", "0.4.0", "c" * 64, None),
+            "a runtime migration journal entry without an application time",
+        )
+        connection.execute(
+            """
+            INSERT INTO schema_migrations(
+              version, name, target_schema_version, sha256, applied_at
+            ) VALUES (?, ?, ?, ?, ?)
+            """,
+            (
+                4,
+                "runtime_entry",
+                "0.4.0",
+                "c" * 64,
+                "2026-01-01T00:00:00Z",
+            ),
+        )
+        connection.execute(
+            """
+            INSERT INTO repositories(
+              repository_id, display_name, created_at, metadata_json
+            ) VALUES (?, ?, ?, ?)
+            """,
+            ("repository-contract", "contract", "2026-01-01T00:00:00Z", "{}"),
+        )
+        expect_sqlite_integrity_rejection(
+            connection,
+            """
+            INSERT INTO builds(
+              build_id, repository_id, expected_schema, state,
+              created_at, updated_at, finished_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                "build-closed-at-creation",
+                "repository-contract",
+                "0.2.0",
+                "aborted",
+                "2026-01-01T00:00:00Z",
+                "2026-01-01T00:00:00Z",
+                "2026-01-01T00:00:00Z",
+            ),
+            "a build created in a closed state",
+        )
+        connection.execute(
+            """
+            INSERT INTO builds(
+              build_id, repository_id, expected_schema, state,
+              created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            (
+                "build-contract",
+                "repository-contract",
+                "0.2.0",
+                "open",
+                "2026-01-01T00:00:00Z",
+                "2026-01-01T00:00:00Z",
+            ),
+        )
+        expect_sqlite_integrity_rejection(
+            connection,
+            """
+            UPDATE builds
+            SET state = 'committed', committed_snapshot_id = ?,
+                updated_at = ?, finished_at = ?
+            WHERE build_id = ?
+            """,
+            (
+                "snapshot-contract",
+                "2026-01-01T00:00:01Z",
+                "2026-01-01T00:00:01Z",
+                "build-contract",
+            ),
+            "a committed build without its canonical snapshot",
+        )
+        connection.execute(
+            """
+            INSERT INTO staged_canonical_records(
+              build_id, record_family, record_id, ordinal,
+              canonical_record_json, canonical_record_sha256
+            ) VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            (
+                "build-contract",
+                "artifact",
+                "artifact-contract",
+                0,
+                record_json,
+                record_digest,
+            ),
+        )
+        expect_sqlite_integrity_rejection(
+            connection,
+            """
+            UPDATE builds
+            SET state = 'aborted', updated_at = ?, finished_at = ?
+            WHERE build_id = ?
+            """,
+            (
+                "2026-01-01T00:00:01Z",
+                "2026-01-01T00:00:01Z",
+                "build-contract",
+            ),
+            "closing a build with staged canonical records",
+        )
+        connection.execute(
+            """
+            INSERT INTO canonical_snapshots(
+              snapshot_id, repository_id, build_id, schema_version,
+              canonical_snapshot_json, canonical_bundle_json,
+              canonical_digest, published_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                "snapshot-contract",
+                "repository-contract",
+                "build-contract",
+                "0.2.0",
+                snapshot_json,
+                bundle_json,
+                "a" * 64,
+                "2026-01-01T00:00:01Z",
+            ),
+        )
+        connection.execute(
+            """
+            INSERT INTO canonical_snapshot_records(
+              snapshot_id, record_family, record_id, ordinal,
+              canonical_record_json, canonical_record_sha256
+            ) VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            (
+                "snapshot-contract",
+                "artifact",
+                "artifact-contract",
+                0,
+                record_json,
+                record_digest,
+            ),
+        )
+        expect_sqlite_integrity_rejection(
+            connection,
+            """
+            UPDATE repositories
+            SET current_snapshot_id = ?
+            WHERE repository_id = ?
+            """,
+            ("snapshot-contract", "repository-contract"),
+            "a current snapshot pointer to an open build",
+        )
+        connection.execute(
+            "DELETE FROM staged_canonical_records WHERE build_id = ?",
+            ("build-contract",),
+        )
+        connection.execute(
+            """
+            UPDATE builds
+            SET state = 'committed', committed_snapshot_id = ?,
+                updated_at = ?, finished_at = ?
+            WHERE build_id = ?
+            """,
+            (
+                "snapshot-contract",
+                "2026-01-01T00:00:01Z",
+                "2026-01-01T00:00:01Z",
+                "build-contract",
+            ),
+        )
+        connection.execute(
+            """
+            UPDATE repositories
+            SET current_snapshot_id = ?
+            WHERE repository_id = ?
+            """,
+            ("snapshot-contract", "repository-contract"),
+        )
+
+        observed_json = connection.execute(
+            """
+            SELECT canonical_snapshot_json, canonical_bundle_json
+            FROM canonical_snapshots
+            WHERE snapshot_id = 'snapshot-contract'
+            """
+        ).fetchone()
+        migration_require(
+            observed_json == (snapshot_json, bundle_json),
+            "canonical snapshot JSON did not round-trip byte-for-byte",
+        )
+        observed_record = connection.execute(
+            """
+            SELECT canonical_record_json
+            FROM canonical_snapshot_records
+            WHERE snapshot_id = 'snapshot-contract'
+              AND record_family = 'artifact'
+              AND record_id = 'artifact-contract'
+            """
+        ).fetchone()
+        migration_require(
+            observed_record == (record_json,),
+            "canonical record JSON did not round-trip byte-for-byte",
+        )
+
+        expect_sqlite_integrity_rejection(
+            connection,
+            "UPDATE canonical_snapshots SET metadata_json = '{}' WHERE snapshot_id = ?",
+            ("snapshot-contract",),
+            "a canonical snapshot update after publication",
+        )
+        expect_sqlite_integrity_rejection(
+            connection,
+            "DELETE FROM canonical_snapshots WHERE snapshot_id = ?",
+            ("snapshot-contract",),
+            "canonical snapshot deletion after publication",
+        )
+        expect_sqlite_integrity_rejection(
+            connection,
+            """
+            UPDATE canonical_snapshot_records
+            SET canonical_record_json = canonical_record_json
+            WHERE snapshot_id = ? AND record_family = ? AND record_id = ?
+            """,
+            ("snapshot-contract", "artifact", "artifact-contract"),
+            "a canonical record update after publication",
+        )
+        expect_sqlite_integrity_rejection(
+            connection,
+            """
+            DELETE FROM canonical_snapshot_records
+            WHERE snapshot_id = ? AND record_family = ? AND record_id = ?
+            """,
+            ("snapshot-contract", "artifact", "artifact-contract"),
+            "canonical record deletion after publication",
+        )
+        expect_sqlite_integrity_rejection(
+            connection,
+            """
+            INSERT INTO canonical_snapshot_records(
+              snapshot_id, record_family, record_id, ordinal,
+              canonical_record_json, canonical_record_sha256
+            ) VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            (
+                "snapshot-contract",
+                "node",
+                "late-record",
+                0,
+                '{"id":"late-record"}',
+                "d" * 64,
+            ),
+            "a canonical record inserted after publication",
+        )
+        expect_sqlite_integrity_rejection(
+            connection,
+            """
+            INSERT INTO staged_canonical_records(
+              build_id, record_family, record_id, ordinal,
+              canonical_record_json, canonical_record_sha256
+            ) VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            (
+                "build-contract",
+                "node",
+                "late-staged-record",
+                0,
+                '{"id":"late-staged-record"}',
+                "e" * 64,
+            ),
+            "a staged record inserted after build closure",
+        )
+        expect_sqlite_integrity_rejection(
+            connection,
+            "UPDATE builds SET state = 'open' WHERE build_id = ?",
+            ("build-contract",),
+            "reopening a committed build",
+        )
+        expect_sqlite_integrity_rejection(
+            connection,
+            "DELETE FROM builds WHERE build_id = ?",
+            ("build-contract",),
+            "deleting a committed build",
+        )
+
+        expect_sqlite_integrity_rejection(
+            connection,
+            """
+            UPDATE canonical_snapshots
+            SET publication_status = 'complete'
+            WHERE snapshot_id = 'snapshot-contract'
+            """,
+            (),
+            "legacy complete status as canonical committed state",
+        )
+        expect_sqlite_integrity_rejection(
+            connection,
+            """
+            UPDATE canonical_snapshots
+            SET legacy_projection_status = 'committed'
+            WHERE snapshot_id = 'snapshot-contract'
+            """,
+            (),
+            "canonical committed status as the legacy projection state",
+        )
+        expect_sqlite_integrity_rejection(
+            connection,
+            "UPDATE builds SET state = 'validating' WHERE build_id = ?",
+            ("build-contract",),
+            "an unsupported durable build state",
+        )
+        expect_sqlite_integrity_rejection(
+            connection,
+            """
+            INSERT INTO staged_canonical_records(
+              build_id, record_family, record_id, ordinal,
+              canonical_record_json, canonical_record_sha256
+            ) VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            (
+                "build-contract",
+                "node",
+                "bad-json",
+                0,
+                "{",
+                "b" * 64,
+            ),
+            "malformed staged canonical JSON",
+        )
+        connection.execute(
+            """
+            INSERT INTO repositories(
+              repository_id, display_name, created_at, metadata_json
+            ) VALUES (?, ?, ?, ?)
+            """,
+            ("repository-other", "other", "2026-01-01T00:00:00Z", "{}"),
+        )
+        expect_sqlite_integrity_rejection(
+            connection,
+            """
+            UPDATE repositories
+            SET current_snapshot_id = 'snapshot-contract'
+            WHERE repository_id = 'repository-other'
+            """,
+            (),
+            "a cross-repository current snapshot pointer",
+        )
+        expect_sqlite_integrity_rejection(
+            connection,
+            """
+            INSERT INTO repositories(
+              repository_id, display_name, created_at,
+              metadata_json, current_snapshot_id
+            ) VALUES (?, ?, ?, ?, ?)
+            """,
+            (
+                "repository-insert-other",
+                "insert-other",
+                "2026-01-01T00:00:00Z",
+                "{}",
+                "snapshot-contract",
+            ),
+            "a current snapshot pointer during repository creation",
+        )
+    finally:
+        connection.execute("ROLLBACK TO rkc_publication_contract_probe")
+        connection.execute("RELEASE rkc_publication_contract_probe")
+
+    return {
+        "contract": "transactional-canonical-v1",
+        "journal_migration_count": len(observed_history),
+        "canonical_status": "committed",
+        "legacy_projection_status": "complete",
+        "legacy_v02_upgrade_policy": "empty-only-explicit-backfill-required",
+    }
 
 
 def validate_sqlite_migrations(
@@ -206,6 +832,13 @@ def validate_sqlite_migrations(
             and re.fullmatch(r"[0-9a-f]{64}", digest) is not None,
             f"migration {position} has an invalid sha256",
         )
+        immutable = SQLITE_IMMUTABLE_MIGRATION_HISTORY.get(version)
+        if immutable is not None:
+            immutable_name, immutable_digest = immutable
+            migration_require(
+                name == immutable_name and digest == immutable_digest,
+                f"immutable migration history drifted at version {version}",
+            )
         filename = f"{version:04d}_{name}.sql"
         expected_entries.add(filename)
         planned.append((migration_root / filename, digest, target))
@@ -251,6 +884,8 @@ def validate_sqlite_migrations(
     try:
         try:
             for position, (sql, target) in enumerate(payloads, start=1):
+                if position == 3:
+                    validate_sqlite_v03_upgrade_eligibility(migrated)
                 migrated.executescript(sql)
                 migration_require(
                     not migrated.in_transaction,
@@ -263,6 +898,24 @@ def validate_sqlite_migrations(
                     row == (target,),
                     f"migration {position} recorded schema version {row}, expected {target}",
                 )
+            for migration in migrations:
+                if migration["version"] < 3:
+                    continue
+                migrated.execute(
+                    """
+                    INSERT INTO schema_migrations(
+                      version, name, target_schema_version, sha256, applied_at
+                    ) VALUES (?, ?, ?, ?, ?)
+                    """,
+                    (
+                        migration["version"],
+                        migration["name"],
+                        migration["target_schema_version"],
+                        migration["sha256"],
+                        SQLITE_REFERENCE_MIGRATION_APPLIED_AT,
+                    ),
+                )
+            migrated.commit()
         except sqlite3.Error as exc:
             raise MigrationContractError(
                 f"SQLite migration execution failed: {exc}"
@@ -278,6 +931,8 @@ def validate_sqlite_migrations(
             f"migration foreign-key check failed: {foreign_key_failures[:10]}",
         )
 
+        publication_contract = validate_sqlite_publication_contract(migrated)
+
         consolidated.executescript(
             (root / "storage" / "sqlite" / "schema.sql").read_text(encoding="utf-8")
         )
@@ -287,6 +942,13 @@ def validate_sqlite_migrations(
         migration_require(
             consolidated_version == (manifest["database_schema_version"],),
             "consolidated schema version drifted from the migration manifest",
+        )
+        consolidated_publication_contract = validate_sqlite_publication_contract(
+            consolidated
+        )
+        migration_require(
+            consolidated_publication_contract == publication_contract,
+            "consolidated SQLite publication contract drifted from migrations",
         )
         migrated_catalog = sqlite_catalog(migrated)
         consolidated_catalog = sqlite_catalog(consolidated)
@@ -310,6 +972,7 @@ def validate_sqlite_migrations(
         "migration_count": len(planned),
         "database_schema_version": manifest["database_schema_version"],
         "catalog_sha256": migrated_digest,
+        "publication_contract": publication_contract,
     }
 
 
@@ -523,7 +1186,7 @@ try:
     version = connection.execute(
         "SELECT value FROM schema_meta WHERE key='schema_version'"
     ).fetchone()[0]
-    record("SQLite DDL", version == "0.2.0", f"schema_version={version}")
+    record("SQLite DDL", version == "0.3.0", f"schema_version={version}")
     connection.close()
 except Exception as exc:
     record("SQLite DDL", False, str(exc))
