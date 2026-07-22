@@ -2,6 +2,7 @@
 """Failure-oriented unit tests for the release license validator."""
 from __future__ import annotations
 
+import hashlib
 import importlib.util
 import io
 import json
@@ -73,9 +74,142 @@ class LicenseValidationTests(unittest.TestCase):
             "THIRD_PARTY_NOTICES.md",
             "RKC-owned source code Apache-2.0\n"
             "Go runtime and standard library BSD-3-Clause LICENSES/Go.txt\n"
+            "modernc.org/sqlite v1.54.0 modernc.org/libc v1.74.1\n"
+            "third_party/go-modules.lock.json LICENSES/go-modules/\n"
             "do not bundle model weights\nllama.cpp is MIT licensed\n"
             "Qwen3.5-2B Qwen3-Embedding-0.6B models/models.lock.json\n",
         )
+        self.write("go.sum", "fixture.test/module v1.0.0 h1:fixture\n")
+        self.write("third_party/go-modules.lock.json", "{}\n")
+
+    def dependency_fixture(
+        self,
+    ) -> tuple[dict[str, dict[str, object]], dict[str, str]]:
+        """Write a complete two-module dependency-governance fixture."""
+        license_values = {
+            "example.test/lib": {"LICENSE": "fixture library license\n"},
+            "example.test/sqlite": {
+                "LICENSE": "fixture sqlite driver license\n",
+                "SQLITE-LICENSE": "fixture sqlite public-domain notice\n",
+            },
+        }
+        expected_modules: dict[str, dict[str, object]] = {
+            "example.test/lib": {
+                "version": "v1.2.3",
+                "module_sum": "h1:GzkhY7T5VNhEkwH0PVJgjz+fX1rhBrR7pRT3mDkpeCY=",
+                "go_mod_sum": "h1:Mu1zIs6XwVuF/gI1OepvI0qD18qycQx+mFykh5fBlto=",
+                "license_spdx": "BSD-3-Clause",
+                "licenses": {},
+            },
+            "example.test/sqlite": {
+                "version": "v4.5.6",
+                "module_sum": "h1:JCxR4qwkJvOaqAoYcgDoO25Nc+ROg6EJ2LfBVzdrgog=",
+                "go_mod_sum": "h1:4ntCLuNmnH8+GNqjka1wNg7KJd5/Hi5FYp8K+XQ7GZw=",
+                "license_spdx": "BSD-3-Clause",
+                "licenses": {},
+            },
+        }
+        for module_path, source_files in license_values.items():
+            expected = expected_modules[module_path]
+            version = str(expected["version"])
+            license_hashes: dict[str, str] = {}
+            for source_path, value in source_files.items():
+                relative = f"LICENSES/go-modules/{module_path}@{version}/{source_path}"
+                self.write(relative, value)
+                license_hashes[source_path] = hashlib.sha256(
+                    value.encode("utf-8")
+                ).hexdigest()
+            expected["licenses"] = license_hashes
+
+        roots = {"example.test/sqlite": "v4.5.6"}
+        modules: list[dict[str, object]] = []
+        notice_lines = ["third_party/go-modules.lock.json"]
+        sum_lines: list[str] = []
+        for module_path, expected in sorted(expected_modules.items()):
+            version = str(expected["version"])
+            licenses = [
+                {
+                    "source_path": source_path,
+                    "path": (
+                        f"LICENSES/go-modules/{module_path}@{version}/{source_path}"
+                    ),
+                    "sha256": digest,
+                }
+                for source_path, digest in sorted(dict(expected["licenses"]).items())
+            ]
+            modules.append(
+                {
+                    "path": module_path,
+                    "version": version,
+                    "direct": module_path in roots,
+                    "module_sum": expected["module_sum"],
+                    "go_mod_sum": expected["go_mod_sum"],
+                    "source_url": (
+                        f"https://proxy.golang.org/{module_path}/@v/{version}.zip"
+                    ),
+                    "license_spdx": expected["license_spdx"],
+                    "licenses": licenses,
+                    "notice_path": "THIRD_PARTY_NOTICES.md",
+                }
+            )
+            notice_lines.append(f"{module_path} {version}")
+            notice_lines.extend(str(item["path"]) for item in licenses)
+            sum_lines.extend(
+                (
+                    f"{module_path} {version} {expected['module_sum']}",
+                    f"{module_path} {version}/go.mod {expected['go_mod_sum']}",
+                )
+            )
+
+        lock = {
+            "schema_version": "1.0",
+            "go": {"directive": "1.25.0", "toolchain": "go1.26.5"},
+            "root_requirements": [
+                {"path": path, "version": version}
+                for path, version in sorted(roots.items())
+            ],
+            "modules": modules,
+        }
+        self.write(
+            "go.mod",
+            "module fixture.test/rkc\n\n"
+            "go 1.25.0\n\n"
+            "toolchain go1.26.5\n\n"
+            "require (\n"
+            "\texample.test/lib v1.2.3 // indirect\n"
+            "\texample.test/sqlite v4.5.6\n"
+            ")\n",
+        )
+        self.write("go.sum", "\n".join(sorted(sum_lines)) + "\n")
+        self.write(
+            "third_party/go-modules.lock.json",
+            json.dumps(lock, indent=2) + "\n",
+        )
+        self.write("THIRD_PARTY_NOTICES.md", "\n".join(notice_lines) + "\n")
+        return expected_modules, roots
+
+    def validate_dependency_fixture(
+        self,
+        expected_modules: dict[str, dict[str, object]],
+        roots: dict[str, str],
+    ) -> dict[str, object]:
+        """Run dependency validation with the fixture's pinned policy."""
+        LICENSES.ERRORS.clear()
+        LICENSES.CHECKS.clear()
+        with mock.patch.multiple(
+            LICENSES,
+            EXPECTED_MODULE_PATH="fixture.test/rkc",
+            EXPECTED_GO_DIRECTIVE="1.25.0",
+            EXPECTED_TOOLCHAIN="go1.26.5",
+            EXPECTED_ROOT_REQUIREMENTS=roots,
+            EXPECTED_EXPLICIT_REQUIREMENTS={
+                "example.test/lib": "v1.2.3",
+                "example.test/sqlite": "v4.5.6",
+            },
+            EXPECTED_MODULES=expected_modules,
+        ):
+            LICENSES.validate_dependency_boundary()
+        return LICENSES.CHECKS[-1]
 
     def test_read_regular_enforces_type_size_and_utf8(self) -> None:
         self.assertIsNone(LICENSES.read_regular(Path("missing")))
@@ -127,7 +261,11 @@ class LicenseValidationTests(unittest.TestCase):
                 {
                     "llama_cpp": {"license_spdx": "MIT"},
                     "assets": [
-                        {"id": "source", "kind": "source-archive", "license_spdx": "MIT"},
+                        {
+                            "id": "source",
+                            "kind": "source-archive",
+                            "license_spdx": "MIT",
+                        },
                         {
                             "id": "model",
                             "kind": "generation-model",
@@ -157,7 +295,11 @@ class LicenseValidationTests(unittest.TestCase):
                             "kind": "source-archive",
                             "license_spdx": "Apache-2.0",
                         },
-                        {"id": "model", "kind": "embedding-model", "license_spdx": "MIT"},
+                        {
+                            "id": "model",
+                            "kind": "embedding-model",
+                            "license_spdx": "MIT",
+                        },
                     ],
                 }
             ),
@@ -165,17 +307,120 @@ class LicenseValidationTests(unittest.TestCase):
         LICENSES.validate_declared_metadata()
         self.assertGreaterEqual(len(LICENSES.ERRORS), 2)
 
-    def test_dependency_boundary_detects_require_directives(self) -> None:
-        self.write("go.mod", "module fixture\n\ngo 1.26\n")
-        LICENSES.validate_dependency_boundary()
-        self.assertTrue(LICENSES.CHECKS[-1]["ok"])
-        self.write("go.mod", "module fixture\nrequire example.test/module v1.0.0 // comment\n")
-        LICENSES.validate_dependency_boundary()
-        self.assertFalse(LICENSES.CHECKS[-1]["ok"])
-        (LICENSES.ROOT / "go.mod").unlink()
-        count = len(LICENSES.CHECKS)
-        LICENSES.validate_dependency_boundary()
-        self.assertEqual(len(LICENSES.CHECKS), count + 1)  # missing-file record only
+    def test_dependency_boundary_accepts_exact_reviewed_closure(self) -> None:
+        expected, roots = self.dependency_fixture()
+        result = self.validate_dependency_fixture(expected, roots)
+        self.assertTrue(result["ok"], result["detail"])
+
+    def test_dependency_boundary_rejects_unknown_missing_and_version_drift(
+        self,
+    ) -> None:
+        expected, roots = self.dependency_fixture()
+        self.write(
+            "go.mod",
+            (LICENSES.ROOT / "go.mod").read_text(encoding="utf-8")
+            + "require unknown.test/module v1.0.0\n",
+        )
+        result = self.validate_dependency_fixture(expected, roots)
+        self.assertFalse(result["ok"])
+        self.assertIn("unknown module", str(result["detail"]))
+
+        expected, roots = self.dependency_fixture()
+        lock_path = LICENSES.ROOT / "third_party/go-modules.lock.json"
+        lock = json.loads(lock_path.read_text(encoding="utf-8"))
+        lock["modules"].pop(0)
+        self.write("third_party/go-modules.lock.json", json.dumps(lock))
+        result = self.validate_dependency_fixture(expected, roots)
+        self.assertFalse(result["ok"])
+        self.assertIn("missing governed modules", str(result["detail"]))
+
+        expected, roots = self.dependency_fixture()
+        self.write(
+            "go.mod",
+            "module fixture.test/rkc\n"
+            "go 1.25.0\n"
+            "toolchain go1.26.5\n"
+            "require example.test/sqlite v9.9.9\n",
+        )
+        result = self.validate_dependency_fixture(expected, roots)
+        self.assertFalse(result["ok"])
+        self.assertIn("version drift", str(result["detail"]))
+
+        expected, roots = self.dependency_fixture()
+        self.write(
+            "go.mod",
+            "module fixture.test/rkc\n"
+            "go 1.25.0\n"
+            "toolchain go1.26.5\n"
+            "require example.test/sqlite v4.5.6\n",
+        )
+        result = self.validate_dependency_fixture(expected, roots)
+        self.assertFalse(result["ok"])
+        self.assertIn("missing explicit requirement", str(result["detail"]))
+
+    def test_dependency_boundary_rejects_go_sum_drift_and_absence(self) -> None:
+        expected, roots = self.dependency_fixture()
+        go_sum = (LICENSES.ROOT / "go.sum").read_text(encoding="utf-8")
+        self.write("go.sum", go_sum.replace("h1:Gzkh", "h1:Azkh", 1))
+        result = self.validate_dependency_fixture(expected, roots)
+        self.assertFalse(result["ok"])
+        self.assertIn("checksum drift", str(result["detail"]))
+
+        expected, roots = self.dependency_fixture()
+        (LICENSES.ROOT / "go.sum").unlink()
+        result = self.validate_dependency_fixture(expected, roots)
+        self.assertFalse(result["ok"])
+        self.assertIn("missing or unreadable", str(result["detail"]))
+
+    def test_dependency_boundary_rejects_license_hash_path_and_absence(self) -> None:
+        expected, roots = self.dependency_fixture()
+        license_path = (
+            LICENSES.ROOT / "LICENSES/go-modules/example.test/lib@v1.2.3/LICENSE"
+        )
+        license_path.write_text("tampered\n", encoding="utf-8")
+        result = self.validate_dependency_fixture(expected, roots)
+        self.assertFalse(result["ok"])
+        self.assertIn("license file hash drift", str(result["detail"]))
+
+        expected, roots = self.dependency_fixture()
+        lock_path = LICENSES.ROOT / "third_party/go-modules.lock.json"
+        lock = json.loads(lock_path.read_text(encoding="utf-8"))
+        lock["modules"][0]["licenses"][0]["path"] += ".moved"
+        self.write("third_party/go-modules.lock.json", json.dumps(lock))
+        result = self.validate_dependency_fixture(expected, roots)
+        self.assertFalse(result["ok"])
+        self.assertIn("license path drift", str(result["detail"]))
+
+        expected, roots = self.dependency_fixture()
+        license_path.unlink()
+        result = self.validate_dependency_fixture(expected, roots)
+        self.assertFalse(result["ok"])
+        self.assertIn("missing governed license file", str(result["detail"]))
+
+    def test_dependency_boundary_rejects_missing_notice_and_ambiguous_lock(
+        self,
+    ) -> None:
+        expected, roots = self.dependency_fixture()
+        self.write("THIRD_PARTY_NOTICES.md", "third_party/go-modules.lock.json\n")
+        result = self.validate_dependency_fixture(expected, roots)
+        self.assertFalse(result["ok"])
+        self.assertIn("notice omits", str(result["detail"]))
+
+        expected, roots = self.dependency_fixture()
+        lock = (LICENSES.ROOT / "third_party/go-modules.lock.json").read_text(
+            encoding="utf-8"
+        )
+        self.write(
+            "third_party/go-modules.lock.json",
+            lock.replace(
+                '"schema_version": "1.0",',
+                '"schema_version": "1.0",\n  "schema_version": "1.0",',
+                1,
+            ),
+        )
+        result = self.validate_dependency_fixture(expected, roots)
+        self.assertFalse(result["ok"])
+        self.assertIn("duplicate JSON key", str(result["detail"]))
 
     @mock.patch.object(LICENSES.subprocess, "run")
     def test_tracked_artifact_policy_accepts_regular_and_reports_all_failures(
@@ -202,10 +447,18 @@ class LicenseValidationTests(unittest.TestCase):
         )
         LICENSES.validate_tracked_artifacts()
         detail = str(LICENSES.CHECKS[-1]["detail"])
-        for marker in ("unmerged", "symlink", "submodule", "model/native", "unportable"):
+        for marker in (
+            "unmerged",
+            "symlink",
+            "submodule",
+            "model/native",
+            "unportable",
+        ):
             self.assertIn(marker, detail)
 
-        run.return_value = subprocess.CompletedProcess([], 9, stdout=b"", stderr=b"git failed")
+        run.return_value = subprocess.CompletedProcess(
+            [], 9, stdout=b"", stderr=b"git failed"
+        )
         LICENSES.validate_tracked_artifacts()
         self.assertIn("git failed", str(LICENSES.CHECKS[-1]["detail"]))
 
@@ -213,11 +466,17 @@ class LicenseValidationTests(unittest.TestCase):
         def good_check() -> None:
             LICENSES.record("fixture", True, "ok")
 
-        with mock.patch.object(LICENSES, "validate_root_documents", good_check), mock.patch.object(
+        with mock.patch.object(
+            LICENSES, "validate_root_documents", good_check
+        ), mock.patch.object(
             LICENSES, "validate_declared_metadata", good_check
-        ), mock.patch.object(LICENSES, "validate_dependency_boundary", good_check), mock.patch.object(
+        ), mock.patch.object(
+            LICENSES, "validate_dependency_boundary", good_check
+        ), mock.patch.object(
             LICENSES, "validate_tracked_artifacts", good_check
-        ), mock.patch("sys.stdout", new=io.StringIO()) as output:
+        ), mock.patch(
+            "sys.stdout", new=io.StringIO()
+        ) as output:
             self.assertEqual(LICENSES.main(), 0)
             self.assertTrue(json.loads(output.getvalue())["ok"])
 
@@ -229,7 +488,9 @@ class LicenseValidationTests(unittest.TestCase):
             side_effect=lambda: LICENSES.record("fixture", False, "bad"),
         ), mock.patch.object(LICENSES, "validate_declared_metadata"), mock.patch.object(
             LICENSES, "validate_dependency_boundary"
-        ), mock.patch.object(LICENSES, "validate_tracked_artifacts"), mock.patch(
+        ), mock.patch.object(
+            LICENSES, "validate_tracked_artifacts"
+        ), mock.patch(
             "sys.stdout", new=io.StringIO()
         ):
             self.assertEqual(LICENSES.main(), 1)
