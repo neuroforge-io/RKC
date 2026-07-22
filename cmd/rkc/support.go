@@ -1,8 +1,10 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
+	"flag"
 	"fmt"
 	"os"
 	"sort"
@@ -32,6 +34,29 @@ func writeJSONStdout(value any) error {
 	return encoder.Encode(value)
 }
 func loadDataset(dir string) (*server.Dataset, error) { return server.Load(dir) }
+
+func loadSelectedDataset(ctx context.Context, dir, database, snapshotID, repositoryID string, dirExplicit bool) (*server.Dataset, error) {
+	if database == "" {
+		if snapshotID != "" || repositoryID != "" {
+			return nil, errors.New("--snapshot and --repository require --database")
+		}
+		return loadDataset(dir)
+	}
+	if dirExplicit {
+		return nil, errors.New("--database and --dir are mutually exclusive")
+	}
+	return loadSQLiteDataset(ctx, database, snapshotID, repositoryID)
+}
+
+func flagWasSet(set *flag.FlagSet, name string) bool {
+	found := false
+	set.Visit(func(item *flag.Flag) {
+		if item.Name == name {
+			found = true
+		}
+	})
+	return found
+}
 
 func resolveNode(dataset *server.Dataset, reference string) (rkcmodel.Node, error) {
 	reference = strings.TrimSpace(reference)

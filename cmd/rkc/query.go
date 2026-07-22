@@ -38,6 +38,9 @@ func runQuery(args []string) error {
 	fs := flag.NewFlagSet("query", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
 	dir := fs.String("dir", ".rkc", "generated RKC output directory")
+	database := fs.String("database", "", "durable SQLite store (mutually exclusive with --dir)")
+	snapshotID := fs.String("snapshot", "", "SQLite snapshot ID")
+	repositoryID := fs.String("repository", "", "SQLite repository ID; selects its current snapshot")
 	kinds := fs.String("kinds", "", "comma-separated node kinds")
 	languages := fs.String("languages", "", "comma-separated languages")
 	objects := fs.String("objects", "", "comma-separated object types")
@@ -73,7 +76,7 @@ func runQuery(args []string) error {
 	if mode == retrieval.ModeLexical && semanticOptionSet {
 		return errors.New("embedding and vector-index options require --mode semantic or --mode hybrid")
 	}
-	dataset, err := loadDataset(*dir)
+	dataset, err := loadSelectedDataset(ctx, *dir, *database, *snapshotID, *repositoryID, flagWasSet(fs, "dir"))
 	if err != nil {
 		return err
 	}

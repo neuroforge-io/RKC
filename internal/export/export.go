@@ -590,29 +590,45 @@ func notebookDiagnostics(bundle model.Bundle, coverage model.Coverage) string {
 
 func writeSite(bundle model.Bundle, coverage model.Coverage, opts Options) error {
 	dir := filepath.Join(opts.Output, "site")
-	dataDir := filepath.Join(dir, "data")
-	if err := os.MkdirAll(dataDir, 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Join(dir, "data"), 0o755); err != nil {
 		return err
 	}
+	files, err := BrowserAssets(bundle, coverage)
+	if err != nil {
+		return err
+	}
+	for name, content := range files {
+		path := filepath.Join(dir, filepath.FromSlash(name))
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			return err
+		}
+		if err := os.WriteFile(path, content, 0o644); err != nil {
+			return fmt.Errorf("write static atlas %s: %w", name, err)
+		}
+	}
+	return nil
+}
+
+// BrowserAssets returns the deterministic browser shell used by both exported
+// atlases and datasets reconstructed directly from a durable store. Keys are
+// canonical forward-slash paths for filesystem and HTTP consumers.
+func BrowserAssets(bundle model.Bundle, coverage model.Coverage) (map[string][]byte, error) {
 	siteBundle := model.CanonicalBundle(bundle)
 	payload := struct {
 		Bundle   model.Bundle   `json:"bundle"`
 		Coverage model.Coverage `json:"coverage"`
 	}{siteBundle, coverage}
-	if err := writeJSON(filepath.Join(dataDir, "atlas.json"), payload); err != nil {
-		return err
+	data, err := json.MarshalIndent(payload, "", "  ")
+	if err != nil {
+		return nil, fmt.Errorf("encode static atlas data: %w", err)
 	}
-	files := map[string]string{
-		"index.html": siteHTML,
-		"styles.css": siteCSS,
-		"app.js":     siteJS,
-	}
-	for name, content := range files {
-		if err := os.WriteFile(filepath.Join(dir, name), []byte(content), 0o644); err != nil {
-			return fmt.Errorf("write static atlas %s: %w", name, err)
-		}
-	}
-	return nil
+	data = append(data, '\n')
+	return map[string][]byte{
+		"index.html":      []byte(siteHTML),
+		"styles.css":      []byte(siteCSS),
+		"app.js":          []byte(siteJS),
+		"data/atlas.json": data,
+	}, nil
 }
 
 type exportPolicy struct {

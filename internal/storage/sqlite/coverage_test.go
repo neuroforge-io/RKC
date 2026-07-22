@@ -203,10 +203,10 @@ func TestAssetAndBindingFailureBranches(t *testing.T) {
 	}
 
 	path := filepath.Join(privateTempDir(t), "bound.db")
-	if _, _, err := secureDatabasePath(path); err != nil {
+	if _, _, err := secureDatabasePath(path, false); err != nil {
 		t.Fatal(err)
 	}
-	binding, err := bindDatabasePath(path)
+	binding, err := bindDatabasePath(path, false)
 	if err != nil {
 		t.Fatal(err)
 	}

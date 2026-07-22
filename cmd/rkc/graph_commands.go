@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"flag"
 	"fmt"
@@ -14,6 +15,9 @@ func runPath(args []string) error {
 	fs := flag.NewFlagSet("path", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
 	dir := fs.String("dir", ".rkc", "generated RKC output directory")
+	database := fs.String("database", "", "durable SQLite store (mutually exclusive with --dir)")
+	snapshotID := fs.String("snapshot", "", "SQLite snapshot ID")
+	repositoryID := fs.String("repository", "", "SQLite repository ID; selects its current snapshot")
 	from := fs.String("from", "", "source node ID, logical ID, qualified name, or unique name")
 	to := fs.String("to", "", "target node ID, logical ID, qualified name, or unique name")
 	direction := fs.String("direction", "outgoing", "incoming, outgoing, or both")
@@ -26,10 +30,13 @@ func runPath(args []string) error {
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
+	if fs.NArg() != 0 {
+		return errors.New("path does not accept positional arguments")
+	}
 	if *from == "" || *to == "" {
 		return errors.New("--from and --to are required")
 	}
-	dataset, err := loadDataset(*dir)
+	dataset, err := loadSelectedDataset(context.Background(), *dir, *database, *snapshotID, *repositoryID, flagWasSet(fs, "dir"))
 	if err != nil {
 		return err
 	}
@@ -71,6 +78,9 @@ func runImpact(args []string) error {
 	fs := flag.NewFlagSet("impact", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
 	dir := fs.String("dir", ".rkc", "generated RKC output directory")
+	database := fs.String("database", "", "durable SQLite store (mutually exclusive with --dir)")
+	snapshotID := fs.String("snapshot", "", "SQLite snapshot ID")
+	repositoryID := fs.String("repository", "", "SQLite repository ID; selects its current snapshot")
 	nodeReference := fs.String("node", "", "seed node ID, logical ID, qualified name, or unique name")
 	direction := fs.String("direction", "incoming", "incoming, outgoing, or both")
 	edgeKinds := fs.String("edge-kinds", "", "comma-separated edge kinds")
@@ -82,10 +92,13 @@ func runImpact(args []string) error {
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
+	if fs.NArg() != 0 {
+		return errors.New("impact does not accept positional arguments")
+	}
 	if *nodeReference == "" {
 		return errors.New("--node is required")
 	}
-	dataset, err := loadDataset(*dir)
+	dataset, err := loadSelectedDataset(context.Background(), *dir, *database, *snapshotID, *repositoryID, flagWasSet(fs, "dir"))
 	if err != nil {
 		return err
 	}
@@ -115,6 +128,9 @@ func runComponents(args []string) error {
 	fs := flag.NewFlagSet("components", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
 	dir := fs.String("dir", ".rkc", "generated RKC output directory")
+	database := fs.String("database", "", "durable SQLite store (mutually exclusive with --dir)")
+	snapshotID := fs.String("snapshot", "", "SQLite snapshot ID")
+	repositoryID := fs.String("repository", "", "SQLite repository ID; selects its current snapshot")
 	edgeKinds := fs.String("edge-kinds", "calls,imports,depends_on", "comma-separated edge kinds")
 	cyclesOnly := fs.Bool("cycles-only", false, "show only cyclic components")
 	limit := fs.Int("limit", 100, "maximum components")
@@ -122,7 +138,10 @@ func runComponents(args []string) error {
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
-	dataset, err := loadDataset(*dir)
+	if fs.NArg() != 0 {
+		return errors.New("components does not accept positional arguments")
+	}
+	dataset, err := loadSelectedDataset(context.Background(), *dir, *database, *snapshotID, *repositoryID, flagWasSet(fs, "dir"))
 	if err != nil {
 		return err
 	}

@@ -46,7 +46,7 @@ func (d *Database) ListSnapshots(
 	}
 	scope := readerScopeFingerprint(string(query.RepositoryID))
 	return readerWithConnection(d, ctx, operation, func(connection *sql.Conn) (rkcstore.SnapshotPage, error) {
-		key, err := readerCursorKey(ctx, connection, operation)
+		key, err := readerCursorKey(ctx, connection, operation, !d.options.ReadOnly)
 		if err != nil {
 			return rkcstore.SnapshotPage{}, err
 		}
@@ -343,7 +343,7 @@ func readerQueryRecordPageImpl[T any](
 		if !exists {
 			return readerPageResult[T]{}, readerSnapshotNotFound(spec.operation, spec.snapshotID, "")
 		}
-		key, err := readerCursorKey(ctx, connection, spec.operation)
+		key, err := readerCursorKey(ctx, connection, spec.operation, !database.options.ReadOnly)
 		if err != nil {
 			return readerPageResult[T]{}, err
 		}

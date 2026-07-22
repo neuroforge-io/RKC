@@ -36,6 +36,7 @@ func readerCursorKey(
 	ctx context.Context,
 	connection *sql.Conn,
 	operation string,
+	allowCreate bool,
 ) ([]byte, error) {
 	read := func() (string, error) {
 		var encoded string
@@ -48,6 +49,15 @@ func readerCursorKey(
 	}
 	encoded, err := read()
 	if errors.Is(err, sql.ErrNoRows) {
+		if !allowCreate {
+			return nil, readerStoredDataError(
+				operation,
+				"",
+				"cursor",
+				"cursor authentication key is absent; open the database writable to initialize it",
+				err,
+			)
+		}
 		candidate := make([]byte, sha256.Size)
 		if _, err := rand.Read(candidate); err != nil {
 			return nil, readerStoredDataError(

@@ -44,6 +44,7 @@ func runScanContext(ctx context.Context, args []string) error {
 	configFlag := fs.String("config", configPath, "JSON configuration file; omitted uses built-in defaults")
 	out := fs.String("out", cfg.Workspace.Output, "generated output directory")
 	stateDir := fs.String("state-dir", cfg.Exports.SnapshotStore, "optional immutable snapshot store directory")
+	databasePath := fs.String("database", "", "optional durable SQLite store; must remain outside the scanned repository")
 	maxFile := fs.Int64("max-file-bytes", cfg.Inventory.MaxFileBytes, "largest individual regular file hashed or parsed; 0 disables")
 	maxText := fs.Int64("max-text-bytes", cfg.Inventory.MaxTextBytes, "largest text file parsed or normalized")
 	maxRepository := fs.Int64("max-repository-bytes", cfg.Inventory.MaxRepositoryBytes, "maximum encountered repository bytes; 0 disables")
@@ -89,6 +90,9 @@ func runScanContext(ctx context.Context, args []string) error {
 	if *configFlag != configPath {
 		return errors.New("--config must be supplied only once; its values establish flag defaults")
 	}
+	if *databasePath != "" && *stateDir != "" {
+		return errors.New("--database and --state-dir are mutually exclusive")
+	}
 	source := "."
 	if fs.NArg() > 1 {
 		return errors.New("scan accepts at most one repository path or Git URL")
@@ -133,6 +137,24 @@ func runScanContext(ctx context.Context, args []string) error {
 			excludes = append(excludes, filepath.ToSlash(rel))
 		}
 		*stateDir = stateAbs
+	}
+	resolvedDatabase := ""
+	if *databasePath != "" {
+		resolvedDatabase, err = canonicalSQLitePath(*databasePath)
+		if err != nil {
+			return err
+		}
+		insideRepository, err := pathIsWithin(rootAbs, resolvedDatabase)
+		if err != nil {
+			return fmt.Errorf("compare repository and SQLite database: %w", err)
+		}
+		insideOutput, err := pathIsWithin(outAbs, resolvedDatabase)
+		if err != nil {
+			return fmt.Errorf("compare output and SQLite database: %w", err)
+		}
+		if insideRepository || insideOutput {
+			return fmt.Errorf("%w: SQLite database must remain outside the scanned repository and generated output", safeoutput.ErrUnsafeTarget)
+		}
 	}
 	pluginPath := strings.TrimSpace(*pythonPlugin)
 	pythonPluginBuiltin := false
@@ -214,6 +236,22 @@ func runScanContext(ctx context.Context, args []string) error {
 		return fmt.Errorf("scan rejected before publication with %d error diagnostic(s)", coverage.DiagnosticsBySeverity["error"])
 	}
 
+	var sqlitePending *sqlitePublication
+	sqliteNoop := false
+	if resolvedDatabase != "" {
+		stateMetadata := map[string]string{"repository_source": acquired.RedactedSource, "atlas_target": outAbs}
+		if !acquired.Temporary {
+			stateMetadata["repository_root"] = rootAbs
+		}
+		sqlitePending, err = prepareSQLiteBundle(ctx, resolvedDatabase, bundle, stateMetadata)
+		if err != nil {
+			return fmt.Errorf("stage SQLite snapshot before atlas publication: %w", err)
+		}
+		defer func() { _ = sqlitePending.Close(errors.New("scan exited before SQLite cleanup")) }()
+		bundle, coverage = sqlitePending.Bundle, sqlitePending.Coverage
+		resolvedDatabase, sqliteNoop = sqlitePending.Path, sqlitePending.Noop
+	}
+
 	publication, err := prepareExport(rootAbs, outAbs, *force, bundle, coverage, rkcexport.Options{
 		Root: rootAbs, NotebookMaxSize: *notebookPackBytes, IncludeSources: *includeSources,
 		DisableStaticSite: *noStaticSite, DisableJSONLGraph: *noJSONLGraph,
@@ -221,15 +259,37 @@ func runScanContext(ctx context.Context, args []string) error {
 		UnsafeIncludeSecrets: *unsafeIncludeSecrets,
 	})
 	if err != nil {
+		if sqlitePending != nil {
+			return errors.Join(err, sqlitePending.Close(err))
+		}
 		return err
 	}
 	defer func() { _ = publication.Abort() }()
 
 	if err := scanCancellation(ctx); err != nil {
+		if sqlitePending != nil {
+			return errors.Join(err, sqlitePending.Close(err))
+		}
 		return err
 	}
+	if sqlitePending != nil {
+		if err := sqlitePending.Commit(ctx); err != nil {
+			return errors.Join(err, sqlitePending.Close(err))
+		}
+	}
 	if err := publication.Commit(bundle.Snapshot.ID); err != nil {
+		if sqlitePending != nil {
+			return errors.Join(
+				fmt.Errorf("SQLite snapshot %s is durable at %s but atlas publication failed: %w", bundle.Snapshot.ID, resolvedDatabase, err),
+				sqlitePending.Close(err),
+			)
+		}
 		return err
+	}
+	if sqlitePending != nil {
+		if err := sqlitePending.Close(nil); err != nil {
+			return fmt.Errorf("atlas and SQLite snapshot are durable but SQLite close failed: %w", err)
+		}
 	}
 
 	// Publish the self-contained atlas before advancing the optional snapshot
@@ -269,6 +329,7 @@ func runScanContext(ctx context.Context, args []string) error {
 
 	summary := map[string]any{
 		"snapshot_id": bundle.Snapshot.ID, "source": acquired.RedactedSource, "source_kind": acquired.Kind, "output": outAbs, "snapshot_store": *stateDir,
+		"database": resolvedDatabase, "database_noop": sqliteNoop,
 		"artifacts": coverage.ArtifactsInventoried, "text_artifacts": coverage.TextArtifacts,
 		"syntax_parsed": coverage.ArtifactsSyntacticallyParsed, "semantic_parsed": coverage.ArtifactsSemanticallyParsed,
 		"symbols": coverage.SymbolsTotal, "edges": coverage.EdgesTotal, "unresolved_edges": coverage.UnresolvedEdges,
@@ -290,6 +351,9 @@ func runScanContext(ctx context.Context, args []string) error {
 	fmt.Printf("Output: %s\n", outAbs)
 	if *stateDir != "" {
 		fmt.Printf("Snapshot store: %s\n", *stateDir)
+	}
+	if resolvedDatabase != "" {
+		fmt.Printf("SQLite store: %s (idempotent=%t)\n", resolvedDatabase, sqliteNoop)
 	}
 	fmt.Printf("Browse: rkc serve --dir %s\n", outAbs)
 	return nil

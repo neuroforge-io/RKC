@@ -85,6 +85,35 @@ func TestOpenFreshDatabaseAndClose(t *testing.T) {
 	}
 }
 
+func TestOpenReadOnlyUsesReadOnlyDatabaseAndBinding(t *testing.T) {
+	path := filepath.Join(privateTempDir(t), "read-only.db")
+	writable := openTestDatabase(t, path)
+	if err := writable.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	options := testOptions(path)
+	options.ReadOnly = true
+	database, err := Open(context.Background(), options)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	if !database.Options().ReadOnly || !database.Options().RequireExisting || database.writerLeases != nil {
+		t.Fatalf("read-only options or lease state = %+v, %v", database.Options(), database.writerLeases)
+	}
+	if _, err := database.binding.file.Write(nil); err == nil {
+		t.Fatal("read-only inode binding accepted a write")
+	}
+	if _, err := database.db.ExecContext(context.Background(), "CREATE TABLE forbidden(value TEXT)"); err == nil {
+		t.Fatal("read-only SQLite connection accepted a schema write")
+	}
+	parsed, err := url.Parse(sqliteURI(database.Options()))
+	if err != nil || parsed.Query().Get("mode") != "ro" {
+		t.Fatalf("read-only URI = %v, %v", parsed, err)
+	}
+}
+
 func TestEveryConnectionReceivesSafetyPragmas(t *testing.T) {
 	database := openTestDatabase(t, filepath.Join(privateTempDir(t), "connections.db"))
 	connections := make([]*sql.Conn, 0, database.options.ReadConnections+1)
@@ -109,6 +138,9 @@ func TestEveryConnectionReceivesSafetyPragmas(t *testing.T) {
 
 func TestOpenRejectsInvalidOptionsAndUnsafePaths(t *testing.T) {
 	base := privateTempDir(t)
+	if _, err := Open(nil, Options{Path: filepath.Join(base, "nil-context.db")}); !errors.Is(err, ErrInvalidOptions) {
+		t.Fatalf("nil context error = %v", err)
+	}
 	valid := filepath.Join(base, "valid.db")
 	cases := []Options{
 		{},
@@ -220,17 +252,17 @@ func TestSQLiteURIQuotesPathAndOptions(t *testing.T) {
 
 func TestSecurePathCreationBooleanAndInodeBinding(t *testing.T) {
 	path := filepath.Join(privateTempDir(t), "bound.db")
-	resolved, created, err := secureDatabasePath(path)
+	resolved, created, err := secureDatabasePath(path, false)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if resolved != path || !created {
 		t.Fatalf("first secureDatabasePath = %q, %v", resolved, created)
 	}
-	if _, created, err := secureDatabasePath(path); err != nil || created {
+	if _, created, err := secureDatabasePath(path, false); err != nil || created {
 		t.Fatalf("second secureDatabasePath created=%v err=%v", created, err)
 	}
-	binding, err := bindDatabasePath(path)
+	binding, err := bindDatabasePath(path, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -250,8 +282,20 @@ func TestSecurePathCreationBooleanAndInodeBinding(t *testing.T) {
 	if err := binding.verifyFilesystem(); !errors.Is(err, ErrUnsafePath) {
 		t.Fatalf("verify closed binding = %v, want ErrUnsafePath", err)
 	}
-	if _, err := bindDatabasePath(filepath.Join(privateTempDir(t), "missing.db")); !errors.Is(err, ErrUnsafePath) {
+	if _, err := bindDatabasePath(filepath.Join(privateTempDir(t), "missing.db"), false); !errors.Is(err, ErrUnsafePath) {
 		t.Fatalf("bind missing database = %v, want ErrUnsafePath", err)
+	}
+}
+
+func TestOpenRequireExistingDoesNotCreateDatabaseOrLease(t *testing.T) {
+	path := filepath.Join(privateTempDir(t), "missing.sqlite")
+	if _, err := Open(context.Background(), Options{Path: path, RequireExisting: true}); !errors.Is(err, ErrOpenFailed) {
+		t.Fatalf("Open require-existing error = %v", err)
+	}
+	for _, candidate := range []string{path, path + writerLeaseSuffix} {
+		if _, err := os.Lstat(candidate); !errors.Is(err, os.ErrNotExist) {
+			t.Fatalf("require-existing created %s: %v", candidate, err)
+		}
 	}
 }
 
@@ -274,10 +318,10 @@ func TestParentDirectoryBindingDetectsReplacement(t *testing.T) {
 		t.Fatal(err)
 	}
 	path := filepath.Join(parent, "rkc.db")
-	if _, _, err := secureDatabasePath(path); err != nil {
+	if _, _, err := secureDatabasePath(path, false); err != nil {
 		t.Fatal(err)
 	}
-	binding, err := bindDatabasePath(path)
+	binding, err := bindDatabasePath(path, false)
 	if err != nil {
 		t.Fatal(err)
 	}

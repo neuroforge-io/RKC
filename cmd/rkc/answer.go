@@ -114,6 +114,9 @@ func runAnswerContext(ctx context.Context, args []string, dependencies answerDep
 	fs.SetOutput(os.Stderr)
 	_ = fs.String("config", configPath, "JSON configuration file")
 	dir := fs.String("dir", ".rkc", "generated RKC output directory")
+	database := fs.String("database", "", "durable SQLite store (mutually exclusive with --dir)")
+	snapshotID := fs.String("snapshot", "", "SQLite snapshot ID")
+	repositoryID := fs.String("repository", "", "SQLite repository ID; selects its current snapshot")
 	kinds := fs.String("kinds", "", "comma-separated node or artifact kinds")
 	languages := fs.String("languages", "", "comma-separated languages")
 	objects := fs.String("objects", "", "comma-separated object types")
@@ -203,7 +206,12 @@ func runAnswerContext(ctx context.Context, args []string, dependencies answerDep
 	if !validModelTask(task) {
 		return fmt.Errorf("invalid model task %q", *taskValue)
 	}
-	dataset, err := dependencies.loadDataset(*dir)
+	var dataset *server.Dataset
+	if *database == "" && *snapshotID == "" && *repositoryID == "" {
+		dataset, err = dependencies.loadDataset(*dir)
+	} else {
+		dataset, err = loadSelectedDataset(ctx, *dir, *database, *snapshotID, *repositoryID, flagWasSet(fs, "dir"))
+	}
 	if err != nil {
 		return err
 	}

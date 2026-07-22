@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -9,14 +10,15 @@ import (
 	"os"
 	"path/filepath"
 	"time"
-
-	"github.com/neuroforge-io/RKC/internal/server"
 )
 
 func runServe(args []string) error {
 	fs := flag.NewFlagSet("serve", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
 	dir := fs.String("dir", ".rkc", "generated RKC output directory")
+	database := fs.String("database", "", "durable SQLite store (mutually exclusive with --dir)")
+	snapshotID := fs.String("snapshot", "", "SQLite snapshot ID")
+	repositoryID := fs.String("repository", "", "SQLite repository ID; selects its current snapshot")
 	addr := fs.String("addr", "127.0.0.1:8787", "HTTP listen address")
 	readyFile := fs.String("ready-file", "", "atomically create a JSON readiness receipt after binding; file must not exist")
 	readTimeout := fs.Duration("read-timeout", 15*time.Second, "HTTP read timeout")
@@ -24,7 +26,10 @@ func runServe(args []string) error {
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
-	dataset, err := server.Load(*dir)
+	if fs.NArg() != 0 {
+		return fmt.Errorf("serve does not accept positional arguments")
+	}
+	dataset, err := loadSelectedDataset(context.Background(), *dir, *database, *snapshotID, *repositoryID, flagWasSet(fs, "dir"))
 	if err != nil {
 		return err
 	}

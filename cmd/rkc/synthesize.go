@@ -89,6 +89,9 @@ func runSynthesizeContext(modelContext context.Context, args []string) error {
 	fs.SetOutput(os.Stderr)
 	_ = fs.String("config", configPath, "JSON configuration file")
 	dir := fs.String("dir", ".rkc", "generated RKC output directory")
+	database := fs.String("database", "", "durable SQLite store (mutually exclusive with --dir)")
+	snapshotID := fs.String("snapshot", "", "SQLite snapshot ID")
+	repositoryID := fs.String("repository", "", "SQLite repository ID; selects its current snapshot")
 	repositoryRoot := fs.String("repo-root", "", "repository source root used for evidence excerpts")
 	output := fs.String("out", "", "synthesis output directory outside the verified dataset")
 	var nodeRefs stringList
@@ -123,6 +126,9 @@ func runSynthesizeContext(modelContext context.Context, args []string) error {
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
+	if fs.NArg() != 0 {
+		return errors.New("synthesize does not accept positional arguments")
+	}
 	if *limit <= 0 || *limit > 10000 {
 		return errors.New("limit must be between 1 and 10000")
 	}
@@ -145,7 +151,7 @@ func runSynthesizeContext(modelContext context.Context, args []string) error {
 	if !validModelTask(task) {
 		return fmt.Errorf("invalid model task %q", *taskValue)
 	}
-	dataset, err := loadDataset(*dir)
+	dataset, err := loadSelectedDataset(modelContext, *dir, *database, *snapshotID, *repositoryID, flagWasSet(fs, "dir"))
 	if err != nil {
 		return err
 	}
@@ -191,7 +197,11 @@ func runSynthesizeContext(modelContext context.Context, args []string) error {
 	if err != nil {
 		return err
 	}
-	publication, err := safeoutput.Begin(finalOutput, dataset.Root, *force, "synthesis")
+	_, protectedDatasetRoot, err := synthesisDatasetIdentity(dataset.Root)
+	if err != nil {
+		return err
+	}
+	publication, err := safeoutput.Begin(finalOutput, protectedDatasetRoot, *force, "synthesis")
 	if err != nil {
 		return err
 	}
@@ -408,8 +418,9 @@ func synthesisCancellation(ctx context.Context) error {
 // the verified dataset tree. That separation is a hard trust boundary: a later
 // RKC load or self-scan must not mistake generated prose for verified input.
 func resolveSynthesisOutput(requested, datasetRoot, repositoryRoot, profile string) (string, error) {
-	if strings.TrimSpace(datasetRoot) == "" {
-		return "", errors.New("verified dataset root is empty")
+	datasetResolved, protectedDirectory, err := synthesisDatasetIdentity(datasetRoot)
+	if err != nil {
+		return "", err
 	}
 	target := strings.TrimSpace(requested)
 	if target == "" {
@@ -426,17 +437,9 @@ func resolveSynthesisOutput(requested, datasetRoot, repositoryRoot, profile stri
 		)
 	}
 
-	resolved, err := safeoutput.ResolveTarget(target, datasetRoot)
+	resolved, err := safeoutput.ResolveTarget(target, protectedDirectory)
 	if err != nil {
 		return "", err
-	}
-	datasetResolved, err := filepath.EvalSymlinks(datasetRoot)
-	if err != nil {
-		return "", fmt.Errorf("resolve verified dataset root: %w", err)
-	}
-	datasetResolved, err = filepath.Abs(datasetResolved)
-	if err != nil {
-		return "", fmt.Errorf("resolve verified dataset root: %w", err)
 	}
 	inside, err := pathIsWithin(datasetResolved, resolved)
 	if err != nil {
@@ -444,6 +447,13 @@ func resolveSynthesisOutput(requested, datasetRoot, repositoryRoot, profile stri
 	}
 	if inside {
 		return "", fmt.Errorf("%w: synthesis output must be outside verified dataset %s", safeoutput.ErrUnsafeTarget, datasetResolved)
+	}
+	containsDataset, err := pathIsWithin(resolved, datasetResolved)
+	if err != nil {
+		return "", fmt.Errorf("compare synthesis output with verified dataset: %w", err)
+	}
+	if containsDataset {
+		return "", fmt.Errorf("%w: synthesis output cannot contain verified dataset %s", safeoutput.ErrUnsafeTarget, datasetResolved)
 	}
 	if strings.TrimSpace(repositoryRoot) != "" {
 		resolved, err = safeoutput.ResolveTarget(resolved, repositoryRoot)
@@ -461,6 +471,31 @@ func resolveSynthesisOutput(requested, datasetRoot, repositoryRoot, profile stri
 		}
 	}
 	return resolved, nil
+}
+
+func synthesisDatasetIdentity(datasetRoot string) (string, string, error) {
+	if strings.TrimSpace(datasetRoot) == "" {
+		return "", "", errors.New("verified dataset root is empty")
+	}
+	datasetResolved, err := filepath.EvalSymlinks(datasetRoot)
+	if err != nil {
+		return "", "", fmt.Errorf("%w: resolve verified dataset root: %v", safeoutput.ErrUnsafeTarget, err)
+	}
+	datasetResolved, err = filepath.Abs(datasetResolved)
+	if err != nil {
+		return "", "", fmt.Errorf("%w: resolve verified dataset root: %v", safeoutput.ErrUnsafeTarget, err)
+	}
+	datasetInfo, err := os.Lstat(datasetResolved)
+	if err != nil {
+		return "", "", fmt.Errorf("%w: inspect verified dataset root: %v", safeoutput.ErrUnsafeTarget, err)
+	}
+	if datasetInfo.IsDir() {
+		return datasetResolved, datasetResolved, nil
+	}
+	if datasetInfo.Mode().IsRegular() && datasetInfo.Mode()&os.ModeSymlink == 0 {
+		return datasetResolved, "", nil
+	}
+	return "", "", fmt.Errorf("%w: verified dataset identity is neither a regular database nor a directory", safeoutput.ErrUnsafeTarget)
 }
 
 func pathIsWithin(parent, candidate string) (bool, error) {

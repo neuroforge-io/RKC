@@ -50,6 +50,8 @@ const (
 // Path must name a database file beneath an existing, symlink-free directory.
 type Options struct {
 	Path            string
+	RequireExisting bool
+	ReadOnly        bool
 	BusyTimeout     time.Duration
 	ReadConnections int
 	Synchronous     string
@@ -83,6 +85,9 @@ type Database struct {
 // Open validates the path and immutable migration assets, opens SQLite with
 // per-connection safety pragmas, atomically migrates, and runs Check.
 func Open(ctx context.Context, options Options) (*Database, error) {
+	if ctx == nil {
+		return nil, operationError("open", options.Path, ErrInvalidOptions, errors.New("context is required"))
+	}
 	if err := ctx.Err(); err != nil {
 		return nil, operationError("open", options.Path, ErrCanceled, err)
 	}
@@ -94,19 +99,22 @@ func Open(ctx context.Context, options Options) (*Database, error) {
 	if err != nil {
 		return nil, err
 	}
-	path, created, err := secureDatabasePath(normalized.Path)
+	path, created, err := secureDatabasePath(normalized.Path, normalized.RequireExisting)
 	if err != nil {
 		return nil, err
 	}
 	normalized.Path = path
-	binding, err := bindDatabasePath(path)
+	binding, err := bindDatabasePath(path, normalized.ReadOnly)
 	if err != nil {
 		return nil, err
 	}
-	writerLeases, err := openWriterLeaseManager(path)
-	if err != nil {
-		_ = binding.Close()
-		return nil, err
+	var writerLeases *writerLeaseManager
+	if !normalized.ReadOnly {
+		writerLeases, err = openWriterLeaseManager(path)
+		if err != nil {
+			_ = binding.Close()
+			return nil, err
+		}
 	}
 
 	dsn := sqliteURI(normalized)
@@ -144,11 +152,16 @@ func Open(ctx context.Context, options Options) (*Database, error) {
 	if err := inspectOwnership(ctx, pool, path, plan); err != nil {
 		return fail(err)
 	}
-	if err := enableWAL(ctx, pool, path, normalized.BusyTimeout); err != nil {
-		return fail(err)
-	}
-	if err := migrate(ctx, pool, path, plan); err != nil {
-		return fail(err)
+	if !normalized.ReadOnly {
+		if err := enableWAL(ctx, pool, path, normalized.BusyTimeout); err != nil {
+			return fail(err)
+		}
+		if err := migrate(ctx, pool, path, plan); err != nil {
+			return fail(err)
+		}
+		if err := ensureReaderCursorKey(ctx, pool, path); err != nil {
+			return fail(err)
+		}
 	}
 	if err := database.check(ctx, false); err != nil {
 		return fail(err)
@@ -157,6 +170,18 @@ func Open(ctx context.Context, options Options) (*Database, error) {
 		return fail(err)
 	}
 	return database, nil
+}
+
+func ensureReaderCursorKey(ctx context.Context, pool *sql.DB, path string) error {
+	connection, err := pool.Conn(ctx)
+	if err != nil {
+		return operationError("open cursor key connection", path, classifyDatabaseError(err), err)
+	}
+	defer connection.Close()
+	if _, err := readerCursorKey(ctx, connection, "initialize cursor authentication", true); err != nil {
+		return operationError("initialize cursor authentication", path, classifyDatabaseError(err), err)
+	}
+	return nil
 }
 
 // Path returns the absolute canonical database path.
@@ -209,6 +234,9 @@ func (d *Database) requireOpen(op string) error {
 }
 
 func normalizeOptions(options Options) (Options, error) {
+	if options.ReadOnly {
+		options.RequireExisting = true
+	}
 	defaults := DefaultOptions()
 	if options.BusyTimeout == 0 {
 		options.BusyTimeout = defaults.BusyTimeout
@@ -245,7 +273,7 @@ func normalizeOptions(options Options) (Options, error) {
 	return options, nil
 }
 
-func secureDatabasePath(path string) (string, bool, error) {
+func secureDatabasePath(path string, requireExisting bool) (string, bool, error) {
 	if !utf8.ValidString(path) || strings.IndexByte(path, 0) >= 0 {
 		return "", false, operationError("validate path", path, ErrUnsafePath, fmt.Errorf("invalid path text"))
 	}
@@ -287,6 +315,9 @@ func secureDatabasePath(path string) (string, bool, error) {
 
 	info, err := os.Lstat(clean)
 	if errors.Is(err, os.ErrNotExist) {
+		if requireExisting {
+			return "", false, operationError("open existing database", clean, ErrOpenFailed, os.ErrNotExist)
+		}
 		file, createErr := os.OpenFile(clean, os.O_RDWR|os.O_CREATE|os.O_EXCL, 0o600)
 		if createErr == nil {
 			if closeErr := file.Close(); closeErr != nil {
@@ -328,13 +359,18 @@ type pathBinding struct {
 	parent     *os.File
 }
 
-func bindDatabasePath(path string) (*pathBinding, error) {
+func bindDatabasePath(path string, readOnly bool) (*pathBinding, error) {
 	parentPath := filepath.Dir(path)
 	parent, err := os.Open(parentPath)
 	if err != nil {
 		return nil, operationError("bind database parent", parentPath, ErrUnsafePath, err)
 	}
-	file, err := os.OpenFile(path, os.O_RDWR, 0)
+	var file *os.File
+	if readOnly {
+		file, err = os.Open(path)
+	} else {
+		file, err = os.OpenFile(path, os.O_RDWR, 0)
+	}
 	if err != nil {
 		_ = parent.Close()
 		return nil, operationError("bind database file", path, ErrUnsafePath, err)
@@ -430,7 +466,11 @@ func (b *pathBinding) verify(ctx context.Context, database queryExecutor) error 
 
 func sqliteURI(options Options) string {
 	query := url.Values{}
-	query.Set("mode", "rwc")
+	mode := "rwc"
+	if options.ReadOnly {
+		mode = "ro"
+	}
+	query.Set("mode", mode)
 	query.Set("cache", "private")
 	query.Set("nofollow", "1")
 	query.Set("_txlock", "immediate")

@@ -286,6 +286,109 @@ func TestQueryAndGraphCommands(t *testing.T) {
 	if err := runImpact([]string{"--dir", output}); err == nil {
 		t.Fatal("impact accepted missing --node")
 	}
+	for name, call := range map[string]func() error{
+		"path": func() error {
+			return runPath([]string{"--from", "Alpha", "--to", "Beta", "unexpected", "--database", "ignored"})
+		},
+		"impact":     func() error { return runImpact([]string{"--node", "Alpha", "unexpected", "--database", "ignored"}) },
+		"components": func() error { return runComponents([]string{"unexpected", "--database", "ignored"}) },
+		"serve":      func() error { return runServe([]string{"unexpected", "--database", "ignored"}) },
+		"synthesize": func() error { return runSynthesize([]string{"unexpected", "--database", "ignored"}) },
+	} {
+		if err := call(); err == nil || !strings.Contains(err.Error(), "does not accept positional") {
+			t.Fatalf("%s positional selector error = %v", name, err)
+		}
+	}
+}
+
+func TestSQLiteScanQueryAndIdempotentReplay(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "private")
+	if err := os.Mkdir(root, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	repository := filepath.Join(root, "repository")
+	writeTestFile(t, filepath.Join(repository, "main.go"), "package sample\n\nfunc Alpha() {}\n")
+	database := filepath.Join(root, "rkc.sqlite")
+	output := filepath.Join(root, "atlas")
+	args := []string{
+		"--database", database, "--out", output, "--json", "--no-plugins", "--no-frameworks",
+		"--no-static-site", "--no-jsonl-graph", "--no-search-index", "--no-integrations", repository,
+	}
+	firstOutput, err := captureStdout(t, func() error { return runScan(args) })
+	if err != nil {
+		t.Fatalf("first SQLite scan: %v", err)
+	}
+	var first map[string]any
+	if err := json.Unmarshal([]byte(firstOutput), &first); err != nil {
+		t.Fatal(err)
+	}
+	snapshotID, _ := first["snapshot_id"].(string)
+	if snapshotID == "" || first["database"] != database || first["database_noop"] != false {
+		t.Fatalf("first SQLite scan summary = %v", first)
+	}
+	queryOutput, err := captureStdout(t, func() error {
+		return runQuery([]string{"--database", database, "--snapshot", snapshotID, "--json", "Alpha"})
+	})
+	if err != nil || !strings.Contains(queryOutput, "Alpha") {
+		t.Fatalf("SQLite query: output=%q err=%v", queryOutput, err)
+	}
+	synthesisOutput := filepath.Join(root, "synthesis")
+	if _, err := captureStdout(t, func() error {
+		return runSynthesize([]string{
+			"--database", database, "--snapshot", snapshotID, "--repo-root", repository,
+			"--node", "Alpha", "--packet-only", "--out", synthesisOutput, "--json",
+		})
+	}); err != nil {
+		t.Fatalf("SQLite packet-only synthesis: %v", err)
+	}
+	manifestData, err := os.ReadFile(filepath.Join(synthesisOutput, "manifest.json"))
+	if err != nil || !strings.Contains(string(manifestData), `"snapshot_id": "`+snapshotID+`"`) {
+		t.Fatalf("SQLite synthesis manifest: %s, %v", manifestData, err)
+	}
+
+	secondArgs := append([]string(nil), args...)
+	secondArgs = append([]string{"--force"}, secondArgs...)
+	secondOutput, err := captureStdout(t, func() error { return runScan(secondArgs) })
+	if err != nil {
+		t.Fatalf("idempotent SQLite scan: %v", err)
+	}
+	var second map[string]any
+	if err := json.Unmarshal([]byte(secondOutput), &second); err != nil {
+		t.Fatal(err)
+	}
+	if second["snapshot_id"] != snapshotID || second["database_noop"] != true {
+		t.Fatalf("idempotent SQLite scan summary = %v", second)
+	}
+	var published rkcmodel.Bundle
+	publishedBytes, err := os.ReadFile(filepath.Join(output, "bundle.json"))
+	if err != nil {
+		t.Fatalf("read published SQLite atlas: %v", err)
+	}
+	if err := json.Unmarshal(publishedBytes, &published); err != nil {
+		t.Fatalf("decode published SQLite atlas: %v", err)
+	}
+	writeTestFile(t, filepath.Join(repository, "main.go"), "package sample\n\nfunc Beta() {}\n")
+	if _, err := captureStdout(t, func() error { return runScan(args) }); err == nil {
+		t.Fatal("scan unexpectedly replaced an existing atlas without --force")
+	}
+	current, err := loadSQLiteDataset(context.Background(), database, "", published.Snapshot.RepositoryID)
+	if err != nil || current.Manifest.ID != snapshotID {
+		t.Fatalf("failed atlas preparation advanced SQLite current: current=%v err=%v", current, err)
+	}
+
+	if err := runQuery([]string{"--dir", output, "--database", database, "--snapshot", snapshotID, "Alpha"}); err == nil || !strings.Contains(err.Error(), "mutually exclusive") {
+		t.Fatalf("mixed dataset selector error = %v", err)
+	}
+	if err := runScan([]string{"--database", database, "--state-dir", filepath.Join(root, "legacy"), repository}); err == nil || !strings.Contains(err.Error(), "mutually exclusive") {
+		t.Fatalf("mixed persistence selector error = %v", err)
+	}
+	missing := filepath.Join(root, "missing.sqlite")
+	if _, err := loadSQLiteDataset(context.Background(), missing, snapshotID, ""); err == nil {
+		t.Fatal("missing read database unexpectedly opened")
+	}
+	if _, err := os.Lstat(missing); !os.IsNotExist(err) {
+		t.Fatalf("missing read database was created: %v", err)
+	}
 }
 
 func TestSynthesizeValidationAndOwnedOutput(t *testing.T) {
