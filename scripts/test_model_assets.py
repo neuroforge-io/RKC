@@ -130,7 +130,9 @@ class ModelAssetTests(unittest.TestCase):
             )
             self.assertEqual(path.read_bytes(), payload)
             self.assertEqual(path.stat().st_mode & 0o777, 0o600)
-            self.assertFalse(any(item.name.endswith(".part") for item in cache.iterdir()))
+            self.assertFalse(
+                any(item.name.endswith(".part") for item in cache.iterdir())
+            )
             self.assertEqual(len(opener.requests), 1)
 
             reused = model_assets.fetch_asset(
@@ -187,7 +189,9 @@ class ModelAssetTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             cache = Path(temporary) / "cache"
             response = FakeResponse(payload, asset.url, content_length=len(payload) + 1)
-            with self.assertRaisesRegex(model_assets.IntegrityError, "size header mismatch"):
+            with self.assertRaisesRegex(
+                model_assets.IntegrityError, "size header mismatch"
+            ):
                 model_assets.fetch_asset(
                     asset,
                     cache,
@@ -228,7 +232,9 @@ class ModelAssetTests(unittest.TestCase):
 
     def test_https_downgrade_is_rejected(self) -> None:
         asset = fixture_asset(b"expected")
-        with self.assertRaisesRegex(model_assets.IntegrityError, "credential-free HTTPS"):
+        with self.assertRaisesRegex(
+            model_assets.IntegrityError, "credential-free HTTPS"
+        ):
             model_assets._validate_fetch_url(
                 "http://fixtures.example/payload.gguf", asset
             )
@@ -276,7 +282,9 @@ class ModelAssetTests(unittest.TestCase):
             (model_assets._boolean, 1),
             (model_assets._integer, True),
         ):
-            with self.subTest(function=function.__name__), self.assertRaises(model_assets.LockError):
+            with self.subTest(function=function.__name__), self.assertRaises(
+                model_assets.LockError
+            ):
                 function(value, "x")
         for url in (
             "http://example.test/path",
@@ -287,8 +295,12 @@ class ModelAssetTests(unittest.TestCase):
             with self.subTest(url=url), self.assertRaises(model_assets.LockError):
                 model_assets._https_url(url, "url")
         self.assertTrue(model_assets._host_allowed("exact.example", ("exact.example",)))
-        self.assertTrue(model_assets._host_allowed("a.content.example", (".content.example",)))
-        self.assertFalse(model_assets._host_allowed("content.example", (".content.example",)))
+        self.assertTrue(
+            model_assets._host_allowed("a.content.example", (".content.example",))
+        )
+        self.assertFalse(
+            model_assets._host_allowed("content.example", (".content.example",))
+        )
         self.assertEqual(
             model_assets._validate_hosts(["EXAMPLE.test", ".content.test"], "hosts"),
             ("example.test", ".content.test"),
@@ -350,7 +362,9 @@ class ModelAssetTests(unittest.TestCase):
         ):
             changed = deepcopy(source)
             changed[key] = value
-            with self.subTest(source_key=key), self.assertRaises(model_assets.LockError):
+            with self.subTest(source_key=key), self.assertRaises(
+                model_assets.LockError
+            ):
                 model_assets._parse_asset(changed, 0)
 
     def test_load_lock_rejects_duplicate_json_and_invalid_defaults(self) -> None:
@@ -379,13 +393,15 @@ class ModelAssetTests(unittest.TestCase):
         with mock.patch.object(model_assets.sys, "platform", "darwin"):
             matches = model_assets.active_priority_processes()
         self.assertEqual(matches[0][0], 123)
-        with mock.patch.object(model_assets, "active_priority_processes", return_value=matches):
+        with mock.patch.object(
+            model_assets, "active_priority_processes", return_value=matches
+        ):
             with self.assertRaisesRegex(model_assets.PriorityBlocked, "priority"):
                 model_assets.assert_priority_available()
         run.side_effect = FileNotFoundError("pgrep")
-        with mock.patch.object(model_assets.sys, "platform", "darwin"), self.assertRaises(
-            model_assets.PriorityBlocked
-        ):
+        with mock.patch.object(
+            model_assets.sys, "platform", "darwin"
+        ), self.assertRaises(model_assets.PriorityBlocked):
             model_assets.active_priority_processes()
 
     def test_linux_priority_inventory_and_ancestor_walk(self) -> None:
@@ -408,9 +424,9 @@ class ModelAssetTests(unittest.TestCase):
                     return proc / name.removeprefix("/proc/")
                 return real_path(value)
 
-            with mock.patch.object(model_assets, "Path", side_effect=mapped), mock.patch.object(
-                model_assets, "_ancestor_pids", return_value={999}
-            ):
+            with mock.patch.object(
+                model_assets, "Path", side_effect=mapped
+            ), mock.patch.object(model_assets, "_ancestor_pids", return_value={999}):
                 matches = model_assets.active_priority_processes()
             self.assertEqual(matches, [(101, "python /work/erais/train.py ")])
 
@@ -445,7 +461,9 @@ class ModelAssetTests(unittest.TestCase):
             for name, value in files.items():
                 (cgroup / name).write_text(value + "\n", encoding="ascii")
             self_cgroup = root / "self.cgroup"
-            self_cgroup.write_text("0::/user.slice/rkc-low-fixture.scope\n", encoding="ascii")
+            self_cgroup.write_text(
+                "0::/user.slice/rkc-low-fixture.scope\n", encoding="ascii"
+            )
             oom = root / "oom_score_adj"
             oom.write_text("750\n", encoding="ascii")
 
@@ -460,9 +478,13 @@ class ModelAssetTests(unittest.TestCase):
                 return real_path(value)
 
             ionice = subprocess.CompletedProcess([], 0, stdout="idle\n", stderr="")
-            with mock.patch.object(model_assets, "Path", side_effect=mapped), mock.patch.object(
+            with mock.patch.object(
+                model_assets, "Path", side_effect=mapped
+            ), mock.patch.object(
                 model_assets.os, "getpriority", return_value=19
-            ), mock.patch.object(model_assets.subprocess, "run", return_value=ionice):
+            ), mock.patch.object(
+                model_assets.subprocess, "run", return_value=ionice
+            ):
                 model_assets.assert_resource_guard()
                 (cgroup / "cpu.weight").write_text("2\n", encoding="ascii")
                 with self.assertRaisesRegex(model_assets.AssetError, "CPUWeight"):
@@ -471,24 +493,36 @@ class ModelAssetTests(unittest.TestCase):
                 (cgroup / "memory.high").write_text("1\n", encoding="ascii")
                 with self.assertRaisesRegex(model_assets.AssetError, "memory.high"):
                     model_assets.assert_resource_guard()
-                (cgroup / "memory.high").write_text(files["memory.high"] + "\n", encoding="ascii")
+                (cgroup / "memory.high").write_text(
+                    files["memory.high"] + "\n", encoding="ascii"
+                )
                 (cgroup / "io.weight").write_text("default 100\n", encoding="ascii")
                 with self.assertRaisesRegex(model_assets.AssetError, "IOWeight"):
                     model_assets.assert_resource_guard()
             (cgroup / "io.weight").write_text("default 1\n", encoding="ascii")
-            with mock.patch.object(model_assets, "Path", side_effect=mapped), mock.patch.object(
+            with mock.patch.object(
+                model_assets, "Path", side_effect=mapped
+            ), mock.patch.object(
                 model_assets.os, "getpriority", return_value=0
-            ), mock.patch.object(model_assets.subprocess, "run", return_value=ionice), self.assertRaisesRegex(
+            ), mock.patch.object(
+                model_assets.subprocess, "run", return_value=ionice
+            ), self.assertRaisesRegex(
                 model_assets.AssetError, "nice level"
             ):
                 model_assets.assert_resource_guard()
-            with mock.patch.object(model_assets, "Path", side_effect=mapped), mock.patch.object(
+            with mock.patch.object(
+                model_assets, "Path", side_effect=mapped
+            ), mock.patch.object(
                 model_assets.os, "getpriority", return_value=19
             ), mock.patch.object(
                 model_assets.subprocess,
                 "run",
-                return_value=subprocess.CompletedProcess([], 1, stdout="", stderr="bad"),
-            ), self.assertRaisesRegex(model_assets.AssetError, "scheduling"):
+                return_value=subprocess.CompletedProcess(
+                    [], 1, stdout="", stderr="bad"
+                ),
+            ), self.assertRaisesRegex(
+                model_assets.AssetError, "scheduling"
+            ):
                 model_assets.assert_resource_guard()
 
     def test_redirect_write_and_fsync_edge_failures(self) -> None:
@@ -499,9 +533,9 @@ class ModelAssetTests(unittest.TestCase):
         with self.assertRaisesRegex(model_assets.IntegrityError, "five redirects"):
             handler.redirect_request(request, None, 302, "found", {}, asset.url)
         self.assertIsNotNone(model_assets._default_opener(asset))
-        with mock.patch.object(model_assets.os, "write", return_value=0), self.assertRaisesRegex(
-            OSError, "short write"
-        ):
+        with mock.patch.object(
+            model_assets.os, "write", return_value=0
+        ), self.assertRaisesRegex(OSError, "short write"):
             model_assets._write_all(1, b"x")
         for error_number, should_raise in ((22, False), (95, False), (5, True)):
             error = OSError(error_number, "fsync")
@@ -523,9 +557,9 @@ class ModelAssetTests(unittest.TestCase):
                 real_link(src, dst, **kwargs)
                 raise FileExistsError(dst)
 
-            with mock.patch.object(model_assets, "assert_resource_guard"), mock.patch.object(
-                model_assets.os, "link", side_effect=racing_link
-            ):
+            with mock.patch.object(
+                model_assets, "assert_resource_guard"
+            ), mock.patch.object(model_assets.os, "link", side_effect=racing_link):
                 path = model_assets.fetch_asset(
                     asset,
                     cache,
@@ -559,9 +593,9 @@ class ModelAssetTests(unittest.TestCase):
             self.assertEqual(leftovers[0].read_bytes(), b"replacement")
 
     def test_resource_guard_and_cache_root_fail_closed(self) -> None:
-        with mock.patch.object(model_assets.sys, "platform", "darwin"), self.assertRaisesRegex(
-            model_assets.AssetError, "Linux"
-        ):
+        with mock.patch.object(
+            model_assets.sys, "platform", "darwin"
+        ), self.assertRaisesRegex(model_assets.AssetError, "Linux"):
             model_assets.assert_resource_guard()
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
@@ -587,18 +621,26 @@ class ModelAssetTests(unittest.TestCase):
             cache = Path(temporary) / "cache"
             cache.mkdir(mode=0o700)
             with self.assertRaises(model_assets.MissingAsset):
-                model_assets.verify_cached_asset(asset, cache, priority_check=lambda: None)
+                model_assets.verify_cached_asset(
+                    asset, cache, priority_check=lambda: None
+                )
             target = cache / asset.filename
             target.write_bytes(b"wrong-size")
             with self.assertRaisesRegex(model_assets.IntegrityError, "size mismatch"):
-                model_assets.verify_cached_asset(asset, cache, priority_check=lambda: None)
+                model_assets.verify_cached_asset(
+                    asset, cache, priority_check=lambda: None
+                )
             target.write_bytes(b"tampered")
             self.assertEqual(len(b"tampered"), asset.size_bytes)
             with self.assertRaisesRegex(model_assets.IntegrityError, "SHA-256"):
-                model_assets.verify_cached_asset(asset, cache, priority_check=lambda: None)
+                model_assets.verify_cached_asset(
+                    asset, cache, priority_check=lambda: None
+                )
             target.write_bytes(payload)
             self.assertEqual(
-                model_assets.verify_cached_asset(asset, cache, priority_check=lambda: None),
+                model_assets.verify_cached_asset(
+                    asset, cache, priority_check=lambda: None
+                ),
                 target,
             )
 
@@ -627,9 +669,9 @@ class ModelAssetTests(unittest.TestCase):
             self.assertGreaterEqual(checks, 3)
 
             statvfs = mock.Mock(f_frsize=4096, f_bsize=4096, f_bavail=1)
-            with mock.patch.object(model_assets.os, "statvfs", return_value=statvfs), self.assertRaisesRegex(
-                model_assets.AssetError, "disk headroom"
-            ):
+            with mock.patch.object(
+                model_assets.os, "statvfs", return_value=statvfs
+            ), self.assertRaisesRegex(model_assets.AssetError, "disk headroom"):
                 model_assets.assert_disk_headroom(cache, 1, "fixture")
             with self.assertRaisesRegex(model_assets.AssetError, "negative"):
                 model_assets._required_free_bytes(-1)
@@ -639,13 +681,18 @@ class ModelAssetTests(unittest.TestCase):
         asset = fixture_asset(payload)
         cases = (
             (FakeResponse(payload, asset.url, status=503), model_assets.AssetError),
-            (FakeResponse(payload, asset.url, content_encoding="gzip"), model_assets.IntegrityError),
+            (
+                FakeResponse(payload, asset.url, content_encoding="gzip"),
+                model_assets.IntegrityError,
+            ),
             (FakeResponse(payload, asset.url, content_length=None), None),
             (FakeResponse(payload[:-1], asset.url), model_assets.IntegrityError),
             (FakeResponse(payload + b"x", asset.url), model_assets.IntegrityError),
         )
         for response, error in cases:
-            with self.subTest(status=response.status, size=len(response.stream.getvalue())):
+            with self.subTest(
+                status=response.status, size=len(response.stream.getvalue())
+            ):
                 with tempfile.TemporaryFile() as handle:
                     if error is None:
                         model_assets._download_to_descriptor(
@@ -654,7 +701,10 @@ class ModelAssetTests(unittest.TestCase):
                     else:
                         with self.assertRaises(error):
                             model_assets._download_to_descriptor(
-                                asset, handle.fileno(), FakeOpener(response), lambda: None
+                                asset,
+                                handle.fileno(),
+                                FakeOpener(response),
+                                lambda: None,
                             )
         bad_length = FakeResponse(payload, asset.url)
         bad_length.headers["Content-Length"] = "NaN"
@@ -664,30 +714,41 @@ class ModelAssetTests(unittest.TestCase):
             model_assets._download_to_descriptor(
                 asset, handle.fileno(), FakeOpener(bad_length), lambda: None
             )
+
         class BrokenOpener:
             def open(self, *_args, **_kwargs):  # type: ignore[no-untyped-def]
                 raise urllib.error.URLError("offline")
 
-        with tempfile.TemporaryFile() as handle, self.assertRaises(model_assets.AssetError):
-            model_assets._download_to_descriptor(asset, handle.fileno(), BrokenOpener(), lambda: None)
+        with tempfile.TemporaryFile() as handle, self.assertRaises(
+            model_assets.AssetError
+        ):
+            model_assets._download_to_descriptor(
+                asset, handle.fileno(), BrokenOpener(), lambda: None
+            )
 
     def test_main_commands_and_error_statuses_are_mocked(self) -> None:
         lock = model_assets.load_lock()
         asset = lock.assets[1]
-        with mock.patch.object(model_assets, "load_lock", return_value=lock), mock.patch(
-            "sys.stdout", new=io.StringIO()
-        ) as output:
+        with mock.patch.object(
+            model_assets, "load_lock", return_value=lock
+        ), mock.patch("sys.stdout", new=io.StringIO()) as output:
             self.assertEqual(model_assets.main(["list"]), 0)
             self.assertEqual(len(json.loads(output.getvalue())), len(lock.assets))
-        with mock.patch.object(model_assets, "load_lock", return_value=lock), mock.patch(
+        with mock.patch.object(
+            model_assets, "load_lock", return_value=lock
+        ), mock.patch("sys.stdout", new=io.StringIO()):
+            self.assertEqual(model_assets.main(["validate-lock"]), 0)
+        with mock.patch.object(
+            model_assets, "load_lock", return_value=lock
+        ), mock.patch.object(
+            model_assets, "verify_cached_asset", return_value=Path("/cache/model")
+        ), mock.patch.object(
+            model_assets, "assert_priority_available"
+        ) as priority, mock.patch.object(
+            model_assets, "assert_resource_guard"
+        ) as guard, mock.patch(
             "sys.stdout", new=io.StringIO()
         ):
-            self.assertEqual(model_assets.main(["validate-lock"]), 0)
-        with mock.patch.object(model_assets, "load_lock", return_value=lock), mock.patch.object(
-            model_assets, "verify_cached_asset", return_value=Path("/cache/model")
-        ), mock.patch.object(model_assets, "assert_priority_available") as priority, mock.patch.object(
-            model_assets, "assert_resource_guard"
-        ) as guard, mock.patch("sys.stdout", new=io.StringIO()):
             self.assertEqual(
                 model_assets.main(
                     ["verify", "--asset", asset.asset_id, "--cache-root", "/cache"]
@@ -696,18 +757,22 @@ class ModelAssetTests(unittest.TestCase):
             )
             priority.assert_called()
             guard.assert_called_once()
-        with mock.patch.object(model_assets, "load_lock", return_value=lock), mock.patch(
-            "sys.stderr", new=io.StringIO()
-        ):
+        with mock.patch.object(
+            model_assets, "load_lock", return_value=lock
+        ), mock.patch("sys.stderr", new=io.StringIO()):
             self.assertEqual(
                 model_assets.main(
                     ["fetch", "--asset", asset.asset_id, "--cache-root", "/cache"]
                 ),
                 1,
             )
-        with mock.patch.object(model_assets, "load_lock", return_value=lock), mock.patch.object(
+        with mock.patch.object(
+            model_assets, "load_lock", return_value=lock
+        ), mock.patch.object(
             model_assets, "fetch_asset", return_value=Path("/cache/model")
-        ), mock.patch("sys.stdout", new=io.StringIO()):
+        ), mock.patch(
+            "sys.stdout", new=io.StringIO()
+        ):
             self.assertEqual(
                 model_assets.main(
                     [
@@ -726,6 +791,360 @@ class ModelAssetTests(unittest.TestCase):
             model_assets, "load_lock", side_effect=model_assets.PriorityBlocked("busy")
         ), mock.patch("sys.stderr", new=io.StringIO()):
             self.assertEqual(model_assets.main(["list"]), 75)
+
+    def test_lock_rejects_structural_and_binding_policy_drift(self) -> None:
+        lock = model_assets.load_lock()
+        documents: list[tuple[str, object, str]] = []
+
+        def changed(label: str, message: str) -> dict[str, object]:
+            document = deepcopy(lock.document)
+            documents.append((label, document, message))
+            return document
+
+        documents.append(("root", [], "root must be an object"))
+        changed("missing-key", "keys differ").pop("assets")
+        changed("schema", "checked-in schema")["$schema"] = "elsewhere.json"
+        changed("version", "unsupported")["schema_version"] = "2.0.0"
+        changed("llama-type", "must be an object")["llama_cpp"] = []
+        changed("repository", "reviewed upstream")["llama_cpp"][
+            "repository"
+        ] = "https://example.test/llama.cpp"
+        changed("tag", "tag is invalid")["llama_cpp"]["tag"] = "release-1"
+        changed("commit", "full lowercase")["llama_cpp"]["commit"] = "A" * 40
+        changed("license", "upstream MIT")["llama_cpp"]["license_spdx"] = "Apache-2.0"
+        changed("asset-count", "between three and 32")["assets"] = []
+        duplicate = changed("duplicate-assets", "duplicate asset identifiers")
+        duplicate["assets"].append(deepcopy(duplicate["assets"][0]))
+        wrong_tag = changed("source-tag", "pinned release tag")
+        wrong_tag["assets"][0]["filename"] = "llama-source.tar.gz"
+        changed("default-id", "valid asset identifier")["default_generation_model"] = 17
+        wrong_kind = changed("default-kind", "qualified, default-eligible")
+        wrong_kind["assets"][1]["status"] = "qualified"
+        wrong_kind["assets"][1]["default_eligible"] = True
+        wrong_kind["default_embedding_model"] = wrong_kind["assets"][1]["id"]
+
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / "models.lock.json"
+            for label, document, message in documents:
+                with self.subTest(label=label):
+                    path.write_text(json.dumps(document), encoding="utf-8")
+                    with self.assertRaisesRegex(model_assets.LockError, message):
+                        model_assets.load_lock(path)
+
+    def test_cmake_rejects_nested_collection_policy_drift(self) -> None:
+        base = deepcopy(model_assets.load_lock().document["llama_cpp"])
+        cases: list[tuple[str, object, str]] = []
+
+        def changed(label: str, message: str) -> dict[str, object]:
+            llama = deepcopy(base)
+            cases.append((label, llama, message))
+            return llama
+
+        changed("cmake-type", "must be an object")["cmake"] = None
+        changed("cmake-keys", "keys differ")["cmake"]["unexpected"] = []
+        changed("targets-type", "one to eight targets")["cmake"]["targets"] = None
+        duplicate_targets = changed("targets-duplicate", "contains duplicates")
+        duplicate_targets["cmake"]["targets"].append("llama-cli")
+        changed("common-empty", "one to 64 options")["cmake"]["common_options"] = []
+        duplicate_options = changed("common-duplicate", "duplicate options")
+        option = duplicate_options["cmake"]["common_options"][0]
+        duplicate_options["cmake"]["common_options"] = [option, option]
+        changed("profiles-type", "must be an object")["cmake"]["profiles"] = []
+        changed("profiles-keys", "keys differ")["cmake"]["profiles"]["gpu"] = []
+        changed("portable-empty", "one to 64 options")["cmake"]["profiles"][
+            "portable"
+        ] = []
+        changed("native-invalid", "invalid CMake")["cmake"]["profiles"]["native"] = [
+            "-Dunsafe value=true"
+        ]
+
+        for label, llama, message in cases:
+            with self.subTest(label=label), self.assertRaisesRegex(
+                model_assets.LockError, message
+            ):
+                model_assets._validate_cmake(llama)
+
+    def test_asset_parser_rejects_nested_metadata_policy_edges(self) -> None:
+        lock = model_assets.load_lock()
+        generation = deepcopy(lock.document["assets"][1])
+        cases: list[tuple[str, dict[str, object], str]] = []
+
+        def changed(label: str, message: str) -> dict[str, object]:
+            asset = deepcopy(generation)
+            cases.append((label, asset, message))
+            return asset
+
+        changed("missing-key", "keys differ").pop("repository")
+        changed("revision-binding", "embed the immutable revision")[
+            "url"
+        ] = "https://huggingface.co/example/model.gguf"
+        changed("hosts-type", "between one and eight host rules")[
+            "allowed_hosts"
+        ] = "huggingface.co"
+        changed("host-entry-type", "must be a string")["allowed_hosts"] = [17]
+        changed("quantization", "quantization is invalid")["quantization"] = "bad value"
+        changed("context-bool", "must be an integer")["native_context_tokens"] = True
+        changed("context-bound", "supported bound")["native_context_tokens"] = (
+            1024 * 1024 + 1
+        )
+        changed("qualification-absolute", "escapes")[
+            "qualification_spec"
+        ] = "/models/qualification/model.json"
+        changed("qualification-directory", "escapes")[
+            "qualification_spec"
+        ] = "docs/qualification/model.json"
+        changed("qualification-suffix", "escapes")[
+            "qualification_spec"
+        ] = "models/qualification/model.yaml"
+        changed("extraction-root", "portable directory")["extraction_root"] = "../src"
+        changed("default-type", "must be a boolean")["default_eligible"] = 1
+        changed("repository-ip", "DNS hostname")[
+            "repository"
+        ] = "https://127.0.0.1/model"
+        changed("license-url", "without credentials")[
+            "license_url"
+        ] = "https://user@example.test/LICENSE"
+
+        for label, asset, message in cases:
+            with self.subTest(label=label), self.assertRaisesRegex(
+                model_assets.LockError, message
+            ):
+                model_assets._parse_asset(asset, 1)
+
+        source = deepcopy(lock.document["assets"][0])
+        for label, key, value in (
+            ("context", "native_context_tokens", 1),
+            ("qualification", "qualification_spec", "models/qualification/source.json"),
+        ):
+            with self.subTest(source_metadata=label):
+                changed_source = deepcopy(source)
+                changed_source[key] = value
+                with self.assertRaisesRegex(
+                    model_assets.LockError, "model-only metadata"
+                ):
+                    model_assets._parse_asset(changed_source, 0)
+
+    def test_resource_guard_rejects_missing_and_incomplete_contracts(self) -> None:
+        with mock.patch.object(
+            model_assets.Path, "read_text", return_value="1:name:/legacy\n"
+        ), self.assertRaisesRegex(model_assets.AssetError, "no unified cgroup"):
+            model_assets.assert_resource_guard()
+        with mock.patch.object(
+            model_assets.Path,
+            "read_text",
+            return_value="0::/user.slice/not-rkc.scope\n",
+        ), self.assertRaisesRegex(model_assets.AssetError, "outside an RKC"):
+            model_assets.assert_resource_guard()
+
+        with tempfile.TemporaryDirectory() as temporary:
+            missing = Path(temporary)
+            with self.assertRaisesRegex(model_assets.AssetError, "is unavailable"):
+                model_assets._read_cgroup_value(missing, "cpu.weight")
+
+            root = Path(temporary)
+            sysfs = root / "sysfs"
+            cgroup = sysfs / "rkc-low-fixture.service"
+            cgroup.mkdir(parents=True)
+            values = {
+                "cpu.weight": "1",
+                "cpu.max": "max 100000",
+                "memory.high": str(2 * 1024 * 1024 * 1024),
+                "memory.max": str(2560 * 1024 * 1024),
+                "memory.swap.max": str(256 * 1024 * 1024),
+                "pids.max": "128",
+            }
+            for name, value in values.items():
+                (cgroup / name).write_text(value + "\n", encoding="ascii")
+            self_cgroup = root / "self.cgroup"
+            self_cgroup.write_text("0::/rkc-low-fixture.service\n", encoding="ascii")
+            oom = root / "oom_score_adj"
+            oom.write_text("750\n", encoding="ascii")
+            real_path = Path
+
+            def mapped(value: object = ".") -> Path:
+                name = str(value)
+                if name == "/proc/self/cgroup":
+                    return self_cgroup
+                if name == "/sys/fs/cgroup":
+                    return sysfs
+                if name == "/proc/self/oom_score_adj":
+                    return oom
+                return real_path(value)
+
+            ionice = subprocess.CompletedProcess([], 0, stdout="idle\n", stderr="")
+            with mock.patch.object(
+                model_assets, "Path", side_effect=mapped
+            ), mock.patch.object(
+                model_assets.os, "getpriority", return_value=19
+            ), mock.patch.object(
+                model_assets.subprocess, "run", return_value=ionice
+            ), self.assertRaisesRegex(
+                model_assets.AssetError, "exceeds one CPU"
+            ):
+                model_assets.assert_resource_guard()
+            (cgroup / "cpu.max").write_text("100000 100000\n", encoding="ascii")
+            oom.write_text("0\n", encoding="ascii")
+            with mock.patch.object(
+                model_assets, "Path", side_effect=mapped
+            ), mock.patch.object(
+                model_assets.os, "getpriority", return_value=19
+            ), mock.patch.object(
+                model_assets.subprocess, "run", return_value=ionice
+            ), self.assertRaisesRegex(
+                model_assets.AssetError, "OOM score"
+            ):
+                model_assets.assert_resource_guard()
+            oom.write_text("750\n", encoding="ascii")
+            with mock.patch.object(
+                model_assets, "Path", side_effect=mapped
+            ), mock.patch.object(
+                model_assets.os, "getpriority", return_value=19
+            ), mock.patch.object(
+                model_assets.subprocess, "run", side_effect=FileNotFoundError("ionice")
+            ), self.assertRaisesRegex(
+                model_assets.AssetError, "cannot inspect"
+            ):
+                model_assets.assert_resource_guard()
+
+    def test_cache_and_verification_identity_failures_are_closed(self) -> None:
+        payload = b"verified"
+        asset = fixture_asset(payload)
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            with self.assertRaisesRegex(model_assets.AssetError, "does not exist"):
+                model_assets._assert_no_symlink_components(root / "missing" / "child")
+            component = root / "component"
+            component.write_bytes(b"not a directory")
+            with self.assertRaisesRegex(
+                model_assets.AssetError, "not a real directory"
+            ):
+                model_assets._assert_no_symlink_components(component / "child")
+            with self.assertRaisesRegex(model_assets.AssetError, "real directory"):
+                model_assets._open_cache_root(component)
+
+            cache = root / "cache"
+            cache.mkdir(mode=0o700)
+            if hasattr(os, "getuid"):
+                with mock.patch.object(
+                    model_assets.os, "getuid", return_value=os.getuid() + 1
+                ), self.assertRaisesRegex(model_assets.AssetError, "not owned"):
+                    model_assets._open_cache_root(cache)
+            with mock.patch.object(
+                model_assets.os, "open", side_effect=OSError("denied")
+            ), self.assertRaisesRegex(model_assets.AssetError, "open cache root"):
+                model_assets._open_cache_root(cache)
+            with mock.patch.object(
+                model_assets, "_same_inode", return_value=False
+            ), self.assertRaisesRegex(
+                model_assets.AssetError, "changed while it was opened"
+            ):
+                model_assets._open_cache_root(cache)
+
+            target = cache / asset.filename
+            target.write_bytes(payload)
+            with mock.patch.object(
+                model_assets,
+                "_same_inode",
+                side_effect=[True, True, False],
+            ), self.assertRaisesRegex(model_assets.IntegrityError, "pathname changed"):
+                model_assets.verify_cached_asset(
+                    asset, cache, priority_check=lambda: None
+                )
+            with mock.patch.object(
+                model_assets,
+                "_same_inode",
+                side_effect=[True, True, True, False],
+            ), self.assertRaisesRegex(
+                model_assets.IntegrityError, "root pathname changed"
+            ):
+                model_assets.verify_cached_asset(
+                    asset, cache, priority_check=lambda: None
+                )
+
+            descriptor = os.open(cache, os.O_RDONLY)
+            try:
+                with self.assertRaisesRegex(
+                    model_assets.IntegrityError, "not a regular file"
+                ):
+                    model_assets._verify_open_asset(
+                        descriptor, asset, priority_check=lambda: None
+                    )
+                enough = mock.Mock(f_frsize=4096, f_bsize=4096, f_bavail=2**30)
+                with mock.patch.object(
+                    model_assets.os, "fstatvfs", return_value=enough
+                ):
+                    model_assets.assert_disk_headroom(descriptor, 1, "fixture")
+                with mock.patch.object(
+                    model_assets.os, "fstatvfs", side_effect=OSError("unavailable")
+                ), self.assertRaisesRegex(model_assets.AssetError, "cannot inspect"):
+                    model_assets.assert_disk_headroom(descriptor, 1, "fixture")
+            finally:
+                os.close(descriptor)
+
+    def test_exact_temporary_cleanup_and_publication_fail_closed(self) -> None:
+        payload = b"expected"
+        asset = fixture_asset(payload)
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            root_fd = os.open(root, os.O_RDONLY)
+            try:
+                temporary_name = "temporary.part"
+                temporary_path = root / temporary_name
+                temporary_path.write_bytes(payload)
+                expected = temporary_path.stat()
+                model_assets._unlink_exact_temporary(root_fd, temporary_name, expected)
+                self.assertFalse(temporary_path.exists())
+                model_assets._unlink_exact_temporary(root_fd, temporary_name, expected)
+
+                changed_name = "changed.part"
+                changed_path = root / changed_name
+                changed_path.write_bytes(payload)
+                changed_expected = changed_path.stat()
+                changed_path.unlink()
+                changed_path.mkdir()
+                with self.assertRaisesRegex(
+                    model_assets.IntegrityError, "inode changed"
+                ):
+                    model_assets._unlink_exact_temporary(
+                        root_fd, changed_name, changed_expected
+                    )
+            finally:
+                os.close(root_fd)
+
+        with tempfile.TemporaryDirectory() as temporary:
+            cache = Path(temporary) / "cache"
+            with mock.patch.object(
+                model_assets.os, "link", side_effect=OSError("publication failed")
+            ), self.assertRaisesRegex(OSError, "publication failed"):
+                model_assets.fetch_asset(
+                    asset,
+                    cache,
+                    require_guard=False,
+                    opener=FakeOpener(FakeResponse(payload, asset.url)),
+                    priority_check=lambda: None,
+                )
+            self.assertEqual(list(cache.glob(".download-*.part")), [])
+            self.assertFalse((cache / asset.filename).exists())
+
+        with tempfile.TemporaryDirectory() as temporary:
+            cache = Path(temporary) / "cache"
+
+            def corrupting_race(_source, destination, **_kwargs):  # type: ignore[no-untyped-def]
+                (cache / destination).write_bytes(b"tampered")
+                raise FileExistsError(destination)
+
+            with mock.patch.object(
+                model_assets.os, "link", side_effect=corrupting_race
+            ), self.assertRaisesRegex(model_assets.IntegrityError, "SHA-256"):
+                model_assets.fetch_asset(
+                    asset,
+                    cache,
+                    require_guard=False,
+                    opener=FakeOpener(FakeResponse(payload, asset.url)),
+                    priority_check=lambda: None,
+                )
+            self.assertEqual(list(cache.glob(".download-*.part")), [])
+            self.assertEqual((cache / asset.filename).read_bytes(), b"tampered")
 
 
 if __name__ == "__main__":
