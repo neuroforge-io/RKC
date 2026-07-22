@@ -43,7 +43,7 @@ fi
 VERSION=$(tr -d '\n' < "$SOURCE/VERSION")
 LDFLAGS="-s -w -X main.version=$VERSION"
 export GOENV=off
-export GOFLAGS=-p=1
+export GOFLAGS='-p=1 -modcacherw'
 export GOFIPS140=off
 export GOTOOLCHAIN=local
 export GOWORK=off

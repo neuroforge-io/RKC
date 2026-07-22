@@ -23,7 +23,7 @@ if [ "$(git -C "$SOURCE" rev-parse 'HEAD^{tree}')" != "$SOURCE_TREE" ] ||
 fi
 VERSION=$(tr -d '\n' < "$SOURCE/VERSION")
 export GOENV=off
-export GOFLAGS=-p=1
+export GOFLAGS='-p=1 -modcacherw'
 export GOFIPS140=off
 export GOTOOLCHAIN=local
 export GOWORK=off

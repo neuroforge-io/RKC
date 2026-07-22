@@ -413,7 +413,8 @@ class CompletePackageTests(unittest.TestCase):
         valid_bundle = {
             "snapshot": {
                 "id": "snapshot-one",
-                "git": {"commit": self.identity.commit, "dirty": False},
+                # Canonical GitInfo JSON omits its zero-valued clean marker.
+                "git": {"commit": self.identity.commit},
             }
         }
 
@@ -423,10 +424,64 @@ class CompletePackageTests(unittest.TestCase):
 
         write_demo(valid_bundle, {"snapshot_id": "snapshot-one"})
         PACKAGE.validate_demo_outputs(demo, self.identity)
+        explicit_clean_bundle = {
+            "snapshot": {
+                "id": "snapshot-one",
+                "git": {"commit": self.identity.commit, "dirty": False},
+            }
+        }
+        write_demo(explicit_clean_bundle, {"snapshot_id": "snapshot-one"})
+        PACKAGE.validate_demo_outputs(demo, self.identity)
         for bundle, coverage, marker in (
             ([], {}, "JSON objects"),
             ({}, {}, "snapshot is missing"),
             ({"snapshot": {"id": "one"}}, {"snapshot_id": "one"}, "immutable source"),
+            (
+                {
+                    "snapshot": {
+                        "id": "snapshot-one",
+                        "git": {"commit": self.identity.commit, "dirty": True},
+                    }
+                },
+                {"snapshot_id": "snapshot-one"},
+                "immutable source",
+            ),
+            (
+                {
+                    "snapshot": {
+                        "id": "snapshot-one",
+                        "git": {"commit": self.identity.commit, "dirty": "false"},
+                    }
+                },
+                {"snapshot_id": "snapshot-one"},
+                "immutable source",
+            ),
+            (
+                {
+                    "snapshot": {
+                        "id": "snapshot-one",
+                        "git": {
+                            "commit": self.identity.commit,
+                            "unavailable": True,
+                        },
+                    }
+                },
+                {"snapshot_id": "snapshot-one"},
+                "immutable source",
+            ),
+            (
+                {
+                    "snapshot": {
+                        "id": "snapshot-one",
+                        "git": {
+                            "commit": self.identity.commit,
+                            "working_tree_digest": "sha256:unexpected",
+                        },
+                    }
+                },
+                {"snapshot_id": "snapshot-one"},
+                "immutable source",
+            ),
             (valid_bundle, {"snapshot_id": "other"}, "not bound"),
         ):
             with self.subTest(marker=marker):
@@ -1009,8 +1064,15 @@ class CompletePackageTests(unittest.TestCase):
             encoding="utf-8"
         )
         verifier = (scripts / "verify-release.sh").read_text(encoding="utf-8")
+        demo = (scripts / "generate-demo.sh").read_text(encoding="utf-8")
+        binaries = (scripts / "build-release-binaries.sh").read_text(encoding="utf-8")
         self.assertIn('export GOCACHE="$lane_go_cache"', reproducible)
         self.assertIn('export GOMODCACHE="$lane_module_cache"', reproducible)
+        self.assertIn("export GOFLAGS='-p=1 -modcacherw'", demo)
+        self.assertIn("export GOFLAGS='-p=1 -modcacherw'", binaries)
+        self.assertIn("-mod=readonly", demo)
+        self.assertIn("-mod=readonly", binaries)
+        self.assertIn("go mod verify", binaries)
         self.assertIn('--destination "$ROOT/dist/release"', reproducible)
         self.assertIn('mv "$WORK/evidence" "$RELEASE_STAGE/evidence"', reproducible)
         self.assertIn('--destination "$ROOT/dist/evidence"', verifier)

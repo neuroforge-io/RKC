@@ -1038,9 +1038,16 @@ def validate_demo_outputs(source: Path, identity: SourceIdentity) -> None:
     if (
         not isinstance(git, dict)
         or git.get("commit") != identity.commit
-        or git.get("dirty") is not False
+        # Canonical Go JSON omits the zero-valued dirty:false field. An absent
+        # field and the explicit boolean false are therefore the same clean
+        # state; every other value remains fail-closed.
+        or git.get("dirty", False) is not False
+        or git.get("unavailable", False) is not False
+        or "working_tree_digest" in git
     ):
-        raise PackageError("demo bundle is not bound to the clean immutable source commit")
+        raise PackageError(
+            "demo bundle is not bound to the clean immutable source commit"
+        )
     if coverage.get("snapshot_id") != snapshot.get("id"):
         raise PackageError("demo coverage is not bound to the packaged demo snapshot")
 
