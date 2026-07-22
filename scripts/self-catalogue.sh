@@ -315,8 +315,13 @@ for raw in result.stdout.split(b"\0"):
     destination = target.joinpath(*path.parts)
     destination.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
     output_flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0)
-    output = os.open(destination, output_flags, 0o755 if mode == b"100755" else 0o644)
+    committed_mode = 0o755 if mode == b"100755" else 0o644
+    output = os.open(destination, output_flags, committed_mode)
     with os.fdopen(output, "wb") as handle:
+        # The workflow-wide umask deliberately makes every new file private.
+        # Restore the exact verified Git mode only after exclusive creation;
+        # the detached tree itself remains inside a private temporary root.
+        os.fchmod(handle.fileno(), committed_mode)
         handle.write(payload)
         handle.flush()
         os.fsync(handle.fileno())
