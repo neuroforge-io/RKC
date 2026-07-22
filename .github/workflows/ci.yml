@@ -56,11 +56,17 @@ jobs:
           RKC_REQUIRE_IO_CONTROLLER: '1'
         run: sh scripts/verify-resource-guard.sh
       - name: Verify source, contracts, docs, live plugin sandbox, determinism and interfaces
-        run: make verify
+        env:
+          RKC_RESOURCE_GUARD_MODE: service
+        run: sh scripts/with-rkc-limits.sh make verify
       - name: Race detector
-        run: make test-race
+        env:
+          RKC_RESOURCE_GUARD_MODE: service
+        run: sh scripts/with-rkc-limits.sh make test-race
       - name: Generate demonstration atlas
-        run: make demo
+        env:
+          RKC_RESOURCE_GUARD_MODE: service
+        run: sh scripts/with-rkc-limits.sh make demo
       - name: Docker build
         run: docker build -t rkc:ci .
       - name: Docker runtime smoke (explicit portable no-Python profile)

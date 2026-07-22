@@ -523,6 +523,8 @@ type ownershipManifest struct {
 	PacketOnly           json.RawMessage         `json:"packet_only,omitempty"`
 	Provider             json.RawMessage         `json:"provider,omitempty"`
 	Model                json.RawMessage         `json:"model,omitempty"`
+	ModelBinding         json.RawMessage         `json:"model_binding,omitempty"`
+	ResponseSchemaSHA256 json.RawMessage         `json:"response_schema_sha256,omitempty"`
 	Options              json.RawMessage         `json:"options,omitempty"`
 	Budget               json.RawMessage         `json:"budget,omitempty"`
 	SubjectsRequested    json.RawMessage         `json:"subjects_requested,omitempty"`
