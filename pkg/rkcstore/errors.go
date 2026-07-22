@@ -9,48 +9,51 @@ import (
 type Code string
 
 const (
-	CodeInvalidArgument  Code = "invalid_argument"
-	CodeInvalidQuery     Code = "invalid_query"
-	CodeInvalidCursor    Code = "invalid_cursor"
-	CodeBuildNotFound    Code = "build_not_found"
-	CodeBuildClosed      Code = "build_closed"
-	CodeBuildCommitted   Code = "build_committed"
-	CodeSnapshotNotFound Code = "snapshot_not_found"
-	CodeRecordNotFound   Code = "record_not_found"
-	CodeConflict         Code = "conflict"
-	CodeValidation       Code = "validation_failed"
-	CodeCoverageMismatch Code = "coverage_mismatch"
-	CodeCanceled         Code = "canceled"
+	CodeInvalidArgument   Code = "invalid_argument"
+	CodeInvalidQuery      Code = "invalid_query"
+	CodeInvalidCursor     Code = "invalid_cursor"
+	CodeBuildNotFound     Code = "build_not_found"
+	CodeBuildClosed       Code = "build_closed"
+	CodeBuildCommitted    Code = "build_committed"
+	CodeSnapshotNotFound  Code = "snapshot_not_found"
+	CodeRecordNotFound    Code = "record_not_found"
+	CodeConflict          Code = "conflict"
+	CodeValidation        Code = "validation_failed"
+	CodeCoverageMismatch  Code = "coverage_mismatch"
+	CodeResourceExhausted Code = "resource_exhausted"
+	CodeCanceled          Code = "canceled"
 )
 
 var (
-	ErrInvalidArgument  = errors.New("rkcstore: invalid argument")
-	ErrInvalidQuery     = errors.New("rkcstore: invalid query")
-	ErrInvalidCursor    = errors.New("rkcstore: invalid cursor")
-	ErrBuildNotFound    = errors.New("rkcstore: build not found")
-	ErrBuildClosed      = errors.New("rkcstore: build is closed")
-	ErrBuildCommitted   = errors.New("rkcstore: build is committed")
-	ErrSnapshotNotFound = errors.New("rkcstore: snapshot not found")
-	ErrRecordNotFound   = errors.New("rkcstore: record not found")
-	ErrConflict         = errors.New("rkcstore: transaction conflict")
-	ErrValidation       = errors.New("rkcstore: validation failed")
-	ErrCoverageMismatch = errors.New("rkcstore: coverage mismatch")
-	ErrCanceled         = errors.New("rkcstore: operation canceled")
+	ErrInvalidArgument   = errors.New("rkcstore: invalid argument")
+	ErrInvalidQuery      = errors.New("rkcstore: invalid query")
+	ErrInvalidCursor     = errors.New("rkcstore: invalid cursor")
+	ErrBuildNotFound     = errors.New("rkcstore: build not found")
+	ErrBuildClosed       = errors.New("rkcstore: build is closed")
+	ErrBuildCommitted    = errors.New("rkcstore: build is committed")
+	ErrSnapshotNotFound  = errors.New("rkcstore: snapshot not found")
+	ErrRecordNotFound    = errors.New("rkcstore: record not found")
+	ErrConflict          = errors.New("rkcstore: transaction conflict")
+	ErrValidation        = errors.New("rkcstore: validation failed")
+	ErrCoverageMismatch  = errors.New("rkcstore: coverage mismatch")
+	ErrResourceExhausted = errors.New("rkcstore: resource exhausted")
+	ErrCanceled          = errors.New("rkcstore: operation canceled")
 )
 
 var sentinelByCode = map[Code]error{
-	CodeInvalidArgument:  ErrInvalidArgument,
-	CodeInvalidQuery:     ErrInvalidQuery,
-	CodeInvalidCursor:    ErrInvalidCursor,
-	CodeBuildNotFound:    ErrBuildNotFound,
-	CodeBuildClosed:      ErrBuildClosed,
-	CodeBuildCommitted:   ErrBuildCommitted,
-	CodeSnapshotNotFound: ErrSnapshotNotFound,
-	CodeRecordNotFound:   ErrRecordNotFound,
-	CodeConflict:         ErrConflict,
-	CodeValidation:       ErrValidation,
-	CodeCoverageMismatch: ErrCoverageMismatch,
-	CodeCanceled:         ErrCanceled,
+	CodeInvalidArgument:   ErrInvalidArgument,
+	CodeInvalidQuery:      ErrInvalidQuery,
+	CodeInvalidCursor:     ErrInvalidCursor,
+	CodeBuildNotFound:     ErrBuildNotFound,
+	CodeBuildClosed:       ErrBuildClosed,
+	CodeBuildCommitted:    ErrBuildCommitted,
+	CodeSnapshotNotFound:  ErrSnapshotNotFound,
+	CodeRecordNotFound:    ErrRecordNotFound,
+	CodeConflict:          ErrConflict,
+	CodeValidation:        ErrValidation,
+	CodeCoverageMismatch:  ErrCoverageMismatch,
+	CodeResourceExhausted: ErrResourceExhausted,
+	CodeCanceled:          ErrCanceled,
 }
 
 // ValidationFailure preserves the complete deterministic validation result.
@@ -133,6 +136,10 @@ func invalidQuery(operation, field, message string) error {
 
 func invalidCursor(operation, message string) error {
 	return storeError(CodeInvalidCursor, operation, "", "", "cursor", errors.New(message))
+}
+
+func resourceExhausted(operation string, build BuildID, field, message string) error {
+	return storeError(CodeResourceExhausted, operation, build, "", field, errors.New(message))
 }
 
 func conflict(operation string, build BuildID, snapshot SnapshotID, format string, args ...any) error {

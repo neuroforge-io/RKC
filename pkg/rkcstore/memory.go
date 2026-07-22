@@ -29,20 +29,23 @@ const (
 )
 
 type memoryBuild struct {
-	options     BuildOptions
-	baseCurrent SnapshotID
-	state       buildState
-	abortReason string
-	artifacts   map[string]rkcmodel.Artifact
-	nodes       map[string]rkcmodel.Node
-	edges       map[string]rkcmodel.Edge
-	evidence    map[string]rkcmodel.Evidence
-	diagnostics map[string]rkcmodel.Diagnostic
-	conflicts   map[string]rkcmodel.Conflict
-	documents   map[string]rkcmodel.Document
-	claims      map[string]rkcmodel.Claim
-	paths       map[string]rkcmodel.ExecutionPath
-	coverage    *rkcmodel.Coverage
+	options       BuildOptions
+	baseCurrent   SnapshotID
+	state         buildState
+	abortReason   string
+	artifacts     map[string]rkcmodel.Artifact
+	nodes         map[string]rkcmodel.Node
+	edges         map[string]rkcmodel.Edge
+	evidence      map[string]rkcmodel.Evidence
+	diagnostics   map[string]rkcmodel.Diagnostic
+	conflicts     map[string]rkcmodel.Conflict
+	documents     map[string]rkcmodel.Document
+	claims        map[string]rkcmodel.Claim
+	paths         map[string]rkcmodel.ExecutionPath
+	coverage      *rkcmodel.Coverage
+	coverageBytes int64
+	recordCount   int64
+	recordBytes   int64
 }
 
 type memorySnapshot struct {
@@ -54,11 +57,14 @@ type memorySnapshot struct {
 // the same transaction and cursor rules required of durable implementations,
 // making it suitable for contract tests without weakening production semantics.
 type MemoryStore struct {
-	mu        sync.RWMutex
-	secret    [32]byte
-	builds    map[BuildID]*memoryBuild
-	snapshots map[SnapshotID]*memorySnapshot
-	current   map[RepositoryID]SnapshotID
+	mu               sync.RWMutex
+	secret           [32]byte
+	options          MemoryOptions
+	builds           map[BuildID]*memoryBuild
+	snapshots        map[SnapshotID]*memorySnapshot
+	current          map[RepositoryID]SnapshotID
+	openBuilds       int
+	closedBuildOrder []BuildID
 }
 
 var _ Store = (*MemoryStore)(nil)
@@ -67,8 +73,18 @@ var _ Store = (*MemoryStore)(nil)
 // are per-store, so a cursor cannot accidentally be replayed against another
 // repository database.
 func NewMemoryStore() (*MemoryStore, error) {
+	return NewMemoryStoreWithOptions(DefaultMemoryOptions())
+}
+
+// NewMemoryStoreWithOptions creates an isolated backend with explicit,
+// validated staging and tombstone limits.
+func NewMemoryStoreWithOptions(options MemoryOptions) (*MemoryStore, error) {
+	if err := validateMemoryOptions(options); err != nil {
+		return nil, err
+	}
 	store := &MemoryStore{
-		builds: make(map[BuildID]*memoryBuild), snapshots: make(map[SnapshotID]*memorySnapshot),
+		options: options,
+		builds:  make(map[BuildID]*memoryBuild), snapshots: make(map[SnapshotID]*memorySnapshot),
 		current: make(map[RepositoryID]SnapshotID),
 	}
 	if _, err := rand.Read(store.secret[:]); err != nil {
@@ -96,12 +112,18 @@ func (store *MemoryStore) BeginBuild(ctx context.Context, opts BuildOptions) (Bu
 	if opts.ExpectedSchema != rkcmodel.SchemaVersion {
 		return "", invalidArgument(operation, "expected_schema", "unsupported RKC schema version")
 	}
+	if err := validateMetadata(operation, opts.Metadata, store.options); err != nil {
+		return "", err
+	}
 	opts.Metadata = cloneStrings(opts.Metadata)
 
 	store.mu.Lock()
 	defer store.mu.Unlock()
 	if err := checkContext(ctx, operation); err != nil {
 		return "", err
+	}
+	if store.openBuilds >= store.options.MaxOpenBuilds {
+		return "", resourceExhausted(operation, "", "builds", "store exceeds MaxOpenBuilds")
 	}
 	base := store.current[opts.RepositoryID]
 	if base != opts.ParentSnapshotID {
@@ -137,6 +159,7 @@ func (store *MemoryStore) BeginBuild(ctx context.Context, opts BuildOptions) (Bu
 		documents: make(map[string]rkcmodel.Document), claims: make(map[string]rkcmodel.Claim),
 		paths: make(map[string]rkcmodel.ExecutionPath),
 	}
+	store.openBuilds++
 	return id, nil
 }
 
@@ -146,7 +169,7 @@ func (store *MemoryStore) PutArtifacts(ctx context.Context, build BuildID, value
 
 func (store *MemoryStore) putArtifacts(ctx context.Context, buildID BuildID, values []rkcmodel.Artifact) error {
 	const operation = "put artifacts"
-	cloned, err := prepareBatch(ctx, operation, values, func(value rkcmodel.Artifact) string { return value.ID })
+	batch, err := prepareLimitedBatch(ctx, operation, values, func(value rkcmodel.Artifact) string { return value.ID }, store.options)
 	if err != nil {
 		return err
 	}
@@ -156,12 +179,12 @@ func (store *MemoryStore) putArtifacts(ctx context.Context, buildID BuildID, val
 	if err != nil {
 		return err
 	}
-	return mergeBatch(operation, buildID, build.artifacts, cloned, func(value rkcmodel.Artifact) string { return value.ID })
+	return mergeBatch(operation, buildID, build, build.artifacts, batch, func(value rkcmodel.Artifact) string { return value.ID }, store.options)
 }
 
 func (store *MemoryStore) PutNodes(ctx context.Context, buildID BuildID, values []rkcmodel.Node) error {
 	const operation = "put nodes"
-	cloned, err := prepareBatch(ctx, operation, values, func(value rkcmodel.Node) string { return value.ID })
+	batch, err := prepareLimitedBatch(ctx, operation, values, func(value rkcmodel.Node) string { return value.ID }, store.options)
 	if err != nil {
 		return err
 	}
@@ -171,12 +194,12 @@ func (store *MemoryStore) PutNodes(ctx context.Context, buildID BuildID, values 
 	if err != nil {
 		return err
 	}
-	return mergeBatch(operation, buildID, build.nodes, cloned, func(value rkcmodel.Node) string { return value.ID })
+	return mergeBatch(operation, buildID, build, build.nodes, batch, func(value rkcmodel.Node) string { return value.ID }, store.options)
 }
 
 func (store *MemoryStore) PutEdges(ctx context.Context, buildID BuildID, values []rkcmodel.Edge) error {
 	const operation = "put edges"
-	cloned, err := prepareBatch(ctx, operation, values, func(value rkcmodel.Edge) string { return value.ID })
+	batch, err := prepareLimitedBatch(ctx, operation, values, func(value rkcmodel.Edge) string { return value.ID }, store.options)
 	if err != nil {
 		return err
 	}
@@ -186,12 +209,12 @@ func (store *MemoryStore) PutEdges(ctx context.Context, buildID BuildID, values 
 	if err != nil {
 		return err
 	}
-	return mergeBatch(operation, buildID, build.edges, cloned, func(value rkcmodel.Edge) string { return value.ID })
+	return mergeBatch(operation, buildID, build, build.edges, batch, func(value rkcmodel.Edge) string { return value.ID }, store.options)
 }
 
 func (store *MemoryStore) PutEvidence(ctx context.Context, buildID BuildID, values []rkcmodel.Evidence) error {
 	const operation = "put evidence"
-	cloned, err := prepareBatch(ctx, operation, values, func(value rkcmodel.Evidence) string { return value.ID })
+	batch, err := prepareLimitedBatch(ctx, operation, values, func(value rkcmodel.Evidence) string { return value.ID }, store.options)
 	if err != nil {
 		return err
 	}
@@ -201,12 +224,12 @@ func (store *MemoryStore) PutEvidence(ctx context.Context, buildID BuildID, valu
 	if err != nil {
 		return err
 	}
-	return mergeBatch(operation, buildID, build.evidence, cloned, func(value rkcmodel.Evidence) string { return value.ID })
+	return mergeBatch(operation, buildID, build, build.evidence, batch, func(value rkcmodel.Evidence) string { return value.ID }, store.options)
 }
 
 func (store *MemoryStore) PutDiagnostics(ctx context.Context, buildID BuildID, values []rkcmodel.Diagnostic) error {
 	const operation = "put diagnostics"
-	cloned, err := prepareBatch(ctx, operation, values, func(value rkcmodel.Diagnostic) string { return value.ID })
+	batch, err := prepareLimitedBatch(ctx, operation, values, func(value rkcmodel.Diagnostic) string { return value.ID }, store.options)
 	if err != nil {
 		return err
 	}
@@ -216,12 +239,12 @@ func (store *MemoryStore) PutDiagnostics(ctx context.Context, buildID BuildID, v
 	if err != nil {
 		return err
 	}
-	return mergeBatch(operation, buildID, build.diagnostics, cloned, func(value rkcmodel.Diagnostic) string { return value.ID })
+	return mergeBatch(operation, buildID, build, build.diagnostics, batch, func(value rkcmodel.Diagnostic) string { return value.ID }, store.options)
 }
 
 func (store *MemoryStore) PutConflicts(ctx context.Context, buildID BuildID, values []rkcmodel.Conflict) error {
 	const operation = "put conflicts"
-	cloned, err := prepareBatch(ctx, operation, values, func(value rkcmodel.Conflict) string { return value.ID })
+	batch, err := prepareLimitedBatch(ctx, operation, values, func(value rkcmodel.Conflict) string { return value.ID }, store.options)
 	if err != nil {
 		return err
 	}
@@ -231,12 +254,12 @@ func (store *MemoryStore) PutConflicts(ctx context.Context, buildID BuildID, val
 	if err != nil {
 		return err
 	}
-	return mergeBatch(operation, buildID, build.conflicts, cloned, func(value rkcmodel.Conflict) string { return value.ID })
+	return mergeBatch(operation, buildID, build, build.conflicts, batch, func(value rkcmodel.Conflict) string { return value.ID }, store.options)
 }
 
 func (store *MemoryStore) PutDocuments(ctx context.Context, buildID BuildID, values []rkcmodel.Document) error {
 	const operation = "put documents"
-	cloned, err := prepareBatch(ctx, operation, values, func(value rkcmodel.Document) string { return value.ID })
+	batch, err := prepareLimitedBatch(ctx, operation, values, func(value rkcmodel.Document) string { return value.ID }, store.options)
 	if err != nil {
 		return err
 	}
@@ -246,12 +269,12 @@ func (store *MemoryStore) PutDocuments(ctx context.Context, buildID BuildID, val
 	if err != nil {
 		return err
 	}
-	return mergeBatch(operation, buildID, build.documents, cloned, func(value rkcmodel.Document) string { return value.ID })
+	return mergeBatch(operation, buildID, build, build.documents, batch, func(value rkcmodel.Document) string { return value.ID }, store.options)
 }
 
 func (store *MemoryStore) PutClaims(ctx context.Context, buildID BuildID, values []rkcmodel.Claim) error {
 	const operation = "put claims"
-	cloned, err := prepareBatch(ctx, operation, values, func(value rkcmodel.Claim) string { return value.ID })
+	batch, err := prepareLimitedBatch(ctx, operation, values, func(value rkcmodel.Claim) string { return value.ID }, store.options)
 	if err != nil {
 		return err
 	}
@@ -261,12 +284,12 @@ func (store *MemoryStore) PutClaims(ctx context.Context, buildID BuildID, values
 	if err != nil {
 		return err
 	}
-	return mergeBatch(operation, buildID, build.claims, cloned, func(value rkcmodel.Claim) string { return value.ID })
+	return mergeBatch(operation, buildID, build, build.claims, batch, func(value rkcmodel.Claim) string { return value.ID }, store.options)
 }
 
 func (store *MemoryStore) PutPaths(ctx context.Context, buildID BuildID, values []rkcmodel.ExecutionPath) error {
 	const operation = "put paths"
-	cloned, err := prepareBatch(ctx, operation, values, func(value rkcmodel.ExecutionPath) string { return value.ID })
+	batch, err := prepareLimitedBatch(ctx, operation, values, func(value rkcmodel.ExecutionPath) string { return value.ID }, store.options)
 	if err != nil {
 		return err
 	}
@@ -276,7 +299,7 @@ func (store *MemoryStore) PutPaths(ctx context.Context, buildID BuildID, values 
 	if err != nil {
 		return err
 	}
-	return mergeBatch(operation, buildID, build.paths, cloned, func(value rkcmodel.ExecutionPath) string { return value.ID })
+	return mergeBatch(operation, buildID, build, build.paths, batch, func(value rkcmodel.ExecutionPath) string { return value.ID }, store.options)
 }
 
 func (store *MemoryStore) PutCoverage(ctx context.Context, buildID BuildID, coverage rkcmodel.Coverage) error {
@@ -284,9 +307,9 @@ func (store *MemoryStore) PutCoverage(ctx context.Context, buildID BuildID, cove
 	if err := checkContext(ctx, operation); err != nil {
 		return err
 	}
-	cloned, err := cloneJSON(coverage)
+	cloned, bytes, err := prepareLimitedRecord(operation, "coverage", coverage, store.options)
 	if err != nil {
-		return invalidArgument(operation, "coverage", "coverage is not canonically serializable: "+err.Error())
+		return err
 	}
 	store.mu.Lock()
 	defer store.mu.Unlock()
@@ -294,7 +317,21 @@ func (store *MemoryStore) PutCoverage(ctx context.Context, buildID BuildID, cove
 	if err != nil {
 		return err
 	}
+	records := int64(0)
+	retainedBytes := build.recordBytes - build.coverageBytes
+	if build.coverage == nil {
+		records = 1
+	}
+	if err := ensureBuildCapacity(operation, buildID, build, records, bytes-build.coverageBytes, store.options); err != nil {
+		return err
+	}
+	if retainedBytes > store.options.MaxBuildBytes-bytes {
+		return resourceExhausted(operation, buildID, "coverage", "build exceeds MaxBuildBytes")
+	}
 	build.coverage = &cloned
+	build.recordCount += records
+	build.recordBytes = retainedBytes + bytes
+	build.coverageBytes = bytes
 	return nil
 }
 
@@ -376,8 +413,7 @@ func (store *MemoryStore) Commit(ctx context.Context, buildID BuildID, snapshot 
 	}
 	store.snapshots[snapshotID] = &memorySnapshot{bundle: canonical, coverage: coverage}
 	store.current[build.options.RepositoryID] = snapshotID
-	build.state = buildCommitted
-	build.clearPayload()
+	store.closeBuildLocked(buildID, build, buildCommitted, "")
 	return nil
 }
 
@@ -398,11 +434,11 @@ func (store *MemoryStore) Abort(ctx context.Context, buildID BuildID, reason err
 	case buildAborted:
 		return nil
 	}
-	build.state = buildAborted
+	reasonText := limitedAbortReason(reason, store.options.MaxMetadataBytes)
 	if reason != nil {
-		build.abortReason = reason.Error()
+		build.abortReason = reasonText
 	}
-	build.clearPayload()
+	store.closeBuildLocked(buildID, build, buildAborted, reasonText)
 	return nil
 }
 
@@ -415,15 +451,14 @@ func (store *MemoryStore) Recover(ctx context.Context) (RecoveryResult, error) {
 	}
 	result := RecoveryResult{AbortedBuilds: make([]BuildID, 0)}
 	for id, build := range store.builds {
-		if build.state != buildOpen {
-			continue
+		if build.state == buildOpen {
+			result.AbortedBuilds = append(result.AbortedBuilds, id)
 		}
-		build.state = buildAborted
-		build.abortReason = "recovered incomplete build"
-		build.clearPayload()
-		result.AbortedBuilds = append(result.AbortedBuilds, id)
 	}
 	sort.Slice(result.AbortedBuilds, func(i, j int) bool { return result.AbortedBuilds[i] < result.AbortedBuilds[j] })
+	for _, id := range result.AbortedBuilds {
+		store.closeBuildLocked(id, store.builds[id], buildAborted, "recovered incomplete build")
+	}
 	return result, nil
 }
 
@@ -449,6 +484,8 @@ func (store *MemoryStore) openBuildLocked(ctx context.Context, operation string,
 }
 
 func (build *memoryBuild) clearPayload() {
+	build.options.Metadata = nil
+	build.baseCurrent = ""
 	build.artifacts = nil
 	build.nodes = nil
 	build.edges = nil
@@ -459,6 +496,25 @@ func (build *memoryBuild) clearPayload() {
 	build.claims = nil
 	build.paths = nil
 	build.coverage = nil
+	build.coverageBytes = 0
+	build.recordCount = 0
+	build.recordBytes = 0
+}
+
+func (store *MemoryStore) closeBuildLocked(id BuildID, build *memoryBuild, state buildState, reason string) {
+	build.state = state
+	build.abortReason = reason
+	build.clearPayload()
+	store.openBuilds--
+	store.closedBuildOrder = append(store.closedBuildOrder, id)
+	for len(store.closedBuildOrder) > store.options.MaxClosedBuildTombstones {
+		oldest := store.closedBuildOrder[0]
+		store.closedBuildOrder[0] = ""
+		store.closedBuildOrder = store.closedBuildOrder[1:]
+		if candidate, ok := store.builds[oldest]; ok && candidate.state != buildOpen {
+			delete(store.builds, oldest)
+		}
+	}
 }
 
 func bundleFromBuild(snapshot rkcmodel.Snapshot, build *memoryBuild) (rkcmodel.Bundle, error) {
@@ -544,41 +600,29 @@ func cloneCoveragePointer(value *rkcmodel.Coverage) *rkcmodel.Coverage {
 	return &cloned
 }
 
-func prepareBatch[T any](ctx context.Context, operation string, values []T, identifier func(T) string) ([]T, error) {
-	if err := checkContext(ctx, operation); err != nil {
-		return nil, err
-	}
-	if len(values) > MaxBatchSize {
-		return nil, invalidArgument(operation, "values", "batch exceeds MaxBatchSize")
-	}
-	seen := make(map[string]struct{}, len(values))
-	for _, value := range values {
-		id := identifier(value)
-		if err := validIdentifier(operation, "record_id", id); err != nil {
-			return nil, err
-		}
-		if _, duplicate := seen[id]; duplicate {
-			return nil, conflict(operation, "", "", "duplicate record identifier %q in batch", id)
-		}
-		seen[id] = struct{}{}
-	}
-	cloned, err := cloneJSON(values)
-	if err != nil {
-		return nil, invalidArgument(operation, "values", "batch is not canonically serializable: "+err.Error())
-	}
-	return cloned, checkContext(ctx, operation)
-}
-
-func mergeBatch[T any](operation string, buildID BuildID, destination map[string]T, values []T, identifier func(T) string) error {
-	for _, value := range values {
+func mergeBatch[T any](
+	operation string,
+	buildID BuildID,
+	build *memoryBuild,
+	destination map[string]T,
+	batch preparedBatch[T],
+	identifier func(T) string,
+	options MemoryOptions,
+) error {
+	for _, value := range batch.values {
 		id := identifier(value)
 		if _, exists := destination[id]; exists {
 			return conflict(operation, buildID, "", "record identifier %q already exists", id)
 		}
 	}
-	for _, value := range values {
+	if err := ensureBuildCapacity(operation, buildID, build, batch.records, batch.bytes, options); err != nil {
+		return err
+	}
+	for _, value := range batch.values {
 		destination[identifier(value)] = value
 	}
+	build.recordCount += batch.records
+	build.recordBytes += batch.bytes
 	return nil
 }
 

@@ -406,7 +406,7 @@ func TestMemoryStoreAtomicBatchesCoverageAndConcurrentWriters(t *testing.T) {
 		t.Fatalf("empty record id = %v", err)
 	}
 	oversized := make([]rkcmodel.Node, MaxBatchSize+1)
-	if err := store.PutNodes(ctx, build, oversized); !errors.Is(err, ErrInvalidArgument) {
+	if err := store.PutNodes(ctx, build, oversized); !errors.Is(err, ErrResourceExhausted) {
 		t.Fatalf("oversized batch = %v", err)
 	}
 	badJSON := rkcmodel.Node{ID: "json", Attributes: map[string]any{"bad": make(chan int)}}
