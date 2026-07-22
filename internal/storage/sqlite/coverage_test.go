@@ -6,6 +6,7 @@ import (
 	"errors"
 	"path/filepath"
 	"testing"
+	"testing/fstest"
 )
 
 func TestErrorAndClassificationBranches(t *testing.T) {
@@ -188,5 +189,53 @@ func TestConnectionPolicyAndCheckErrorBranches(t *testing.T) {
 	var nilDatabase *Database
 	if err := nilDatabase.Check(ctx); !errors.Is(err, ErrClosed) {
 		t.Fatalf("nil Check() = %v, want ErrClosed", err)
+	}
+}
+
+func TestAssetAndBindingFailureBranches(t *testing.T) {
+	ctx := context.Background()
+	if _, err := loadMigrationPlan(fstest.MapFS{}, embeddedManifestSHA256); !errors.Is(err, ErrMigrationTampered) {
+		t.Fatalf("missing migration manifest = %v, want ErrMigrationTampered", err)
+	}
+	var nilBinding *pathBinding
+	if err := nilBinding.verify(ctx, nil); !errors.Is(err, ErrUnsafePath) {
+		t.Fatalf("nil path binding verification = %v, want ErrUnsafePath", err)
+	}
+
+	path := filepath.Join(privateTempDir(t), "bound.db")
+	if _, _, err := secureDatabasePath(path); err != nil {
+		t.Fatal(err)
+	}
+	binding, err := bindDatabasePath(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer binding.Close()
+	memory, err := sql.Open("sqlite", ":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer memory.Close()
+	if err := binding.verify(ctx, memory); !errors.Is(err, ErrUnsafePath) {
+		t.Fatalf("mismatched SQLite path = %v, want ErrUnsafePath", err)
+	}
+
+	foreignVersion, err := sql.Open("sqlite", ":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer foreignVersion.Close()
+	if _, err := foreignVersion.Exec(
+		`CREATE TABLE schema_meta(key TEXT PRIMARY KEY, value TEXT NOT NULL) STRICT;
+		 INSERT INTO schema_meta(key, value) VALUES ('schema_version', '0.3.0')`,
+	); err != nil {
+		t.Fatal(err)
+	}
+	plan, err := embeddedMigrationPlan()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := inspectOwnership(ctx, foreignVersion, "foreign.db", plan); !errors.Is(err, ErrForeignDatabase) {
+		t.Fatalf("unowned v0.3 schema = %v, want ErrForeignDatabase", err)
 	}
 }
