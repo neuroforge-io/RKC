@@ -286,6 +286,20 @@ func TestParseLlamaEmbeddingStrictProtocol(t *testing.T) {
 	}
 }
 
+func TestEmbeddingBufferStringAndClosedBinding(t *testing.T) {
+	t.Parallel()
+	buffer := &embeddingBoundedBuffer{limit: 8}
+	if written, err := buffer.Write([]byte("bound")); err != nil || written != 5 {
+		t.Fatalf("buffer write = %d, %v", written, err)
+	}
+	if got := buffer.String(); got != "bound" {
+		t.Fatalf("buffer string = %q", got)
+	}
+	if got := (&boundRegularFile{}).referencePath(); got != "" {
+		t.Fatalf("closed bound-file reference = %q", got)
+	}
+}
+
 func embeddingFixture(t *testing.T, body string) (string, string) {
 	t.Helper()
 	root := t.TempDir()

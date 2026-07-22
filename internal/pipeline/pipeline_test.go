@@ -223,8 +223,18 @@ func TestPipelineSmallHelpers(t *testing.T) {
 			t.Errorf("artifactRank(%q)=%d want %d", status, got, want)
 		}
 	}
-	if resolutionRank(rkcmodel.ResolutionCompilerResolved) <= resolutionRank(rkcmodel.ResolutionUnresolved) {
-		t.Fatal("resolution ranking is inverted")
+	for resolution, want := range map[string]int{
+		rkcmodel.ResolutionCompilerResolved:      7,
+		rkcmodel.ResolutionRuntimeObserved:       6,
+		rkcmodel.ResolutionDeclared:              5,
+		rkcmodel.ResolutionSyntaxInferred:        4,
+		rkcmodel.ResolutionDocumentationAsserted: 3,
+		rkcmodel.ResolutionModelInferred:         2,
+		rkcmodel.ResolutionUnresolved:            1,
+	} {
+		if got := resolutionRank(resolution); got != want {
+			t.Errorf("resolutionRank(%q)=%d want %d", resolution, got, want)
+		}
 	}
 	diagnostic := adapterError("CODE", "plugin", errors.New("boom"))
 	if diagnostic.ID == "" || diagnostic.Message != "boom" {
