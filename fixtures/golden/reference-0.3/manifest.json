@@ -1,0 +1,29 @@
+{
+  "schema_version": "1.0",
+  "rkc_version": "0.3.0-reference",
+  "canonical_schema": "0.2.0",
+  "source_commit": "6556a12954fb90f63b4b12b73a09a04cf78deea8",
+  "signed_tag": "v0.3.0-reference",
+  "tag_object": "f8e9cf2693a1c8de08facfa41a469389b4d3bc4b",
+  "tag_signing_key": "136D2F0E1485164F058A04712DD4B300954F1D12",
+  "proof": {
+    "ci_run": "https://github.com/neuroforge-io/RKC/actions/runs/29912722050",
+    "codeql_run": "https://github.com/neuroforge-io/RKC/actions/runs/29912721796",
+    "go_coverage": "90.03%",
+    "python_coverage": "90.26%",
+    "self_catalogue_artifact": "rkc-self-catalogue-6556a12954fb90f63b4b12b73a09a04cf78deea8",
+    "self_catalogue_artifact_id": 8526706979,
+    "self_catalogue_size_bytes": 28483080
+  },
+  "files": [
+    {
+      "path": "bundle.json",
+      "sha256": "51b36e0fc064318843a91339b0d57b8bb92b56956774c795db47988d83af5a0d",
+      "canonical_digest": "6139b7fcab2e34e687f662d20de347477cd39b59212e69f2a1186449b2610ea3"
+    },
+    {
+      "path": "stable-ids.json",
+      "sha256": "f3f73da199532865a73ff0ddd87a792842c7e413baf68aa09c63762b6f1f4e66"
+    }
+  ]
+}

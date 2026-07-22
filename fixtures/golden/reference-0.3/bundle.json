@@ -1,0 +1,77 @@
+{
+  "snapshot": {
+    "schema_version": "0.2.0",
+    "id": "rkc:snapshot:reference-0.3",
+    "created_at": "0001-01-01T00:00:00Z",
+    "status": "committed",
+    "root_name": "reference-fixture",
+    "root_path": "",
+    "content_digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "git": {},
+    "tool": {
+      "name": "rkc",
+      "version": "0.3.0-reference"
+    }
+  },
+  "artifacts": [
+    {
+      "id": "artifact",
+      "path": "main.go",
+      "kind": "source",
+      "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "text": true,
+      "status": "included"
+    }
+  ],
+  "nodes": [
+    {
+      "id": "node",
+      "kind": "function",
+      "name": "Main",
+      "qualified_name": "reference.Main",
+      "language": "go",
+      "visibility": "public",
+      "artifact_id": "artifact",
+      "source": {
+        "artifact_id": "artifact",
+        "path": "main.go",
+        "start_line": 1,
+        "end_line": 1
+      },
+      "evidence_ids": ["evidence"]
+    }
+  ],
+  "edges": [
+    {
+      "id": "edge",
+      "kind": "calls",
+      "from": "node",
+      "to": "node",
+      "resolution": "declared",
+      "confidence": 1,
+      "evidence_ids": ["evidence"]
+    }
+  ],
+  "evidence": [
+    {
+      "id": "evidence",
+      "kind": "syntax_inferred",
+      "method": "golden.fixture",
+      "confidence": 1,
+      "source": {
+        "artifact_id": "artifact",
+        "path": "main.go",
+        "start_line": 1,
+        "end_line": 1
+      }
+    }
+  ],
+  "diagnostics": [
+    {
+      "id": "diagnostic",
+      "severity": "note",
+      "code": "RKC-BASELINE-001",
+      "message": "Reference compatibility fixture"
+    }
+  ]
+}

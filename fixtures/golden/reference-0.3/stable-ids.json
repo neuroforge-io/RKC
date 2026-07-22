@@ -1,0 +1,47 @@
+{
+  "schema_version": "1.0",
+  "vectors": [
+    {
+      "name": "unicode",
+      "namespace": "node",
+      "parts": ["λ", "café"],
+      "expected": "rkc:node:de7fad33c8c42614fdadc28a"
+    },
+    {
+      "name": "windows-path",
+      "namespace": "artifact",
+      "parts": ["C:\\repo\\src\\main.go"],
+      "expected": "rkc:artifact:2291c503d303778a3c34f092"
+    },
+    {
+      "name": "case-sensitive-upper",
+      "namespace": "artifact",
+      "parts": ["src/Main.go"],
+      "expected": "rkc:artifact:0571eea8a64603bca7fcf8b9"
+    },
+    {
+      "name": "case-sensitive-lower",
+      "namespace": "artifact",
+      "parts": ["src/main.go"],
+      "expected": "rkc:artifact:0c2f6cc5d9128f64427bd6a2"
+    },
+    {
+      "name": "overload-signature",
+      "namespace": "node",
+      "parts": ["pkg.F", "(int,string)"],
+      "expected": "rkc:node:f84ee4fb08aed215269204fc"
+    },
+    {
+      "name": "anonymous-function",
+      "namespace": "node",
+      "parts": ["src/app.ts", "line:42", "anonymous:1"],
+      "expected": "rkc:node:c4d6ee0fd944dc77530281f2"
+    },
+    {
+      "name": "dirty-working-tree",
+      "namespace": "snapshot",
+      "parts": ["commit:abc", "dirty:sha256:0123456789abcdef"],
+      "expected": "rkc:snapshot:1fc9b3542937f8586a4ded99"
+    }
+  ]
+}
