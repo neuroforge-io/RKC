@@ -1077,6 +1077,19 @@ class CompletePackageTests(unittest.TestCase):
         self.assertIn('mv "$WORK/evidence" "$RELEASE_STAGE/evidence"', reproducible)
         self.assertIn('--destination "$ROOT/dist/evidence"', verifier)
         self.assertIn("prior evidence is unchanged", verifier)
+        self.assertIn('"$ROOT/.venv/bin/python"', verifier)
+        self.assertIn("RKC_VALIDATION_PYTHON", verifier)
+        self.assertIn("python-environment", verifier)
+        self.assertIn('PYTHON="$VALIDATION_PYTHON"', verifier)
+        for script in (reproducible, verifier, demo, binaries):
+            self.assertIn("git_source_guard.py", script)
+            self.assertIn("publication", script)
+        self.assertIn('"$SOURCE/scripts/publish_directory.py"', verifier)
+        self.assertIn('"$TOOLS_SOURCE/scripts/publish_directory.py"', reproducible)
+        self.assertIn('--repository-root "$ROOT"', verifier)
+        self.assertIn('--repository-root "$ROOT"', reproducible)
+        self.assertIn('"$SOURCE/scripts/publish_file.py"', demo)
+        self.assertIn('"$SOURCE/scripts/publish_file.py"', binaries)
 
     def test_build_package_orchestrates_only_expected_inputs(self) -> None:
         for relative in PACKAGE.REQUIRED_INPUTS:
@@ -1144,6 +1157,8 @@ class CompletePackageTests(unittest.TestCase):
         output.write_bytes(b"zip")
         argv = ["package-complete.py", "--output", str(output), "--force"]
         with mock.patch.object(sys, "argv", argv), mock.patch.object(
+            PACKAGE, "require_clean_worktree"
+        ), mock.patch.object(
             PACKAGE, "prepare_output", return_value=output
         ), mock.patch.object(PACKAGE, "build_package"), mock.patch(
             "sys.stdout", new=io.StringIO()
@@ -1151,8 +1166,16 @@ class CompletePackageTests(unittest.TestCase):
             PACKAGE.main()
             self.assertEqual(json.loads(stdout.getvalue())["size_bytes"], 3)
         with mock.patch.object(sys, "argv", argv), mock.patch.object(
+            PACKAGE, "require_clean_worktree"
+        ), mock.patch.object(
             PACKAGE, "prepare_output", side_effect=PACKAGE.PackageError("no")
         ), self.assertRaisesRegex(SystemExit, "package error"):
+            PACKAGE.main()
+        with mock.patch.object(sys, "argv", argv), mock.patch.object(
+            PACKAGE,
+            "require_clean_worktree",
+            side_effect=PACKAGE.SourceGuardError("dirty source"),
+        ), self.assertRaisesRegex(SystemExit, "dirty source"):
             PACKAGE.main()
 
 

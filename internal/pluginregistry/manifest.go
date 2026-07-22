@@ -282,6 +282,7 @@ func BuildLock(manifests []Manifest) Lockfile {
 }
 
 func LockDigest(lock Lockfile) string {
+	lock.Plugins = append([]LockedPlugin(nil), lock.Plugins...)
 	sort.Slice(lock.Plugins, func(i, j int) bool {
 		if lock.Plugins[i].ID == lock.Plugins[j].ID {
 			return lock.Plugins[i].Version < lock.Plugins[j].Version

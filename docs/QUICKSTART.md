@@ -2,12 +2,22 @@
 
 ## 1. Install prerequisites
 
+For a source checkout on Linux or macOS:
+
 ```sh
 go version       # use a currently supported release; CI pins 1.26.5
 python3 --version # 3.11 or newer
 git --version
-python3 -m pip install jsonschema PyYAML
+python3 -m venv .venv
+.venv/bin/python -m pip install -r requirements-dev.txt
 ```
+
+The virtual environment keeps the pinned validation dependencies out of the
+system interpreter. Prebuilt binaries need none of these tools for a local
+`--no-python` scan. Native Windows users can build the two Go commands and use
+that portable profile, while the guarded development/release automation and
+the optional Python adapter require Linux; WSL2 is the supported Windows route
+for those Linux-only paths.
 
 ## 2. Verify the checkout
 
@@ -20,6 +30,12 @@ document-link validation, plugin-lock verification, a mixed-language scan,
 deterministic replay, HTTP API smoke tests, MCP smoke tests, and remote-Git
 acquisition tests.
 
+`safe-*` targets are intentionally Linux-specific: they require a reachable
+user-systemd manager and delegated CPU, memory, I/O, and process controllers.
+Run `make build` for an unguarded portable build. Run `./bin/rkc doctor` after
+building to see whether the Python adapter and remote-Git conveniences are
+available on the current host.
+
 Run the race detector separately or use the logged release sequence:
 
 ```sh
@@ -30,19 +46,23 @@ make safe-release-verify
 ## 3. Build
 
 ```sh
-make safe-build
+make build
 ./bin/rkc version
-./bin/rkc doctor
+./bin/rkc doctor --repository .
 ```
+
+On a supported Linux user-systemd host, `make safe-build` provides the same
+binary build under RKC's deliberately subordinate resource envelope.
 
 ## 4. Generate configuration
 
 ```sh
-./bin/rkc init --out rkc.json
+./bin/rkc init --path rkc.json
 ```
 
 Edit `rkc.json`, then pass it with `--config rkc.json`. Omit the option to use
-safe local defaults.
+safe local defaults. The older `--out` spelling remains a compatibility alias;
+`--path` is the canonical flag.
 
 `inventory.exclude` values are exact repository-relative paths, not globs. Each
 value excludes that path and its descendants. RKC does not claim to interpret
@@ -53,14 +73,24 @@ named root-level coverage/cache outputs. Add another exact path with a repeated
 
 ## 5. Scan a repository
 
+Start with the portable deterministic profile:
+
 ```sh
 ./bin/rkc scan \
   --config rkc.json \
+  --no-python \
   --out /tmp/my-atlas \
   --state-dir /tmp/my-atlas-state \
   --force \
   /path/to/repository
 ```
+
+This still performs deterministic Go and JavaScript/TypeScript syntax
+analysis, framework and document extraction, secret-pattern detection, graph
+construction, search indexing, and every configured export. If
+`./bin/rkc doctor --strict --config rkc.json --repository /path/to/repository`
+passes on Linux, omit `--no-python` to enable the built-in Python AST adapter.
+RKC never falls back to running that adapter without its isolation boundary.
 
 `--state-dir` must be missing, empty, or already marked as an RKC snapshot
 store. RKC refuses to adopt arbitrary nonempty directories as transaction
@@ -73,6 +103,7 @@ For the durable SQLite runtime, create an owner-only database directory and use
 install -d -m 700 /tmp/rkc-store
 ./bin/rkc scan \
   --config rkc.json \
+  --no-python \
   --database /tmp/rkc-store/rkc.sqlite \
   --out /tmp/my-atlas \
   --force \
@@ -93,6 +124,7 @@ Remote Git repositories are materialized without prompts or hooks:
 
 ```sh
 ./bin/rkc scan \
+  --no-python \
   --ref main \
   --clone-depth 1 \
   --out /tmp/remote-atlas \

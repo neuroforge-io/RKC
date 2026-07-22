@@ -13,6 +13,9 @@ func TestDefaultConfigurationIsValidAndDeterministic(t *testing.T) {
 	if err := cfg.Validate(); err != nil {
 		t.Fatalf("default configuration is invalid: %v", err)
 	}
+	if cfg.SchemaURI != configurationSchemaURI {
+		t.Fatalf("default schema URI = %q, want canonical %q", cfg.SchemaURI, configurationSchemaURI)
+	}
 	if cfg.Digest() == "" || cfg.PolicyDigest() == "" || cfg.PluginDigest() == "" {
 		t.Fatal("configuration digests must be populated")
 	}

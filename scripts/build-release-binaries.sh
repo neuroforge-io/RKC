@@ -3,6 +3,9 @@ set -eu
 
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 cd "$ROOT"
+python3 scripts/git_source_guard.py \
+  --root "$ROOT" \
+  --operation "release binary build"
 SOURCE_COMMIT=$(git rev-parse --verify 'HEAD^{commit}')
 SOURCE_TREE=$(git rev-parse --verify "${SOURCE_COMMIT}^{tree}")
 SOURCE_DATE_EPOCH=$(git show -s --format=%ct "$SOURCE_COMMIT")
@@ -108,11 +111,16 @@ publish_file() {
   else
     mode=0644
   fi
-  python3 scripts/publish_file.py \
+  python3 "$SOURCE/scripts/publish_file.py" \
     --source "$source" \
     --destination "$destination" \
+    --repository-root "$ROOT" \
     --mode "$mode"
 }
+
+python3 "$SOURCE/scripts/git_source_guard.py" \
+  --root "$ROOT" \
+  --operation "release binary publication"
 
 for architecture in amd64 arm64; do
   platform="$TARGET/linux-$architecture"

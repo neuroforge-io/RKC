@@ -2,7 +2,7 @@
 set -eu
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 cd "$ROOT"
-EXPECTED_STEPS='go-modules format vet coverage contracts docs licenses model-lock build plugins smoke reproducibility api-smoke mcp-smoke git-smoke race benchmark'
+EXPECTED_STEPS='go-modules python-environment format vet coverage contracts docs licenses model-lock build plugins smoke reproducibility api-smoke mcp-smoke git-smoke race benchmark'
 
 prepare_validation_output() {
   output=$1
@@ -103,18 +103,20 @@ PY
   mkdir -p "$destination/logs"
   for relative in summary.json steps.tsv; do
     if [ -f "$source/$relative" ] && [ ! -L "$source/$relative" ]; then
-      python3 "$ROOT/scripts/publish_file.py" \
+      python3 "$SOURCE/scripts/publish_file.py" \
         --source "$source/$relative" \
         --destination "$destination/$relative" \
+        --repository-root "$ROOT" \
         --mode 0644
     fi
   done
   for name in $EXPECTED_STEPS; do
     relative="logs/$name.log"
     if [ -f "$source/$relative" ] && [ ! -L "$source/$relative" ]; then
-      python3 "$ROOT/scripts/publish_file.py" \
+      python3 "$SOURCE/scripts/publish_file.py" \
         --source "$source/$relative" \
         --destination "$destination/$relative" \
+        --repository-root "$ROOT" \
         --mode 0644
     fi
   done
@@ -135,14 +137,37 @@ stage_benchmark_output() {
   fi
   mkdir -p "$destination"
   for name in result.json time.txt scan.stdout; do
-    python3 "$ROOT/scripts/publish_file.py" \
+    python3 "$SOURCE/scripts/publish_file.py" \
       --source "$source/$name" \
       --destination "$destination/$name" \
+      --repository-root "$ROOT" \
       --mode 0644
   done
 }
 
 if [ "${RKC_RELEASE_VERIFY_INNER:-0}" != 1 ]; then
+  python3 scripts/git_source_guard.py \
+    --root "$ROOT" \
+    --operation "release verification"
+  if [ -n "${RKC_VALIDATION_PYTHON:-}" ]; then
+    VALIDATION_PYTHON=$RKC_VALIDATION_PYTHON
+  elif [ -x "$ROOT/.venv/bin/python" ]; then
+    VALIDATION_PYTHON=$ROOT/.venv/bin/python
+  else
+    VALIDATION_PYTHON=$(command -v python3 || true)
+  fi
+  if [ -z "$VALIDATION_PYTHON" ] || [ ! -x "$VALIDATION_PYTHON" ]; then
+    echo "release verification: no executable validation Python was found" >&2
+    exit 1
+  fi
+  case "$VALIDATION_PYTHON" in
+    /*) ;;
+    *)
+      VALIDATION_PYTHON=$(CDPATH= cd -- "$(dirname -- "$VALIDATION_PYTHON")" && pwd -P)/$(basename -- "$VALIDATION_PYTHON")
+      ;;
+  esac
+  "$VALIDATION_PYTHON" scripts/verify_python_environment.py \
+    --requirements requirements-dev.txt >/dev/null
   SOURCE_COMMIT=$(git rev-parse --verify 'HEAD^{commit}')
   SOURCE_TREE=$(git rev-parse --verify "${SOURCE_COMMIT}^{tree}")
   SOURCE_COMMIT_TIME=$(git show -s --format=%ct "$SOURCE_COMMIT")
@@ -169,7 +194,8 @@ if [ "${RKC_RELEASE_VERIFY_INNER:-0}" != 1 ]; then
     echo "release verification: private source checkout does not match immutable HEAD" >&2
     exit 1
   fi
-  if RKC_RELEASE_VERIFY_INNER=1 sh "$SOURCE/scripts/verify-release.sh"; then
+  if RKC_RELEASE_VERIFY_INNER=1 PYTHON="$VALIDATION_PYTHON" \
+    sh "$SOURCE/scripts/verify-release.sh"; then
     verification_status=0
   else
     verification_status=$?
@@ -184,12 +210,19 @@ if [ "${RKC_RELEASE_VERIFY_INNER:-0}" != 1 ]; then
     echo "release verification: failed evidence was not published; prior evidence is unchanged" >&2
     exit "$verification_status"
   fi
+  python3 "$SOURCE/scripts/git_source_guard.py" \
+    --root "$ROOT" \
+    --operation "release evidence staging"
   EVIDENCE=$WORK/evidence
   stage_validation_output "$SOURCE/dist/validation" "$EVIDENCE/validation"
   stage_benchmark_output "$SOURCE/dist/benchmark" "$EVIDENCE/benchmark"
-  python3 "$ROOT/scripts/publish_directory.py" \
+  python3 "$SOURCE/scripts/git_source_guard.py" \
+    --root "$ROOT" \
+    --operation "release evidence publication"
+  python3 "$SOURCE/scripts/publish_directory.py" \
     --source "$EVIDENCE" \
-    --destination "$ROOT/dist/evidence"
+    --destination "$ROOT/dist/evidence" \
+    --repository-root "$ROOT"
   exit 0
 fi
 
@@ -241,12 +274,13 @@ PY
   printf '%s\t%s\t%s\n' "$name" "$status" "$((step_end-step_start))" >>"$STEPS"
 }
 run_step go-modules make go-mod-verify
+run_step python-environment "$PYTHON" scripts/verify_python_environment.py --requirements requirements-dev.txt
 run_step format make format-check
 run_step vet make vet
 run_step coverage make coverage
 run_step contracts make contracts
 run_step docs make docs-check
-run_step licenses python3 scripts/validate-licenses.py
+run_step licenses "$PYTHON" scripts/validate-licenses.py
 run_step model-lock make model-lock-check
 run_step build make build
 run_step plugins make plugins

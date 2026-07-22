@@ -56,6 +56,9 @@ func (result Result) Cleanup() error {
 }
 
 func Open(ctx context.Context, source string, options Options) (Result, error) {
+	if ctx == nil {
+		return Result{}, errors.New("repository acquisition context is required")
+	}
 	source = strings.TrimSpace(source)
 	if source == "" {
 		source = "."

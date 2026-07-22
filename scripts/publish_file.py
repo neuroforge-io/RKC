@@ -34,11 +34,15 @@ def destination_identity(parent_fd: int, name: str) -> tuple[int, int, int, int]
     return identity(info)
 
 
-def open_destination_parent(destination: Path) -> tuple[int, str]:
+def open_destination_parent(
+    destination: Path, repository_root: Path | None = None
+) -> tuple[int, str]:
     """Open every destination parent component without following links."""
+    root = Path(os.path.abspath(repository_root if repository_root is not None else ROOT))
+    dist = root / "dist"
     absolute = Path(os.path.abspath(destination))
     try:
-        relative = absolute.relative_to(DIST)
+        relative = absolute.relative_to(dist)
     except ValueError as exc:
         raise PublishError("destination must be inside the repository dist directory") from exc
     if not relative.parts or relative.name in {"", ".", ".."}:
@@ -49,7 +53,7 @@ def open_destination_parent(destination: Path) -> tuple[int, str]:
         flags |= os.O_DIRECTORY
     if hasattr(os, "O_NOFOLLOW"):
         flags |= os.O_NOFOLLOW
-    root_fd = os.open(ROOT, flags)
+    root_fd = os.open(root, flags)
     opened = [root_fd]
     try:
         current = os.open("dist", flags, dir_fd=root_fd)
@@ -67,7 +71,12 @@ def open_destination_parent(destination: Path) -> tuple[int, str]:
     return result, relative.name
 
 
-def publish(source: Path, destination: Path, mode: int) -> None:
+def publish(
+    source: Path,
+    destination: Path,
+    mode: int,
+    repository_root: Path | None = None,
+) -> None:
     """Copy through a same-parent inode and atomically replace one safe leaf."""
     if mode not in {0o644, 0o755}:
         raise PublishError("mode must be 0644 or 0755")
@@ -84,7 +93,9 @@ def publish(source: Path, destination: Path, mode: int) -> None:
         before = os.fstat(source_fd)
         if not stat.S_ISREG(before.st_mode) or before.st_size > MAXIMUM_BYTES:
             raise PublishError("source must be a bounded regular file")
-        parent_fd, destination_name = open_destination_parent(destination)
+        parent_fd, destination_name = open_destination_parent(
+            destination, repository_root
+        )
         original_destination = destination_identity(parent_fd, destination_name)
         if original_destination is not None and (before.st_dev, before.st_ino) == original_destination[:2]:
             raise PublishError("source and destination are the same file")
@@ -153,9 +164,19 @@ def main() -> int:
     parser.add_argument("--source", required=True, type=Path)
     parser.add_argument("--destination", required=True, type=Path)
     parser.add_argument("--mode", required=True, choices=("0644", "0755"))
+    parser.add_argument(
+        "--repository-root",
+        type=Path,
+        help="repository whose dist directory receives the file (default: script root)",
+    )
     args = parser.parse_args()
     try:
-        publish(args.source, args.destination, int(args.mode, 8))
+        publish(
+            args.source,
+            args.destination,
+            int(args.mode, 8),
+            repository_root=args.repository_root,
+        )
     except (OSError, PublishError) as exc:
         print(f"publish file: {exc}", file=sys.stderr)
         return 1

@@ -41,6 +41,14 @@ func TestLlamaCPPProviderRunsThroughLiveUserServiceGuard(t *testing.T) {
 	if err := exec.Command("systemctl", "--user", "is-active", "--quiet", "default.target").Run(); err != nil {
 		t.Skipf("user-systemd manager unavailable: %v", err)
 	}
+	// The live integration case intentionally proves both the outer RKC
+	// development envelope and the nested model service. Plain `go test` and
+	// the packaged fresh-extraction gate run outside that envelope, so they must
+	// retain the hermetic provider tests below without failing host-policy
+	// admission. `make safe-test` and guarded release verification exercise it.
+	if err := resourceguard.RequireCurrentProcessLowPriority(); err != nil {
+		t.Skipf("test process is not running through the RKC resource guard: %v", err)
+	}
 	root := t.TempDir()
 	modelPath := filepath.Join(root, "tiny.gguf")
 	modelContents := make([]byte, 1024)

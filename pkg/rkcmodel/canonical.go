@@ -75,10 +75,22 @@ func SortBundle(bundle *Bundle) {
 
 // CanonicalBundle returns a deep-enough copy for deterministic serialization,
 // removing machine-local and clock-derived fields while preserving provenance.
+// It returns the zero bundle for a non-serializable value; trust-boundary code
+// should use CanonicalJSON so it can propagate the corresponding error.
 func CanonicalBundle(bundle Bundle) Bundle {
-	data, _ := json.Marshal(bundle)
+	out, _ := canonicalBundle(bundle)
+	return out
+}
+
+func canonicalBundle(bundle Bundle) (Bundle, error) {
+	data, err := json.Marshal(bundle)
+	if err != nil {
+		return Bundle{}, fmt.Errorf("encode canonical bundle: %w", err)
+	}
 	var out Bundle
-	_ = json.Unmarshal(data, &out)
+	if err := json.Unmarshal(data, &out); err != nil {
+		return Bundle{}, fmt.Errorf("clone canonical bundle: %w", err)
+	}
 	out.Snapshot.CreatedAt = time.Time{}
 	out.Snapshot.RootPath = ""
 	if out.Snapshot.Metadata != nil {
@@ -87,11 +99,14 @@ func CanonicalBundle(bundle Bundle) Bundle {
 		delete(out.Snapshot.Metadata, "duration_ms")
 	}
 	SortBundle(&out)
-	return out
+	return out, nil
 }
 
 func CanonicalJSON(bundle Bundle) ([]byte, error) {
-	canonical := CanonicalBundle(bundle)
+	canonical, err := canonicalBundle(bundle)
+	if err != nil {
+		return nil, err
+	}
 	return json.Marshal(canonical)
 }
 

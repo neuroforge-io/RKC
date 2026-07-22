@@ -60,6 +60,18 @@ type textContent struct {
 }
 
 func (s *Server) Serve(ctx context.Context, input io.Reader, output io.Writer) error {
+	if ctx == nil {
+		return errors.New("MCP server context is required")
+	}
+	if input == nil {
+		return errors.New("MCP server input is required")
+	}
+	if output == nil {
+		return errors.New("MCP server output is required")
+	}
+	if s == nil || s.dataset == nil {
+		return errors.New("MCP server dataset is required")
+	}
 	decoder := json.NewDecoder(bufio.NewReaderSize(input, 64*1024))
 	decoder.UseNumber()
 	encoder := json.NewEncoder(output)

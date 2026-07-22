@@ -5,7 +5,7 @@ set -eu
 
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 cd "$ROOT"
-EXPECTED_STEPS='go-modules format vet coverage contracts docs licenses model-lock build plugins smoke reproducibility api-smoke mcp-smoke git-smoke race benchmark'
+EXPECTED_STEPS='go-modules python-environment format vet coverage contracts docs licenses model-lock build plugins smoke reproducibility api-smoke mcp-smoke git-smoke race benchmark'
 EVIDENCE_ROOT=$ROOT/dist/evidence
 FINAL=$ROOT/dist/release/repository-knowledge-compiler-complete.zip
 
@@ -17,6 +17,9 @@ if [ -L "$EVIDENCE_ROOT" ] || [ ! -d "$EVIDENCE_ROOT" ]; then
   echo "complete package: verified evidence generation is missing or unsafe" >&2
   exit 1
 fi
+python3 scripts/git_source_guard.py \
+  --root "$ROOT" \
+  --operation "complete package assembly"
 SOURCE_COMMIT=$(git rev-parse --verify 'HEAD^{commit}')
 SOURCE_TREE=$(git rev-parse --verify "${SOURCE_COMMIT}^{tree}")
 SOURCE_COMMIT_TIME=$(git show -s --format=%ct "$SOURCE_COMMIT")
@@ -29,6 +32,14 @@ esac
 
 WORK=$(mktemp -d "$ROOT/dist/.rkc-complete-reproducibility.XXXXXX")
 trap 'rm -rf "$WORK"' EXIT INT TERM
+TOOLS_SOURCE=$WORK/tool-source
+git clone --quiet --no-hardlinks --no-checkout -- "$ROOT" "$TOOLS_SOURCE"
+git -C "$TOOLS_SOURCE" -c advice.detachedHead=false checkout --quiet --detach "$SOURCE_COMMIT"
+if [ "$(git -C "$TOOLS_SOURCE" rev-parse 'HEAD^{tree}')" != "$SOURCE_TREE" ] ||
+   [ -n "$(git -C "$TOOLS_SOURCE" status --porcelain=v1 --untracked-files=all)" ]; then
+  echo "complete package: immutable publication helpers do not match source" >&2
+  exit 1
+fi
 
 validate_validation_inventory() {
   directory=$1
@@ -101,22 +112,25 @@ snapshot_release_evidence() {
   validate_benchmark_inventory "$EVIDENCE_ROOT/benchmark"
   mkdir -p "$snapshot/validation/logs" "$snapshot/benchmark"
   for relative in summary.json steps.tsv; do
-    python3 "$ROOT/scripts/publish_file.py" \
+    python3 "$TOOLS_SOURCE/scripts/publish_file.py" \
       --source "$EVIDENCE_ROOT/validation/$relative" \
       --destination "$snapshot/validation/$relative" \
+      --repository-root "$ROOT" \
       --mode 0644
   done
   for name in $EXPECTED_STEPS; do
     relative="logs/$name.log"
-    python3 "$ROOT/scripts/publish_file.py" \
+    python3 "$TOOLS_SOURCE/scripts/publish_file.py" \
       --source "$EVIDENCE_ROOT/validation/$relative" \
       --destination "$snapshot/validation/$relative" \
+      --repository-root "$ROOT" \
       --mode 0644
   done
   for name in result.json time.txt scan.stdout; do
-    python3 "$ROOT/scripts/publish_file.py" \
+    python3 "$TOOLS_SOURCE/scripts/publish_file.py" \
       --source "$EVIDENCE_ROOT/benchmark/$name" \
       --destination "$snapshot/benchmark/$name" \
+      --repository-root "$ROOT" \
       --mode 0644
   done
 }
@@ -220,6 +234,9 @@ build_lane() {
 # separate detached source checkouts. They share only the exact raw validation
 # and benchmark evidence from the immediately preceding immutable verification
 # run.
+python3 "$TOOLS_SOURCE/scripts/git_source_guard.py" \
+  --root "$ROOT" \
+  --operation "complete package evidence snapshot"
 snapshot_release_evidence
 build_lane a
 build_lane b
@@ -242,13 +259,12 @@ mv \
   "$WORK/a/source/dist/repository-knowledge-compiler-complete.zip" \
   "$RELEASE_STAGE/repository-knowledge-compiler-complete.zip"
 mv "$WORK/evidence" "$RELEASE_STAGE/evidence"
-if [ "$(git rev-parse --verify 'HEAD^{commit}')" != "$SOURCE_COMMIT" ] ||
-   [ "$(git rev-parse --verify 'HEAD^{tree}')" != "$SOURCE_TREE" ]; then
-  echo "complete package: root HEAD or tree changed before atomic publication" >&2
-  exit 1
-fi
-python3 "$ROOT/scripts/publish_directory.py" \
+python3 "$TOOLS_SOURCE/scripts/git_source_guard.py" \
+  --root "$ROOT" \
+  --operation "complete package publication"
+python3 "$TOOLS_SOURCE/scripts/publish_directory.py" \
   --source "$RELEASE_STAGE" \
-  --destination "$ROOT/dist/release"
+  --destination "$ROOT/dist/release" \
+  --repository-root "$ROOT"
 
 echo "complete package: two cache-isolated immutable builds are byte-identical: $FINAL"

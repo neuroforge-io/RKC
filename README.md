@@ -105,14 +105,45 @@ The exact ordered work, interfaces, migrations, tests, and exit gates are in
   product specification, retained and extended.
 - [`docs/backlog.md`](docs/backlog.md): stable engineering issue catalogue.
 
+## One-minute local atlas
+
+The dependency-light profile works on every supported RKC platform and does
+not need a model, daemon, database server, or Python sandbox:
+
+```sh
+make build
+./bin/rkc doctor --repository .
+./bin/rkc scan --no-python --out .rkc --state-dir .rkc-state --force .
+./bin/rkc check --coverage .rkc/coverage.json --bundle .rkc/bundle.json
+./bin/rkc serve --dir .rkc
+```
+
+Open `http://127.0.0.1:8787`. The generated `.rkc` atlas is portable and the
+`.rkc-state` directory retains immutable local snapshots. Both paths are
+explicit default inventory exclusions, so rerunning RKC on its own checkout
+does not recursively ingest prior output.
+
+Run `./bin/rkc doctor --strict` before omitting `--no-python`. The built-in
+Python adapter intentionally requires Python 3.11 or newer and its fail-closed
+Linux user-systemd isolation boundary. Go and JavaScript/TypeScript analysis,
+framework extraction, graph export, search, and browsing remain available in
+the portable profile.
+
 ## Requirements
 
-- a supported Go toolchain (CI and release images pin Go 1.26.5; the module uses
-  Go 1.25 language semantics required by its pinned SQLite dependency graph);
-- Python 3.11 or later for the Python analyzer and validation scripts;
+- a supported Go toolchain to build from source (CI and release images pin Go
+  1.26.5; the module uses Go 1.25 language semantics required by its pinned
+  SQLite dependency graph);
+- Python 3.11 or later plus `requirements-dev.txt` for repository validation;
 - Git for repository metadata and remote acquisition;
-- `jsonschema` and `PyYAML` for offline contract validation;
-- `curl` for the HTTP smoke test.
+- `curl` for the HTTP smoke test;
+- on Linux only, a reachable user-systemd manager for the optional Python AST
+  adapter and the guarded `safe-*` development targets.
+
+Prebuilt RKC binaries do not require the Go toolchain. A local-directory scan
+with `--no-python` does not require Python, Git, a model runtime, or network
+access. `rkc doctor` reports which optional capabilities are available and
+provides a remediation for each missing one.
 
 The runtime pins `modernc.org/sqlite` and its transitive pure-Go module graph in
 `go.mod` and `go.sum`. The reviewed dependency/license inventory is locked in
@@ -122,7 +153,8 @@ the downloaded module cache before tests or packaging.
 ## Build and fully verify
 
 ```sh
-python3 -m pip install -r requirements-dev.txt
+python3 -m venv .venv
+.venv/bin/python -m pip install -r requirements-dev.txt
 make go-mod-verify
 make safe-verify
 make safe-test-race
@@ -145,6 +177,7 @@ package/self-catalogue assembly inside its disposable runner.
 make build
 
 ./bin/rkc scan \
+  --no-python \
   --out /tmp/rkc-output \
   --state-dir /tmp/rkc-state \
   --force \
@@ -175,7 +208,7 @@ directory and use `--database` instead of `--state-dir`:
 
 ```sh
 install -d -m 700 /tmp/rkc-store
-./bin/rkc scan --database /tmp/rkc-store/rkc.sqlite --out /tmp/rkc-output --force examples
+./bin/rkc scan --no-python --database /tmp/rkc-store/rkc.sqlite --out /tmp/rkc-output --force examples
 ./bin/rkc snapshots list --database /tmp/rkc-store/rkc.sqlite --limit 20
 ./bin/rkc query --database /tmp/rkc-store/rkc.sqlite --snapshot '<snapshot-id>' Login
 ./bin/rkc serve --database /tmp/rkc-store/rkc.sqlite --snapshot '<snapshot-id>' --addr 127.0.0.1:8787
@@ -320,11 +353,19 @@ See
 Generate a complete configuration file:
 
 ```sh
-./bin/rkc init --out rkc.json
+./bin/rkc init --path rkc.json
 ```
+
+`--out` remains accepted as a compatibility alias, but new scripts should use
+`--path`. `rkc init --stdout` emits the same configuration without writing a
+file.
 
 The schema is [`schemas/config.schema.json`](schemas/config.schema.json), and a
 maintained example is [`config/rkc.example.json`](config/rkc.example.json).
+Generated configuration uses an immutable commit-pinned GitHub schema URL, so
+its editor association remains valid regardless of the chosen output directory;
+the checked-in example uses a repository-local relative schema path for
+offline checkout navigation.
 Configuration affecting repository truth enters the snapshot digest. Display,
 server-address, and derived-model settings do not silently change source truth.
 
@@ -368,6 +409,24 @@ third-party native-worker containment remain production blockers documented in
 the remainder plan.
 
 ## Container use
+
+The shortest portable container workflow is:
+
+```sh
+docker compose build
+docker compose run --rm rkc
+docker compose run --rm rkc check \
+  --coverage /output/atlas/coverage.json \
+  --bundle /output/atlas/bundle.json
+docker compose run --rm -p 127.0.0.1:8787:8787 rkc \
+  serve --dir /output/atlas --addr 0.0.0.0:8787
+```
+
+The named output and state volumes survive the one-shot scan container. Remove
+them only when their generated data is no longer needed (`docker compose down
+--volumes`).
+
+The equivalent explicit Docker invocation is:
 
 ```sh
 docker build -t rkc:local .

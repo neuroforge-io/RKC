@@ -215,6 +215,70 @@ func TestExportFormattingAndIntegrationHelpers(t *testing.T) {
 	}
 }
 
+func TestBrowserAssetsAccessibilityAndSerializationContract(t *testing.T) {
+	t.Parallel()
+	bundle := exportFixture(t.TempDir(), "x.go", []byte("package x\n"))
+	coverage := model.BuildCoverage(bundle)
+	assets, err := BrowserAssets(bundle, coverage)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(assets) != 4 {
+		t.Fatalf("browser asset count = %d, want 4", len(assets))
+	}
+	for name, markers := range map[string][]string{
+		"index.html": {
+			`class="skip-link"`, `role="tablist"`, `role="tabpanel"`,
+			`aria-live="polite"`, `<noscript>`,
+		},
+		"styles.css": {
+			":focus-visible", "prefers-reduced-motion", "prefers-contrast",
+			"forced-colors", "@media (max-width: 560px)", ".coverage-grid",
+			"max-height: min(48vh, 420px)",
+		},
+		"app.js": {
+			"handleListKeys", "clearFilters", "aria-selected", "role=\"progressbar\"",
+			"role=\"button\"", "atlas data is incomplete", "renderSelectionPrompt",
+			"<caption class=\"sr-only\">", "<th scope=\"col\">Category</th>",
+			"<th scope=\"row\">", "argument.default??''", "Object.create(null)",
+			"event.key==='Enter'||event.key===' '", "Not applicable", "coverage.claims_total?",
+		},
+	} {
+		content := string(assets[name])
+		for _, marker := range markers {
+			if !strings.Contains(content, marker) {
+				t.Errorf("%s is missing accessibility marker %q", name, marker)
+			}
+		}
+		if strings.Contains(content, "onclick=") {
+			t.Errorf("%s contains an inline event handler", name)
+		}
+	}
+	var data struct {
+		Bundle   model.Bundle   `json:"bundle"`
+		Coverage model.Coverage `json:"coverage"`
+	}
+	if err := json.Unmarshal(assets["data/atlas.json"], &data); err != nil {
+		t.Fatalf("decode browser data: %v", err)
+	}
+	if data.Bundle.Snapshot.ID != bundle.Snapshot.ID || data.Coverage.SymbolsTotal != coverage.SymbolsTotal {
+		t.Fatalf("browser data binding mismatch: snapshot=%q symbols=%d", data.Bundle.Snapshot.ID, data.Coverage.SymbolsTotal)
+	}
+
+	invalid := bundle
+	invalid.Nodes[0].Attributes = map[string]any{"channel": make(chan int)}
+	if _, err := BrowserAssets(invalid, coverage); err == nil || !strings.Contains(err.Error(), "canonicalize export bundle") {
+		t.Fatalf("BrowserAssets invalid bundle error = %v", err)
+	}
+	output := filepath.Join(t.TempDir(), "invalid-output")
+	if err := WriteAll(invalid, coverage, Options{Root: t.TempDir(), Output: output}); err == nil || !strings.Contains(err.Error(), "canonicalize export bundle") {
+		t.Fatalf("WriteAll invalid bundle error = %v", err)
+	}
+	if _, err := os.Stat(output); !os.IsNotExist(err) {
+		t.Fatalf("invalid export created output before canonical validation: %v", err)
+	}
+}
+
 func TestMarkdownGenerationContainsAdversarialRepositoryText(t *testing.T) {
 	t.Parallel()
 	payload := "declared text\n``````\n<script>alert('not inert')</script>\n# injected heading"

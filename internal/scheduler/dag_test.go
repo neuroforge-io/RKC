@@ -268,15 +268,29 @@ func TestExecuteEmptyAndDefaultWorkerCount(t *testing.T) {
 func TestCacheKeyIsDeterministicAndDoesNotMutateInputs(t *testing.T) {
 	digests := []string{"z", "a", "m"}
 	configuration := map[string]any{"enabled": true, "count": float64(2)}
-	first := CacheKey("stage", "1", digests, configuration)
-	second := CacheKey("stage", "1", []string{"m", "z", "a"}, map[string]any{"count": float64(2), "enabled": true})
+	first, err := CacheKey("stage", "1", digests, configuration)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := CacheKey("stage", "1", []string{"m", "z", "a"}, map[string]any{"count": float64(2), "enabled": true})
+	if err != nil {
+		t.Fatal(err)
+	}
 	if first != second || !strings.HasPrefix(first, "stage:") || len(first) != len("stage:")+64 {
 		t.Fatalf("CacheKey() = %q and %q", first, second)
 	}
 	if !reflect.DeepEqual(digests, []string{"z", "a", "m"}) {
 		t.Fatalf("CacheKey mutated input: %v", digests)
 	}
-	if first == CacheKey("stage", "2", digests, configuration) || first == CacheKey("other", "1", digests, configuration) {
+	differentVersion, err := CacheKey("stage", "2", digests, configuration)
+	if err != nil {
+		t.Fatal(err)
+	}
+	differentStage, err := CacheKey("other", "1", digests, configuration)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first == differentVersion || first == differentStage {
 		t.Fatal("CacheKey failed to bind stage identity/version")
 	}
 	if got := uniqueSorted([]string{" b ", "a", "a", ""}); !reflect.DeepEqual(got, []string{" b ", "a"}) {
@@ -289,5 +303,29 @@ func TestCacheKeyIsDeterministicAndDoesNotMutateInputs(t *testing.T) {
 	emit(nil, Event{})
 	if events != 1 {
 		t.Fatalf("emit callback count = %d", events)
+	}
+}
+
+func TestCacheKeyRejectsUnserializableConfiguration(t *testing.T) {
+	if _, err := CacheKey("stage", "1", nil, map[string]any{"channel": make(chan int)}); err == nil {
+		t.Fatal("CacheKey accepted an unserializable configuration")
+	}
+
+	stage := Stage{
+		ID:            "invalid-configuration",
+		Version:       "1",
+		Configuration: map[string]any{"channel": make(chan int)},
+		Run: func(context.Context, Inputs) (Result, error) {
+			return Result{}, errors.New("stage with an invalid cache-key configuration was executed")
+		},
+	}
+	if _, err := Execute(context.Background(), []Stage{stage}, Options{}); err == nil || !strings.Contains(err.Error(), "compute cache key") {
+		t.Fatalf("Execute invalid configuration error = %v", err)
+	}
+}
+
+func TestExecuteRejectsNilContext(t *testing.T) {
+	if _, err := Execute(nil, nil, Options{}); err == nil || !strings.Contains(err.Error(), "context is required") {
+		t.Fatalf("Execute nil context error = %v", err)
 	}
 }

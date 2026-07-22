@@ -16,10 +16,27 @@ and small interfaces over clever coupling.
 
 ## Local checks
 
+Create an isolated validation environment once:
+
 ```bash
-make safe-coverage
-make smoke
+python3 -m venv .venv
+.venv/bin/python -m pip install -r requirements-dev.txt
+make build
+./bin/rkc doctor --strict --repository .
 ```
+
+Then run the complete guarded checks on a Linux user-systemd host:
+
+```bash
+make safe-verify
+make safe-test-race
+```
+
+The `safe-*` targets fail closed when the delegated resource guard is
+unavailable; this is an intentional safety contract, not a reason to bypass
+the wrapper in release validation. Individual unprefixed targets such as
+`make smoke` are useful for focused debugging but do not provide the shared-host
+resource envelope.
 
 ## Commit sign-off
 

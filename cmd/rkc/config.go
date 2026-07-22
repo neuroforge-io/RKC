@@ -18,6 +18,7 @@ import (
 
 const (
 	configurationSchemaVersion = "0.2.0"
+	configurationSchemaURI     = "https://raw.githubusercontent.com/neuroforge-io/RKC/039edfa35972e4c003bb8a09738e42a21053b2d4/schemas/config.schema.json"
 	modelMaximumRSSMiB         = int64(2560)
 )
 
@@ -164,7 +165,7 @@ type QualityGatesConfig struct {
 
 func defaultConfiguration() Configuration {
 	return Configuration{
-		SchemaURI: "../schemas/config.schema.json", SchemaVersion: configurationSchemaVersion,
+		SchemaURI: configurationSchemaURI, SchemaVersion: configurationSchemaVersion,
 		Workspace:     WorkspaceConfig{PrivacyMode: "paths-relative", Output: ".rkc"},
 		Inventory:     InventoryConfig{MaxFileBytes: 1 << 30, MaxTextBytes: 2 << 20, MaxRepositoryBytes: 20 << 30, MaxFiles: 500000, Exclude: defaultInventoryExclusions(), ClassifyVendorDirectories: true, ClassifyGeneratedFiles: true},
 		Analysis:      AnalysisConfig{Tiers: []string{"inventory", "syntax", "framework"}, FailClosedOnPluginError: true, Incremental: true},

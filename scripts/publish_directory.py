@@ -105,15 +105,19 @@ def renameat2(
         raise OSError(error, os.strerror(error))
 
 
-def publish(source: Path, destination: Path) -> str:
+def publish(
+    source: Path, destination: Path, repository_root: Path | None = None
+) -> str:
     """Publish a whole generation with one rename and rollback on sync failure."""
     if not sys.platform.startswith("linux"):
         raise PublishDirectoryError("atomic generation publication requires Linux")
     source = Path(os.path.abspath(source))
     destination = Path(os.path.abspath(destination))
+    root = Path(os.path.abspath(repository_root if repository_root is not None else ROOT))
+    dist = root / "dist"
     try:
-        relative_source = source.relative_to(DIST)
-        relative_destination = destination.relative_to(DIST)
+        relative_source = source.relative_to(dist)
+        relative_destination = destination.relative_to(dist)
     except ValueError as exc:
         raise PublishDirectoryError("source and destination must be inside dist") from exc
     if (
@@ -132,7 +136,7 @@ def publish(source: Path, destination: Path) -> str:
 
     flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0)
     try:
-        dist_fd = os.open(DIST, flags)
+        dist_fd = os.open(dist, flags)
     except OSError as exc:
         raise PublishDirectoryError(f"dist is unavailable or unsafe: {exc}") from exc
     try:
@@ -214,9 +218,18 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--source", required=True, type=Path)
     parser.add_argument("--destination", required=True, type=Path)
+    parser.add_argument(
+        "--repository-root",
+        type=Path,
+        help="repository whose dist directory receives the generation (default: script root)",
+    )
     arguments = parser.parse_args()
     try:
-        publication = publish(arguments.source, arguments.destination)
+        publication = publish(
+            arguments.source,
+            arguments.destination,
+            repository_root=arguments.repository_root,
+        )
     except (OSError, PublishDirectoryError) as exc:
         print(f"publish directory: {exc}", file=sys.stderr)
         return 1
