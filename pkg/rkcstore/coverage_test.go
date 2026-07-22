@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"errors"
+	"reflect"
 	"strings"
 	"sync"
 	"testing"
@@ -46,6 +47,10 @@ func signedTestCursor(store *MemoryStore, payload string) Cursor {
 
 func TestTypedErrorsAndCursorFailurePaths(t *testing.T) {
 	store := newConformanceStore(t)
+	if scopeFingerprint("a", "\x00b") == scopeFingerprint("a\x00", "b") ||
+		scopeFingerprint("a") == scopeFingerprint("a", "") {
+		t.Fatal("cursor scope encoding is not structurally unambiguous")
+	}
 	var nilFailure *ValidationFailure
 	if nilFailure.Error() != "<nil>" {
 		t.Fatalf("nil validation failure = %q", nilFailure.Error())
@@ -246,6 +251,51 @@ func TestReaderAndPaginationFailurePaths(t *testing.T) {
 	diagnosticPage, err := store.diagnosticPage("diagnostics", diagnostics, 1, cursorPayload{}, "scope")
 	if err != nil || len(diagnosticPage.Items) != 1 || diagnosticPage.Next == "" {
 		t.Fatalf("diagnostic page = %+v, %v", diagnosticPage, err)
+	}
+}
+
+func TestValidateDoesNotMutateStagedRecords(t *testing.T) {
+	ctx := context.Background()
+	store := newConformanceStore(t)
+	bundle := conformanceBundle("snapshot", "repo", "", time.Unix(1, 0).UTC())
+	second := bundle.Evidence[0]
+	second.ID = "evidence-z"
+	bundle.Evidence = append(bundle.Evidence, second)
+	bundle.Nodes[0].EvidenceIDs = []string{second.ID, bundle.Evidence[0].ID}
+	build := beginAndStage(t, store, bundle, true)
+
+	store.mu.RLock()
+	before := append([]string(nil), store.builds[build].nodes["node-a"].EvidenceIDs...)
+	store.mu.RUnlock()
+	if _, err := store.Validate(ctx, build); err != nil {
+		t.Fatal(err)
+	}
+	store.mu.RLock()
+	after := append([]string(nil), store.builds[build].nodes["node-a"].EvidenceIDs...)
+	store.mu.RUnlock()
+	if !reflect.DeepEqual(after, before) {
+		t.Fatalf("Validate mutated staged evidence IDs: before=%v after=%v", before, after)
+	}
+
+	start := make(chan struct{})
+	errorsSeen := make(chan error, 16)
+	var wait sync.WaitGroup
+	for worker := 0; worker < cap(errorsSeen); worker++ {
+		wait.Add(1)
+		go func() {
+			defer wait.Done()
+			<-start
+			_, err := store.Validate(ctx, build)
+			errorsSeen <- err
+		}()
+	}
+	close(start)
+	wait.Wait()
+	close(errorsSeen)
+	for err := range errorsSeen {
+		if err != nil {
+			t.Fatal(err)
+		}
 	}
 }
 

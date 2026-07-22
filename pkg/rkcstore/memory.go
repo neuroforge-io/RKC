@@ -306,9 +306,12 @@ func (store *MemoryStore) Validate(ctx context.Context, buildID BuildID) (Valida
 		store.mu.RUnlock()
 		return ValidationResult{}, err
 	}
-	bundle := provisionalBundle(buildID, build)
+	bundle, cloneErr := provisionalBundle(buildID, build)
 	provided := cloneCoveragePointer(build.coverage)
 	store.mu.RUnlock()
+	if cloneErr != nil {
+		return ValidationResult{}, fmt.Errorf("clone staged build: %w", cloneErr)
+	}
 	if err := checkContext(ctx, operation); err != nil {
 		return ValidationResult{}, err
 	}
@@ -354,7 +357,10 @@ func (store *MemoryStore) Commit(ctx context.Context, buildID BuildID, snapshot 
 		return conflict(operation, buildID, snapshotID, "snapshot identifier already exists")
 	}
 
-	bundle := bundleFromBuild(clonedSnapshot, build)
+	bundle, err := bundleFromBuild(clonedSnapshot, build)
+	if err != nil {
+		return fmt.Errorf("clone staged build: %w", err)
+	}
 	result := validateBundle(bundle, cloneCoveragePointer(build.coverage))
 	if result.Report.HasErrors() {
 		return &ValidationFailure{Operation: operation, BuildID: buildID, Result: result}
@@ -455,7 +461,7 @@ func (build *memoryBuild) clearPayload() {
 	build.coverage = nil
 }
 
-func bundleFromBuild(snapshot rkcmodel.Snapshot, build *memoryBuild) rkcmodel.Bundle {
+func bundleFromBuild(snapshot rkcmodel.Snapshot, build *memoryBuild) (rkcmodel.Bundle, error) {
 	bundle := rkcmodel.Bundle{Snapshot: snapshot}
 	for _, value := range build.artifacts {
 		bundle.Artifacts = append(bundle.Artifacts, value)
@@ -484,11 +490,15 @@ func bundleFromBuild(snapshot rkcmodel.Snapshot, build *memoryBuild) rkcmodel.Bu
 	for _, value := range build.paths {
 		bundle.Paths = append(bundle.Paths, value)
 	}
-	rkcmodel.SortBundle(&bundle)
-	return bundle
+	cloned, err := cloneJSON(bundle)
+	if err != nil {
+		return rkcmodel.Bundle{}, err
+	}
+	rkcmodel.SortBundle(&cloned)
+	return cloned, nil
 }
 
-func provisionalBundle(id BuildID, build *memoryBuild) rkcmodel.Bundle {
+func provisionalBundle(id BuildID, build *memoryBuild) (rkcmodel.Bundle, error) {
 	snapshot := rkcmodel.Snapshot{
 		SchemaVersion: build.options.ExpectedSchema,
 		ID:            string(id), RepositoryID: string(build.options.RepositoryID),

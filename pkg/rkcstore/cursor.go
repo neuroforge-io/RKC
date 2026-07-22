@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"crypto/subtle"
 	"encoding/base64"
+	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
 	"io"
@@ -75,8 +76,10 @@ func (store *MemoryStore) openCursor(operation string, cursor Cursor, kind, scop
 
 func scopeFingerprint(values ...string) string {
 	hash := sha256.New()
+	var size [8]byte
 	for _, value := range values {
-		_, _ = hash.Write([]byte{0})
+		binary.BigEndian.PutUint64(size[:], uint64(len(value)))
+		_, _ = hash.Write(size[:])
 		_, _ = hash.Write([]byte(value))
 	}
 	return hex.EncodeToString(hash.Sum(nil))
