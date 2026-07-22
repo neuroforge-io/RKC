@@ -68,7 +68,9 @@ jobs:
           sh scripts/with-rkc-limits.sh make build
       - name: Run full release verification and assemble the complete package
         env:
-          CGO_ENABLED: '0'
+          # Release binaries remain explicitly CGO-free; the release proof also
+          # runs Go's race detector, which requires CGO on the Linux runner.
+          CGO_ENABLED: '1'
           RKC_RESOURCE_GUARD_MODE: service
         run: make safe-complete-package
       - name: Build verified non-recursive RKC self-catalogue
