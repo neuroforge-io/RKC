@@ -38,9 +38,13 @@ jobs:
           user_id="$(id -u)"
           user_name="$(id -un)"
           runtime_dir="/run/user/${user_id}"
+          drop_in='/etc/systemd/system/user@.service.d/90-rkc-ci-delegation.conf'
+          sudo install -d -m 0755 "$(dirname "$drop_in")"
+          printf '%s\n' '[Service]' 'Delegate=cpu io memory pids' |
+            sudo tee "$drop_in" >/dev/null
+          sudo systemctl daemon-reload
           sudo loginctl enable-linger "$user_name"
-          sudo systemctl start "user@${user_id}.service"
-          sudo systemctl set-property --runtime "user@${user_id}.service" 'Delegate=cpu io memory pids'
+          sudo systemctl restart "user@${user_id}.service"
           test -S "${runtime_dir}/bus"
           {
             printf 'XDG_RUNTIME_DIR=%s\n' "$runtime_dir"
