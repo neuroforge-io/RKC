@@ -20,7 +20,7 @@ services:
       - rkc-state:/state
     command:
       - scan
-      # Alpine containers do not provide the required user-systemd sandbox.
+      # The static scratch runtime has no user-systemd sandbox or Python.
       # Keep Python disabled explicitly; never fall back to an unsandboxed worker.
       - --no-python
       - --out

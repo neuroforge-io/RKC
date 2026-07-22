@@ -10,6 +10,25 @@ import (
 	"testing"
 )
 
+func TestCrossLanguageRuntimeReceiptFixtureMatchesGoContract(t *testing.T) {
+	receipt, data := loadCrossLanguageRuntimeReceiptFixture(t)
+	lock := lockDocument{LlamaCPP: llamaLock{
+		Tag:         receipt.Tag,
+		Commit:      receipt.Commit,
+		LicenseSPDX: receipt.License.LicenseSPDX,
+		LicenseURL:  receipt.License.LicenseURL,
+	}}
+	source := lockAsset{
+		SHA256:      receipt.SourceSHA256,
+		SizeBytes:   receipt.SourceSizeBytes,
+		LicenseSPDX: receipt.License.LicenseSPDX,
+		LicenseURL:  receipt.License.LicenseURL,
+	}
+	if err := validateReceiptShape(data, receipt, lock, receipt.LockSHA256, source); err != nil {
+		t.Fatalf("shared Python/Go runtime receipt fixture violates Go contract: %v", err)
+	}
+}
+
 func TestResolveGenerationBindsQualifiedModelAndRuntimeReceipt(t *testing.T) {
 	fixture := newResolverFixture(t)
 	binding, err := ResolveGeneration(fixture.request())
@@ -98,6 +117,9 @@ func TestResolveGenerationRejectsMalformedRequestsAndBindings(t *testing.T) {
 				f.t.Fatal(err)
 			}
 		}, "private real directory"},
+		{"runtime license mutation", func(f *resolverFixture, _ *GenerationRequest) {
+			f.write(f.licensePath, []byte("changed license\n"), 0o600)
+		}, "runtime license"},
 		{"executable receipt size", func(f *resolverFixture, _ *GenerationRequest) { f.receipt.Binaries[1].SizeBytes++ }, "llama-cli size"},
 	}
 	for _, test := range tests {
@@ -144,6 +166,7 @@ func TestResolverPolicyValidationRejectsInvalidShapes(t *testing.T) {
 	}{
 		{"profile", func(receipt *runtimeReceipt) { receipt.Profile = "gpu" }},
 		{"build policy", func(receipt *runtimeReceipt) { receipt.CMake = "" }},
+		{"license binding", func(receipt *runtimeReceipt) { receipt.License.SHA256 = "bad" }},
 		{"binary record", func(receipt *runtimeReceipt) { receipt.Binaries[0].Path = "../llama-bench" }},
 		{"duplicate binary", func(receipt *runtimeReceipt) { receipt.Binaries[1].Path = receipt.Binaries[0].Path }},
 	}
@@ -248,12 +271,14 @@ type resolverFixture struct {
 	root                   string
 	lockPath               string
 	receiptPath            string
+	licensePath            string
 	model                  string
 	executable             string
 	embeddingExecutable    string
 	modelSHA               string
 	executableSHA          string
 	embeddingExecutableSHA string
+	licenseSHA             string
 	lock                   lockDocument
 	receipt                runtimeReceipt
 }
@@ -265,19 +290,25 @@ func newResolverFixture(t *testing.T) *resolverFixture {
 	if err := os.MkdirAll(filepath.Join(runtimeRoot, "build", "bin"), 0o700); err != nil {
 		t.Fatal(err)
 	}
+	if err := os.MkdirAll(filepath.Join(runtimeRoot, "source"), 0o700); err != nil {
+		t.Fatal(err)
+	}
 	fixture := &resolverFixture{
 		t: t, root: root, lockPath: filepath.Join(root, "models.lock.json"),
 		receiptPath:         filepath.Join(runtimeRoot, runtimeReceiptName),
+		licensePath:         filepath.Join(runtimeRoot, filepath.FromSlash(runtimeLicensePath)),
 		model:               filepath.Join(root, "fixture.gguf"),
 		executable:          filepath.Join(runtimeRoot, "build", "bin", "llama-cli"),
 		embeddingExecutable: filepath.Join(runtimeRoot, "build", "bin", "llama-embedding"),
 	}
 	fixture.write(fixture.model, []byte("GGUFtest"), 0o600)
+	fixture.write(fixture.licensePath, []byte("llama.cpp fixture MIT license\n"), 0o600)
 	fixture.write(fixture.executable, []byte("#!/bin/sh\nexit 0\n"), 0o700)
 	fixture.write(fixture.embeddingExecutable, []byte("#!/bin/sh\nexit 0\n"), 0o700)
 	fixture.modelSHA = fileDigest(t, fixture.model)
 	fixture.executableSHA = fileDigest(t, fixture.executable)
 	fixture.embeddingExecutableSHA = fileDigest(t, fixture.embeddingExecutable)
+	fixture.licenseSHA = fileDigest(t, fixture.licensePath)
 	quantization := "Q4_K_M"
 	contextTokens := 32768
 	qualification := "models/qualification/fixture.json"
@@ -289,7 +320,7 @@ func newResolverFixture(t *testing.T) *resolverFixture {
 			LicenseURL: "https://github.com/ggml-org/llama.cpp/blob/commit/LICENSE", SourceAssetID: "source", CMake: json.RawMessage(`{}`),
 		},
 		Assets: []lockAsset{
-			{ID: "source", Kind: "source-archive", Status: "runtime-pinned", Repository: "https://github.com/ggml-org/llama.cpp", Revision: strings.Repeat("c", 40), Filename: "source.tar.gz", URL: "https://example.com/source.tar.gz", AllowedHosts: []string{"example.com"}, SHA256: strings.Repeat("b", 64), SizeBytes: 123, LicenseSPDX: "MIT", LicenseURL: "https://example.com/license", Redistribution: "not-bundled-download-on-demand", ExtractionRoot: stringPointer("source")},
+			{ID: "source", Kind: "source-archive", Status: "runtime-pinned", Repository: "https://github.com/ggml-org/llama.cpp", Revision: strings.Repeat("c", 40), Filename: "source.tar.gz", URL: "https://example.com/source.tar.gz", AllowedHosts: []string{"example.com"}, SHA256: strings.Repeat("b", 64), SizeBytes: 123, LicenseSPDX: "MIT", LicenseURL: "https://github.com/ggml-org/llama.cpp/blob/commit/LICENSE", Redistribution: "not-bundled-download-on-demand", ExtractionRoot: stringPointer("source")},
 			{ID: "generation", Kind: "generation-model", Status: "qualified", DefaultEligible: true, Repository: "https://example.com/model", Revision: strings.Repeat("a", 40), Filename: "fixture.gguf", URL: "https://example.com/fixture.gguf", AllowedHosts: []string{"example.com"}, SHA256: fixture.modelSHA, SizeBytes: 8, LicenseSPDX: "Apache-2.0", LicenseURL: "https://example.com/license", Redistribution: "not-bundled-download-on-demand", Quantization: &quantization, NativeContextTokens: &contextTokens, QualificationSpec: &qualification},
 			{ID: "embedding", Kind: "embedding-model", Status: "unqualified", Repository: "https://example.com/embedding", Revision: strings.Repeat("d", 40), Filename: "embedding.gguf", URL: "https://example.com/embedding.gguf", AllowedHosts: []string{"example.com"}, SHA256: strings.Repeat("e", 64), SizeBytes: 8, LicenseSPDX: "Apache-2.0", LicenseURL: "https://example.com/license", Redistribution: "not-bundled-download-on-demand", Quantization: stringPointer("Q8_0"), NativeContextTokens: intPointer(8192), QualificationSpec: stringPointer("models/qualification/fixture.json")},
 		},
@@ -307,17 +338,27 @@ func (fixture *resolverFixture) publishDocuments() {
 	fixture.write(fixture.lockPath, lockBytes, 0o600)
 	lockDigest := sha256.Sum256(lockBytes)
 	if fixture.receipt.SchemaVersion == "" {
-		fixture.receipt = runtimeReceipt{
-			SchemaVersion: runtimeSchemaVersion, Runtime: "llama.cpp", Tag: fixture.lock.LlamaCPP.Tag, Commit: fixture.lock.LlamaCPP.Commit,
-			SourceSHA256: fixture.lock.Assets[0].SHA256, SourceSizeBytes: fixture.lock.Assets[0].SizeBytes, LockSHA256: hex.EncodeToString(lockDigest[:]),
-			Profile: "native", CMake: "cmake version 3.30", ConfigureArgv: []string{"cmake", "-S", "source"}, BuildArgv: []string{"cmake", "--build", "build"},
-			Platform: "test", Machine: "test", Python: "3", QualificationStatus: "not-run", DefaultModelStatus: "none",
-			Binaries: []runtimeBinary{
-				{Path: "build/bin/llama-bench", SHA256: strings.Repeat("1", 64), SizeBytes: 1},
-				{Path: "build/bin/llama-cli", SHA256: fixture.executableSHA, SizeBytes: int64(len("#!/bin/sh\nexit 0\n"))},
-				{Path: "build/bin/llama-embedding", SHA256: fixture.embeddingExecutableSHA, SizeBytes: int64(len("#!/bin/sh\nexit 0\n"))},
-				{Path: "build/bin/llama-server", SHA256: strings.Repeat("3", 64), SizeBytes: 1},
-			},
+		fixture.receipt, _ = loadCrossLanguageRuntimeReceiptFixture(fixture.t)
+		fixture.receipt.SchemaVersion = runtimeSchemaVersion
+		fixture.receipt.Runtime = "llama.cpp"
+		fixture.receipt.Tag = fixture.lock.LlamaCPP.Tag
+		fixture.receipt.Commit = fixture.lock.LlamaCPP.Commit
+		fixture.receipt.SourceSHA256 = fixture.lock.Assets[0].SHA256
+		fixture.receipt.SourceSizeBytes = fixture.lock.Assets[0].SizeBytes
+		fixture.receipt.LockSHA256 = hex.EncodeToString(lockDigest[:])
+		fixture.receipt.Profile = "native"
+		fixture.receipt.License = runtimeLicense{
+			Path:        runtimeLicensePath,
+			SHA256:      fixture.licenseSHA,
+			SizeBytes:   int64(len("llama.cpp fixture MIT license\n")),
+			LicenseSPDX: fixture.lock.LlamaCPP.LicenseSPDX,
+			LicenseURL:  fixture.lock.LlamaCPP.LicenseURL,
+		}
+		fixture.receipt.Binaries = []runtimeBinary{
+			{Path: "build/bin/llama-bench", SHA256: strings.Repeat("1", 64), SizeBytes: 1},
+			{Path: "build/bin/llama-cli", SHA256: fixture.executableSHA, SizeBytes: int64(len("#!/bin/sh\nexit 0\n"))},
+			{Path: "build/bin/llama-embedding", SHA256: fixture.embeddingExecutableSHA, SizeBytes: int64(len("#!/bin/sh\nexit 0\n"))},
+			{Path: "build/bin/llama-server", SHA256: strings.Repeat("3", 64), SizeBytes: 1},
 		}
 	}
 	receiptBytes, err := json.Marshal(fixture.receipt)
@@ -325,6 +366,20 @@ func (fixture *resolverFixture) publishDocuments() {
 		fixture.t.Fatal(err)
 	}
 	fixture.write(fixture.receiptPath, receiptBytes, 0o600)
+}
+
+func loadCrossLanguageRuntimeReceiptFixture(t *testing.T) (runtimeReceipt, []byte) {
+	t.Helper()
+	path := filepath.Join("..", "..", "models", "runtime-receipt-v1.1.fixture.json")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read shared Python/Go runtime receipt fixture: %v", err)
+	}
+	var receipt runtimeReceipt
+	if err := decodeStrictDocument(data, &receipt); err != nil {
+		t.Fatalf("decode shared Python/Go runtime receipt fixture: %v", err)
+	}
+	return receipt, data
 }
 
 func (fixture *resolverFixture) request() GenerationRequest {

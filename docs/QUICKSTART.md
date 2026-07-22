@@ -66,6 +66,29 @@ named root-level coverage/cache outputs. Add another exact path with a repeated
 store. RKC refuses to adopt arbitrary nonempty directories as transaction
 state.
 
+For the durable SQLite runtime, create an owner-only database directory and use
+`--database` instead of `--state-dir`:
+
+```sh
+install -d -m 700 /tmp/rkc-store
+./bin/rkc scan \
+  --config rkc.json \
+  --database /tmp/rkc-store/rkc.sqlite \
+  --out /tmp/my-atlas \
+  --force \
+  /path/to/repository
+
+./bin/rkc snapshots list --database /tmp/rkc-store/rkc.sqlite --limit 20
+./bin/rkc query --database /tmp/rkc-store/rkc.sqlite --snapshot '<snapshot-id>' authentication
+./bin/rkc serve --database /tmp/rkc-store/rkc.sqlite --snapshot '<snapshot-id>'
+./bin/rkc-mcp --database /tmp/rkc-store/rkc.sqlite --snapshot '<snapshot-id>'
+```
+
+Use the snapshot ID printed by `scan`, or select one repository's current
+snapshot with `--repository`. Database readers open the existing file in
+read-only mode and reject missing files, mixed selectors, and paths with unsafe
+ownership or permissions.
+
 Remote Git repositories are materialized without prompts or hooks:
 
 ```sh
@@ -189,8 +212,9 @@ Use graph commands to inspect a changed node’s impact:
 ## 11. Produce the complete distributable
 
 ```sh
-make complete-package
+make safe-complete-package
 ```
 
-The package builder refuses to proceed without release verification,
-demonstration output, and cross-compiled Linux binaries.
+The package builder refuses to proceed without release verification and two
+cache-isolated, byte-identical builds. The coherent output is under
+`dist/release`.

@@ -76,6 +76,9 @@ licenses:
 
 - `llama.cpp` is MIT licensed by its upstream contributors. RKC pins release
   `b10082` and the full source revision and archive digest in the model lock.
+  The optional local build retains upstream `LICENSE`; its runtime receipt
+  binds that file's path, byte count, SHA-256, `MIT` SPDX expression, and exact
+  revision license URL, and reuse fails closed if the file or metadata changes.
 - Qwen3.5-2B and the locked `Qwen3.5-2B-Q4_K_M` GGUF derivative are
   Apache-2.0 licensed. The quantized file is attributed to Bartowski and the
   underlying model to Qwen.
@@ -88,9 +91,10 @@ license, NOTICE obligations where applicable, model attribution, and the exact
 corresponding source/provenance record. RKC release checks continue to reject
 tracked native binaries and model weights.
 
-The optional container uses an immutable official Alpine Linux base and contains
-Alpine/BusyBox/musl system components under their respective licenses. Their APK
-package metadata and upstream notices remain authoritative and must be preserved.
-Container publication requires a component-level SBOM and license report; this
-source-tree notice is not a substitute for that image inventory. Python is not
-present in the runtime image.
+The optional final container is a static nonroot `scratch` image. It contains
+the two CGO-free RKC executables, RKC runtime contracts/configuration, and the
+audited license/notice inventory; it contains no Alpine, BusyBox, musl, shell,
+package manager, or Python runtime component. The pinned Go-on-Alpine builder is
+disposable and no builder root filesystem is copied into the final image.
+Container publication still requires a component-level SBOM and license report;
+this source-tree notice is not a substitute for that image inventory.

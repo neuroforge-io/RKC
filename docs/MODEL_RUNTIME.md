@@ -105,7 +105,10 @@ profiles are available:
 Both profiles build `llama-cli`, `llama-server`, `llama-embedding`, and
 `llama-bench` from the same verified MIT-licensed source. The build receipt
 requires and hashes that exact binary inventory, including the direct embedding
-provider executable. CMake configures the upstream examples tree because the
+provider executable. It also binds retained upstream `source/LICENSE` by path,
+byte count, SHA-256, `MIT` SPDX expression, and the exact revision license URL;
+fresh publication and runtime reuse both fail closed if the license or metadata
+is missing or changed. CMake configures the upstream examples tree because the
 pinned `llama-embedding` target is defined there, but the build command names
 only those four targets. Built source, binaries, weights, and receipts stay
 under ignored `.rkc-*` directories and are not part of RKC source or release

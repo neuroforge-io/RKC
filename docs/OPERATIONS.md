@@ -147,13 +147,11 @@ worker logs, acquisition metadata, and release provenance.
 The reference release path is:
 
 ```sh
-make release-verify
-make demo
-make release-binaries
-python3 scripts/package-complete.py \
-  --output dist/repository-knowledge-compiler-complete.zip
+make safe-complete-package
 ```
 
-Production publication adds signed checksums, SBOMs, provenance, container
-multi-architecture builds, vulnerability scanning, and a clean-environment
-installation test.
+The coherent output generation is `dist/release`; it contains the ZIP, binaries,
+demo, and the exact receipt-bound validation/benchmark evidence. Production
+publication still adds signed checksums, provenance, container
+multi-architecture builds and SBOMs, vulnerability scanning, and a
+clean-environment installation test.

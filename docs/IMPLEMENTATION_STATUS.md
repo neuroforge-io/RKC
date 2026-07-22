@@ -21,7 +21,8 @@ The labels below mean:
 | Filesystem snapshot publication | Implemented | Building/committed states and recovery |
 | Content-addressed object store | Implemented | Reference filesystem store |
 | Transactional storage contract | Implemented | Typed reader/writer/recovery API; atomic, immutable in-memory conformance backend with authenticated cursors and lossless export |
-| SQLite runtime writer/query layer | Partial | Consolidated DDL plus digest-locked forward migrations are validated; durable driver, staging lifecycle, recovery, and paginated SQLite queries remain |
+| SQLite driver/bootstrap | Implemented | Pinned pure-Go driver, embedded digest-locked migrations through schema `0.4.0`, fail-closed build/publication compare-and-swap, monotonic current-pointer guards, CGO-free build gates, reader-key initialization, read-only consumers, and strict database-open health checks |
+| SQLite runtime writer/query layer | Implemented | Transactional staging/publication, OS writer leases, recovery, digest-verified canonical reads, exact coverage binding, authenticated pagination, projections, and CLI/HTTP/MCP integration |
 | Pipeline DAG and cache library | Partial | Scheduler/cache exist; scan not fully staged |
 | Clean/incremental equivalence | Planned | Deterministic clean replay passes |
 
@@ -96,7 +97,9 @@ The labels below mean:
 | WASI capability enforcement | Planned |
 | native-worker OS sandbox | Partial | fail-closed Linux guard for the digest-pinned built-in Python adapter only; third-party execution disabled |
 | OIDC/RBAC/tenancy/audit retention | Planned |
-| signed binaries, SBOM, provenance | Planned |
+| per-binary Go-module SPDX SBOM | Implemented | Deterministic SPDX 2.3 JSON is generated for every Linux executable and independently rebound to its checksum, command, GOOS/GOARCH, normalized GOAMD64/GOARM64 target, default GOEXPERIMENT set, `GOFIPS140=off`, exact Go toolchain, immutable source commit/tree/time, module lock, canonical Go purls, and actual linked modules during packaging; audited declared expressions are retained and every unanalyzed package conclusion remains `NOASSERTION` |
+| complete-distribution SPDX SBOM | Implemented | `SBOM.spdx.json` inventories substantive archive files, all four platform command components, and their linked Go modules; circular receipt files are explicitly excluded, the manifest hashes the SBOM, and final checksums hash both |
+| release signing, container SBOM, provenance | Planned | No publication claim until signatures and attestations are generated and verified |
 | Docker and CI reference files | Implemented |
 | full logged release verification | Implemented |
 
@@ -104,23 +107,36 @@ The labels below mean:
 
 `make release-verify` runs:
 
-1. Go formatting check;
-2. `go vet`;
-3. Go tests;
-4. Python analyzer tests;
-5. JSON Schema, OpenAPI, WIT, immutable SQLite migration, and lockfile validation;
-6. local Markdown-link and code-fence checks;
-7. binary builds;
-8. plugin manifest/lock validation;
-9. mixed-language scan and quality gate;
-10. deterministic duplicate scan comparison;
-11. HTTP API smoke test;
-12. MCP smoke test;
-13. constrained remote-Git acquisition test;
-14. Go race detector;
-15. self-analysis benchmark.
+1. checksum-locked Go module download and cache verification;
+2. Go formatting check;
+3. `go vet`;
+4. Go tests;
+5. Python analyzer tests;
+6. JSON Schema, OpenAPI, WIT, immutable SQLite migration, and lockfile validation;
+7. local Markdown-link and code-fence checks;
+8. model/runtime supply-chain lock validation;
+9. CGO-disabled binary builds;
+10. plugin manifest/lock validation;
+11. mixed-language scan and quality gate;
+12. deterministic duplicate scan comparison;
+13. HTTP API smoke test;
+14. MCP smoke test;
+15. constrained remote-Git acquisition test;
+16. Go race detector;
+17. self-analysis benchmark.
 
-CI additionally runs `make self-catalogue` inside the delegated resource guard
-and uploads the commit-bound `dist/self-catalogue` receipts and atlas. The
-workflow does not qualify or promote a model; both committed model defaults
-remain null until the separate measured qualification gate passes.
+`make safe-complete-package` runs that logged sequence inside the mandatory
+resource guard. Validation itself executes inside an immutable private checkout
+and atomically replaces `dist/evidence` only after the complete validation and
+benchmark inventory passes. Packaging then rebuilds binaries, SBOMs, and
+deterministic demo inputs in two detached checkouts with lane-private Go build
+and module caches, validates the exact successful raw evidence inventory, uses
+stored ZIP entries, and requires byte equality of the final commit/tree-bound
+archives. It publishes the ZIP, binaries, demo, and exact receipt-bound raw
+evidence with one atomic `dist/release` generation swap.
+
+CI runs the complete release/package path and `make self-catalogue` inside the
+delegated resource guard, then uploads the single `dist/release` generation and
+the commit-bound `dist/self-catalogue` receipts and atlas. The workflow does not
+qualify or promote a model; both committed model defaults remain null until the
+separate measured qualification gate passes.

@@ -564,29 +564,36 @@ func newCLIModelFixtureWithScript(t *testing.T, script string) cliModelFixture {
 	if err := os.MkdirAll(bin, 0o700); err != nil {
 		t.Fatal(err)
 	}
+	licensePath := filepath.Join(runtimeRoot, "source", "LICENSE")
+	if err := os.MkdirAll(filepath.Dir(licensePath), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	writeTestFile(t, licensePath, "llama.cpp fixture MIT license\n")
 	modelPath := filepath.Join(root, "fixture.gguf")
 	writeTestFile(t, modelPath, "GGUFtest")
 	executablePath := filepath.Join(bin, "llama-cli")
 	writeExecutable(t, executablePath, script)
 	modelSHA := digestFile(t, modelPath)
 	executableSHA := digestFile(t, executablePath)
+	licenseSHA := digestFile(t, licensePath)
 	modelRevision := strings.Repeat("a", 40)
 	runtimeRevision := strings.Repeat("c", 40)
 	sourceSHA := strings.Repeat("b", 64)
+	licenseURL := "https://github.com/ggml-org/llama.cpp/blob/commit/LICENSE"
 	defaultGeneration := "generation"
 	lock := map[string]any{
 		"$schema": "../schemas/model-lock.schema.json", "schema_version": "1.0.0",
 		"default_generation_model": defaultGeneration, "default_embedding_model": nil,
 		"llama_cpp": map[string]any{
 			"repository": "https://github.com/ggml-org/llama.cpp", "tag": "b1", "commit": runtimeRevision,
-			"license_spdx": "MIT", "license_url": "https://github.com/ggml-org/llama.cpp/blob/commit/LICENSE",
+			"license_spdx": "MIT", "license_url": licenseURL,
 			"source_asset_id": "source", "cmake": map[string]any{},
 		},
 		"assets": []map[string]any{
 			{"id": "source", "kind": "source-archive", "status": "runtime-pinned", "default_eligible": false,
 				"repository": "https://github.com/ggml-org/llama.cpp", "revision": runtimeRevision, "filename": "source.tar.gz",
 				"url": "https://example.com/source.tar.gz", "allowed_hosts": []string{"example.com"}, "sha256": sourceSHA,
-				"size_bytes": 123, "license_spdx": "MIT", "license_url": "https://example.com/license",
+				"size_bytes": 123, "license_spdx": "MIT", "license_url": licenseURL,
 				"redistribution": "not-bundled-download-on-demand", "quantization": nil, "native_context_tokens": nil,
 				"qualification_spec": nil, "extraction_root": "source"},
 			{"id": "generation", "kind": "generation-model", "status": "qualified", "default_eligible": true,
@@ -611,10 +618,12 @@ func newCLIModelFixtureWithScript(t *testing.T, script string) cliModelFixture {
 	writeTestFile(t, lockPath, string(lockData))
 	lockDigest := sha256.Sum256(lockData)
 	receipt := map[string]any{
-		"schema_version": "1.0.0", "runtime": "llama.cpp", "tag": "b1", "commit": runtimeRevision,
+		"schema_version": "1.1.0", "runtime": "llama.cpp", "tag": "b1", "commit": runtimeRevision,
 		"source_sha256": sourceSHA, "source_size_bytes": 123, "lock_sha256": hex.EncodeToString(lockDigest[:]),
 		"profile": "native", "cmake": "cmake version 3.30", "configure_argv": []string{"cmake", "-S", "source"},
 		"build_argv": []string{"cmake", "--build", "build"}, "platform": "test", "machine": "test", "python": "3",
+		"license": map[string]any{"path": "source/LICENSE", "sha256": licenseSHA, "size_bytes": fileSize(t, licensePath),
+			"license_spdx": "MIT", "license_url": licenseURL},
 		"binaries": []map[string]any{
 			{"path": "build/bin/llama-bench", "sha256": strings.Repeat("1", 64), "size_bytes": 1},
 			{"path": "build/bin/llama-cli", "sha256": executableSHA, "size_bytes": fileSize(t, executablePath)},

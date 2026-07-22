@@ -25,6 +25,26 @@ GOFLAGS="${GOFLAGS:+$GOFLAGS }-p=1"
 export GOMAXPROCS OMP_NUM_THREADS OPENBLAS_NUM_THREADS MKL_NUM_THREADS
 export NUMEXPR_NUM_THREADS CMAKE_BUILD_PARALLEL_LEVEL CARGO_BUILD_JOBS GOFLAGS
 
+# Transient services start with the user manager's clean environment rather
+# than the caller's environment. Preserve only the caller-controlled build and
+# controller policy values that the guarded command must observe.
+guard_cgo_enabled=${CGO_ENABLED-}
+case "$guard_cgo_enabled" in
+    ''|0|1) ;;
+    *)
+        echo "rkc resource guard: CGO_ENABLED must be empty, 0, or 1" >&2
+        exit 2
+        ;;
+esac
+guard_require_io_controller=${RKC_REQUIRE_IO_CONTROLLER:-0}
+case "$guard_require_io_controller" in
+    0|1) ;;
+    *)
+        echo "rkc resource guard: RKC_REQUIRE_IO_CONTROLLER must be 0 or 1" >&2
+        exit 2
+        ;;
+esac
+
 # ERAIS training and evaluation are explicitly higher-priority workloads on
 # shared development hosts. Refuse to start new RKC work while one is visible;
 # callers receive EX_TEMPFAIL (75) and can retry later. The bracketed regular
@@ -101,6 +121,16 @@ case "$mode" in
             --setenv="XDG_RUNTIME_DIR=$XDG_RUNTIME_DIR" \
             --setenv="DBUS_SESSION_BUS_ADDRESS=$DBUS_SESSION_BUS_ADDRESS" \
             --setenv="RKC_RESOURCE_GUARD_UNIT=$unit" \
+            --setenv="GOMAXPROCS=$GOMAXPROCS" \
+            --setenv="OMP_NUM_THREADS=$OMP_NUM_THREADS" \
+            --setenv="OPENBLAS_NUM_THREADS=$OPENBLAS_NUM_THREADS" \
+            --setenv="MKL_NUM_THREADS=$MKL_NUM_THREADS" \
+            --setenv="NUMEXPR_NUM_THREADS=$NUMEXPR_NUM_THREADS" \
+            --setenv="CMAKE_BUILD_PARALLEL_LEVEL=$CMAKE_BUILD_PARALLEL_LEVEL" \
+            --setenv="CARGO_BUILD_JOBS=$CARGO_BUILD_JOBS" \
+            --setenv="GOFLAGS=$GOFLAGS" \
+            --setenv="CGO_ENABLED=$guard_cgo_enabled" \
+            --setenv="RKC_REQUIRE_IO_CONTROLLER=$guard_require_io_controller" \
             --property CPUWeight=1 \
             --property IOWeight=1 \
             --property CPUQuota=100% \

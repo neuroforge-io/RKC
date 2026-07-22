@@ -1,20 +1,27 @@
 # Release validation
 
 The complete package is built only after `scripts/verify-release.sh` succeeds.
-Logs are retained under `dist/validation/logs`, and a machine-readable summary is
-written to `dist/validation/summary.json`.
+That verifier materializes a clean detached copy of exact `HEAD`, runs the full
+sequence only inside the immutable checkout, confirms that its tracked and
+untracked source state stayed clean, and preserves the prior evidence until the
+complete validation and benchmark inventory can replace `dist/evidence` with one
+atomic directory exchange. Logs and the machine-readable summary are under
+`dist/evidence/validation`; raw benchmark outputs are under
+`dist/evidence/benchmark`.
 
 ## Verification sequence
 
 | Step | Command | Purpose |
 |---|---|---|
+| Go modules | `make go-mod-verify` | download checksum-locked modules and verify cached source |
 | format | `make format-check` | canonical Go formatting |
 | vet | `make vet` | static Go diagnostics |
 | coverage gate | `make coverage` | all Go tests plus Python line/branch tests, inventory, and policy floors |
 | contracts | `make contracts` | schemas, examples, OpenAPI parity, WIT, SQLite |
 | docs | `make docs-check` | local links and code fences |
 | licenses | `python3 scripts/validate-licenses.py` | Apache and third-party notice boundaries |
-| build | `make build` | `rkc` and `rkc-mcp` |
+| model lock | `make model-lock-check` | optional runtime/model identities, hashes, licenses, and null-default policy |
+| build | `make build` | CGO-disabled `rkc` and `rkc-mcp` |
 | plugins | `make plugins` | manifest and lock digest verification |
 | smoke | `make smoke` | mixed-language scan, gate, search, packet-only synthesis |
 | reproducibility | `make reproducibility` | byte-identical bundle and coverage |
@@ -68,18 +75,22 @@ The offline validator:
   forward-only schema versions, canonical UTF-8/LF encoding, clean migration
   execution, foreign-key and integrity checks, and catalogue equivalence with
   the consolidated SQLite DDL;
+- probes canonical snapshot/build lineage, stale-build commit and publication
+  rejection, and monotonic current-pointer enforcement;
 - verifies the WIT package revision;
 - checks the plugin lockfile shape.
 
 ## License validation
 
-The dependency-free license validator fails closed when required Apache or
+The dependency-aware license validator fails closed when required Apache or
 third-party notices are missing, altered into an unrecognized form, or replaced
-by links. It checks the implemented OpenAPI and official plugin license metadata,
-keeps the current no-third-party-Go-module assertion honest, requires every file
-under `LICENSES/` to be referenced from `THIRD_PARTY_NOTICES.md`, and rejects
-tracked symlinks, submodules, model weights, and native artifacts. A newly added
-dependency must therefore expand the reviewed notice inventory before release.
+by links. It checks the implemented OpenAPI and official plugin metadata,
+requires `go.mod`, `go.sum`, `third_party/go-modules.lock.json`, and every
+reviewed file under `LICENSES/` to agree with the resolved Go module graph,
+requires every license file to be referenced from `THIRD_PARTY_NOTICES.md`, and
+rejects tracked links, submodules, model weights, and native artifacts. A newly
+added dependency must expand the reviewed lock and notice inventory before
+release.
 
 ## Determinism
 
@@ -97,23 +108,57 @@ does not alter source truth.
 
 ## Package construction
 
-The deterministic package builder:
+The byte-reproducible package builder:
 
-1. enumerates source from stage-zero files in the Git index rather than copying
-   arbitrary tracked or untracked worktree neighbours;
+1. resolves one exact `HEAD` commit, tree, and commit timestamp, enumerates that
+   commit with `git ls-tree`, and materializes each source file from its verified
+   Git blob rather than copying worktree neighbours;
 2. rejects source symlinks, submodules, model weights, native artifacts, and
    generated-output paths;
-3. includes Linux amd64 and arm64 `rkc` and `rkc-mcp` binaries;
-4. includes a fresh mixed-language demonstration atlas;
-5. includes all release validation logs and summary;
-6. places `LICENSE`, `NOTICE`, `THIRD_PARTY_NOTICES.md`, and `LICENSES/` both at
-   the archive root and inside the tracked source tree;
+3. includes Linux amd64 and arm64 `rkc` and `rkc-mcp` binaries plus a
+   deterministic SPDX 2.3 Go-module SBOM for each executable, then independently
+   recomputes and compares the exact binary checksum, command identity,
+   GOOS/GOARCH, normalized GOAMD64/GOARM64 target, default GOEXPERIMENT set,
+   `GOFIPS140=off`, Go toolchain, immutable source commit/tree/time, module-lock
+   digest, canonical Go purls, and linked dependency inventory before copying;
+   declared values come from the audited lock while every unanalyzed package's
+   `licenseConcluded` remains the SPDX-required `NOASSERTION`;
+4. includes the byte-stable `bundle.json` and `coverage.json` from a fresh
+   mixed-language demonstration generated in a private immutable checkout;
+5. requires the exact successful release step/log inventory, summary schema,
+   source binding, every log digest, and the exact three-file raw benchmark
+   inventory, then includes a receipt containing every validation/benchmark
+   evidence path, size, SHA-256, and an aggregate manifest digest while leaving
+   those volatile files outside the ZIP;
+6. places `LICENSE`, `NOTICE`, `THIRD_PARTY_NOTICES.md`, every audited
+   `LICENSES/` file, and `third_party/go-modules.lock.json` at the archive root
+   as well as in the tracked source tree, and requires every binary bundle to
+   carry the exact audited license inventory and module lock;
 7. writes `README-FIRST.md` with the RKC/third-party license boundary;
-8. writes a JSON manifest containing every payload file, size, and SHA-256;
-9. writes `SHA256SUMS.txt`;
-10. sorts archive entries and fixes ZIP timestamps and permissions;
-11. accepts output only below `dist/`, uses an exclusive temporary file, and
-    publishes without replacement unless `--force` was explicitly supplied.
+8. writes `SBOM.spdx.json`, a complete-distribution SPDX 2.3 inventory of
+   substantive files, platform command components, and their linked Go modules;
+   it explicitly excludes its own circular hash plus the later manifest and
+   checksum receipts;
+9. writes `MANIFEST.json`, including the distribution SBOM's size and SHA-256,
+   then writes `SHA256SUMS.txt` over the SBOM, manifest, and every other file
+   except the checksum file itself;
+10. sorts archive entries, fixes ZIP timestamps and permissions, and uses stored
+    entries so archive bytes do not depend on a host zlib implementation;
+11. accepts lane output only below `dist/` and uses an exclusive temporary file;
+12. independently rebuilds binaries, SBOMs, and demo artifacts in two clean
+    detached checkouts with separate `GOCACHE` and `GOMODCACHE` directories,
+    assembles a complete ZIP in each, and requires byte-for-byte equality before
+    publishing the ZIP, binaries, demo, and its exact raw-evidence snapshot with
+    one atomic `dist/release` generation exchange; staged directories are
+    synced bottom-up, both rename parents are synced, and a sync failure rolls
+    the namespace back before returning an error.
+
+CI runs this complete release-verification, cross-platform binary/SBOM, and ZIP
+assembly path inside the delegated one-core, 2.5-GiB low-priority resource
+guard. CI uploads the one coherent `dist/release` generation, including the ZIP,
+all SPDX documents, and the exact raw validation/benchmark evidence that is
+intentionally excluded from the reproducible ZIP; mocked unit coverage is not
+the release integration gate.
 
 ## Fresh extraction gate
 
@@ -133,7 +178,8 @@ The outer package checksums and the internal `SHA256SUMS.txt` must also verify.
 
 ## Honest scope
 
-Passing this suite proves the reference paths packaged here. It does not prove
-future compiler adapters, production sandboxing, PostgreSQL team mode, or a
-real-GGUF memory target that are not yet implemented. Those have separate exit
-gates in the remainder plan.
+Passing this suite proves the reference paths packaged here, including the
+durable local SQLite backend. It does not prove future compiler adapters,
+general third-party native-plugin sandboxing, PostgreSQL team mode, signed
+publication, container SBOMs, provenance, or a qualified real-GGUF
+memory/quality target. Those have separate exit gates in the remainder plan.

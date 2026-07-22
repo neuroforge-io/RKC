@@ -45,6 +45,35 @@ CONFIGURE_TIMEOUT_SECONDS = 15 * 60
 BUILD_TIMEOUT_SECONDS = 60 * 60
 BUILD_POLL_SECONDS = 0.5
 RECEIPT_NAME = "rkc-llama-runtime.json"
+RUNTIME_RECEIPT_SCHEMA_VERSION = "1.1.0"
+RUNTIME_LICENSE_RELATIVE = PurePosixPath("source/LICENSE")
+MAX_RUNTIME_LICENSE_BYTES = 1024 * 1024
+RUNTIME_RECEIPT_KEYS = frozenset(
+    {
+        "schema_version",
+        "runtime",
+        "tag",
+        "commit",
+        "source_sha256",
+        "source_size_bytes",
+        "lock_sha256",
+        "profile",
+        "cmake",
+        "configure_argv",
+        "build_argv",
+        "platform",
+        "machine",
+        "python",
+        "license",
+        "binaries",
+        "qualification_status",
+        "default_model_status",
+    }
+)
+RUNTIME_LICENSE_KEYS = frozenset(
+    {"path", "sha256", "size_bytes", "license_spdx", "license_url"}
+)
+RUNTIME_BINARY_KEYS = frozenset({"path", "sha256", "size_bytes"})
 
 
 def _mapping(value: object, label: str) -> dict[str, object]:
@@ -377,29 +406,130 @@ def _runtime_name(lock: ModelLock, profile: str) -> str:
     return f"{llama['tag']}-{str(llama['commit'])[:12]}-{profile}"
 
 
+def _runtime_license_record(path: Path, lock: ModelLock) -> dict[str, object]:
+    """Bind the retained upstream MIT license to the exact model lock."""
+    llama = _mapping(lock.document["llama_cpp"], "llama_cpp")
+    source_asset = lock.asset(str(llama["source_asset_id"]))
+    license_spdx = llama.get("license_spdx")
+    license_url = llama.get("license_url")
+    if (
+        license_spdx != "MIT"
+        or source_asset.license_spdx != license_spdx
+        or source_asset.license_url != license_url
+    ):
+        raise IntegrityError(
+            "llama.cpp runtime license metadata does not match the pinned source"
+        )
+    license_path = path / Path(*RUNTIME_LICENSE_RELATIVE.parts)
+    try:
+        digest, size = _sha256_file(
+            license_path,
+            maximum_bytes=MAX_RUNTIME_LICENSE_BYTES,
+        )
+    except (OSError, IntegrityError) as exc:
+        raise IntegrityError(
+            f"llama.cpp runtime license cannot be verified: {license_path}"
+        ) from exc
+    if size <= 0:
+        raise IntegrityError("llama.cpp runtime license is empty")
+    return {
+        "path": RUNTIME_LICENSE_RELATIVE.as_posix(),
+        "sha256": digest,
+        "size_bytes": size,
+        "license_spdx": license_spdx,
+        "license_url": license_url,
+    }
+
+
+def _strict_json_object(pairs: list[tuple[str, object]]) -> dict[str, object]:
+    """Build one receipt object while rejecting duplicate member names."""
+    result: dict[str, object] = {}
+    for key, value in pairs:
+        if key in result:
+            raise IntegrityError(f"llama.cpp runtime receipt repeats JSON key: {key}")
+        result[key] = value
+    return result
+
+
+def _reject_json_constant(value: str) -> object:
+    """Reject non-standard NaN and infinity tokens accepted by Python JSON."""
+    raise IntegrityError(
+        f"llama.cpp runtime receipt contains invalid JSON constant: {value}"
+    )
+
+
 def _verify_existing_runtime(path: Path, lock: ModelLock, profile: str) -> dict[str, object]:
     receipt_path = path / RECEIPT_NAME
     raw = receipt_path.read_bytes()
     if len(raw) > 1024 * 1024:
         raise IntegrityError("llama.cpp runtime receipt is oversized")
     try:
-        receipt = json.loads(raw)
-    except json.JSONDecodeError as exc:
+        receipt = json.loads(
+            raw,
+            object_pairs_hook=_strict_json_object,
+            parse_constant=_reject_json_constant,
+        )
+    except IntegrityError:
+        raise
+    except (json.JSONDecodeError, UnicodeDecodeError) as exc:
         raise IntegrityError(f"invalid llama.cpp runtime receipt: {exc}") from exc
     if not isinstance(receipt, dict):
         raise IntegrityError("llama.cpp runtime receipt is not an object")
+    if set(receipt) != RUNTIME_RECEIPT_KEYS:
+        raise IntegrityError("llama.cpp runtime receipt shape is malformed")
+    if type(receipt.get("source_size_bytes")) is not int:
+        raise IntegrityError(
+            "llama.cpp runtime receipt source_size_bytes has an invalid type"
+        )
+    llama = _mapping(lock.document["llama_cpp"], "llama_cpp")
+    source_asset = lock.asset(str(llama["source_asset_id"]))
     expected = {
+        "schema_version": RUNTIME_RECEIPT_SCHEMA_VERSION,
+        "runtime": "llama.cpp",
+        "tag": llama["tag"],
+        "commit": llama["commit"],
+        "source_sha256": source_asset.sha256,
+        "source_size_bytes": source_asset.size_bytes,
         "lock_sha256": lock.digest,
         "profile": profile,
         "qualification_status": "not-run",
+        "default_model_status": "none",
     }
     for key, value in expected.items():
         if receipt.get(key) != value:
-            raise IntegrityError(f"llama.cpp runtime receipt {key} does not match the request")
+            raise IntegrityError(
+                f"llama.cpp runtime receipt {key} does not match the request"
+            )
+    for key in ("cmake", "platform", "machine", "python"):
+        value = receipt.get(key)
+        if not isinstance(value, str) or not value.strip():
+            raise IntegrityError(
+                f"llama.cpp runtime receipt {key} build policy is invalid"
+            )
+    for key in ("configure_argv", "build_argv"):
+        value = receipt.get(key)
+        if (
+            not isinstance(value, list)
+            or not value
+            or any(not isinstance(item, str) for item in value)
+        ):
+            raise IntegrityError(
+                f"llama.cpp runtime receipt {key} build policy is invalid"
+            )
+    license_record = receipt.get("license")
+    if (
+        not isinstance(license_record, dict)
+        or set(license_record) != RUNTIME_LICENSE_KEYS
+        or type(license_record.get("size_bytes")) is not int
+    ):
+        raise IntegrityError("llama.cpp runtime license receipt is malformed")
+    if license_record != _runtime_license_record(path, lock):
+        raise IntegrityError(
+            "llama.cpp runtime license no longer matches its receipt and model lock"
+        )
     binaries = receipt.get("binaries")
     if not isinstance(binaries, list) or not binaries:
         raise IntegrityError("llama.cpp runtime receipt has no binary inventory")
-    llama = _mapping(lock.document["llama_cpp"], "llama_cpp")
     cmake_policy = _mapping(llama["cmake"], "llama_cpp.cmake")
     suffix = ".exe" if os.name == "nt" else ""
     expected_paths = {
@@ -408,11 +538,14 @@ def _verify_existing_runtime(path: Path, lock: ModelLock, profile: str) -> dict[
     }
     observed_paths: set[str] = set()
     for entry in binaries:
-        if not isinstance(entry, dict) or set(entry) != {
-            "path",
-            "sha256",
-            "size_bytes",
-        }:
+        if (
+            not isinstance(entry, dict)
+            or set(entry) != RUNTIME_BINARY_KEYS
+            or not isinstance(entry.get("sha256"), str)
+            or re.fullmatch(r"[0-9a-f]{64}", entry["sha256"]) is None
+            or type(entry.get("size_bytes")) is not int
+            or entry["size_bytes"] <= 0
+        ):
             raise IntegrityError("llama.cpp runtime binary receipt is malformed")
         relative = entry.get("path")
         if not isinstance(relative, str) or relative not in expected_paths:
@@ -536,7 +669,7 @@ def build_runtime(
                 }
             )
         receipt = {
-            "schema_version": "1.0.0",
+            "schema_version": RUNTIME_RECEIPT_SCHEMA_VERSION,
             "runtime": "llama.cpp",
             "tag": llama["tag"],
             "commit": llama["commit"],
@@ -550,6 +683,7 @@ def build_runtime(
             "platform": platform.platform(),
             "machine": platform.machine(),
             "python": platform.python_version(),
+            "license": _runtime_license_record(staging, lock),
             "binaries": binaries,
             "qualification_status": "not-run",
             "default_model_status": "none",

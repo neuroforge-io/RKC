@@ -79,10 +79,11 @@ after derived output is written.
 
 ## Current storage
 
-The current scan writes a deterministic filesystem dataset and can publish it to
-an immutable filesystem snapshot store with a content-addressed object store.
-The SQLite DDL is validated and comprehensive, but the scan has not yet been
-refactored to write through the production `SnapshotWriter` transaction.
+The scan always writes a deterministic portable filesystem atlas. It can also
+publish through either the immutable filesystem snapshot store or the durable
+SQLite `SnapshotWriter` transaction. SQLite-backed readers power query, answer,
+graph, snapshots, browser serving, synthesis, and MCP with exact snapshot or
+repository-current selectors; read paths open the existing database read-only.
 
 ## Search and graph
 
@@ -126,17 +127,19 @@ third-party plugin sandbox. On platforms without that Linux enforcement path
 the Python adapter fails closed; the in-process Go and TypeScript analyzers
 remain available.
 
-The Alpine reference image cannot provide this user-systemd boundary. Its
-container and Compose examples select `--no-python` explicitly and continue to
-exercise the in-process analyzers. No container path silently downgrades to an
-unsandboxed Python worker.
+The static `scratch` reference image has no Python or user-systemd manager and
+cannot provide this boundary. Its container and Compose examples select
+`--no-python` explicitly and continue to exercise the in-process analyzers. No
+container path silently downgrades to an unsandboxed Python worker.
 
 ## Verification
 
 The complete release verifier runs unit, integration, contract, determinism,
 API, MCP, Git-acquisition, race, and benchmark checks and preserves logs in
-`dist/validation`. The deterministic package builder includes those logs and a
-fresh mixed-language demonstration atlas.
+the atomic `dist/evidence` generation. The deterministic package builder hashes
+the exact raw validation/benchmark evidence into its receipt, retains it outside
+the ZIP in the same `dist/release` generation, and includes a fresh
+mixed-language demonstration atlas plus a complete-distribution SPDX SBOM.
 
 ## Production deltas
 
@@ -151,4 +154,4 @@ fresh mixed-language demonstration atlas.
 | single local dataset | multi-repository PostgreSQL/object-store service |
 | local unauthenticated API | OIDC/RBAC/tenant-aware service API |
 | fake model executable tests | measured real-GGUF resource benchmark |
-| source checksums | signed releases, SBOM, provenance, transparency records |
+| source checksums plus binary/distribution SPDX SBOMs | signed releases, container SBOM, provenance, transparency records |

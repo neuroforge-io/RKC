@@ -1,5 +1,6 @@
-# Reproducible validation and coverage tooling. RKC's runtime remains a
-# dependency-free Go binary; these packages are only used by repository checks.
+# Reproducible validation and coverage tooling. These Python packages are used
+# only by repository checks; the Go runtime has a pinned, CGO-free SQLite module
+# graph recorded in go.mod, go.sum, and third_party/go-modules.lock.json.
 attrs==26.1.0
 coverage==7.15.2
 jsonschema==4.26.0

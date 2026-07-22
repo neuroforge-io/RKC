@@ -10,7 +10,7 @@ permissions:
 jobs:
   verify:
     runs-on: ubuntu-24.04
-    timeout-minutes: 30
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -22,8 +22,8 @@ jobs:
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version: '1.26.5'
-          # RKC currently has no external Go modules and therefore no go.sum.
-          cache: false
+          cache: true
+          cache-dependency-path: go.sum
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: '3.11'
@@ -55,18 +55,22 @@ jobs:
           RKC_RESOURCE_GUARD_MODE: service
           RKC_REQUIRE_IO_CONTROLLER: '1'
         run: sh scripts/verify-resource-guard.sh
-      - name: Verify source, contracts, docs, live plugin sandbox, determinism and interfaces
+      - name: Verify downloaded Go modules
         env:
           RKC_RESOURCE_GUARD_MODE: service
-        run: sh scripts/with-rkc-limits.sh make verify
-      - name: Race detector
+        run: sh scripts/with-rkc-limits.sh make go-mod-verify
+      - name: Verify CGO-free Go test and build paths
         env:
+          CGO_ENABLED: '0'
           RKC_RESOURCE_GUARD_MODE: service
-        run: sh scripts/with-rkc-limits.sh make test-race
-      - name: Generate demonstration atlas
+        run: |
+          sh scripts/with-rkc-limits.sh go test -p=1 ./...
+          sh scripts/with-rkc-limits.sh make build
+      - name: Run full release verification and assemble the complete package
         env:
+          CGO_ENABLED: '0'
           RKC_RESOURCE_GUARD_MODE: service
-        run: sh scripts/with-rkc-limits.sh make demo
+        run: make safe-complete-package
       - name: Build verified non-recursive RKC self-catalogue
         env:
           RKC_RESOURCE_GUARD_MODE: service
@@ -100,16 +104,29 @@ jobs:
             rkc:ci scan --no-python --out /output/atlas --force /workspace
           docker run --rm "${resource_limits[@]}" \
             --read-only \
-            --entrypoint /bin/sh \
+            --tmpfs /tmp:size=256m,mode=1777 \
+            --security-opt no-new-privileges:true \
+            --cap-drop ALL \
             -v "$volume:/output:ro" \
-            rkc:ci -c 'test -s /output/atlas/bundle.json && test -s /output/atlas/coverage.json'
+            rkc:ci check \
+              --coverage /output/atlas/coverage.json \
+              --bundle /output/atlas/bundle.json \
+              --min-inventory-accounting 1 \
+              --min-symbol-evidence 1 \
+              --max-errors 0
       - name: Upload demonstration atlas
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: rkc-demo
           path: |
-            dist/demo
-            dist/demo-*.txt
+            dist/release/demo
+            dist/release/demo-*.txt
+          if-no-files-found: error
+      - name: Upload one atomic complete release generation
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: rkc-complete-release-${{ github.sha }}
+          path: dist/release
           if-no-files-found: error
       - name: Upload verified self-catalogue
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1

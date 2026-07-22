@@ -5,7 +5,7 @@ PYTHON ?= $(if $(wildcard .venv/bin/python),.venv/bin/python,python3)
 MODEL_RUNTIME ?=
 MODEL_QUALIFICATION_OUTPUT ?=
 
-.PHONY: all build safe-build format-check vet test python-test coverage safe-coverage test-race contracts docs-check licenses model-lock-check model-runtime-portable model-runtime-native model-fetch-generation model-fetch-embedding model-qualify plugins smoke reproducibility smoke-api smoke-mcp smoke-git benchmark verify safe-verify safe-test safe-test-race release-verify safe-release-verify self-catalogue demo release-binaries complete-package clean package
+.PHONY: all build safe-build format-check vet test python-test coverage safe-coverage test-race go-mod-verify contracts docs-check licenses model-lock-check model-runtime-portable model-runtime-native model-fetch-generation model-fetch-embedding model-qualify plugins smoke reproducibility smoke-api smoke-mcp smoke-git benchmark verify safe-verify safe-test safe-test-race release-verify safe-release-verify self-catalogue demo release-binaries assemble-complete-package complete-package safe-complete-package clean package
 
 all: verify build
 
@@ -18,7 +18,7 @@ safe-build:
 	sh scripts/with-rkc-limits.sh $(MAKE) build
 
 format-check:
-	@test -z "$$(gofmt -l cmd internal pkg)" || { echo "Go files require gofmt:"; gofmt -l cmd internal pkg; exit 1; }
+	@test -z "$$(gofmt -l cmd internal pkg storage)" || { echo "Go files require gofmt:"; gofmt -l cmd internal pkg storage; exit 1; }
 
 vet:
 	go vet ./...
@@ -38,6 +38,10 @@ safe-coverage:
 
 test-race:
 	go test -p=1 -race ./...
+
+go-mod-verify:
+	go mod download
+	go mod verify
 
 # Local development guards deliberately yield CPU/I/O to higher-priority work
 # and fail closed if the user cgroup controller is unavailable.
@@ -101,7 +105,7 @@ smoke-git: build
 benchmark: build
 	sh scripts/benchmark-reference.sh
 
-verify: format-check vet coverage contracts docs-check licenses model-lock-check build plugins smoke reproducibility smoke-api smoke-mcp smoke-git
+verify: go-mod-verify format-check vet coverage contracts docs-check licenses model-lock-check build plugins smoke reproducibility smoke-api smoke-mcp smoke-git
 
 safe-verify:
 	sh scripts/with-rkc-limits.sh $(MAKE) verify
@@ -117,14 +121,20 @@ safe-release-verify:
 self-catalogue:
 	sh scripts/with-rkc-limits.sh bash scripts/self-catalogue.sh
 
-demo: build
+demo:
 	sh scripts/generate-demo.sh
 
-release-binaries:
+release-binaries: go-mod-verify
 	sh scripts/build-release-binaries.sh
 
-complete-package: release-verify demo release-binaries
-	$(PYTHON) scripts/package-complete.py --output dist/repository-knowledge-compiler-complete.zip --force
+assemble-complete-package:
+	sh scripts/reproducible-complete-package.sh
+
+complete-package: release-verify
+	$(MAKE) assemble-complete-package
+
+safe-complete-package:
+	sh scripts/with-rkc-limits.sh $(MAKE) complete-package
 
 package: complete-package
 

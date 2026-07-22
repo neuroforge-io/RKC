@@ -29,12 +29,26 @@ for controller in cpu memory pids; do
     esac
 done
 
+guard_require_io_controller=${RKC_REQUIRE_IO_CONTROLLER:-0}
+CGO_ENABLED=0 \
+GOFLAGS=-mod=readonly \
+RKC_REQUIRE_IO_CONTROLLER="$guard_require_io_controller" \
 sh scripts/with-rkc-limits.sh sh -c '
     set -eu
     fail() {
         echo "rkc resource guard verification: $*" >&2
         exit 1
     }
+    [ "${GOMAXPROCS:-}" = 1 ] || fail "GOMAXPROCS did not survive guard entry"
+    [ "${OMP_NUM_THREADS:-}" = 1 ] || fail "OMP_NUM_THREADS did not survive guard entry"
+    [ "${OPENBLAS_NUM_THREADS:-}" = 1 ] || fail "OPENBLAS_NUM_THREADS did not survive guard entry"
+    [ "${MKL_NUM_THREADS:-}" = 1 ] || fail "MKL_NUM_THREADS did not survive guard entry"
+    [ "${NUMEXPR_NUM_THREADS:-}" = 1 ] || fail "NUMEXPR_NUM_THREADS did not survive guard entry"
+    [ "${CMAKE_BUILD_PARALLEL_LEVEL:-}" = 1 ] || fail "CMAKE_BUILD_PARALLEL_LEVEL did not survive guard entry"
+    [ "${CARGO_BUILD_JOBS:-}" = 1 ] || fail "CARGO_BUILD_JOBS did not survive guard entry"
+    [ "${GOFLAGS:-}" = "-mod=readonly -p=1" ] || fail "GOFLAGS did not survive guard entry"
+    [ "${CGO_ENABLED:-}" = 0 ] || fail "CGO_ENABLED did not survive guard entry"
+    [ "${RKC_REQUIRE_IO_CONTROLLER:-}" = "$1" ] || fail "RKC_REQUIRE_IO_CONTROLLER did not survive guard entry"
     relative=
     while IFS=: read -r hierarchy controllers path; do
         [ "$hierarchy" = 0 ] && relative=$path
@@ -88,6 +102,6 @@ fi
     [ "$nice_value" = "19" ] || fail "process nice value is not 19"
     ionice -p $$ | grep -Eq "^idle" || fail "I/O scheduling class is not idle"
     [ "$(systemctl --user show --property=OOMPolicy --value "$unit")" = "stop" ] || fail "OOMPolicy is not stop"
-'
+' guard-probe "$guard_require_io_controller"
 
 echo "rkc resource guard verification: passed"

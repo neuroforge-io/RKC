@@ -23,10 +23,12 @@ import (
 
 const (
 	lockSchemaVersion    = "1.0.0"
-	runtimeSchemaVersion = "1.0.0"
+	runtimeSchemaVersion = "1.1.0"
 	maximumLockBytes     = int64(4 * 1024 * 1024)
 	maximumReceiptBytes  = int64(1024 * 1024)
+	maximumLicenseBytes  = int64(1024 * 1024)
 	runtimeReceiptName   = "rkc-llama-runtime.json"
+	runtimeLicensePath   = "source/LICENSE"
 )
 
 var (
@@ -142,9 +144,18 @@ type runtimeReceipt struct {
 	Platform            string          `json:"platform"`
 	Machine             string          `json:"machine"`
 	Python              string          `json:"python"`
+	License             runtimeLicense  `json:"license"`
 	Binaries            []runtimeBinary `json:"binaries"`
 	QualificationStatus string          `json:"qualification_status"`
 	DefaultModelStatus  string          `json:"default_model_status"`
+}
+
+type runtimeLicense struct {
+	Path        string `json:"path"`
+	SHA256      string `json:"sha256"`
+	SizeBytes   int64  `json:"size_bytes"`
+	LicenseSPDX string `json:"license_spdx"`
+	LicenseURL  string `json:"license_url"`
 }
 
 type runtimeBinary struct {
@@ -231,7 +242,8 @@ func resolveModelBinding(request ModelRequest, modelKind string) (ModelBinding, 
 	if source == nil || source.Kind != "source-archive" || source.Revision != lock.LlamaCPP.Commit {
 		return GenerationBinding{}, errors.New("model lock does not bind the llama.cpp source archive to its commit")
 	}
-	if !sha256Pattern.MatchString(source.SHA256) || source.SizeBytes <= 0 || source.LicenseSPDX != "MIT" || source.Status != "runtime-pinned" {
+	if !sha256Pattern.MatchString(source.SHA256) || source.SizeBytes <= 0 || source.LicenseSPDX != "MIT" ||
+		source.LicenseURL != lock.LlamaCPP.LicenseURL || source.Status != "runtime-pinned" {
 		return GenerationBinding{}, errors.New("llama.cpp source asset provenance is invalid")
 	}
 	modelPath, modelInfo, err := canonicalRegularPath(request.ModelPath, false)
@@ -268,6 +280,9 @@ func resolveModelBinding(request ModelRequest, modelKind string) (ModelBinding, 
 		return GenerationBinding{}, err
 	}
 	runtimeRoot := filepath.Dir(receiptPath)
+	if err := verifyRuntimeLicense(runtimeRoot, receipt.License); err != nil {
+		return GenerationBinding{}, err
+	}
 	expectedBinaryName := executableName
 	if runtime.GOOS == "windows" {
 		expectedBinaryName += ".exe"
@@ -393,7 +408,7 @@ func validateModelAsset(asset lockAsset, expectedKind string) error {
 func validateReceiptShape(data []byte, receipt runtimeReceipt, lock lockDocument, lockDigest string, source lockAsset) error {
 	expectedKeys := []string{
 		"schema_version", "runtime", "tag", "commit", "source_sha256", "source_size_bytes", "lock_sha256", "profile", "cmake",
-		"configure_argv", "build_argv", "platform", "machine", "python", "binaries", "qualification_status", "default_model_status",
+		"configure_argv", "build_argv", "platform", "machine", "python", "license", "binaries", "qualification_status", "default_model_status",
 	}
 	if err := requireJSONObjectKeys(data, expectedKeys); err != nil {
 		return fmt.Errorf("llama.cpp runtime receipt shape: %w", err)
@@ -405,6 +420,12 @@ func validateReceiptShape(data []byte, receipt runtimeReceipt, lock lockDocument
 	}
 	if receipt.Profile != "portable" && receipt.Profile != "native" {
 		return errors.New("llama.cpp runtime receipt profile is invalid")
+	}
+	if receipt.License.Path != runtimeLicensePath || !sha256Pattern.MatchString(receipt.License.SHA256) ||
+		receipt.License.SizeBytes <= 0 || receipt.License.SizeBytes > maximumLicenseBytes ||
+		receipt.License.LicenseSPDX != lock.LlamaCPP.LicenseSPDX || receipt.License.LicenseSPDX != source.LicenseSPDX ||
+		receipt.License.LicenseURL != lock.LlamaCPP.LicenseURL || receipt.License.LicenseURL != source.LicenseURL {
+		return errors.New("llama.cpp runtime receipt has invalid license binding")
 	}
 	if strings.TrimSpace(receipt.CMake) == "" || len(receipt.ConfigureArgv) == 0 || len(receipt.BuildArgv) == 0 ||
 		strings.TrimSpace(receipt.Platform) == "" || strings.TrimSpace(receipt.Machine) == "" || strings.TrimSpace(receipt.Python) == "" ||
@@ -434,6 +455,18 @@ func validateReceiptShape(data []byte, receipt runtimeReceipt, lock lockDocument
 	sort.Strings(expectedPaths)
 	if strings.Join(observed, "\x00") != strings.Join(expectedPaths, "\x00") {
 		return fmt.Errorf("llama.cpp runtime receipt binary inventory differs: got %v", observed)
+	}
+	return nil
+}
+
+func verifyRuntimeLicense(runtimeRoot string, license runtimeLicense) error {
+	path := filepath.Join(runtimeRoot, filepath.FromSlash(runtimeLicensePath))
+	_, _, digest, info, err := readBoundedRegular(path, maximumLicenseBytes)
+	if err != nil {
+		return fmt.Errorf("verify llama.cpp runtime license: %w", err)
+	}
+	if digest != license.SHA256 || info.Size() != license.SizeBytes {
+		return errors.New("llama.cpp runtime license does not match its receipt")
 	}
 	return nil
 }

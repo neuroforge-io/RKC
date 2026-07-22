@@ -30,8 +30,12 @@ The reference build provides:
 - explicit unresolved-symbol nodes instead of discarded or guessed relations;
 - canonical sorting, validation, deterministic digests, and coverage ratios;
 - a typed transactional snapshot-store boundary with a concurrency-safe
-  in-memory conformance backend, atomic current-snapshot publication, recovery,
-  authenticated keyset cursors, and lossless bundle export;
+  in-memory conformance backend and a durable pure-Go SQLite backend, including
+  staged publication, OS-backed writer leases, recovery, authenticated keyset
+  cursors, bounded pagination, exact coverage binding, and lossless export;
+- SQLite-backed scan, query, answer, graph, snapshot, browser, synthesis, and
+  MCP paths with immutable migrations, verified module hashes, CGO-disabled
+  build gates, read-only consumers, and strict database-open health checks;
 - crash-safe filesystem snapshots and content-addressed object storage;
 - ranked lexical search, qualification-gated semantic and hybrid retrieval,
   graph neighbourhoods, shortest paths, impact traversal, strongly connected
@@ -45,16 +49,25 @@ The reference build provides:
 - plugin manifests, lockfiles, GraphPatch validation, and an external Python
   worker protocol;
 - offline contract, documentation, determinism, API, MCP, Git-acquisition,
-  race-detector, benchmark, and release-package verification.
+  race-detector, benchmark, and release-package verification, including
+  deterministic SPDX 2.3 Go-module SBOMs cryptographically rebound to each
+  binary's checksum, command path, target GOOS/GOARCH, normalized architecture
+  tuning, default Go experiment set, `GOFIPS140=off`, exact Go toolchain, immutable source
+  commit/tree/time, module lock, canonical Go purls, and linked module inventory
+  during final package assembly; dependency declarations are retained while
+  license conclusions remain `NOASSERTION` without file-level analysis.
+- a deterministic complete-distribution SPDX 2.3 SBOM covering substantive
+  archive files, platform binary components, and their linked Go modules; its
+  self-reference exclusions are explicit, `MANIFEST.json` hashes the SBOM, and
+  `SHA256SUMS.txt` hashes both receipts;
 
 ## What remains before commercial production 1.0
 
 The highest-value unfinished work is:
 
-1. make SQLite, rather than the filesystem bundle, the canonical local runtime
-   writer and query store; the public contract, memory conformance backend, and
-   digest-locked migration chain now exist, while the durable SQLite
-   implementation remains unfinished;
+1. **Completed on current `main`:** make the durable SQLite `rkcstore`
+   writer/query implementation available across local CLI, HTTP, and MCP paths,
+   with transactional staging, recovery, pagination, and read-only consumers;
 2. route every scan stage through the deterministic DAG scheduler and cache;
 3. enforce plugin capabilities with a WASI host and isolated native workers;
 4. add compiler-grade semantic adapters, beginning with Python, TypeScript, Go,
@@ -64,8 +77,10 @@ The highest-value unfinished work is:
 7. benchmark a real quantized GGUF model below the 2.5 GiB guarded ceiling;
 8. implement PostgreSQL/object-storage team mode, authentication, authorization,
    queues, audit retention, backups, and operational telemetry;
-9. publish signed binaries, containers, SBOMs, provenance, and measured adapter
-   accuracy over a maintained benchmark corpus.
+9. publish signed binaries and containers, container SBOMs, provenance, and
+   measured adapter accuracy over a maintained benchmark corpus; per-binary
+   Go-module and complete-distribution SPDX SBOMs are already generated and
+   packaged.
 
 The exact ordered work, interfaces, migrations, tests, and exit gates are in
 [`docs/REMAINDER_IMPLEMENTATION_PLAN.md`](docs/REMAINDER_IMPLEMENTATION_PLAN.md).
@@ -92,19 +107,23 @@ The exact ordered work, interfaces, migrations, tests, and exit gates are in
 
 ## Requirements
 
-- a supported Go toolchain (CI and release images pin Go 1.26.5; the module
-  retains Go 1.23 language compatibility);
+- a supported Go toolchain (CI and release images pin Go 1.26.5; the module uses
+  Go 1.25 language semantics required by its pinned SQLite dependency graph);
 - Python 3.11 or later for the Python analyzer and validation scripts;
 - Git for repository metadata and remote acquisition;
 - `jsonschema` and `PyYAML` for offline contract validation;
 - `curl` for the HTTP smoke test.
 
-No third-party Go modules are required by the reference implementation.
+The runtime pins `modernc.org/sqlite` and its transitive pure-Go module graph in
+`go.mod` and `go.sum`. The reviewed dependency/license inventory is locked in
+`third_party/go-modules.lock.json`; builds run with `CGO_ENABLED=0` and verify
+the downloaded module cache before tests or packaging.
 
 ## Build and fully verify
 
 ```sh
-python3 -m pip install jsonschema PyYAML
+python3 -m pip install -r requirements-dev.txt
+make go-mod-verify
 make safe-verify
 make safe-test-race
 ```
@@ -117,7 +136,8 @@ make safe-release-verify
 
 The `safe-*` targets run local builds and tests at nice level 19 and idle I/O
 priority inside a fail-closed user cgroup capped at one CPU core and 2.5 GiB RAM.
-CI uses the ordinary targets inside its disposable runner.
+CI provisions the same delegated guard around expensive verification and
+package/self-catalogue assembly inside its disposable runner.
 
 ## Scan and browse
 
@@ -149,6 +169,23 @@ directories whose exact inode, bounded marker, and bounded building record
 still agree at the deletion boundary.
 
 Open `http://127.0.0.1:8787`.
+
+For a durable canonical store, place the database beneath an owner-only
+directory and use `--database` instead of `--state-dir`:
+
+```sh
+install -d -m 700 /tmp/rkc-store
+./bin/rkc scan --database /tmp/rkc-store/rkc.sqlite --out /tmp/rkc-output --force examples
+./bin/rkc snapshots list --database /tmp/rkc-store/rkc.sqlite --limit 20
+./bin/rkc query --database /tmp/rkc-store/rkc.sqlite --snapshot '<snapshot-id>' Login
+./bin/rkc serve --database /tmp/rkc-store/rkc.sqlite --snapshot '<snapshot-id>' --addr 127.0.0.1:8787
+./bin/rkc-mcp --database /tmp/rkc-store/rkc.sqlite --snapshot '<snapshot-id>'
+```
+
+The scan summary prints the committed snapshot ID. Read commands require
+exactly one `--snapshot` or `--repository`; they never create a missing
+database. The generated atlas remains a portable export, while the SQLite file
+is the durable source for later reads and snapshot operations.
 
 ## Query and inspect graph relationships
 
@@ -344,10 +381,11 @@ docker run --rm \
   rkc:local scan --no-python --out /output/atlas --force /workspace
 ```
 
-The Alpine image intentionally has no user-systemd manager and therefore cannot
-enforce the host Python-worker sandbox. Container scans must pass `--no-python`
-explicitly; RKC never falls back to unsandboxed Python. The Compose file encodes
-that portable profile and additionally applies a one-core quota, 2 GiB memory
+The static `scratch` image contains only the two CGO-free RKC executables,
+runtime contracts/configuration, and attribution material; it has no shell,
+package manager, Python, or user-systemd manager. Container scans must pass
+`--no-python` explicitly; RKC never falls back to unsandboxed Python. The
+Compose file encodes that portable profile and additionally applies a one-core quota, 2 GiB memory
 reservation, 2.5 GiB hard memory limit, 256 MiB swap allowance, 128-process
 limit, minimum CPU/block-I/O weights, high OOM-kill preference, a read-only root
 filesystem, `no-new-privileges`, and dropped Linux capabilities. Scheduling
@@ -357,11 +395,23 @@ user-systemd when Python AST extraction is required.
 ## Build the complete release archive
 
 ```sh
-make complete-package
+make safe-complete-package
 ```
 
-The resulting deterministic ZIP contains source, Linux amd64/arm64 binaries,
-demonstration output, release logs, checksums, contracts, and all plans.
+The resulting `dist/release/repository-knowledge-compiler-complete.zip` contains
+source materialized directly from
+the immutable `HEAD` commit tree, Linux amd64/arm64 binaries built in a private
+checkout of that commit, deterministic demonstration artifacts, a canonical
+successful-validation receipt, a complete-distribution SPDX SBOM, checksums,
+contracts, and all plans. The exact raw validation and benchmark files named by
+the receipt are retained at `dist/release/evidence` outside the ZIP but inside
+the same atomically published generation. Verification preserves the prior
+`dist/evidence` generation until a complete replacement is ready. Assembly
+rebuilds binaries, SBOMs, and demo inputs in two detached checkouts with separate
+Go build and module caches, uses implementation-independent stored ZIP entries,
+and requires final byte equality before one atomic `dist/release` swap. The safe
+target gives priority to ERAIS and applies the same one-core, 2.5-GiB cgroup to
+release verification, cross-compilation, SBOM rebinding, and ZIP assembly.
 
 ## Security status
 

@@ -1,0 +1,55 @@
+{
+  "schema_version": "1.1.0",
+  "runtime": "llama.cpp",
+  "tag": "b1",
+  "commit": "cccccccccccccccccccccccccccccccccccccccc",
+  "source_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+  "source_size_bytes": 123,
+  "lock_sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+  "profile": "portable",
+  "cmake": "cmake version fixture",
+  "configure_argv": [
+    "cmake",
+    "-S",
+    "source"
+  ],
+  "build_argv": [
+    "cmake",
+    "--build",
+    "build"
+  ],
+  "platform": "fixture-platform",
+  "machine": "fixture-machine",
+  "python": "3.11.fixture",
+  "license": {
+    "path": "source/LICENSE",
+    "sha256": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+    "size_bytes": 31,
+    "license_spdx": "MIT",
+    "license_url": "https://github.com/ggml-org/llama.cpp/blob/commit/LICENSE"
+  },
+  "binaries": [
+    {
+      "path": "build/bin/llama-bench",
+      "sha256": "1111111111111111111111111111111111111111111111111111111111111111",
+      "size_bytes": 1
+    },
+    {
+      "path": "build/bin/llama-cli",
+      "sha256": "2222222222222222222222222222222222222222222222222222222222222222",
+      "size_bytes": 1
+    },
+    {
+      "path": "build/bin/llama-embedding",
+      "sha256": "3333333333333333333333333333333333333333333333333333333333333333",
+      "size_bytes": 1
+    },
+    {
+      "path": "build/bin/llama-server",
+      "sha256": "4444444444444444444444444444444444444444444444444444444444444444",
+      "size_bytes": 1
+    }
+  ],
+  "qualification_status": "not-run",
+  "default_model_status": "none"
+}

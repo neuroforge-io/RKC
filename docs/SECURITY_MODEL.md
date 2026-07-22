@@ -87,10 +87,11 @@ namespace. External Python/native workers are disabled. The local HTTP server
 has no authentication and is intended for loopback use. The secret scanner is
 high-signal pattern detection, not a complete data-loss-prevention product.
 
-The Alpine reference container has no user-systemd manager. Its documented
-portable scan profile therefore disables Python explicitly with `--no-python`;
-it does not weaken the worker policy or silently execute Python without a
-sandbox. Python AST extraction currently requires a supported Linux host.
+The static `scratch` reference container has no shell, package manager, Python,
+or user-systemd manager. Its documented portable scan profile therefore
+disables Python explicitly with `--no-python`; it does not weaken the worker
+policy or silently execute Python without a sandbox. Python AST extraction
+currently requires a supported Linux host.
 
 These limitations prohibit describing the reference release as a hardened
 multi-tenant service.

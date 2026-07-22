@@ -26,8 +26,8 @@ sys.modules[MODULE_NAME] = PACKAGE
 SPEC.loader.exec_module(PACKAGE)
 
 
-def index_entry(mode: str, path: str, stage: str = "0") -> bytes:
-    return f"{mode} {'0' * 40} {stage}\t{path}".encode() + b"\0"
+def tree_entry(mode: str, path: str, object_type: str = "blob") -> bytes:
+    return f"{mode} {object_type} {'0' * 40}\t{path}".encode() + b"\0"
 
 
 class CompletePackageTests(unittest.TestCase):
@@ -38,6 +38,7 @@ class CompletePackageTests(unittest.TestCase):
         PACKAGE.ROOT = Path(self.temporary.name)
         PACKAGE.DIST = PACKAGE.ROOT / "dist"
         PACKAGE.DIST.mkdir(mode=0o755)
+        self.identity = PACKAGE.SourceIdentity("a" * 40, "b" * 40, "7")
 
     def tearDown(self) -> None:
         PACKAGE.ROOT = self.original_root
@@ -51,6 +52,110 @@ class CompletePackageTests(unittest.TestCase):
         os.chmod(path, mode)
         return path
 
+    def write_module_lock(self, root: Path) -> Path:
+        license_relative = "LICENSES/go-modules/modernc.org/sqlite@v1.54.0/LICENSE"
+        license_path = root / license_relative
+        lock = root.joinpath(*PACKAGE.GO_MODULE_LOCK.parts)
+        lock.parent.mkdir(parents=True, exist_ok=True)
+        lock.write_text(
+            json.dumps(
+                {
+                    "schema_version": "1.0",
+                    "go": {"directive": "1.25.0", "toolchain": "go1.26.5"},
+                    "root_requirements": [
+                        {"path": "modernc.org/sqlite", "version": "v1.54.0"}
+                    ],
+                    "modules": [
+                        {
+                            "path": "modernc.org/sqlite",
+                            "version": "v1.54.0",
+                            "direct": True,
+                            "module_sum": "h1:module",
+                            "go_mod_sum": "h1:mod",
+                            "source_url": "https://modernc.org/sqlite",
+                            "license_spdx": "BSD-3-Clause",
+                            "licenses": [
+                                {
+                                    "source_path": "LICENSE",
+                                    "path": license_relative,
+                                    "sha256": PACKAGE.sha256(license_path),
+                                }
+                            ],
+                            "notice_path": "THIRD_PARTY_NOTICES.md",
+                        }
+                    ],
+                },
+                indent=2,
+                sort_keys=True,
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        return lock
+
+    def write_release_evidence(
+        self, root: Path, identity: object | None = None
+    ) -> Path:
+        identity = self.identity if identity is None else identity
+        logs = root / "logs"
+        logs.mkdir(parents=True, exist_ok=True)
+        rows: list[str] = []
+        steps: list[dict[str, object]] = []
+        for index, name in enumerate(PACKAGE.RELEASE_STEPS):
+            log = logs / f"{name}.log"
+            log.write_text(f"{name} passed\n", encoding="utf-8")
+            rows.append(f"{name}\tpassed\t{index}")
+            steps.append(
+                {
+                    "name": name,
+                    "status": "passed",
+                    "duration_seconds": index,
+                    "log_sha256": PACKAGE.sha256(log),
+                }
+            )
+        (root / "steps.tsv").write_text("\n".join(rows) + "\n", encoding="utf-8")
+        (root / "summary.json").write_text(
+            json.dumps(
+                {
+                    "schema_version": "2.0",
+                    "ok": True,
+                    "source": {
+                        "commit": identity.commit,
+                        "tree": identity.tree,
+                        "commit_time_unix": identity.commit_time_unix,
+                    },
+                    "elapsed_seconds": 99,
+                    "steps": steps,
+                },
+                indent=2,
+                sort_keys=True,
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        return root
+
+    def write_benchmark_evidence(self, root: Path) -> Path:
+        root.mkdir(parents=True, exist_ok=True)
+        (root / "result.json").write_text(
+            json.dumps(
+                {
+                    "schema_version": "1.0",
+                    "profile": "fixture",
+                    "elapsed_seconds": 1.0,
+                    "maximum_rss_kib": 1,
+                    "coverage": {},
+                },
+                indent=2,
+                sort_keys=True,
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        (root / "time.txt").write_text("elapsed fixture\n", encoding="utf-8")
+        (root / "scan.stdout").write_text("scan fixture\n", encoding="utf-8")
+        return root
+
     def test_safe_paths_and_prohibited_names(self) -> None:
         self.assertEqual(PACKAGE.safe_relative_path("a/b.txt", "fixture"), PurePosixPath("a/b.txt"))
         for value in ("", "/abs", "../escape", "a/../b", "a\\b", "a\x01b"):
@@ -61,24 +166,24 @@ class CompletePackageTests(unittest.TestCase):
         self.assertFalse(PACKAGE.prohibited_name(PurePosixPath("model.json")))
 
     @mock.patch.object(PACKAGE.subprocess, "run")
-    def test_tracked_files_parses_modes_and_rejects_index_hazards(self, run: mock.Mock) -> None:
+    def test_tracked_files_parses_modes_and_rejects_commit_tree_hazards(self, run: mock.Mock) -> None:
         run.return_value = subprocess.CompletedProcess(
             [],
             0,
-            stdout=index_entry("100755", "scripts/tool.sh") + index_entry("100644", "README.md"),
+            stdout=tree_entry("100755", "scripts/tool.sh") + tree_entry("100644", "README.md"),
             stderr=b"",
         )
-        files = PACKAGE.tracked_files()
+        files = PACKAGE.tracked_files(self.identity.commit)
         self.assertEqual([str(item.path) for item in files], ["README.md", "scripts/tool.sh"])
         self.assertTrue(files[1].executable)
 
         cases = (
-            (index_entry("100644", "conflict", "2"), "unmerged"),
-            (index_entry("120000", "link"), "symlinks"),
-            (index_entry("160000", "module"), "submodules"),
-            (index_entry("100600", "mode"), "unsupported"),
-            (index_entry("100644", "dist/output"), "generated"),
-            (index_entry("100644", "same") * 2, "duplicate"),
+            (tree_entry("100644", "conflict", "tree"), "unsupported"),
+            (tree_entry("120000", "link"), "symlinks"),
+            (tree_entry("160000", "module", "commit"), "submodules"),
+            (tree_entry("100600", "mode"), "unsupported"),
+            (tree_entry("100644", "dist/output"), "generated"),
+            (tree_entry("100644", "same") * 2, "duplicate"),
             (b"malformed\0", "unportable"),
             (b"", "no source"),
         )
@@ -86,10 +191,10 @@ class CompletePackageTests(unittest.TestCase):
             with self.subTest(marker=marker):
                 run.return_value = subprocess.CompletedProcess([], 0, stdout=payload, stderr=b"")
                 with self.assertRaisesRegex(PACKAGE.PackageError, marker):
-                    PACKAGE.tracked_files()
+                    PACKAGE.tracked_files(self.identity.commit)
         run.return_value = subprocess.CompletedProcess([], 7, stdout=b"", stderr=b"failure")
         with self.assertRaisesRegex(PACKAGE.PackageError, "failure"):
-            PACKAGE.tracked_files()
+            PACKAGE.tracked_files(self.identity.commit)
 
     @mock.patch.object(PACKAGE.subprocess, "run")
     def test_clean_source_requires_both_git_diff_checks(self, run: mock.Mock) -> None:
@@ -173,58 +278,240 @@ class CompletePackageTests(unittest.TestCase):
                 PACKAGE.copy_regular_file(link, PACKAGE.ROOT / "stage/link", mode=0o644, label="x")
 
     def test_copy_tracked_source_requires_license_closure(self) -> None:
+        object_id = "c" * 40
         tracked = [
-            PACKAGE.TrackedFile(PurePosixPath("LICENSE"), False),
-            PACKAGE.TrackedFile(PurePosixPath("NOTICE"), False),
-            PACKAGE.TrackedFile(PurePosixPath("THIRD_PARTY_NOTICES.md"), False),
-            PACKAGE.TrackedFile(PurePosixPath("LICENSES/Go.txt"), False),
-            PACKAGE.TrackedFile(PurePosixPath("tool.sh"), True),
+            PACKAGE.TrackedFile(PurePosixPath("LICENSE"), False, object_id),
+            PACKAGE.TrackedFile(PurePosixPath("NOTICE"), False, object_id),
+            PACKAGE.TrackedFile(PurePosixPath("THIRD_PARTY_NOTICES.md"), False, object_id),
+            PACKAGE.TrackedFile(PurePosixPath("LICENSES/Go.txt"), False, object_id),
+            PACKAGE.TrackedFile(
+                PurePosixPath("LICENSES/go-modules/modernc.org/sqlite@v1.54.0/LICENSE"),
+                False,
+                object_id,
+            ),
+            PACKAGE.TrackedFile(PACKAGE.GO_MODULE_LOCK, False, object_id),
+            PACKAGE.TrackedFile(PurePosixPath("tool.sh"), True, object_id),
         ]
         for item in tracked:
+            if item.path == PACKAGE.GO_MODULE_LOCK:
+                continue
             self.write(str(item.path), b"terms\n", 0o755 if item.executable else 0o644)
+        self.write_module_lock(PACKAGE.ROOT)
         target = PACKAGE.ROOT / "stage-source"
-        with mock.patch.object(PACKAGE, "tracked_files", return_value=tracked):
-            PACKAGE.copy_tracked_source(target)
+        def copy_fixture(item: object, destination: Path) -> int:
+            tracked_item = item
+            source = PACKAGE.ROOT.joinpath(*tracked_item.path.parts)
+            return PACKAGE.copy_regular_file(
+                source,
+                destination,
+                mode=0o755 if tracked_item.executable else 0o644,
+                label="fixture commit blob",
+            )
+
+        with mock.patch.object(PACKAGE, "tracked_files", return_value=tracked), mock.patch.object(
+            PACKAGE, "copy_commit_blob", side_effect=copy_fixture
+        ):
+            PACKAGE.copy_tracked_source(target, self.identity)
         self.assertEqual((target / "tool.sh").stat().st_mode & 0o777, 0o755)
         with mock.patch.object(
             PACKAGE,
             "tracked_files",
-            return_value=[PACKAGE.TrackedFile(PurePosixPath("weight.gguf"), False)],
+            return_value=[
+                PACKAGE.TrackedFile(PurePosixPath("weight.gguf"), False, object_id)
+            ],
         ), self.assertRaisesRegex(PACKAGE.PackageError, "prohibited"):
-            PACKAGE.copy_tracked_source(PACKAGE.ROOT / "other")
+            PACKAGE.copy_tracked_source(PACKAGE.ROOT / "other", self.identity)
         with mock.patch.object(PACKAGE, "tracked_files", return_value=[]), self.assertRaisesRegex(
             PACKAGE.PackageError, "required license"
         ):
-            PACKAGE.copy_tracked_source(PACKAGE.ROOT / "empty")
+            PACKAGE.copy_tracked_source(PACKAGE.ROOT / "empty", self.identity)
 
     def release_binary_fixture(self, source: Path) -> None:
+        for name in PACKAGE.TOP_LEVEL_LICENSE_FILES:
+            self.write(name, ("terms " + name).encode())
+        self.write("LICENSES/Go.txt", b"Go terms")
+        self.write(
+            "LICENSES/go-modules/modernc.org/sqlite@v1.54.0/LICENSE",
+            b"SQLite terms",
+        )
+        self.write_module_lock(PACKAGE.ROOT)
         for relative in PACKAGE.EXPECTED_BINARIES:
             path = source.joinpath(*relative.parts)
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_bytes(b"\x7fELFfixture")
-        for relative in PACKAGE.BINARY_NOTICE_FILES:
+        for relative in PACKAGE.EXPECTED_BINARY_SBOMS:
             path = source.joinpath(*relative.parts)
             path.parent.mkdir(parents=True, exist_ok=True)
-            canonical_parts = relative.parts[1:] if relative.parts[0].startswith("linux-") else relative.parts
+            path.write_text(
+                json.dumps(
+                    {
+                        "spdxVersion": "SPDX-2.3",
+                        "dataLicense": "CC0-1.0",
+                        "packages": [{"name": relative.stem}],
+                    }
+                ),
+                encoding="utf-8",
+            )
+        for relative in PACKAGE.binary_notice_files():
+            path = source.joinpath(*relative.parts)
+            path.parent.mkdir(parents=True, exist_ok=True)
+            canonical_parts = (
+                relative.parts[1:]
+                if relative.parts[0].startswith("linux-")
+                else relative.parts
+            )
             canonical = PACKAGE.ROOT.joinpath(*canonical_parts)
-            canonical.parent.mkdir(parents=True, exist_ok=True)
-            canonical.write_bytes(("terms " + "/".join(canonical_parts)).encode())
             path.write_bytes(canonical.read_bytes())
 
-    def test_release_binary_bundle_is_exact_and_notices_match(self) -> None:
+    def write_staged_distribution_components(self, stage: Path) -> None:
+        dependency = {
+            "SPDXID": "SPDXRef-Module-0001",
+            "name": "example.test/module",
+            "versionInfo": "v1.0.0",
+            "downloadLocation": "https://example.test/module.zip",
+            "filesAnalyzed": False,
+            "licenseConcluded": "NOASSERTION",
+            "licenseDeclared": "BSD-3-Clause",
+            "copyrightText": "NOASSERTION",
+            "externalRefs": [
+                {
+                    "referenceCategory": "PACKAGE-MANAGER",
+                    "referenceType": "purl",
+                    "referenceLocator": "pkg:golang/example.test/module@v1.0.0",
+                }
+            ],
+        }
+        for relative in PACKAGE.EXPECTED_BINARIES:
+            binary = stage / "artifacts" / "binaries" / relative
+            binary.parent.mkdir(parents=True, exist_ok=True)
+            binary.write_bytes(b"\x7fELFdistribution fixture")
+            sbom = binary.with_name(binary.name + ".spdx.json")
+            sbom.write_text(
+                json.dumps(
+                    {
+                        "spdxVersion": "SPDX-2.3",
+                        "packages": [
+                            {"SPDXID": "SPDXRef-Package-RKC"},
+                            dependency,
+                        ],
+                    },
+                    indent=2,
+                    sort_keys=True,
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+
+    @mock.patch.object(PACKAGE, "validate_binary_sbom")
+    def test_release_binary_bundle_is_exact_and_notices_match(
+        self, validate_sbom: mock.Mock
+    ) -> None:
         source = PACKAGE.ROOT / "bundle"
         self.release_binary_fixture(source)
         target = PACKAGE.ROOT / "staged-bundle"
-        PACKAGE.copy_release_binaries(source, target)
-        self.assertEqual(len(PACKAGE.tree_files(target, "staged")), len(PACKAGE.EXPECTED_BINARY_BUNDLE))
+        module_lock = PACKAGE.ROOT.joinpath(*PACKAGE.GO_MODULE_LOCK.parts)
+        PACKAGE.copy_release_binaries(
+            source, target, module_lock, PACKAGE.ROOT, self.identity
+        )
+        self.assertEqual(
+            len(PACKAGE.tree_files(target, "staged")),
+            len(PACKAGE.expected_binary_bundle()),
+        )
+        self.assertEqual(validate_sbom.call_count, len(PACKAGE.EXPECTED_BINARY_SBOMS))
+        for relative in PACKAGE.EXPECTED_BINARY_SBOMS:
+            binary_name = relative.name[: -len(".spdx.json")]
+            validate_sbom.assert_any_call(
+                target.joinpath(*relative.parts),
+                target / relative.parent / binary_name,
+                module_lock,
+                PACKAGE.ROOT,
+                self.identity,
+                "linux",
+                relative.parts[0].split("-", 1)[1],
+            )
+        nested_notice = source / (
+            "linux-amd64/LICENSES/go-modules/modernc.org/sqlite@v1.54.0/LICENSE"
+        )
+        nested_content = nested_notice.read_bytes()
+        nested_notice.unlink()
+        with self.assertRaisesRegex(PACKAGE.PackageError, "missing=.*sqlite"):
+            PACKAGE.copy_release_binaries(
+                source,
+                PACKAGE.ROOT / "missing-license",
+                module_lock,
+                PACKAGE.ROOT,
+                self.identity,
+            )
+        nested_notice.write_bytes(nested_content)
         (source / "unexpected").write_text("x", encoding="utf-8")
         with self.assertRaisesRegex(PACKAGE.PackageError, "differs"):
-            PACKAGE.copy_release_binaries(source, PACKAGE.ROOT / "nope")
+            PACKAGE.copy_release_binaries(
+                source,
+                PACKAGE.ROOT / "nope",
+                module_lock,
+                PACKAGE.ROOT,
+                self.identity,
+            )
         (source / "unexpected").unlink()
         binary = source.joinpath(*next(iter(PACKAGE.EXPECTED_BINARIES)).parts)
         binary.write_bytes(b"NOTELF")
         with self.assertRaisesRegex(PACKAGE.PackageError, "not an ELF"):
-            PACKAGE.copy_release_binaries(source, PACKAGE.ROOT / "nope2")
+            PACKAGE.copy_release_binaries(
+                source,
+                PACKAGE.ROOT / "nope2",
+                module_lock,
+                PACKAGE.ROOT,
+                self.identity,
+            )
+
+    @mock.patch.object(PACKAGE.subprocess, "run")
+    def test_binary_sbom_verification_delegates_to_strict_generator(
+        self, run: mock.Mock
+    ) -> None:
+        sbom = self.write("bundle/linux-amd64/rkc.spdx.json", b"{}\n")
+        binary = self.write("bundle/linux-amd64/rkc", b"\x7fELFfixture", 0o755)
+        self.write("VERSION", b"0.3.0-reference\n")
+        module_lock = self.write("third_party/go-modules.lock.json", b"{}\n")
+        run.return_value = subprocess.CompletedProcess([], 0, stdout="", stderr="")
+        PACKAGE.validate_binary_sbom(
+            sbom,
+            binary,
+            module_lock,
+            PACKAGE.ROOT,
+            self.identity,
+            "linux",
+            "amd64",
+        )
+        command = run.call_args.args[0]
+        self.assertIn("--verify-document", command)
+        self.assertIn(str(sbom), command)
+        self.assertIn(str(binary), command)
+        self.assertIn("--source-commit", command)
+        self.assertIn("--goarch", command)
+        self.assertIn("amd64", command)
+
+        run.return_value = subprocess.CompletedProcess([], 2, stdout="", stderr="drift")
+        with self.assertRaisesRegex(PACKAGE.PackageError, "does not bind.*drift"):
+            PACKAGE.validate_binary_sbom(
+                sbom,
+                binary,
+                module_lock,
+                PACKAGE.ROOT,
+                self.identity,
+                "linux",
+                "amd64",
+            )
+        run.side_effect = subprocess.TimeoutExpired(command, 30)
+        with self.assertRaisesRegex(PACKAGE.PackageError, "cannot verify"):
+            PACKAGE.validate_binary_sbom(
+                sbom,
+                binary,
+                module_lock,
+                PACKAGE.ROOT,
+                self.identity,
+                "linux",
+                "amd64",
+            )
 
     def test_generated_tree_allowlist_and_total_boundary(self) -> None:
         source = PACKAGE.ROOT / "data"
@@ -245,32 +532,179 @@ class CompletePackageTests(unittest.TestCase):
         ):
             PACKAGE.copy_data_tree(source, PACKAGE.ROOT / "large-stage", "data")
 
+    def test_release_evidence_is_exact_bound_and_normalized(self) -> None:
+        evidence = self.write_release_evidence(PACKAGE.ROOT / "validation")
+        benchmark = self.write_benchmark_evidence(PACKAGE.ROOT / "benchmark")
+        receipt = PACKAGE.validate_release_evidence(
+            evidence, benchmark, self.identity
+        )
+        self.assertEqual(receipt["status"], "passed")
+        self.assertEqual(receipt["raw_evidence_root"], "evidence")
+        self.assertNotIn("elapsed_seconds", receipt)
+        self.assertNotIn("log_sha256", receipt["steps"][0])
+        raw_files = receipt["raw_evidence_files"]
+        self.assertEqual(raw_files[0]["path"], "validation/summary.json")
+        self.assertEqual(raw_files[1]["path"], "validation/steps.tsv")
+        self.assertEqual(raw_files[-3]["path"], "benchmark/result.json")
+        self.assertEqual(raw_files[-2]["path"], "benchmark/time.txt")
+        self.assertEqual(raw_files[-1]["path"], "benchmark/scan.stdout")
+        self.assertEqual(
+            len(raw_files),
+            len(PACKAGE.RELEASE_STEPS) + 5,
+        )
+        self.assertRegex(receipt["raw_evidence_manifest_sha256"], r"^[0-9a-f]{64}$")
+        self.assertTrue(
+            all(
+                isinstance(item["size_bytes"], int)
+                and item["size_bytes"] >= 0
+                and len(item["sha256"]) == 64
+                for item in raw_files
+            )
+        )
+
+        unexpected = evidence / "logs" / "stale.log"
+        unexpected.write_text("stale\n", encoding="utf-8")
+        with self.assertRaisesRegex(PACKAGE.PackageError, "inventory differs"):
+            PACKAGE.validate_release_evidence(evidence, benchmark, self.identity)
+        unexpected.unlink()
+
+        log = evidence / "logs" / f"{PACKAGE.RELEASE_STEPS[0]}.log"
+        original = log.read_bytes()
+        log.write_bytes(b"tampered\n")
+        with self.assertRaisesRegex(PACKAGE.PackageError, "digest differs"):
+            PACKAGE.validate_release_evidence(evidence, benchmark, self.identity)
+        log.write_bytes(original)
+
+        other = PACKAGE.SourceIdentity("c" * 40, self.identity.tree, "7")
+        with self.assertRaisesRegex(PACKAGE.PackageError, "source identity"):
+            PACKAGE.validate_release_evidence(evidence, benchmark, other)
+
+        (benchmark / "time.txt").write_text("changed\n", encoding="utf-8")
+        changed = PACKAGE.validate_release_evidence(evidence, benchmark, self.identity)
+        self.assertNotEqual(
+            receipt["raw_evidence_manifest_sha256"],
+            changed["raw_evidence_manifest_sha256"],
+        )
+        (benchmark / "unexpected").write_text("unexpected\n", encoding="utf-8")
+        with self.assertRaisesRegex(PACKAGE.PackageError, "benchmark evidence inventory"):
+            PACKAGE.validate_release_evidence(evidence, benchmark, self.identity)
+
+    def test_go_module_lock_closes_nested_license_inventory(self) -> None:
+        for name in PACKAGE.TOP_LEVEL_LICENSE_FILES:
+            self.write(name, (name + "\n").encode())
+        self.write("LICENSES/Go.txt", b"Go terms\n")
+        module_license = self.write(
+            "LICENSES/go-modules/modernc.org/sqlite@v1.54.0/LICENSE",
+            b"SQLite terms\n",
+        )
+        module_lock = self.write_module_lock(PACKAGE.ROOT)
+        PACKAGE.validate_go_module_lock(PACKAGE.ROOT)
+
+        original = module_license.read_bytes()
+        module_license.write_bytes(b"tampered\n")
+        with self.assertRaisesRegex(PACKAGE.PackageError, "digest differs"):
+            PACKAGE.validate_go_module_lock(PACKAGE.ROOT)
+        module_license.write_bytes(original)
+
+        unlocked = self.write(
+            "LICENSES/go-modules/example.invalid/unlocked@v1.0.0/LICENSE",
+            b"unlocked\n",
+        )
+        with self.assertRaisesRegex(PACKAGE.PackageError, "unlocked"):
+            PACKAGE.validate_go_module_lock(PACKAGE.ROOT)
+        unlocked.unlink()
+
+        module_lock.write_text(
+            '{"schema_version":"1.0","schema_version":"1.0"}\n',
+            encoding="utf-8",
+        )
+        with self.assertRaisesRegex(PACKAGE.PackageError, "duplicate JSON key"):
+            PACKAGE.validate_go_module_lock(PACKAGE.ROOT)
+
     def test_license_readme_manifest_and_zip_are_deterministic(self) -> None:
-        source = PACKAGE.ROOT / "source-tree"
+        stage = PACKAGE.ROOT / "stage"
+        stage.mkdir()
+        source = stage / "source"
         for name in PACKAGE.TOP_LEVEL_LICENSE_FILES:
             path = source / name
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text(name, encoding="utf-8")
         (source / "LICENSES").mkdir()
         (source / "LICENSES/Go.txt").write_text("go", encoding="utf-8")
-        self.write("VERSION", b"1.2.3\n")
-        stage = PACKAGE.ROOT / "stage"
-        stage.mkdir()
+        sqlite_license = source / "LICENSES/go-modules/modernc.org/sqlite@v1.54.0/LICENSE"
+        sqlite_license.parent.mkdir(parents=True)
+        sqlite_license.write_text("sqlite", encoding="utf-8")
+        module_lock = self.write_module_lock(source)
+        (source / "VERSION").write_text("1.2.3\n", encoding="utf-8")
+        self.write_staged_distribution_components(stage)
         PACKAGE.copy_license_material(source, stage)
-        PACKAGE.write_readme(stage)
-        PACKAGE.stage_manifest(stage)
+        PACKAGE.write_source_receipt(stage, self.identity)
+        PACKAGE.write_readme(stage, self.identity)
+        PACKAGE.write_distribution_sbom(stage, self.identity)
+        PACKAGE.stage_manifest(stage, self.identity)
+        PACKAGE.write_stage_checksums(stage)
+        distribution_sbom = json.loads(
+            (stage / "SBOM.spdx.json").read_text(encoding="utf-8")
+        )
+        distribution = distribution_sbom["packages"][0]
+        self.assertTrue(distribution["filesAnalyzed"])
+        self.assertEqual(distribution["licenseConcluded"], "NOASSERTION")
+        self.assertEqual(
+            distribution["packageVerificationCode"][
+                "packageVerificationCodeExcludedFiles"
+            ],
+            list(PACKAGE.DISTRIBUTION_SBOM_EXCLUSIONS),
+        )
+        sbom_names = {item["fileName"] for item in distribution_sbom["files"]}
+        self.assertTrue(
+            all(name not in sbom_names for name in PACKAGE.DISTRIBUTION_SBOM_EXCLUSIONS)
+        )
+        self.assertEqual(
+            len(
+                [
+                    item
+                    for item in distribution_sbom["packages"]
+                    if item["SPDXID"].startswith("SPDXRef-Binary-")
+                ]
+            ),
+            len(PACKAGE.EXPECTED_BINARIES),
+        )
         manifest = json.loads((stage / "MANIFEST.json").read_text(encoding="utf-8"))
         self.assertEqual(manifest["version"], "1.2.3")
+        self.assertEqual(manifest["go_module_lock"], "third_party/go-modules.lock.json")
         self.assertGreater(manifest["payload_files"], 0)
+        manifest_files = {item["path"]: item for item in manifest["files"]}
+        self.assertEqual(
+            manifest_files["SBOM.spdx.json"]["sha256"],
+            PACKAGE.sha256(stage / "SBOM.spdx.json"),
+        )
+        checksums = (stage / "SHA256SUMS.txt").read_text(encoding="utf-8")
+        self.assertIn("  SBOM.spdx.json\n", checksums)
+        self.assertIn("  MANIFEST.json\n", checksums)
+        self.assertNotIn("  SHA256SUMS.txt\n", checksums)
+        self.assertEqual(
+            (stage / "third_party/go-modules.lock.json").read_bytes(),
+            module_lock.read_bytes(),
+        )
         output = PACKAGE.DIST / "complete.zip"
+        second = PACKAGE.DIST / "complete-second.zip"
         PACKAGE.write_zip(stage, output, False)
+        PACKAGE.write_zip(stage, second, False)
+        self.assertEqual(output.read_bytes(), second.read_bytes())
         with zipfile.ZipFile(output) as archive:
             names = archive.namelist()
             self.assertTrue(all(name.startswith(PACKAGE.TOP + "/") for name in names))
             self.assertEqual(archive.getinfo(names[0]).date_time, (1980, 1, 1, 0, 0, 0))
+            self.assertTrue(
+                all(item.compress_type == zipfile.ZIP_STORED for item in archive.infolist())
+            )
         with self.assertRaisesRegex(PACKAGE.PackageError, "appeared"):
             PACKAGE.write_zip(stage, output, False)
         PACKAGE.write_zip(stage, output, True)
+
+        module_lock.write_text("[]\n", encoding="utf-8")
+        with self.assertRaisesRegex(PACKAGE.PackageError, "schema_version 1.0"):
+            PACKAGE.copy_license_material(source, PACKAGE.ROOT / "bad-lock-stage")
 
     def test_prepare_output_enforces_dist_and_safe_replacement(self) -> None:
         candidate = PACKAGE.prepare_output("dist/nested/result.zip", False)
@@ -299,31 +733,66 @@ class CompletePackageTests(unittest.TestCase):
         finally:
             PACKAGE.DIST = original
 
+    def test_release_shell_uses_isolated_caches_and_atomic_generations(self) -> None:
+        scripts = Path(__file__).parent
+        reproducible = (scripts / "reproducible-complete-package.sh").read_text(
+            encoding="utf-8"
+        )
+        verifier = (scripts / "verify-release.sh").read_text(encoding="utf-8")
+        self.assertIn('export GOCACHE="$lane_go_cache"', reproducible)
+        self.assertIn('export GOMODCACHE="$lane_module_cache"', reproducible)
+        self.assertIn('--destination "$ROOT/dist/release"', reproducible)
+        self.assertIn('mv "$WORK/evidence" "$RELEASE_STAGE/evidence"', reproducible)
+        self.assertIn('--destination "$ROOT/dist/evidence"', verifier)
+        self.assertIn("prior evidence is unchanged", verifier)
+
     def test_build_package_orchestrates_only_expected_inputs(self) -> None:
         for relative in PACKAGE.REQUIRED_INPUTS:
             (PACKAGE.DIST / relative).mkdir(parents=True)
         output = PACKAGE.DIST / "result.zip"
         calls: list[str] = []
-        with mock.patch.object(PACKAGE, "require_clean_tracked_source", side_effect=lambda: calls.append("clean")), mock.patch.object(
-            PACKAGE, "copy_tracked_source", side_effect=lambda _path: calls.append("source")
+        with mock.patch.object(
+            PACKAGE, "source_identity", return_value=self.identity
+        ), mock.patch.object(
+            PACKAGE,
+            "require_clean_tracked_source",
+            side_effect=lambda: calls.append("clean"),
+        ), mock.patch.object(
+            PACKAGE,
+            "copy_tracked_source",
+            side_effect=lambda _path, _identity: calls.append("source"),
         ), mock.patch.object(PACKAGE, "copy_license_material"), mock.patch.object(
             PACKAGE, "copy_release_binaries"
-        ), mock.patch.object(PACKAGE, "copy_data_tree"), mock.patch.object(
-            PACKAGE, "copy_selected_files"
+        ), mock.patch.object(PACKAGE, "validate_demo_outputs"), mock.patch.object(
+            PACKAGE, "copy_required_files"
+        ), mock.patch.object(
+            PACKAGE, "validate_release_evidence", return_value={}
+        ), mock.patch.object(PACKAGE, "write_json_file"), mock.patch.object(
+            PACKAGE, "write_source_receipt"
         ), mock.patch.object(PACKAGE, "write_readme"), mock.patch.object(
+            PACKAGE, "write_distribution_sbom"
+        ), mock.patch.object(
             PACKAGE, "stage_manifest"
-        ), mock.patch.object(PACKAGE, "write_zip", side_effect=lambda *_args: calls.append("zip")):
+        ), mock.patch.object(
+            PACKAGE, "write_stage_checksums"
+        ), mock.patch.object(
+            PACKAGE, "write_zip", side_effect=lambda *_args: calls.append("zip")
+        ):
             PACKAGE.build_package(output, False)
         self.assertEqual(calls, ["clean", "source", "zip"])
         (PACKAGE.DIST / "demo").rmdir()
-        with mock.patch.object(PACKAGE, "require_clean_tracked_source"), self.assertRaisesRegex(
-            PACKAGE.PackageError, "missing release"
-        ):
+        with mock.patch.object(
+            PACKAGE, "source_identity", return_value=self.identity
+        ), mock.patch.object(
+            PACKAGE, "require_clean_tracked_source"
+        ), self.assertRaisesRegex(PACKAGE.PackageError, "missing release"):
             PACKAGE.build_package(output, False)
         (PACKAGE.DIST / "demo").symlink_to(PACKAGE.ROOT, target_is_directory=True)
-        with mock.patch.object(PACKAGE, "require_clean_tracked_source"), self.assertRaisesRegex(
-            PACKAGE.PackageError, "not a real"
-        ):
+        with mock.patch.object(
+            PACKAGE, "source_identity", return_value=self.identity
+        ), mock.patch.object(
+            PACKAGE, "require_clean_tracked_source"
+        ), self.assertRaisesRegex(PACKAGE.PackageError, "not a real"):
             PACKAGE.build_package(output, False)
 
     def test_main_reports_success_and_translates_package_error(self) -> None:

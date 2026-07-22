@@ -17,6 +17,12 @@ from unittest import mock
 import bootstrap_llama_cpp
 import model_assets
 
+RUNTIME_RECEIPT_FIXTURE = (
+    Path(__file__).resolve().parents[1]
+    / "models"
+    / "runtime-receipt-v1.1.fixture.json"
+)
+
 
 class RuntimeReceiptTests(unittest.TestCase):
     def setUp(self) -> None:
@@ -34,8 +40,22 @@ class RuntimeReceiptTests(unittest.TestCase):
     ) -> None:
         binary_directory = root / "build" / "bin"
         binary_directory.mkdir(parents=True)
-        cmake = lock.document["llama_cpp"]["cmake"]  # type: ignore[index]
+        llama = lock.document["llama_cpp"]  # type: ignore[assignment]
+        cmake = llama["cmake"]  # type: ignore[index]
         targets = cmake["targets"]  # type: ignore[index]
+        source_asset = lock.asset(str(llama["source_asset_id"]))  # type: ignore[index]
+        license_payload = b"llama.cpp fixture MIT license\n"
+        license_path = root / bootstrap_llama_cpp.RUNTIME_LICENSE_RELATIVE
+        license_path.parent.mkdir(parents=True)
+        license_path.write_bytes(license_payload)
+        receipt = json.loads(
+            RUNTIME_RECEIPT_FIXTURE.read_bytes(),
+            object_pairs_hook=bootstrap_llama_cpp._strict_json_object,
+            parse_constant=bootstrap_llama_cpp._reject_json_constant,
+        )
+        fixture_binaries = {
+            Path(str(entry["path"])).name: entry for entry in receipt["binaries"]
+        }
         binaries = []
         for target in targets:
             if target == omit:
@@ -43,19 +63,35 @@ class RuntimeReceiptTests(unittest.TestCase):
             relative = f"build/bin/{target}"
             payload = f"fixture {target}\n".encode("ascii")
             (root / relative).write_bytes(payload)
-            binaries.append(
+            binary = dict(fixture_binaries[target])
+            binary.update(
                 {
                     "path": relative,
                     "sha256": hashlib.sha256(payload).hexdigest(),
                     "size_bytes": len(payload),
                 }
             )
-        receipt = {
-            "lock_sha256": lock.digest,
-            "profile": "portable",
-            "qualification_status": "not-run",
-            "binaries": binaries,
-        }
+            binaries.append(binary)
+        receipt.update(
+            {
+                "schema_version": bootstrap_llama_cpp.RUNTIME_RECEIPT_SCHEMA_VERSION,
+                "runtime": "llama.cpp",
+                "tag": llama["tag"],  # type: ignore[index]
+                "commit": llama["commit"],  # type: ignore[index]
+                "source_sha256": source_asset.sha256,
+                "source_size_bytes": source_asset.size_bytes,
+                "lock_sha256": lock.digest,
+                "profile": "portable",
+                "license": {
+                    "path": bootstrap_llama_cpp.RUNTIME_LICENSE_RELATIVE.as_posix(),
+                    "sha256": hashlib.sha256(license_payload).hexdigest(),
+                    "size_bytes": len(license_payload),
+                    "license_spdx": llama["license_spdx"],  # type: ignore[index]
+                    "license_url": llama["license_url"],  # type: ignore[index]
+                },
+                "binaries": binaries,
+            }
+        )
         (root / bootstrap_llama_cpp.RECEIPT_NAME).write_text(
             json.dumps(receipt), encoding="utf-8"
         )
@@ -432,6 +468,119 @@ class RuntimeReceiptTests(unittest.TestCase):
                 ):
                     bootstrap_llama_cpp._verify_existing_runtime(root, lock, "portable")
 
+    def test_runtime_receipt_matches_go_required_shape_and_strict_json(self) -> None:
+        lock = model_assets.load_lock()
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            self._runtime_fixture(root, lock)
+            receipt_path = root / bootstrap_llama_cpp.RECEIPT_NAME
+            original = json.loads(receipt_path.read_text(encoding="utf-8"))
+            self.assertEqual(
+                set(original), set(bootstrap_llama_cpp.RUNTIME_RECEIPT_KEYS)
+            )
+            variants = (
+                ("source_size_bytes", True, "source_size_bytes"),
+                ("cmake", "", "cmake"),
+                ("configure_argv", [], "configure_argv"),
+                ("configure_argv", ["cmake", 1], "configure_argv"),
+                ("build_argv", [], "build_argv"),
+                ("platform", " ", "platform"),
+                ("machine", None, "machine"),
+                ("python", "", "python"),
+            )
+            for key, value, marker in variants:
+                receipt = json.loads(json.dumps(original))
+                receipt[key] = value
+                receipt_path.write_text(json.dumps(receipt), encoding="utf-8")
+                with self.subTest(key=key, value=value), self.assertRaisesRegex(
+                    model_assets.IntegrityError, marker
+                ):
+                    bootstrap_llama_cpp._verify_existing_runtime(
+                        root, lock, "portable"
+                    )
+
+            receipt = json.loads(json.dumps(original))
+            receipt["binaries"][0]["size_bytes"] = True
+            receipt_path.write_text(json.dumps(receipt), encoding="utf-8")
+            with self.assertRaisesRegex(model_assets.IntegrityError, "binary"):
+                bootstrap_llama_cpp._verify_existing_runtime(root, lock, "portable")
+
+            receipt = json.loads(json.dumps(original))
+            receipt["license"]["size_bytes"] = True
+            receipt_path.write_text(json.dumps(receipt), encoding="utf-8")
+            with self.assertRaisesRegex(model_assets.IntegrityError, "license"):
+                bootstrap_llama_cpp._verify_existing_runtime(root, lock, "portable")
+
+            raw = json.dumps(original)
+            duplicate = raw.replace(
+                '"schema_version":',
+                '"schema_version":"invalid","schema_version":',
+                1,
+            )
+            receipt_path.write_text(duplicate, encoding="utf-8")
+            with self.assertRaisesRegex(model_assets.IntegrityError, "repeats JSON key"):
+                bootstrap_llama_cpp._verify_existing_runtime(root, lock, "portable")
+
+            receipt_path.write_text(
+                raw.replace(
+                    f'"source_size_bytes": {original["source_size_bytes"]}',
+                    '"source_size_bytes": NaN',
+                    1,
+                ),
+                encoding="utf-8",
+            )
+            with self.assertRaisesRegex(model_assets.IntegrityError, "JSON constant"):
+                bootstrap_llama_cpp._verify_existing_runtime(root, lock, "portable")
+
+            receipt_path.write_bytes(b"\xff")
+            with self.assertRaisesRegex(model_assets.IntegrityError, "invalid"):
+                bootstrap_llama_cpp._verify_existing_runtime(root, lock, "portable")
+
+            receipt_path.write_text(
+                raw.replace(
+                    '"path": "source/LICENSE"',
+                    '"path":"invalid","path": "source/LICENSE"',
+                    1,
+                ),
+                encoding="utf-8",
+            )
+            with self.assertRaisesRegex(model_assets.IntegrityError, "repeats JSON key"):
+                bootstrap_llama_cpp._verify_existing_runtime(root, lock, "portable")
+
+    def test_runtime_receipt_binds_retained_upstream_mit_license(self) -> None:
+        lock = model_assets.load_lock()
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            self._runtime_fixture(root, lock)
+            receipt_path = root / bootstrap_llama_cpp.RECEIPT_NAME
+            original = json.loads(receipt_path.read_text(encoding="utf-8"))
+            license_path = root / bootstrap_llama_cpp.RUNTIME_LICENSE_RELATIVE
+            payload = license_path.read_bytes()
+
+            license_path.unlink()
+            with self.assertRaisesRegex(model_assets.IntegrityError, "license"):
+                bootstrap_llama_cpp._verify_existing_runtime(root, lock, "portable")
+
+            license_path.write_bytes(payload + b"tampered")
+            with self.assertRaisesRegex(model_assets.IntegrityError, "license"):
+                bootstrap_llama_cpp._verify_existing_runtime(root, lock, "portable")
+
+            license_path.write_bytes(payload)
+            for key, value in (
+                ("path", "LICENSE"),
+                ("license_spdx", "Apache-2.0"),
+                ("license_url", "https://example.invalid/LICENSE"),
+            ):
+                receipt = json.loads(json.dumps(original))
+                receipt["license"][key] = value
+                receipt_path.write_text(json.dumps(receipt), encoding="utf-8")
+                with self.subTest(key=key), self.assertRaisesRegex(
+                    model_assets.IntegrityError, "license"
+                ):
+                    bootstrap_llama_cpp._verify_existing_runtime(
+                        root, lock, "portable"
+                    )
+
     def test_build_runtime_happy_path_is_fully_mocked(self) -> None:
         lock = model_assets.load_lock()
         with tempfile.TemporaryDirectory() as temporary:
@@ -455,11 +604,20 @@ class RuntimeReceiptTests(unittest.TestCase):
                     binary.write_bytes((target + "\n").encode())
                     os.chmod(binary, 0o700)
 
+            def fake_extract(
+                _archive: Path,
+                destination: Path,
+                _extraction_root: str,
+            ) -> None:
+                (destination / "LICENSE").write_bytes(b"fixture MIT license\n")
+
             with mock.patch.object(bootstrap_llama_cpp, "assert_priority_available"), mock.patch.object(
                 bootstrap_llama_cpp, "assert_resource_guard"
             ), mock.patch.object(bootstrap_llama_cpp, "fetch_asset", return_value=archive), mock.patch.object(
                 bootstrap_llama_cpp, "verify_cached_asset", return_value=archive
-            ), mock.patch.object(bootstrap_llama_cpp, "_extract_source"), mock.patch.object(
+            ), mock.patch.object(
+                bootstrap_llama_cpp, "_extract_source", side_effect=fake_extract
+            ), mock.patch.object(
                 bootstrap_llama_cpp, "_cmake_version", return_value=(3, 31, "cmake 3.31")
             ), mock.patch.object(
                 bootstrap_llama_cpp, "assert_disk_headroom"
