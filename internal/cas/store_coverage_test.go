@@ -86,6 +86,16 @@ func TestCASCoverageOpenInputAndTopologyFailures(t *testing.T) {
 		}
 	})
 
+	t.Run("object layout is a file", func(t *testing.T) {
+		root := t.TempDir()
+		if err := os.WriteFile(filepath.Join(root, "sha256"), []byte("occupied"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := Open(root); err == nil || !strings.Contains(err.Error(), "object layout") {
+			t.Fatalf("Open(file object layout) = %v", err)
+		}
+	})
+
 	store, err := Open(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
@@ -366,6 +376,24 @@ func TestCASCoverageValidationAndSyncFailures(t *testing.T) {
 	}
 	if err := store.validateTemporaryFile(filepath.Join(moved, "missing"), store.tempIdentity); !errors.Is(err, ErrStoreChanged) {
 		t.Fatalf("validateTemporaryFile(invalid layout) = %v, want ErrStoreChanged", err)
+	}
+
+	stable, err := Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	shardPath, shardIdentity, err := stable.ensureShard("ab")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(shardPath, shardPath+".moved"); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(shardPath, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := stable.validateShard(shardPath, shardIdentity); !errors.Is(err, ErrStoreChanged) {
+		t.Fatalf("validateShard(replaced shard) = %v, want ErrStoreChanged", err)
 	}
 
 	if runtime.GOOS == "linux" {

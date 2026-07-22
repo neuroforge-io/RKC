@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"net"
 	"os"
 	"path/filepath"
 	"strings"
@@ -12,6 +13,43 @@ import (
 	"github.com/neuroforge-io/RKC/internal/safeoutput"
 	"github.com/neuroforge-io/RKC/pkg/rkcmodel"
 )
+
+func TestInventoryCoverageFileLimitsSpecialObjectsAndFileExclusions(t *testing.T) {
+	root := t.TempDir()
+	payload := []byte("larger than the direct file limit")
+	largePath := filepath.Join(root, "large.txt")
+	mustWriteInventoryFile(t, largePath, payload)
+	artifact, diagnostic := inspectFile(largePath, "large.txt", int64(len(payload)), 4, 1024)
+	if diagnostic != nil || artifact.Status != "oversized" || artifact.ExclusionReason != "file_exceeds_limit:4" {
+		t.Fatalf("inspectFile(file limit) = %+v, %+v", artifact, diagnostic)
+	}
+	if likelyText([]byte{0xff, 1, 'x'}) {
+		t.Fatal("likelyText classified control-heavy invalid UTF-8 as text")
+	}
+
+	excludedPath := filepath.Join(root, "excluded.txt")
+	mustWriteInventoryFile(t, excludedPath, []byte("excluded"))
+	socketPath := filepath.Join(root, "special.sock")
+	listener, listenErr := net.Listen("unix", socketPath)
+	if listenErr == nil {
+		t.Cleanup(func() { _ = listener.Close() })
+	}
+
+	result, err := Scan(Options{Root: root, MaxFileBytes: 1024, Excludes: []string{"excluded.txt"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	statuses := make(map[string]string, len(result.Artifacts))
+	for _, item := range result.Artifacts {
+		statuses[item.Path] = item.Status
+	}
+	if statuses["excluded.txt"] != "excluded" {
+		t.Fatalf("excluded file status = %q", statuses["excluded.txt"])
+	}
+	if listenErr == nil && statuses["special.sock"] != "excluded" {
+		t.Fatalf("special object status = %q", statuses["special.sock"])
+	}
+}
 
 func TestScanClassifiesFilesAndEnforcesLimits(t *testing.T) {
 	t.Parallel()
