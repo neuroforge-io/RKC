@@ -669,7 +669,11 @@ func TestFinalProjectionRepresentationAndFTSFailures(t *testing.T) {
 		duplicate.Ordinal++
 		bundle.Documents[0].Sections = append(bundle.Documents[0].Sections, duplicate)
 		build := writerTestStage(t, database, bundle, true)
-		productionRequireError(t, database.Commit(ctx, build, bundle.Snapshot), rkcstore.ErrValidation)
+		err := database.Commit(ctx, build, bundle.Snapshot)
+		var failure *rkcstore.ValidationFailure
+		if !errors.Is(err, rkcstore.ErrValidation) || !errors.As(err, &failure) || !failure.Result.Report.HasErrors() {
+			t.Fatalf("duplicate section validation = %#v", err)
+		}
 		finalAssertNoPublication(t, database)
 	})
 
@@ -678,7 +682,11 @@ func TestFinalProjectionRepresentationAndFTSFailures(t *testing.T) {
 		bundle := writerTestBundle("snapshot", "repository", "")
 		bundle.Documents[0].Sections[0].ParentID = "missing-parent"
 		build := writerTestStage(t, database, bundle, true)
-		productionRequireError(t, database.Commit(ctx, build, bundle.Snapshot), rkcstore.ErrValidation)
+		err := database.Commit(ctx, build, bundle.Snapshot)
+		var failure *rkcstore.ValidationFailure
+		if !errors.Is(err, rkcstore.ErrValidation) || !errors.As(err, &failure) || !failure.Result.Report.HasErrors() {
+			t.Fatalf("missing parent validation = %#v", err)
+		}
 		finalAssertNoPublication(t, database)
 	})
 
@@ -712,8 +720,8 @@ func TestFinalUpgradeAndStorageClassifierBoundaries(t *testing.T) {
 	if err := CheckV2UpgradeEligibility(ctx, nil); !errors.Is(err, ErrInvalidOptions) {
 		t.Fatalf("nil v2 database = %v", err)
 	}
-	if err := readerStorageError("read", "snapshot", "database", ErrBusy); !errors.Is(err, rkcstore.ErrConflict) {
-		t.Fatalf("busy reader classification = %v", err)
+	if err := readerStorageError("read", "snapshot", "database", ErrBusy); !errors.Is(err, rkcstore.ErrInternal) {
+		t.Fatalf("bare sentinel reader classification = %v", err)
 	}
 	if got := writerLimitedReason(errors.New("reason"), 0); got != "" {
 		t.Fatalf("zero reason limit = %q", got)
