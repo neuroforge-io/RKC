@@ -272,7 +272,7 @@ func TestAnswerCoverageClosesPartialSessionsAndPropagatesFailures(t *testing.T) 
 			closeErr: errors.New("provider close failed"),
 		}
 		dependencies := answerCoverageDependencies(failing)
-		err := runAnswerContext(context.Background(), []string{"question"}, dependencies)
+		err := runAnswerContext(context.Background(), []string{"Alpha"}, dependencies)
 		requireAnswerCoverageError(t, err, "generation failed")
 		requireAnswerCoverageError(t, err, "provider close failed")
 		if failing.closed != 1 {
