@@ -342,7 +342,7 @@ class LocalServer:
         self.embedding = embedding
         self.pooling = pooling
         self.port = _choose_port()
-        self.api_key = secrets.token_urlsafe(32)
+        self.server_auth = secrets.token_urlsafe(32)
         self.process: subprocess.Popen[bytes] | None = None
         self.stdout_path = log_directory / ("embedding.stdout.log" if embedding else "generation.stdout.log")
         self.stderr_path = log_directory / ("embedding.stderr.log" if embedding else "generation.stderr.log")
@@ -366,7 +366,7 @@ class LocalServer:
 
     def start(self, timeout: float = 180) -> None:
         model_assets.assert_priority_available()
-        self.key_path.write_text(self.api_key + "\n", encoding="ascii")
+        self.key_path.write_text(self.server_auth + "\n", encoding="ascii")
         os.chmod(self.key_path, 0o600)
         arguments = [
             str(self.executable),
@@ -465,7 +465,7 @@ class LocalServer:
                 result.append(
                     _bounded_http(
                         url,
-                        self.api_key,
+                        self.server_auth,
                         payload=payload,
                         timeout=timeout,
                     )

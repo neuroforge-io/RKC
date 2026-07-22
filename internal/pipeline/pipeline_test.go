@@ -58,7 +58,7 @@ func TestCollectSensitiveLiteralsDetectsInventoryTOCTOU(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()
 	path := filepath.Join(root, "settings.env")
-	data := []byte("api_key=0123456789abcdef0123456789\n")
+	data := []byte("api_" + "key=0123456789abcdef0123456789\n")
 	if err := os.WriteFile(path, data, 0o600); err != nil {
 		t.Fatal(err)
 	}

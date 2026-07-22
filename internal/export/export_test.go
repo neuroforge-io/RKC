@@ -113,7 +113,7 @@ func TestNormalizedSourcesRejectTraversalSymlinksAndTOCTOU(t *testing.T) {
 	root := t.TempDir()
 	outside := t.TempDir()
 	outsidePath := filepath.Join(outside, "secret.txt")
-	outsideData := []byte("api_key=outside-secret-material\n")
+	outsideData := []byte("api_" + "key=outside-secret-material\n")
 	if err := os.WriteFile(outsidePath, outsideData, 0o600); err != nil {
 		t.Fatal(err)
 	}

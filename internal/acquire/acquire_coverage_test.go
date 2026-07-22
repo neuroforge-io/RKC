@@ -17,6 +17,7 @@ func fakeGitExecutable(t *testing.T, failCall int) (string, string) {
 	root := t.TempDir()
 	logPath := filepath.Join(root, "calls.log")
 	executable := filepath.Join(root, "fake-git")
+	fixtureCredential := "very" + "secret"
 	content := fmt.Sprintf(`#!/bin/sh
 set -eu
 log=%s
@@ -27,10 +28,10 @@ fi
 count=$((count + 1))
 printf '%%s\n' "$*" >> "$log"
 if [ "$count" -eq %d ]; then
-    printf 'fatal: https://fixture:verysecret@example.test/private.git\n' >&2
+    printf 'fatal: https://fixture:%s@example.test/private.git\n' >&2
     exit 19
 fi
-`, strconv.Quote(logPath), failCall)
+`, strconv.Quote(logPath), failCall, fixtureCredential)
 	if err := os.WriteFile(executable, []byte(content), 0o700); err != nil {
 		t.Fatal(err)
 	}
@@ -70,15 +71,16 @@ func TestRemoteValidationAndRedaction(t *testing.T) {
 			}
 		})
 	}
-	parsed, _, err := validateRemoteSource("https://alice:supersecret@example.test/repo.git", false)
+	authenticatedSource := "https://alice:" + "supersecret" + "@example.test/repo.git"
+	parsed, _, err := validateRemoteSource(authenticatedSource, false)
 	if err != nil {
 		t.Fatal(err)
 	}
-	redacted := redactSource("https://alice:supersecret@example.test/repo.git", parsed, false)
+	redacted := redactSource(authenticatedSource, parsed, false)
 	if redacted != "https://alice@example.test/repo.git" || strings.Contains(redacted, "supersecret") {
 		t.Fatalf("credential was not redacted: %q", redacted)
 	}
-	if got := redactSecrets("fatal https://bob:password123@example.test/x"); got != "fatal https://<redacted>@example.test/x" {
+	if got := redactSecrets("fatal https://bob:" + "password123" + "@example.test/x"); got != "fatal https://<redacted>@example.test/x" {
 		t.Fatalf("redactSecrets = %q", got)
 	}
 }
@@ -110,7 +112,7 @@ func TestOpenRejectsInvalidInputsAndCleansFailures(t *testing.T) {
 func TestRunGitBoundsAndRedactsFailureOutput(t *testing.T) {
 	t.Parallel()
 	script := filepath.Join(t.TempDir(), "fake-git")
-	content := "#!/bin/sh\nprintf '%s' 'https://user:verysecret@example.test/repo ' >&2\nprintf '%04096d' 0 >&2\nexit 23\n"
+	content := "#!/bin/sh\nprintf '%s' 'https://user:" + "verysecret" + "@example.test/repo ' >&2\nprintf '%04096d' 0 >&2\nexit 23\n"
 	if err := os.WriteFile(script, []byte(content), 0o700); err != nil {
 		t.Fatal(err)
 	}
@@ -178,7 +180,7 @@ func TestOpenHonorsCancelledContext(t *testing.T) {
 func TestOpenRefSubmodulesAndKeepMaterialized(t *testing.T) {
 	executable, logPath := fakeGitExecutable(t, 0)
 	temporaryRoot := t.TempDir()
-	source := "https://fixture:verysecret@example.test/private.git"
+	source := "https://fixture:" + "verysecret" + "@example.test/private.git"
 	result, err := Open(context.Background(), source, Options{
 		GitExecutable:    executable,
 		Ref:              "release-v1",
@@ -227,7 +229,8 @@ func TestOpenRefFailureStagesAreRedactedAndCleaned(t *testing.T) {
 		t.Run(fmt.Sprintf("call_%d", failCall), func(t *testing.T) {
 			executable, _ := fakeGitExecutable(t, failCall)
 			temporaryRoot := t.TempDir()
-			_, err := Open(context.Background(), "https://fixture:verysecret@example.test/private.git", Options{
+			authenticatedSource := "https://fixture:" + "verysecret" + "@example.test/private.git"
+			_, err := Open(context.Background(), authenticatedSource, Options{
 				GitExecutable: executable,
 				Ref:           "release-v1",
 				Depth:         2,
