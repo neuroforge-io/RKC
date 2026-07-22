@@ -7,6 +7,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -48,6 +49,28 @@ func TestInventoryCoverageFileLimitsSpecialObjectsAndFileExclusions(t *testing.T
 	}
 	if listenErr == nil && statuses["special.sock"] != "excluded" {
 		t.Fatalf("special object status = %q", statuses["special.sock"])
+	}
+
+	if runtime.GOOS != "windows" && os.Geteuid() != 0 {
+		unreadablePath := filepath.Join(root, "unreadable.txt")
+		mustWriteInventoryFile(t, unreadablePath, []byte("permission denied"))
+		if err := os.Chmod(unreadablePath, 0); err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _ = os.Chmod(unreadablePath, 0o600) })
+		unreadable, unreadableDiagnostic := inspectFile(unreadablePath, "unreadable.txt", 17, 1024, 1024)
+		if unreadable.Status != "unreadable" || unreadableDiagnostic == nil || unreadableDiagnostic.Code != "RKC1004" {
+			t.Fatalf("inspectFile(permission denied) = %+v, %+v", unreadable, unreadableDiagnostic)
+		}
+
+		inaccessibleRoot := t.TempDir()
+		if err := os.Chmod(inaccessibleRoot, 0); err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _ = os.Chmod(inaccessibleRoot, 0o700) })
+		if _, err := Scan(Options{Root: inaccessibleRoot}); err == nil || !strings.Contains(err.Error(), "reserved RKC marker") {
+			t.Fatalf("Scan(inaccessible root) = %v", err)
+		}
 	}
 }
 
