@@ -3,6 +3,7 @@ package sqlite
 import (
 	"context"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -358,14 +359,18 @@ func TestSQLiteReaderKeysetQueriesAndPersistentAuthenticatedCursors(t *testing.T
 	}); !errors.Is(err, rkcstore.ErrInvalidCursor) {
 		t.Fatalf("cross-scope snapshot cursor = %v", err)
 	}
-	tampered := []byte(page1.Next)
-	if tampered[len(tampered)-1] == 'A' {
-		tampered[len(tampered)-1] = 'B'
-	} else {
-		tampered[len(tampered)-1] = 'A'
+	cursorParts := strings.SplitN(string(page1.Next), ".", 2)
+	if len(cursorParts) != 2 {
+		t.Fatalf("snapshot cursor has %d parts", len(cursorParts))
 	}
+	tamperedPayload, err := base64.RawURLEncoding.DecodeString(cursorParts[0])
+	if err != nil || len(tamperedPayload) == 0 {
+		t.Fatalf("decode snapshot cursor payload = %v", err)
+	}
+	tamperedPayload[0] ^= 1
+	tampered := rkcstore.Cursor(base64.RawURLEncoding.EncodeToString(tamperedPayload) + "." + cursorParts[1])
 	if _, err := reopened.ListSnapshots(ctx, rkcstore.SnapshotQuery{
-		RepositoryID: "repo", PageRequest: rkcstore.PageRequest{Cursor: rkcstore.Cursor(tampered)},
+		RepositoryID: "repo", PageRequest: rkcstore.PageRequest{Cursor: tampered},
 	}); !errors.Is(err, rkcstore.ErrInvalidCursor) {
 		t.Fatalf("tampered snapshot cursor = %v", err)
 	}
