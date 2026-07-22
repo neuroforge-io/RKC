@@ -95,7 +95,7 @@ func TestWrapupSQLitePublicationLifecycleAndSelectors(t *testing.T) {
 	}{
 		{"no selector", databasePath, "", "", "exactly one"},
 		{"both selectors", databasePath, bundle.Snapshot.ID, bundle.Snapshot.RepositoryID, "exactly one"},
-		{"missing snapshot", databasePath, "missing-snapshot", "", "not found"},
+		{"missing snapshot", databasePath, "missing-snapshot", "", "snapshot_not_found"},
 		{"missing repository", databasePath, "", "missing-repository", "current snapshot"},
 		{"missing database", filepath.Join(root, "missing.sqlite"), bundle.Snapshot.ID, "", "open"},
 	}
@@ -219,6 +219,10 @@ func TestWrapupCLIParserAndSelectorFailures(t *testing.T) {
 func TestWrapupSQLiteSnapshotErrorsAndTextOutput(t *testing.T) {
 	ctx := context.Background()
 	databasePath := createSQLiteSnapshotsFixture(t)
+	missingDatabaseRoot := t.TempDir()
+	if err := os.Chmod(missingDatabaseRoot, 0o700); err != nil {
+		t.Fatal(err)
+	}
 
 	output, err := captureStdout(t, func() error {
 		return snapshotsListSQLite(ctx, databasePath, "", 1, "", false)
@@ -248,7 +252,7 @@ func TestWrapupSQLiteSnapshotErrorsAndTextOutput(t *testing.T) {
 		{"show rejects mismatched repository", func() error {
 			return snapshotsShowSQLite(ctx, databasePath, sqliteSnapshotRepositoryB, sqliteSnapshotA1, false, false)
 		}, "belongs to repository"},
-		{"show rejects missing snapshot", func() error { return snapshotsShowSQLite(ctx, databasePath, "", "missing", false, false) }, "not found"},
+		{"show rejects missing snapshot", func() error { return snapshotsShowSQLite(ctx, databasePath, "", "missing", false, false) }, "snapshot_not_found"},
 		{"export selection requires repository", func() error { return snapshotsExportSQLite(ctx, databasePath, "", "", "", false, false, 1024) }, "requires --repository"},
 		{"export rejects mismatched repository", func() error {
 			return snapshotsExportSQLite(ctx, databasePath, sqliteSnapshotRepositoryB, sqliteSnapshotA1, filepath.Join(t.TempDir(), "out"), false, false, 1024)
@@ -258,7 +262,7 @@ func TestWrapupSQLiteSnapshotErrorsAndTextOutput(t *testing.T) {
 		}, "omit --include-sources"},
 		{"open rejects blank path", func() error { _, _, err := openSnapshotsSQLite(ctx, "", true); return err }, "path is required"},
 		{"open requires existing database", func() error {
-			_, _, err := openSnapshotsSQLite(ctx, filepath.Join(t.TempDir(), "missing.sqlite"), true)
+			_, _, err := openSnapshotsSQLite(ctx, filepath.Join(missingDatabaseRoot, "missing.sqlite"), true)
 			return err
 		}, "exist"},
 	}
