@@ -231,6 +231,68 @@ class LicenseValidationTests(unittest.TestCase):
         LICENSES.require_markers("complete", "alpha beta", ("alpha", "beta"))
         self.assertTrue(LICENSES.CHECKS[-1]["ok"])
 
+    def test_strict_go_parsers_and_json_shape_helpers_reject_ambiguity(self) -> None:
+        failures: list[str] = []
+        self.assertIsNone(
+            LICENSES.require_exact_keys(
+                [], frozenset({"required"}), "fixture", failures
+            )
+        )
+        self.assertIsNone(
+            LICENSES.require_exact_keys(
+                {"unknown": True}, frozenset({"required"}), "fixture", failures
+            )
+        )
+        self.assertEqual(
+            LICENSES.require_exact_keys(
+                {"required": True}, frozenset({"required"}), "fixture", failures
+            ),
+            {"required": True},
+        )
+        self.assertIn("must be an object", failures[0])
+        self.assertIn("keys differ", failures[1])
+        with self.assertRaisesRegex(ValueError, "duplicate JSON key"):
+            LICENSES.reject_duplicate_keys([("key", 1), ("key", 2)])
+
+        metadata, requirements, failures = LICENSES.parse_go_mod(
+            "module fixture.test/one\n"
+            "module fixture.test/two\n"
+            "go 1.25.0\n"
+            "toolchain go1.26.5\n"
+            "require example.test/inline v1.0.0\n"
+            "require example.test/inline v2.0.0\n"
+            "replace example.test/inline => ../local\n"
+            "require (\n"
+            "malformed\n"
+            "example.test/block v1.0.0\n"
+            "example.test/block v2.0.0\n"
+        )
+        self.assertEqual(metadata["module"], "fixture.test/two")
+        self.assertEqual(requirements["example.test/inline"], "v2.0.0")
+        self.assertEqual(requirements["example.test/block"], "v2.0.0")
+        for marker in (
+            "duplicate module directive",
+            "duplicate requirement example.test/inline",
+            "prohibited or invalid directive",
+            "invalid require entry",
+            "duplicate requirement example.test/block",
+            "unterminated require block",
+        ):
+            self.assertTrue(any(marker in failure for failure in failures), failures)
+
+        entries, failures = LICENSES.parse_go_sum(
+            "z.test/module v1.0.0 h1:fixture\n"
+            "malformed\n"
+            "a.test/module v1.0.0 h1:first\n"
+            "a.test/module v1.0.0 h1:second\n"
+        )
+        self.assertEqual(entries[("a.test/module", "v1.0.0")], "h1:second")
+        self.assertTrue(any("not sorted" in failure for failure in failures))
+        self.assertTrue(any("expected three fields" in failure for failure in failures))
+        self.assertTrue(
+            any("duplicate a.test/module" in failure for failure in failures)
+        )
+
     def test_root_documents_happy_path_and_notice_closure(self) -> None:
         self.root_fixture()
         LICENSES.validate_root_documents()
@@ -421,6 +483,93 @@ class LicenseValidationTests(unittest.TestCase):
         result = self.validate_dependency_fixture(expected, roots)
         self.assertFalse(result["ok"])
         self.assertIn("duplicate JSON key", str(result["detail"]))
+
+    def test_dependency_boundary_rejects_lock_schema_and_entry_shapes(self) -> None:
+        expected, roots = self.dependency_fixture()
+        lock_path = LICENSES.ROOT / "third_party/go-modules.lock.json"
+        lock = json.loads(lock_path.read_text(encoding="utf-8"))
+        lock["schema_version"] = "2.0"
+        lock["go"] = {"directive": "9.9.9", "toolchain": "go9.9.9"}
+        lock["root_requirements"] = []
+        lock["modules"] = {"not": "an array"}
+        self.write("third_party/go-modules.lock.json", json.dumps(lock))
+        result = self.validate_dependency_fixture(expected, roots)
+        detail = str(result["detail"])
+        for marker in (
+            "schema_version must be 1.0",
+            "toolchain metadata drift",
+            "root requirements drift",
+            "modules must be an array",
+            "missing governed modules",
+        ):
+            self.assertIn(marker, detail)
+
+        expected, roots = self.dependency_fixture()
+        lock = json.loads(lock_path.read_text(encoding="utf-8"))
+        lock["modules"].insert(0, {"path": "missing-fields"})
+        lock["modules"].append(
+            {
+                "path": 7,
+                "version": None,
+                "direct": False,
+                "module_sum": "invalid",
+                "go_mod_sum": "invalid",
+                "source_url": "invalid",
+                "license_spdx": "invalid",
+                "licenses": [],
+                "notice_path": "invalid",
+            }
+        )
+        self.write("third_party/go-modules.lock.json", json.dumps(lock))
+        result = self.validate_dependency_fixture(expected, roots)
+        self.assertIn("keys differ", str(result["detail"]))
+        self.assertIn("identity is invalid", str(result["detail"]))
+
+    def test_dependency_boundary_rejects_license_entry_policy_drift(self) -> None:
+        expected, roots = self.dependency_fixture()
+        lock_path = LICENSES.ROOT / "third_party/go-modules.lock.json"
+        lock = json.loads(lock_path.read_text(encoding="utf-8"))
+        module = lock["modules"][0]
+        original = dict(module["licenses"][0])
+        module["direct"] = True
+        module["module_sum"] = "invalid"
+        module["go_mod_sum"] = "h1:" + "A" * 43 + "="
+        module["source_url"] = "https://invalid.example/module.zip"
+        module["license_spdx"] = "GPL-3.0-only"
+        module["notice_path"] = "OTHER.md"
+        module["licenses"] = [
+            {"source_path": 7, "path": None, "sha256": False},
+            {
+                "source_path": "../LICENSE",
+                "path": original["path"],
+                "sha256": original["sha256"],
+            },
+            {
+                "source_path": "UNKNOWN",
+                "path": original["path"],
+                "sha256": original["sha256"],
+            },
+            original,
+            original,
+        ]
+        self.write("third_party/go-modules.lock.json", json.dumps(lock))
+        result = self.validate_dependency_fixture(expected, roots)
+        detail = str(result["detail"])
+        for marker in (
+            "direct flag drift",
+            "invalid module_sum",
+            "module_sum drift",
+            "go_mod_sum drift",
+            "source URL drift",
+            "SPDX drift",
+            "notice path drift",
+            "license fields invalid",
+            "unsafe upstream license path",
+            "unknown upstream license",
+            "duplicates example.test/lib/LICENSE",
+            "duplicate tracked license path",
+        ):
+            self.assertIn(marker, detail)
 
     @mock.patch.object(LICENSES.subprocess, "run")
     def test_tracked_artifact_policy_accepts_regular_and_reports_all_failures(
