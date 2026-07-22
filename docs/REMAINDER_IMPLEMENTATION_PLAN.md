@@ -61,6 +61,17 @@ P7 can proceed after P1. P8 can proceed from the current packet interface but
 must be revalidated after P1/P2. P10 must not begin public rollout before P3 and
 P11 security controls exist.
 
+## Progress ledger
+
+This ledger records completed slices without deleting or weakening any exit
+gate below.
+
+| Date | Work item | Evidence | Remaining boundary |
+|---|---|---|---|
+| 2026-07-22 | P0 signed reference identity and compatibility floor | Signed `v0.3.0-reference` tag; executable canonical bundle, SHA-256, canonical-digest, stable-ID, exact CI/CodeQL, and self-catalogue artifact fixtures | Archive/sign the complete release payload and logs and add the maintained cross-platform/toolchain fixture matrix |
+| 2026-07-22 | `STORE-001` and `STORE-002` | Public typed store interfaces plus concurrency-safe in-memory conformance backend; atomic current publication, stale-writer conflict, abort/recovery, strict validation, exact coverage binding, authenticated cursors, defensive clones, and lossless bundle export | Run the same conformance contract against the durable SQLite backend and replace whole-bundle operational reads with bounded pages |
+| 2026-07-22 | `STORE-003` | Ordered SQLite migrations with pinned file and manifest SHA-256 values; offline validation proves execution, integrity, foreign keys, version order, and consolidated-catalogue equivalence | Complete the durable schema/runtime design, migration journal, connection policy, build staging, recovery, and reader/writer implementation before SQLite is canonical |
+
 ---
 
 # Phase P0: freeze the reference baseline

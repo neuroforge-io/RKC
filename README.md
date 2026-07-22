@@ -29,6 +29,9 @@ The reference build provides:
   evidence, diagnostics, conflicts, documents, claims, and execution paths;
 - explicit unresolved-symbol nodes instead of discarded or guessed relations;
 - canonical sorting, validation, deterministic digests, and coverage ratios;
+- a typed transactional snapshot-store boundary with a concurrency-safe
+  in-memory conformance backend, atomic current-snapshot publication, recovery,
+  authenticated keyset cursors, and lossless bundle export;
 - crash-safe filesystem snapshots and content-addressed object storage;
 - ranked lexical search, qualification-gated semantic and hybrid retrieval,
   graph neighbourhoods, shortest paths, impact traversal, strongly connected
@@ -49,7 +52,9 @@ The reference build provides:
 The highest-value unfinished work is:
 
 1. make SQLite, rather than the filesystem bundle, the canonical local runtime
-   writer and query store;
+   writer and query store; the public contract, memory conformance backend, and
+   digest-locked migration chain now exist, while the durable SQLite
+   implementation remains unfinished;
 2. route every scan stage through the deterministic DAG scheduler and cache;
 3. enforce plugin capabilities with a WASI host and isolated native workers;
 4. add compiler-grade semantic adapters, beginning with Python, TypeScript, Go,

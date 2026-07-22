@@ -64,6 +64,10 @@ The offline validator:
 - parses implemented and future OpenAPI documents;
 - compares implemented OpenAPI paths with Go handler registration;
 - executes the SQLite DDL in an in-memory database;
+- verifies the exact migration-manifest digest, every ordered migration digest,
+  forward-only schema versions, canonical UTF-8/LF encoding, clean migration
+  execution, foreign-key and integrity checks, and catalogue equivalence with
+  the consolidated SQLite DDL;
 - verifies the WIT package revision;
 - checks the plugin lockfile shape.
 

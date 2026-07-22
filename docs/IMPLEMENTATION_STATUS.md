@@ -20,7 +20,8 @@ The labels below mean:
 | Local/remote Git acquisition | Implemented | Promptless, hooks disabled, bounded timeout |
 | Filesystem snapshot publication | Implemented | Building/committed states and recovery |
 | Content-addressed object store | Implemented | Reference filesystem store |
-| SQLite runtime writer/query layer | Planned | DDL exists and is validated |
+| Transactional storage contract | Implemented | Typed reader/writer/recovery API; atomic, immutable in-memory conformance backend with authenticated cursors and lossless export |
+| SQLite runtime writer/query layer | Partial | Consolidated DDL plus digest-locked forward migrations are validated; durable driver, staging lifecycle, recovery, and paginated SQLite queries remain |
 | Pipeline DAG and cache library | Partial | Scheduler/cache exist; scan not fully staged |
 | Clean/incremental equivalence | Planned | Deterministic clean replay passes |
 
@@ -107,7 +108,7 @@ The labels below mean:
 2. `go vet`;
 3. Go tests;
 4. Python analyzer tests;
-5. JSON Schema, OpenAPI, WIT, SQLite, and lockfile validation;
+5. JSON Schema, OpenAPI, WIT, immutable SQLite migration, and lockfile validation;
 6. local Markdown-link and code-fence checks;
 7. binary builds;
 8. plugin manifest/lock validation;
