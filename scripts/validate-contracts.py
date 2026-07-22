@@ -48,7 +48,7 @@ SELF_BENCHMARK_EXCLUSIONS = SAFE_DEFAULT_EXCLUSIONS | frozenset(
     }
 )
 SQLITE_MIGRATION_MANIFEST_SHA256 = (
-    "1f260e2d4a63278d372e3c172e22aac6035c9fc92b73cd283cdaf69643b225d0"
+    "102a6cae08c2b81dff1556ce791cf1396fd9f02dbaf29d71c59e17a67e61d435"
 )
 SQLITE_IMMUTABLE_MIGRATION_HISTORY = {
     1: (
@@ -58,6 +58,14 @@ SQLITE_IMMUTABLE_MIGRATION_HISTORY = {
     2: (
         "claims_conflicts_paths",
         "4a8f0853f4fc5fd3c2e1d5a3b5f17ad66c34b8585b892f46281d5b0fcaa105d2",
+    ),
+    3: (
+        "transactional_publication",
+        "340a18941b1db769620a364e8893669636b96cbc966f2750739d1f93bacbe2cc",
+    ),
+    4: (
+        "publication_compare_and_swap",
+        "c75e1bc04038c3385acd15fc370c0a866929d33102885a72b305a1a28d9635fc",
     ),
 }
 SQLITE_REFERENCE_MIGRATION_APPLIED_AT = "2026-07-22T00:00:00Z"
@@ -160,17 +168,22 @@ SQLITE_PUBLICATION_SCHEMA_OBJECTS = frozenset(
         ("index", "idx_canonical_snapshots_repository_published"),
         ("trigger", "builds_closed_delete_guard"),
         ("trigger", "builds_closed_update_guard"),
+        ("trigger", "builds_commit_compare_and_swap_guard"),
         ("trigger", "builds_close_staging_guard"),
         ("trigger", "builds_commit_snapshot_guard"),
+        ("trigger", "builds_canonical_snapshot_lineage_update_guard"),
         ("trigger", "builds_initial_state_guard"),
         ("trigger", "builds_state_transition_guard"),
         ("trigger", "canonical_snapshot_records_delete_guard"),
         ("trigger", "canonical_snapshot_records_insert_guard"),
         ("trigger", "canonical_snapshot_records_update_guard"),
+        ("trigger", "canonical_snapshots_build_lineage_insert_guard"),
         ("trigger", "canonical_snapshots_build_open_insert_guard"),
         ("trigger", "canonical_snapshots_delete_guard"),
         ("trigger", "canonical_snapshots_update_guard"),
         ("trigger", "repositories_current_snapshot_insert_guard"),
+        ("trigger", "repositories_current_snapshot_clear_guard"),
+        ("trigger", "repositories_current_snapshot_compare_and_swap_guard"),
         ("trigger", "repositories_current_snapshot_committed_guard"),
         ("trigger", "repositories_current_snapshot_repository_guard"),
         ("trigger", "staged_canonical_records_delete_guard"),
@@ -268,7 +281,7 @@ def validate_sqlite_v03_upgrade_eligibility(
 def validate_sqlite_publication_contract(
     connection: sqlite3.Connection,
 ) -> dict[str, object]:
-    """Probe the v0.3 lossless transactional publication schema."""
+    """Probe the v0.4 lossless transactional publication schema."""
     for table, expected_columns in SQLITE_PUBLICATION_TABLE_COLUMNS.items():
         observed_columns = tuple(
             row[1]
@@ -318,7 +331,14 @@ def validate_sqlite_publication_contract(
             3,
             "transactional_publication",
             "0.3.0",
-            "340a18941b1db769620a364e8893669636b96cbc966f2750739d1f93bacbe2cc",
+            SQLITE_IMMUTABLE_MIGRATION_HISTORY[3][1],
+            SQLITE_REFERENCE_MIGRATION_APPLIED_AT,
+        ),
+        (
+            4,
+            "publication_compare_and_swap",
+            "0.4.0",
+            SQLITE_IMMUTABLE_MIGRATION_HISTORY[4][1],
             SQLITE_REFERENCE_MIGRATION_APPLIED_AT,
         ),
     )
@@ -346,6 +366,28 @@ def validate_sqlite_publication_contract(
         + ',"artifacts":[],'
         + ('"nodes":[],"edges":[],"evidence":[],"diagnostics":[]}')
     )
+    stale_publication_snapshot_json = snapshot_json.replace(
+        "snapshot-contract", "snapshot-stale-publication"
+    )
+    stale_publication_bundle_json = bundle_json.replace(
+        "snapshot-contract", "snapshot-stale-publication"
+    )
+    stale_commit_snapshot_json = snapshot_json.replace(
+        "snapshot-contract", "snapshot-stale-commit"
+    )
+    stale_commit_bundle_json = bundle_json.replace(
+        "snapshot-contract", "snapshot-stale-commit"
+    )
+    lineage_mismatch_snapshot_json = snapshot_json.replace(
+        "snapshot-contract", "snapshot-lineage-mismatch"
+    )
+    lineage_mismatch_bundle_json = bundle_json.replace(
+        "snapshot-contract", "snapshot-lineage-mismatch"
+    )
+    next_snapshot_json = snapshot_json.replace(
+        "snapshot-contract", "snapshot-next"
+    )
+    next_bundle_json = bundle_json.replace("snapshot-contract", "snapshot-next")
     record_json = '{"id":"artifact-contract","path":"source.go"}'
     record_digest = hashlib.sha256(record_json.encode("utf-8")).hexdigest()
 
@@ -358,7 +400,7 @@ def validate_sqlite_publication_contract(
               version, name, target_schema_version, sha256, applied_at
             ) VALUES (?, ?, ?, ?, ?)
             """,
-            (4, "runtime_entry", "0.4.0", "c" * 64, None),
+            (5, "runtime_entry", "0.5.0", "c" * 64, None),
             "a runtime migration journal entry without an application time",
         )
         connection.execute(
@@ -368,9 +410,9 @@ def validate_sqlite_publication_contract(
             ) VALUES (?, ?, ?, ?, ?)
             """,
             (
-                4,
+                5,
                 "runtime_entry",
-                "0.4.0",
+                "0.5.0",
                 "c" * 64,
                 "2026-01-01T00:00:00Z",
             ),
@@ -416,6 +458,32 @@ def validate_sqlite_publication_contract(
                 "open",
                 "2026-01-01T00:00:00Z",
                 "2026-01-01T00:00:00Z",
+            ),
+        )
+        connection.executemany(
+            """
+            INSERT INTO builds(
+              build_id, repository_id, expected_schema, state,
+              created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            (
+                (
+                    "build-stale-publication",
+                    "repository-contract",
+                    "0.2.0",
+                    "open",
+                    "2026-01-01T00:00:00Z",
+                    "2026-01-01T00:00:00Z",
+                ),
+                (
+                    "build-stale-commit",
+                    "repository-contract",
+                    "0.2.0",
+                    "open",
+                    "2026-01-01T00:00:00Z",
+                    "2026-01-01T00:00:00Z",
+                ),
             ),
         )
         expect_sqlite_integrity_rejection(
@@ -509,6 +577,51 @@ def validate_sqlite_publication_contract(
             ("snapshot-contract", "repository-contract"),
             "a current snapshot pointer to an open build",
         )
+        connection.executemany(
+            """
+            INSERT INTO canonical_snapshots(
+              snapshot_id, repository_id, build_id, schema_version,
+              canonical_snapshot_json, canonical_bundle_json,
+              canonical_digest, published_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                (
+                    "snapshot-stale-publication",
+                    "repository-contract",
+                    "build-stale-publication",
+                    "0.2.0",
+                    stale_publication_snapshot_json,
+                    stale_publication_bundle_json,
+                    "b" * 64,
+                    "2026-01-01T00:00:01Z",
+                ),
+                (
+                    "snapshot-stale-commit",
+                    "repository-contract",
+                    "build-stale-commit",
+                    "0.2.0",
+                    stale_commit_snapshot_json,
+                    stale_commit_bundle_json,
+                    "c" * 64,
+                    "2026-01-01T00:00:01Z",
+                ),
+            ),
+        )
+        connection.execute(
+            """
+            UPDATE builds
+            SET state = 'committed', committed_snapshot_id = ?,
+                updated_at = ?, finished_at = ?
+            WHERE build_id = ?
+            """,
+            (
+                "snapshot-stale-publication",
+                "2026-01-01T00:00:01Z",
+                "2026-01-01T00:00:01Z",
+                "build-stale-publication",
+            ),
+        )
         connection.execute(
             "DELETE FROM staged_canonical_records WHERE build_id = ?",
             ("build-contract",),
@@ -534,6 +647,175 @@ def validate_sqlite_publication_contract(
             WHERE repository_id = ?
             """,
             ("snapshot-contract", "repository-contract"),
+        )
+        expect_sqlite_integrity_rejection(
+            connection,
+            """
+            UPDATE builds
+            SET state = 'committed', committed_snapshot_id = ?,
+                updated_at = ?, finished_at = ?
+            WHERE build_id = ?
+            """,
+            (
+                "snapshot-stale-commit",
+                "2026-01-01T00:00:02Z",
+                "2026-01-01T00:00:02Z",
+                "build-stale-commit",
+            ),
+            "a stale build commit after the repository current snapshot changed",
+        )
+        expect_sqlite_integrity_rejection(
+            connection,
+            """
+            UPDATE repositories
+            SET current_snapshot_id = ?
+            WHERE repository_id = ?
+            """,
+            ("snapshot-stale-publication", "repository-contract"),
+            "a stale committed build overwriting the current snapshot",
+        )
+        expect_sqlite_integrity_rejection(
+            connection,
+            """
+            UPDATE repositories
+            SET current_snapshot_id = NULL
+            WHERE repository_id = ?
+            """,
+            ("repository-contract",),
+            "clearing a current snapshot after publication",
+        )
+        connection.execute(
+            """
+            UPDATE repositories
+            SET current_snapshot_id = current_snapshot_id
+            WHERE repository_id = ?
+            """,
+            ("repository-contract",),
+        )
+        expect_sqlite_integrity_rejection(
+            connection,
+            """
+            UPDATE builds
+            SET base_current_snapshot_id = ?, parent_snapshot_id = ?
+            WHERE build_id = ?
+            """,
+            (
+                "snapshot-contract",
+                "snapshot-contract",
+                "build-stale-commit",
+            ),
+            "changing build lineage after its canonical snapshot exists",
+        )
+        connection.execute(
+            """
+            INSERT INTO builds(
+              build_id, repository_id, base_current_snapshot_id,
+              parent_snapshot_id, expected_schema, state,
+              created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                "build-lineage-mismatch",
+                "repository-contract",
+                "snapshot-contract",
+                "snapshot-contract",
+                "0.2.0",
+                "open",
+                "2026-01-01T00:00:02Z",
+                "2026-01-01T00:00:02Z",
+            ),
+        )
+        expect_sqlite_integrity_rejection(
+            connection,
+            """
+            UPDATE builds
+            SET base_current_snapshot_id = NULL, parent_snapshot_id = NULL
+            WHERE build_id = ?
+            """,
+            ("build-lineage-mismatch",),
+            "changing build lineage before its canonical snapshot exists",
+        )
+        expect_sqlite_integrity_rejection(
+            connection,
+            """
+            INSERT INTO canonical_snapshots(
+              snapshot_id, repository_id, build_id, schema_version,
+              canonical_snapshot_json, canonical_bundle_json,
+              canonical_digest, published_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                "snapshot-lineage-mismatch",
+                "repository-contract",
+                "build-lineage-mismatch",
+                "0.2.0",
+                lineage_mismatch_snapshot_json,
+                lineage_mismatch_bundle_json,
+                "d" * 64,
+                "2026-01-01T00:00:02Z",
+            ),
+            "a canonical snapshot whose parent differs from its build base",
+        )
+        connection.execute(
+            """
+            INSERT INTO builds(
+              build_id, repository_id, base_current_snapshot_id,
+              parent_snapshot_id, expected_schema, state,
+              created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                "build-next",
+                "repository-contract",
+                "snapshot-contract",
+                "snapshot-contract",
+                "0.2.0",
+                "open",
+                "2026-01-01T00:00:02Z",
+                "2026-01-01T00:00:02Z",
+            ),
+        )
+        connection.execute(
+            """
+            INSERT INTO canonical_snapshots(
+              snapshot_id, repository_id, parent_snapshot_id, build_id,
+              schema_version, canonical_snapshot_json, canonical_bundle_json,
+              canonical_digest, published_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                "snapshot-next",
+                "repository-contract",
+                "snapshot-contract",
+                "build-next",
+                "0.2.0",
+                next_snapshot_json,
+                next_bundle_json,
+                "e" * 64,
+                "2026-01-01T00:00:02Z",
+            ),
+        )
+        connection.execute(
+            """
+            UPDATE builds
+            SET state = 'committed', committed_snapshot_id = ?,
+                updated_at = ?, finished_at = ?
+            WHERE build_id = ?
+            """,
+            (
+                "snapshot-next",
+                "2026-01-01T00:00:02Z",
+                "2026-01-01T00:00:02Z",
+                "build-next",
+            ),
+        )
+        connection.execute(
+            """
+            UPDATE repositories
+            SET current_snapshot_id = ?
+            WHERE repository_id = ?
+            """,
+            ("snapshot-next", "repository-contract"),
         )
 
         observed_json = connection.execute(
@@ -725,11 +1007,13 @@ def validate_sqlite_publication_contract(
         connection.execute("RELEASE rkc_publication_contract_probe")
 
     return {
-        "contract": "transactional-canonical-v1",
+        "contract": "transactional-canonical-v2",
         "journal_migration_count": len(observed_history),
         "canonical_status": "committed",
         "legacy_projection_status": "complete",
         "legacy_v02_upgrade_policy": "empty-only-explicit-backfill-required",
+        "publication_compare_and_swap": "enforced",
+        "current_pointer_clear_policy": "forbidden-after-publication",
     }
 
 
@@ -1186,7 +1470,7 @@ try:
     version = connection.execute(
         "SELECT value FROM schema_meta WHERE key='schema_version'"
     ).fetchone()[0]
-    record("SQLite DDL", version == "0.3.0", f"schema_version={version}")
+    record("SQLite DDL", version == "0.4.0", f"schema_version={version}")
     connection.close()
 except Exception as exc:
     record("SQLite DDL", False, str(exc))

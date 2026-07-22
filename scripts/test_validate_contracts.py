@@ -95,18 +95,20 @@ class ValidateContractsTests(unittest.TestCase):
         namespace = self.validator_namespace()
         validate = namespace["validate_sqlite_migrations"]
         detail = validate()  # type: ignore[operator]
-        self.assertEqual(detail["migration_count"], 3)
-        self.assertEqual(detail["database_schema_version"], "0.3.0")
+        self.assertEqual(detail["migration_count"], 4)
+        self.assertEqual(detail["database_schema_version"], "0.4.0")
         self.assertRegex(detail["manifest_sha256"], r"^[0-9a-f]{64}$")
         self.assertRegex(detail["catalog_sha256"], r"^[0-9a-f]{64}$")
         self.assertEqual(
             detail["publication_contract"],
             {
-                "contract": "transactional-canonical-v1",
-                "journal_migration_count": 3,
+                "contract": "transactional-canonical-v2",
+                "journal_migration_count": 4,
                 "canonical_status": "committed",
                 "legacy_projection_status": "complete",
                 "legacy_v02_upgrade_policy": "empty-only-explicit-backfill-required",
+                "publication_compare_and_swap": "enforced",
+                "current_pointer_clear_policy": "forbidden-after-publication",
             },
         )
 
@@ -242,7 +244,7 @@ class ValidateContractsTests(unittest.TestCase):
 
             def rewrite_shipped_history(document: dict[str, object]) -> None:
                 migrations = document["migrations"]
-                migrations[0]["name"] = "rewritten_initial"  # type: ignore[index]
+                migrations[3]["name"] = "rewritten_publication"  # type: ignore[index]
 
             expected = rewrite_manifest(root, rewrite_shipped_history)
             with self.assertRaisesRegex(error, "immutable migration history drifted"):
@@ -274,7 +276,7 @@ class ValidateContractsTests(unittest.TestCase):
         with sqlite_contract_fixture() as root:
 
             def drift_final(document: dict[str, object]) -> None:
-                document["database_schema_version"] = "0.4.0"
+                document["database_schema_version"] = "0.5.0"
 
             expected = rewrite_manifest(root, drift_final)
             with self.assertRaisesRegex(error, "final migration target"):
@@ -345,6 +347,7 @@ class ValidateContractsTests(unittest.TestCase):
         namespace = self.validator_namespace()
         validate = namespace["validate_sqlite_migrations"]
         error = namespace["MigrationContractError"]
+        immutable_history = namespace["SQLITE_IMMUTABLE_MIGRATION_HISTORY"]
 
         with sqlite_contract_fixture() as root:
             path = (
@@ -362,8 +365,12 @@ class ValidateContractsTests(unittest.TestCase):
                 migrations[2]["sha256"] = digest  # type: ignore[index]
 
             expected = rewrite_manifest(root, replace_digest)
-            with self.assertRaisesRegex(error, "not canonical UTF-8/LF"):
-                validate(root, expected)  # type: ignore[operator]
+            immutable_v3 = immutable_history.pop(3)  # type: ignore[union-attr]
+            try:
+                with self.assertRaisesRegex(error, "not canonical UTF-8/LF"):
+                    validate(root, expected)  # type: ignore[operator]
+            finally:
+                immutable_history[3] = immutable_v3  # type: ignore[index]
 
         with sqlite_contract_fixture() as root:
             schema = root / "storage" / "sqlite" / "schema.sql"
@@ -403,8 +410,12 @@ class ValidateContractsTests(unittest.TestCase):
                 migrations[2]["sha256"] = digest  # type: ignore[index]
 
             expected = rewrite_manifest(root, replace_digest)
-            with self.assertRaisesRegex(error, "SQLite migration execution failed"):
-                validate(root, expected)  # type: ignore[operator]
+            immutable_v3 = immutable_history.pop(3)  # type: ignore[union-attr]
+            try:
+                with self.assertRaisesRegex(error, "SQLite migration execution failed"):
+                    validate(root, expected)  # type: ignore[operator]
+            finally:
+                immutable_history[3] = immutable_v3  # type: ignore[index]
 
 
 if __name__ == "__main__":

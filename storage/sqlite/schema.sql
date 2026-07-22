@@ -12,7 +12,7 @@ CREATE TABLE IF NOT EXISTS schema_meta (
 ) STRICT;
 
 INSERT INTO schema_meta(key, value)
-VALUES ('schema_version', '0.3.0')
+VALUES ('schema_version', '0.4.0')
 ON CONFLICT(key) DO UPDATE SET value = excluded.value;
 
 CREATE TABLE IF NOT EXISTS repositories (
@@ -493,6 +493,13 @@ VALUES
     '0.3.0',
     '340a18941b1db769620a364e8893669636b96cbc966f2750739d1f93bacbe2cc',
     '2026-07-22T00:00:00Z'
+  ),
+  (
+    4,
+    'publication_compare_and_swap',
+    '0.4.0',
+    'c75e1bc04038c3385acd15fc370c0a866929d33102885a72b305a1a28d9635fc',
+    '2026-07-22T00:00:00Z'
   );
 
 CREATE TABLE IF NOT EXISTS builds (
@@ -664,6 +671,20 @@ BEGIN
   SELECT RAISE(ABORT, 'canonical snapshot requires an open owning build');
 END;
 
+CREATE TRIGGER IF NOT EXISTS canonical_snapshots_build_lineage_insert_guard
+BEFORE INSERT ON canonical_snapshots
+WHEN NOT EXISTS (
+  SELECT 1
+  FROM builds AS build
+  WHERE build.build_id = NEW.build_id
+    AND build.repository_id = NEW.repository_id
+    AND build.base_current_snapshot_id IS NEW.parent_snapshot_id
+    AND build.parent_snapshot_id IS NEW.parent_snapshot_id
+)
+BEGIN
+  SELECT RAISE(ABORT, 'canonical snapshot lineage differs from its owning build');
+END;
+
 CREATE TRIGGER IF NOT EXISTS canonical_snapshots_update_guard
 BEFORE UPDATE ON canonical_snapshots
 BEGIN
@@ -720,6 +741,28 @@ WHEN NEW.state = 'committed'
  )
 BEGIN
   SELECT RAISE(ABORT, 'committed build requires its canonical snapshot');
+END;
+
+CREATE TRIGGER IF NOT EXISTS builds_canonical_snapshot_lineage_update_guard
+BEFORE UPDATE OF base_current_snapshot_id, parent_snapshot_id ON builds
+WHEN NEW.base_current_snapshot_id IS NOT OLD.base_current_snapshot_id
+  OR NEW.parent_snapshot_id IS NOT OLD.parent_snapshot_id
+BEGIN
+  SELECT RAISE(ABORT, 'build lineage is immutable after creation');
+END;
+
+CREATE TRIGGER IF NOT EXISTS builds_commit_compare_and_swap_guard
+BEFORE UPDATE OF state, committed_snapshot_id ON builds
+WHEN OLD.state = 'open'
+ AND NEW.state = 'committed'
+ AND NOT EXISTS (
+   SELECT 1
+   FROM repositories AS repository
+   WHERE repository.repository_id = NEW.repository_id
+     AND repository.current_snapshot_id IS NEW.base_current_snapshot_id
+ )
+BEGIN
+  SELECT RAISE(ABORT, 'current snapshot changed since the build started');
 END;
 
 CREATE TABLE IF NOT EXISTS canonical_snapshot_records (
@@ -864,6 +907,35 @@ WHEN NEW.current_snapshot_id IS NOT NULL
  )
 BEGIN
   SELECT RAISE(ABORT, 'current snapshot requires a committed owning build');
+END;
+
+CREATE TRIGGER IF NOT EXISTS repositories_current_snapshot_clear_guard
+BEFORE UPDATE OF current_snapshot_id ON repositories
+WHEN OLD.current_snapshot_id IS NOT NULL
+ AND NEW.current_snapshot_id IS NULL
+BEGIN
+  SELECT RAISE(ABORT, 'current snapshot cannot be cleared after publication');
+END;
+
+CREATE TRIGGER IF NOT EXISTS repositories_current_snapshot_compare_and_swap_guard
+BEFORE UPDATE OF current_snapshot_id ON repositories
+WHEN NEW.current_snapshot_id IS NOT NULL
+ AND NEW.current_snapshot_id IS NOT OLD.current_snapshot_id
+ AND NOT EXISTS (
+   SELECT 1
+   FROM canonical_snapshots AS snapshot
+   JOIN builds AS build
+     ON build.build_id = snapshot.build_id
+    AND build.repository_id = snapshot.repository_id
+   WHERE snapshot.snapshot_id = NEW.current_snapshot_id
+     AND snapshot.repository_id = NEW.repository_id
+     AND snapshot.parent_snapshot_id IS build.base_current_snapshot_id
+     AND snapshot.parent_snapshot_id IS build.parent_snapshot_id
+     AND build.base_current_snapshot_id IS OLD.current_snapshot_id
+     AND build.parent_snapshot_id IS OLD.current_snapshot_id
+ )
+BEGIN
+  SELECT RAISE(ABORT, 'current snapshot changed since the owning build started');
 END;
 
 COMMIT;

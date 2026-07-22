@@ -1,6 +1,6 @@
 {
   "schema_version": "1.0",
-  "database_schema_version": "0.3.0",
+  "database_schema_version": "0.4.0",
   "migrations": [
     {
       "version": 1,
@@ -21,6 +21,13 @@
       "name": "transactional_publication",
       "target_schema_version": "0.3.0",
       "sha256": "340a18941b1db769620a364e8893669636b96cbc966f2750739d1f93bacbe2cc",
+      "minimum_rkc": "0.3.0-reference"
+    },
+    {
+      "version": 4,
+      "name": "publication_compare_and_swap",
+      "target_schema_version": "0.4.0",
+      "sha256": "c75e1bc04038c3385acd15fc370c0a866929d33102885a72b305a1a28d9635fc",
       "minimum_rkc": "0.3.0-reference"
     }
   ]
