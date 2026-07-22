@@ -11,26 +11,110 @@ if [[ -z ${RKC_RESOURCE_GUARD_UNIT:-} ]]; then
   exit 1
 fi
 
-for required in git go make python3 sha256sum; do
+for required in git go make sha256sum; do
   if ! command -v "$required" >/dev/null 2>&1; then
     echo "self-catalogue: required command not found: $required" >&2
     exit 1
   fi
 done
 
-PYTHON=python3
-if [[ -x .venv/bin/python ]]; then
-  PYTHON=.venv/bin/python
+# Self-cataloguing is a supply-chain boundary. Never inherit an activated or
+# repository-local virtual environment: every helper in this workflow uses only
+# the Python standard library from a system interpreter.
+PYTHON=
+for candidate in /usr/bin/python3 /usr/local/bin/python3; do
+  if [[ -x $candidate ]] && "$candidate" -I -S -c \
+    'import sys; raise SystemExit(sys.prefix != sys.base_prefix)'; then
+    PYTHON=$candidate
+    break
+  fi
+done
+if [[ -z $PYTHON ]]; then
+  echo "self-catalogue: an isolated, non-virtualenv system python3 is required" >&2
+  exit 1
 fi
 
 WORK=$(mktemp -d "${TMPDIR:-/tmp}/rkc-self-catalogue.XXXXXX")
 SOURCE="$WORK/RKC"
 SOURCE_MANIFEST="$WORK/source-manifest.json"
 STATUS="$WORK/git-status"
+FINAL_STATUS="$WORK/git-status-final"
 BUILD_INFO="$WORK/rkc-build-info"
-MANIFEST="$WORK/MANIFEST.json"
-CHECKSUMS="$WORK/SHA256SUMS.txt"
-trap 'rm -rf -- "$WORK"' EXIT INT TERM
+STAGING=
+COMMIT=
+
+quarantine_incomplete_staging() {
+  [[ -n ${STAGING:-} && -e $STAGING ]] || return 0
+  "$PYTHON" -I -S - "$ROOT" "$STAGING" <<'PY'
+from __future__ import annotations
+
+import json
+import os
+import secrets
+import stat
+import sys
+from pathlib import Path
+
+root = Path(sys.argv[1])
+stage = Path(sys.argv[2])
+dist = root / "dist"
+marker_name = ".rkc-self-catalogue.json"
+marker = (
+    json.dumps(
+        {"kind": "rkc-self-catalogue", "producer": "rkc", "schema_version": "1.0.0"},
+        indent=2,
+        sort_keys=True,
+    )
+    + "\n"
+).encode()
+if stage.parent != dist or not stage.name.startswith(".rkc-self-catalogue-build-"):
+    raise SystemExit("refusing to quarantine an unrecognized staging path")
+flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0)
+dist_fd = os.open(dist, flags)
+try:
+    info = os.stat(stage.name, dir_fd=dist_fd, follow_symlinks=False)
+    if not stat.S_ISDIR(info.st_mode) or info.st_uid != os.getuid() or info.st_mode & 0o077:
+        raise SystemExit("refusing to quarantine staging without private ownership")
+    stage_fd = os.open(stage.name, flags, dir_fd=dist_fd)
+    try:
+        marker_fd = os.open(
+            marker_name,
+            os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0),
+            dir_fd=stage_fd,
+        )
+        with os.fdopen(marker_fd, "rb") as handle:
+            if handle.read(len(marker) + 1) != marker:
+                raise SystemExit("refusing to quarantine staging with an invalid marker")
+    finally:
+        os.close(stage_fd)
+    for _attempt in range(128):
+        quarantine = f".rkc-self-catalogue-quarantine-failed-{secrets.token_hex(8)}"
+        try:
+            os.stat(quarantine, dir_fd=dist_fd, follow_symlinks=False)
+        except FileNotFoundError:
+            os.rename(stage.name, quarantine, src_dir_fd=dist_fd, dst_dir_fd=dist_fd)
+            os.fsync(dist_fd)
+            print(f"self-catalogue: quarantined incomplete staging at dist/{quarantine}", file=sys.stderr)
+            break
+    else:
+        raise SystemExit("could not allocate an exclusive quarantine name")
+finally:
+    os.close(dist_fd)
+PY
+}
+
+cleanup() {
+  result=$?
+  trap - EXIT INT TERM
+  if (( result != 0 )); then
+    quarantine_incomplete_staging || \
+      echo "self-catalogue: WARNING: failed staging could not be quarantined" >&2
+  fi
+  rm -rf -- "$WORK"
+  exit "$result"
+}
+trap cleanup EXIT
+trap 'exit 130' INT TERM
 
 # Generated and local runtime trees are named explicitly because RKC exclusions
 # are exact paths, not globs. The staging policy below additionally rejects every
@@ -62,22 +146,6 @@ EXCLUSIONS=(
   venv
 )
 
-git status --porcelain=v1 -z --untracked-files=all --ignore-submodules=none >"$STATUS"
-if [[ -s "$STATUS" ]]; then
-  echo "self-catalogue: Git worktree is dirty; commit or remove all changes first" >&2
-  "$PYTHON" - "$STATUS" <<'PY' >&2
-import sys
-from pathlib import Path
-
-entries = [item for item in Path(sys.argv[1]).read_bytes().split(b"\0") if item]
-for entry in entries[:20]:
-    print("  " + entry.decode("utf-8", errors="replace"))
-if len(entries) > 20:
-    print(f"  ... and {len(entries) - 20} more")
-PY
-  exit 1
-fi
-
 COMMIT=$(git rev-parse HEAD)
 TREE=$(git rev-parse 'HEAD^{tree}')
 OBJECT_FORMAT=$(git rev-parse --show-object-format)
@@ -90,15 +158,33 @@ if [[ ! $TREE =~ ^[0-9a-f]{40}$ && ! $TREE =~ ^[0-9a-f]{64}$ ]]; then
   exit 1
 fi
 
+git status --porcelain=v1 -z --untracked-files=all --ignore-submodules=none >"$STATUS"
+if [[ -s "$STATUS" ]]; then
+  echo "self-catalogue: Git worktree is dirty; commit or remove all changes first" >&2
+  "$PYTHON" -I -S - "$STATUS" <<'PY' >&2
+import sys
+from pathlib import Path
+
+entries = [item for item in Path(sys.argv[1]).read_bytes().split(b"\0") if item]
+for entry in entries[:20]:
+    print("  " + entry.decode("utf-8", errors="replace"))
+if len(entries) > 20:
+    print(f"  ... and {len(entries) - 20} more")
+PY
+  exit 1
+fi
+if [[ $(git rev-parse HEAD) != "$COMMIT" || $(git rev-parse 'HEAD^{tree}') != "$TREE" ]]; then
+  echo "self-catalogue: HEAD changed during initial source capture" >&2
+  exit 1
+fi
+
 mkdir -m 0700 "$SOURCE"
-"$PYTHON" - "$ROOT" "$SOURCE" "$SOURCE_MANIFEST" "$COMMIT" "$TREE" "$OBJECT_FORMAT" "${EXCLUSIONS[@]}" <<'PY'
+"$PYTHON" -I -S - "$ROOT" "$SOURCE" "$SOURCE_MANIFEST" "$COMMIT" "$TREE" "$OBJECT_FORMAT" "${EXCLUSIONS[@]}" <<'PY'
 from __future__ import annotations
 
 import hashlib
 import json
 import os
-import re
-import stat
 import subprocess
 import sys
 from pathlib import Path, PurePosixPath
@@ -143,15 +229,24 @@ def is_excluded(path: PurePosixPath) -> bool:
     )
 
 
+tree_result = subprocess.run(
+    ["git", "rev-parse", f"{commit}^{{tree}}"],
+    cwd=root,
+    check=False,
+    stdout=subprocess.PIPE,
+    stderr=subprocess.PIPE,
+)
+if tree_result.returncode != 0 or tree_result.stdout.decode("ascii").strip() != tree:
+    fail("recorded commit no longer resolves to the recorded tree")
 result = subprocess.run(
-    ["git", "ls-files", "--cached", "--stage", "-z"],
+    ["git", "ls-tree", "-r", "-z", "--full-tree", commit],
     cwd=root,
     check=False,
     stdout=subprocess.PIPE,
     stderr=subprocess.PIPE,
 )
 if result.returncode != 0:
-    fail("cannot enumerate the stage-zero Git index: " + result.stderr.decode(errors="replace"))
+    fail("cannot enumerate the recorded commit tree: " + result.stderr.decode(errors="replace"))
 
 records = []
 excluded_tracked = []
@@ -161,20 +256,18 @@ for raw in result.stdout.split(b"\0"):
         continue
     try:
         header, raw_name = raw.split(b"\t", 1)
-        mode, object_id, stage = header.split(b" ", 2)
+        mode, kind, object_id = header.split(b" ", 2)
         name = raw_name.decode("utf-8")
         expected_object = object_id.decode("ascii")
     except (UnicodeDecodeError, ValueError) as exc:
-        fail(f"malformed or non-UTF-8 Git index entry: {exc}")
+        fail(f"malformed or non-UTF-8 commit-tree entry: {exc}")
     path = safe_path(name)
-    if stage != b"0":
-        fail(f"unmerged Git index entry: {name}")
     if mode in {b"120000", b"160000"}:
         fail(f"tracked symlink or submodule is prohibited: {name}")
-    if mode not in {b"100644", b"100755"}:
+    if kind != b"blob" or mode not in {b"100644", b"100755"}:
         fail(f"unsupported tracked mode {mode!r}: {name}")
     if name in seen:
-        fail(f"duplicate Git index path: {name}")
+        fail(f"duplicate commit-tree path: {name}")
     seen.add(name)
     if is_excluded(path):
         excluded_tracked.append(name)
@@ -184,31 +277,31 @@ for raw in result.stdout.split(b"\0"):
     if path.suffix.lower() in weight_suffixes:
         fail(f"tracked model-weight/native tensor suffix is prohibited: {name}")
 
-    cursor = root
-    for component in path.parts[:-1]:
-        cursor /= component
-        info = os.lstat(cursor)
-        if stat.S_ISLNK(info.st_mode) or not stat.S_ISDIR(info.st_mode):
-            fail(f"source parent traverses a link or special file: {name}")
-    source = root.joinpath(*path.parts)
-    initial = os.lstat(source)
-    if stat.S_ISLNK(initial.st_mode) or not stat.S_ISREG(initial.st_mode):
-        fail(f"tracked source is not a regular file: {name}")
-    if initial.st_size > maximum_bytes:
-        fail(f"tracked source exceeds the 64 MiB self-scan ceiling: {name}")
-    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
-    descriptor = os.open(source, flags)
-    with os.fdopen(descriptor, "rb") as handle:
-        before = os.fstat(handle.fileno())
-        payload = handle.read(maximum_bytes + 1)
-        after = os.fstat(handle.fileno())
-    identity = lambda item: (
-        item.st_dev, item.st_ino, item.st_size, item.st_mtime_ns, item.st_ctime_ns
+    size_result = subprocess.run(
+        ["git", "cat-file", "-s", expected_object],
+        cwd=root,
+        check=False,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
     )
-    if identity(initial) != identity(before) or identity(before) != identity(after):
-        fail(f"tracked source changed while read: {name}")
-    if len(payload) > maximum_bytes:
-        fail(f"tracked source grew beyond the 64 MiB ceiling: {name}")
+    try:
+        object_size = int(size_result.stdout.decode("ascii").strip())
+    except (UnicodeDecodeError, ValueError):
+        fail(f"cannot determine committed blob size: {name}")
+    if size_result.returncode != 0 or object_size < 0 or object_size > maximum_bytes:
+        fail(f"committed blob exceeds the 64 MiB self-scan ceiling: {name}")
+    blob_result = subprocess.run(
+        ["git", "cat-file", "blob", expected_object],
+        cwd=root,
+        check=False,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+    if blob_result.returncode != 0:
+        fail(f"cannot read committed blob: {name}")
+    payload = blob_result.stdout
+    if len(payload) != object_size:
+        fail(f"committed blob size changed while read: {name}")
     if payload.startswith(weight_magic) or payload.startswith(
         b"version https://git-lfs.github.com/spec/v1"
     ):
@@ -217,7 +310,7 @@ for raw in result.stdout.split(b"\0"):
     object_hash.update(f"blob {len(payload)}\0".encode())
     object_hash.update(payload)
     if object_hash.hexdigest() != expected_object:
-        fail(f"working source differs from the Git index object: {name}")
+        fail(f"committed blob failed object-integrity verification: {name}")
 
     destination = target.joinpath(*path.parts)
     destination.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
@@ -242,7 +335,7 @@ if not records:
     fail("no eligible tracked source files")
 manifest = {
     "schema_version": "1.0.0",
-    "selection": "git-stage-zero-regular-files",
+    "selection": "recorded-commit-tree-regular-blobs",
     "source": {"commit": commit, "tree": tree, "object_format": object_format},
     "policy": {
         "exact_exclusions": list(exclusions),
@@ -264,40 +357,99 @@ with manifest_path.open("xb") as handle:
     handle.write(encoded)
 PY
 
-# The build is deliberately inside the same subordinate cgroup as the scan.
-make build
-RKC_BIN="$ROOT/bin/rkc"
+# The build consumes the exact detached tree assembled above. It never reads the
+# mutable checkout, index, or an ignored virtual environment.
+env -u MAKEFLAGS -u MFLAGS -u MAKEFILES \
+  make -C "$SOURCE" PYTHON="$PYTHON" build
+RKC_BIN="$SOURCE/bin/rkc"
 if [[ ! -f $RKC_BIN || ! -x $RKC_BIN || -L $RKC_BIN ]]; then
-  echo "self-catalogue: bin/rkc must be a real executable" >&2
+  echo "self-catalogue: staged-source bin/rkc must be a real executable" >&2
   exit 1
 fi
 go version -m "$RKC_BIN" >"$BUILD_INFO"
-if ! grep -Fq $'\tbuild\tvcs.revision='"$COMMIT" "$BUILD_INFO"; then
-  echo "self-catalogue: bin/rkc is not bound to the source commit" >&2
-  exit 1
-fi
-if ! grep -Fq $'\tbuild\tvcs.modified=false' "$BUILD_INFO"; then
-  echo "self-catalogue: bin/rkc build metadata is dirty" >&2
+if grep -Fq $'\tbuild\tvcs.modified=true' "$BUILD_INFO"; then
+  echo "self-catalogue: staged-source binary reports dirty VCS metadata" >&2
   exit 1
 fi
 if ! grep -Fq $'\tbuild\t-trimpath=true' "$BUILD_INFO"; then
-  echo "self-catalogue: bin/rkc was not built with -trimpath" >&2
+  echo "self-catalogue: staged-source bin/rkc was not built with -trimpath" >&2
+  exit 1
+fi
+if grep -Fq $'\tbuild\tvcs.revision=' "$BUILD_INFO" && \
+  ! grep -Fq $'\tbuild\tvcs.revision='"$COMMIT" "$BUILD_INFO"; then
+  echo "self-catalogue: staged-source binary reports the wrong VCS revision" >&2
   exit 1
 fi
 
-OUT="$ROOT/dist/self-catalogue"
-ATLAS="$OUT/atlas"
-"$PYTHON" - "$ROOT" "$OUT" <<'PY'
+# Verify that the build changed only its explicitly excluded bin directory and
+# that every committed input still matches the recorded Git blob.
+verify_staged_source() {
+  "$PYTHON" -I -S - "$SOURCE" "$SOURCE_MANIFEST" <<'PY'
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import stat
 import sys
 from pathlib import Path
 
+source = Path(sys.argv[1])
+manifest = json.loads(Path(sys.argv[2]).read_text(encoding="utf-8"))
+expected = {item["path"]: item for item in manifest["files"]}
+allowed_generated = {"bin/rkc", "bin/rkc-mcp"}
+observed = set()
+for current, directories, files in os.walk(source, topdown=True, followlinks=False):
+    directories.sort()
+    files.sort()
+    base = Path(current)
+    for name in directories:
+        info = os.lstat(base / name)
+        if stat.S_ISLNK(info.st_mode) or not stat.S_ISDIR(info.st_mode):
+            raise SystemExit(f"self-catalogue source audit: link/special directory: {base / name}")
+    for name in files:
+        path = base / name
+        relative = path.relative_to(source).as_posix()
+        info = os.lstat(path)
+        if stat.S_ISLNK(info.st_mode) or not stat.S_ISREG(info.st_mode):
+            raise SystemExit(f"self-catalogue source audit: link/special file: {relative}")
+        if relative in allowed_generated:
+            continue
+        record = expected.get(relative)
+        if record is None:
+            raise SystemExit(f"self-catalogue source audit: unexpected build output: {relative}")
+        data = path.read_bytes()
+        if len(data) != record["size_bytes"] or hashlib.sha256(data).hexdigest() != record["sha256"]:
+            raise SystemExit(f"self-catalogue source audit: committed source mutated: {relative}")
+        required_mode = 0o755 if record["mode"] == "100755" else 0o644
+        if stat.S_IMODE(info.st_mode) != required_mode:
+            raise SystemExit(f"self-catalogue source audit: committed mode mutated: {relative}")
+        observed.add(relative)
+if observed != set(expected):
+    missing = sorted(set(expected) - observed)
+    raise SystemExit(f"self-catalogue source audit: committed files missing: {missing[:5]}")
+for relative in sorted(allowed_generated):
+    path = source / relative
+    info = os.lstat(path)
+    if stat.S_ISLNK(info.st_mode) or not stat.S_ISREG(info.st_mode):
+        raise SystemExit(f"self-catalogue source audit: invalid staged binary: {relative}")
+PY
+}
+verify_staged_source
+
+# Allocate a private same-filesystem sibling. Until the final atomic rename or
+# exchange, the last-known-good dist/self-catalogue directory is untouched.
+STAGING=$("$PYTHON" -I -S - "$ROOT" <<'PY'
+from __future__ import annotations
+
+import json
+import os
+import secrets
+import stat
+import sys
+from pathlib import Path
+
 root = Path(sys.argv[1])
-output = Path(sys.argv[2])
 dist = root / "dist"
 marker_name = ".rkc-self-catalogue.json"
 marker = (
@@ -308,45 +460,48 @@ marker = (
     )
     + "\n"
 ).encode()
-
 if not os.path.lexists(dist):
     dist.mkdir(mode=0o755)
-dist_info = os.lstat(dist)
-if stat.S_ISLNK(dist_info.st_mode) or not stat.S_ISDIR(dist_info.st_mode):
-    raise SystemExit("self-catalogue output: dist is not a real directory")
-if not os.path.lexists(output):
-    output.mkdir(mode=0o700)
-    descriptor = os.open(
-        output / marker_name,
-        os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0),
-        0o600,
-    )
-    with os.fdopen(descriptor, "wb") as handle:
-        handle.write(marker)
-else:
-    info = os.lstat(output)
-    if stat.S_ISLNK(info.st_mode) or not stat.S_ISDIR(info.st_mode):
-        raise SystemExit("self-catalogue output: target is not a real directory")
-    if info.st_uid != os.getuid() or info.st_mode & 0o022:
-        raise SystemExit("self-catalogue output: target is not private and owner-controlled")
-    marker_path = output / marker_name
-    marker_info = os.lstat(marker_path)
-    if stat.S_ISLNK(marker_info.st_mode) or not stat.S_ISREG(marker_info.st_mode):
-        raise SystemExit("self-catalogue output: ownership marker is not regular")
-    if marker_path.read_bytes() != marker:
-        raise SystemExit("self-catalogue output: ownership marker mismatch")
-
-allowed = {marker_name, "atlas", "MANIFEST.json", "SHA256SUMS.txt"}
-for child in output.iterdir():
-    info = os.lstat(child)
-    if stat.S_ISLNK(info.st_mode):
-        raise SystemExit(f"self-catalogue output: symlink is prohibited: {child.name}")
-    if child.name in allowed:
-        continue
-    if child.name.startswith((".rkc-build-", ".rkc-quarantine-")) and stat.S_ISDIR(info.st_mode):
-        continue
-    raise SystemExit(f"self-catalogue output: unexpected entry: {child.name}")
+info = os.lstat(dist)
+if stat.S_ISLNK(info.st_mode) or not stat.S_ISDIR(info.st_mode) or info.st_uid != os.getuid():
+    raise SystemExit("self-catalogue output: dist must be a real owner-controlled directory")
+flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0)
+dist_fd = os.open(dist, flags)
+try:
+    for _attempt in range(128):
+        name = f".rkc-self-catalogue-build-{secrets.token_hex(8)}"
+        try:
+            os.mkdir(name, mode=0o700, dir_fd=dist_fd)
+            break
+        except FileExistsError:
+            continue
+    else:
+        raise SystemExit("self-catalogue output: could not allocate private staging")
+    stage_fd = os.open(name, flags, dir_fd=dist_fd)
+    try:
+        marker_fd = os.open(
+            marker_name,
+            os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0),
+            0o600,
+            dir_fd=stage_fd,
+        )
+        with os.fdopen(marker_fd, "wb") as handle:
+            handle.write(marker)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.fsync(stage_fd)
+    finally:
+        os.close(stage_fd)
+    os.fsync(dist_fd)
+finally:
+    os.close(dist_fd)
+print(dist / name)
 PY
+)
+OUT="$STAGING"
+ATLAS="$OUT/atlas"
+MANIFEST="$OUT/MANIFEST.json"
+CHECKSUMS="$OUT/SHA256SUMS.txt"
 
 SCAN_ARGS=(
   scan
@@ -355,7 +510,7 @@ SCAN_ARGS=(
   --out "$ATLAS"
   --force
   # Keep the canonical toolchain identity independent of checkout location.
-  --python python3
+  --python "$PYTHON"
 )
 for excluded in "${EXCLUSIONS[@]}"; do
   SCAN_ARGS+=(--exclude "$excluded")
@@ -375,9 +530,9 @@ done
   --max-high-confidence-secrets 0 \
   >"$WORK/check.json"
 
-"$PYTHON" - \
+"$PYTHON" -I -S - \
   "$ROOT" "$OUT" "$ATLAS" "$SOURCE_MANIFEST" "$WORK/scan.json" "$WORK/check.json" \
-  "$RKC_BIN" "$COMMIT" "$TREE" "$MANIFEST" "$CHECKSUMS" <<'PY'
+  "$RKC_BIN" "$BUILD_INFO" "$COMMIT" "$TREE" "$MANIFEST" "$CHECKSUMS" <<'PY'
 from __future__ import annotations
 
 import hashlib
@@ -395,6 +550,7 @@ from pathlib import Path
     scan_value,
     check_value,
     binary_value,
+    build_info_value,
     commit,
     tree,
     manifest_value,
@@ -534,6 +690,23 @@ if set(observed) - declared != allowed_unlisted:
 records.append(observed["atlas/.rkc-generated.json"])
 records.sort(key=lambda item: item["path"])
 binary, _binary_info = stable_file(Path(binary_value))
+build_info = stable_file(Path(build_info_value))[0].decode("utf-8")
+build_metadata = [line for line in build_info.splitlines() if line.startswith("\t")]
+reported_revision = next(
+    (
+        line.removeprefix("\tbuild\tvcs.revision=")
+        for line in build_metadata
+        if line.startswith("\tbuild\tvcs.revision=")
+    ),
+    None,
+)
+if reported_revision not in {None, commit}:
+    raise SystemExit("self-catalogue manifest: staged binary reports the wrong VCS revision")
+if source_manifest.get("selection") != "recorded-commit-tree-regular-blobs":
+    raise SystemExit("self-catalogue manifest: source selection is not commit-tree bound")
+source_identity = source_manifest.get("source", {})
+if source_identity.get("commit") != commit or source_identity.get("tree") != tree:
+    raise SystemExit("self-catalogue manifest: source receipt identity mismatch")
 
 manifest = {
     "schema_version": "1.0.0",
@@ -544,7 +717,15 @@ manifest = {
         "selection_manifest": source_manifest,
     },
     "tool": {
-        "path": "bin/rkc",
+        "build_provenance": {
+            "binary_retained": False,
+            "go_version_metadata": build_metadata,
+            "source": "exact detached recorded commit tree",
+            "vcs_metadata": (
+                "commit-bound" if reported_revision else "absent-by-design-detached-tree"
+            ),
+        },
+        "path": "ephemeral-staged-source/bin/rkc",
         "sha256": hashlib.sha256(binary).hexdigest(),
     },
     "atlas": {
@@ -571,6 +752,9 @@ manifest = {
 encoded = (json.dumps(manifest, indent=2, sort_keys=True) + "\n").encode()
 with manifest_path.open("xb") as handle:
     handle.write(encoded)
+    handle.flush()
+    os.fchmod(handle.fileno(), 0o644)
+    os.fsync(handle.fileno())
 
 checksum_records = [
     {
@@ -584,20 +768,227 @@ checksum_records.sort(key=lambda item: item["path"])
 with checksums_path.open("x", encoding="utf-8") as handle:
     for item in checksum_records:
         handle.write(f"{item['sha256']}  {item['path']}\n")
+    handle.flush()
+    os.fchmod(handle.fileno(), 0o644)
+    os.fsync(handle.fileno())
 PY
 
-"$PYTHON" scripts/publish_file.py \
-  --source "$MANIFEST" \
-  --destination "$OUT/MANIFEST.json" \
-  --mode 0644
-"$PYTHON" scripts/publish_file.py \
-  --source "$CHECKSUMS" \
-  --destination "$OUT/SHA256SUMS.txt" \
-  --mode 0644
+verify_staged_source
 
 (
   cd "$OUT"
   sha256sum --check --strict SHA256SUMS.txt >/dev/null
 )
 
-echo "self-catalogue: verified atlas, graph, search, docs, manifest, and hashes at $OUT"
+# Require a complete, link-free staging tree and durably flush every inode before
+# the publication point. No byte in dist/self-catalogue has been touched yet.
+"$PYTHON" -I -S - "$OUT" <<'PY'
+from __future__ import annotations
+
+import os
+import stat
+import sys
+from pathlib import Path
+
+output = Path(sys.argv[1])
+expected = {".rkc-self-catalogue.json", "atlas", "MANIFEST.json", "SHA256SUMS.txt"}
+if {item.name for item in output.iterdir()} != expected:
+    raise SystemExit("self-catalogue publication: staging is not a complete exact output")
+directories = []
+for current, names, files in os.walk(output, topdown=True, followlinks=False):
+    names.sort()
+    files.sort()
+    base = Path(current)
+    directories.append(base)
+    for name in names:
+        info = os.lstat(base / name)
+        if stat.S_ISLNK(info.st_mode) or not stat.S_ISDIR(info.st_mode):
+            raise SystemExit(f"self-catalogue publication: invalid directory: {base / name}")
+    for name in files:
+        path = base / name
+        info = os.lstat(path)
+        if stat.S_ISLNK(info.st_mode) or not stat.S_ISREG(info.st_mode):
+            raise SystemExit(f"self-catalogue publication: invalid file: {path}")
+        descriptor = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+        try:
+            os.fsync(descriptor)
+        finally:
+            os.close(descriptor)
+flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0)
+for directory in reversed(directories):
+    descriptor = os.open(directory, flags)
+    try:
+        os.fsync(descriptor)
+    finally:
+        os.close(descriptor)
+PY
+
+# Abort rather than publishing stale evidence if any concurrent process changed
+# HEAD, its tree, the index, a tracked file, or an untracked source path.
+git status --porcelain=v1 -z --untracked-files=all --ignore-submodules=none >"$FINAL_STATUS"
+if [[ -s "$FINAL_STATUS" ]]; then
+  echo "self-catalogue: Git state changed during generation; preserving the last-known-good output" >&2
+  exit 1
+fi
+if [[ $(git rev-parse HEAD) != "$COMMIT" || $(git rev-parse 'HEAD^{tree}') != "$TREE" ]]; then
+  echo "self-catalogue: HEAD or its tree changed during generation; publication refused" >&2
+  exit 1
+fi
+
+# Linux renameat2(RENAME_EXCHANGE) gives an atomic whole-directory replacement
+# when a last-known-good catalogue exists. Failures are rolled back; a replaced
+# verified catalogue is retained under a marker-bound quarantine name.
+"$PYTHON" -I -S - "$ROOT" "$STAGING" "$COMMIT" <<'PY'
+from __future__ import annotations
+
+import ctypes
+import errno
+import json
+import os
+import secrets
+import stat
+import sys
+from pathlib import Path
+
+root = Path(sys.argv[1])
+stage = Path(sys.argv[2])
+commit = sys.argv[3]
+dist = root / "dist"
+final_name = "self-catalogue"
+marker_name = ".rkc-self-catalogue.json"
+expected_entries = {marker_name, "atlas", "MANIFEST.json", "SHA256SUMS.txt"}
+marker = (
+    json.dumps(
+        {"kind": "rkc-self-catalogue", "producer": "rkc", "schema_version": "1.0.0"},
+        indent=2,
+        sort_keys=True,
+    )
+    + "\n"
+).encode()
+
+if not sys.platform.startswith("linux"):
+    raise SystemExit("self-catalogue publication: atomic directory exchange requires Linux")
+if stage.parent != dist or not stage.name.startswith(".rkc-self-catalogue-build-"):
+    raise SystemExit("self-catalogue publication: invalid staging identity")
+
+directory_flags = (
+    os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0)
+)
+dist_fd = os.open(dist, directory_flags)
+
+
+def inspect_owned(name: str, *, private: bool) -> tuple[int, int]:
+    info = os.stat(name, dir_fd=dist_fd, follow_symlinks=False)
+    forbidden = 0o077 if private else 0o022
+    if not stat.S_ISDIR(info.st_mode) or info.st_uid != os.getuid() or info.st_mode & forbidden:
+        raise SystemExit(f"self-catalogue publication: unsafe owned directory: {name}")
+    descriptor = os.open(name, directory_flags, dir_fd=dist_fd)
+    try:
+        if set(os.listdir(descriptor)) != expected_entries:
+            raise SystemExit(f"self-catalogue publication: incomplete owned directory: {name}")
+        marker_fd = os.open(
+            marker_name,
+            os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0),
+            dir_fd=descriptor,
+        )
+        with os.fdopen(marker_fd, "rb") as handle:
+            if handle.read(len(marker) + 1) != marker:
+                raise SystemExit(f"self-catalogue publication: ownership marker mismatch: {name}")
+    finally:
+        os.close(descriptor)
+    return (info.st_dev, info.st_ino)
+
+
+libc = ctypes.CDLL(None, use_errno=True)
+renameat2 = getattr(libc, "renameat2", None)
+if renameat2 is None:
+    raise SystemExit("self-catalogue publication: libc renameat2 is unavailable")
+renameat2.argtypes = [ctypes.c_int, ctypes.c_char_p, ctypes.c_int, ctypes.c_char_p, ctypes.c_uint]
+renameat2.restype = ctypes.c_int
+
+
+def exchange(left: str, right: str) -> None:
+    if renameat2(dist_fd, os.fsencode(left), dist_fd, os.fsencode(right), 2) != 0:
+        error = ctypes.get_errno()
+        raise OSError(error, os.strerror(error))
+
+
+def no_replace(left: str, right: str) -> None:
+    if renameat2(dist_fd, os.fsencode(left), dist_fd, os.fsencode(right), 1) != 0:
+        error = ctypes.get_errno()
+        raise OSError(error, os.strerror(error))
+
+
+def rollback_exchange(stage_name: str) -> None:
+    try:
+        exchange(stage_name, final_name)
+        os.fsync(dist_fd)
+    except OSError as exc:
+        raise SystemExit(
+            "self-catalogue publication: FATAL atomic rollback failed; inspect both owned directories: "
+            + str(exc)
+        ) from exc
+
+
+try:
+    stage_identity = inspect_owned(stage.name, private=True)
+    try:
+        os.stat(final_name, dir_fd=dist_fd, follow_symlinks=False)
+    except FileNotFoundError:
+        moved = False
+        try:
+            no_replace(stage.name, final_name)
+            moved = True
+            os.fsync(dist_fd)
+        except OSError as exc:
+            if moved:
+                final_info = os.stat(final_name, dir_fd=dist_fd, follow_symlinks=False)
+                if (final_info.st_dev, final_info.st_ino) == stage_identity:
+                    os.rename(final_name, stage.name, src_dir_fd=dist_fd, dst_dir_fd=dist_fd)
+                    os.fsync(dist_fd)
+            raise SystemExit(f"self-catalogue publication: atomic initial publish failed: {exc}") from exc
+        print("self-catalogue: atomically published first verified catalogue")
+    else:
+        inspect_owned(final_name, private=False)
+        exchanged = False
+        try:
+            exchange(stage.name, final_name)
+            exchanged = True
+            os.fsync(dist_fd)
+        except OSError as exc:
+            if exchanged:
+                rollback_exchange(stage.name)
+            raise SystemExit(f"self-catalogue publication: atomic exchange failed: {exc}") from exc
+
+        quarantine = ""
+        try:
+            for _attempt in range(128):
+                candidate = (
+                    f".rkc-self-catalogue-quarantine-{commit[:12]}-{secrets.token_hex(6)}"
+                )
+                try:
+                    os.stat(candidate, dir_fd=dist_fd, follow_symlinks=False)
+                except FileNotFoundError:
+                    quarantine = candidate
+                    break
+            if not quarantine:
+                raise OSError(errno.EEXIST, "cannot allocate quarantine name")
+            os.rename(stage.name, quarantine, src_dir_fd=dist_fd, dst_dir_fd=dist_fd)
+            try:
+                os.fsync(dist_fd)
+            except OSError:
+                os.rename(quarantine, stage.name, src_dir_fd=dist_fd, dst_dir_fd=dist_fd)
+                raise
+        except OSError as exc:
+            rollback_exchange(stage.name)
+            raise SystemExit(
+                f"self-catalogue publication: quarantine failed; publication rolled back: {exc}"
+            ) from exc
+        print(f"self-catalogue: prior verified catalogue quarantined at dist/{quarantine}")
+finally:
+    os.close(dist_fd)
+PY
+
+STAGING=
+FINAL_OUT="$ROOT/dist/self-catalogue"
+echo "self-catalogue: verified and atomically published atlas, graph, search, docs, manifest, and hashes at $FINAL_OUT"

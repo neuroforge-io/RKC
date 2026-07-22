@@ -196,17 +196,19 @@ Self-cataloguing never scans the mutable checkout or a directory containing its
 own output:
 
 ```text
-clean stage-zero Git index
-  -> verified private source copy
+clean recorded Git commit tree
+  -> verified private blob copy and detached build
   -> guarded RKC build and scan
-  -> disjoint dist/self-catalogue/atlas
-  -> manifest and canonical-file checksums
+  -> complete disjoint staging catalogue and checksums
+  -> atomic whole-directory publication
 ```
 
-Every admitted byte is checked against its Git object before scanning. Links,
-submodules, special files, model weights, generated/runtime trees, and dirty
-worktrees are rejected. The output manifest records that model execution and
-generated-output ingestion were disabled.
+Every admitted byte is read from and checked against its recorded-tree Git
+object before scanning. Links, submodules, special files, model weights,
+generated/runtime trees, and dirty worktrees are rejected. The last-known-good
+catalogue is never mutated before the replacement is fully validated. The
+output manifest records that model execution and generated-output ingestion
+were disabled.
 
 ## Interface boundary
 

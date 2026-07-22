@@ -262,13 +262,15 @@ From a clean Git worktree, build a complete atlas of RKC's own committed source:
 make self-catalogue
 ```
 
-The target runs inside the mandatory low-priority cgroup guard, stages only
-verified stage-zero Git files into a private temporary source tree, and writes
-to the physically separate `dist/self-catalogue/atlas` tree. Generated output,
-runtime/model trees, model-weight formats, links, and uncommitted files cannot
-become scan input. No model is invoked. `MANIFEST.json` and `SHA256SUMS.txt`
-bind the source commit, tool binary, snapshot, canonical files, and explicit
-non-recursion assertions. See
+The target runs inside the mandatory low-priority cgroup guard, extracts only
+verified blobs from the recorded committed Git tree into a private temporary
+source tree, and builds RKC from that immutable copy. The complete candidate is
+validated in a private sibling before an atomic whole-directory publication to
+`dist/self-catalogue`. Generated output, runtime/model trees, model-weight
+formats, links, and uncommitted files cannot become scan input. No model is
+invoked. `MANIFEST.json` and `SHA256SUMS.txt` bind the source commit, ephemeral
+tool binary, snapshot, canonical files, and explicit non-recursion assertions.
+See
 [`docs/SELF_CATALOGUE.md`](docs/SELF_CATALOGUE.md) for the verification contract.
 
 ## Configuration

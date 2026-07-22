@@ -16,12 +16,26 @@ rejected.
 
 ## Non-recursive source boundary
 
-The workflow does not point RKC at its mutable working directory. It requires a
-clean Git worktree, enumerates only stage-zero entries in the Git index, verifies
-every copied byte against its Git blob, and constructs a private temporary
-source tree. Tracked symlinks, submodules, special files, duplicate paths,
-Git-LFS pointers, files over 64 MiB, and files that change while being read are
-fatal.
+The workflow does not point RKC at its mutable working directory or index. It
+records `HEAD` and its tree while the worktree is clean, enumerates that exact
+commit tree, reads each admitted blob from Git's object database, verifies its
+object hash, and constructs a private detached source tree. The RKC executable
+is built from that detached tree, not from the checkout. Because detached-tree
+builds intentionally have no `.git` directory, the receipt reports absent Go
+VCS metadata honestly and binds the build through the recorded commit/tree,
+source-object manifest, build metadata, and executable hash instead.
+
+Tracked symlinks, submodules, special files, duplicate paths, Git-LFS pointers,
+and blobs over 64 MiB are fatal. The staged source is re-audited after both the
+build and scan. Only `bin/rkc` and `bin/rkc-mcp` may appear beyond the recorded
+blobs, and `bin` remains excluded from ingestion. Immediately before
+publication, the workflow rechecks clean Git status and the exact `HEAD` and
+tree identities; concurrent source changes therefore preserve the prior
+catalogue.
+
+All helper code runs with isolated standard-library-only system Python
+(`/usr/bin/python3` or `/usr/local/bin/python3`). An activated or ignored
+repository `.venv` is never selected.
 
 The temporary source tree and `dist/self-catalogue` output are separate trees.
 Consequently, RKC cannot discover output produced during the scan. The following
@@ -97,10 +111,11 @@ dist/self-catalogue/
 ```
 
 `MANIFEST.json` binds the Git commit and tree, every admitted source path and
-Git object, the built `rkc` binary hash, snapshot identity, deterministic bundle
-digest, RKC canonical-files digest, and every canonical atlas file. The outer
-checksum list covers that manifest, ownership markers, and all canonical atlas
-files.
+Git object, the ephemeral detached-tree `rkc` binary hash and normalized Go
+build metadata, snapshot identity, deterministic bundle digest, RKC
+canonical-files digest, and every canonical atlas file. The executable itself
+is not retained. The outer checksum list covers that manifest, ownership
+markers, and all canonical atlas files.
 
 `atlas/rkc.execution.json` is deliberately operational: it contains the run
 timestamp. `atlas/rkc-export-manifest.json` includes that operational file's
@@ -119,8 +134,13 @@ sha256sum --check --strict SHA256SUMS.txt
   --export-manifest atlas/rkc-export-manifest.json
 ```
 
-An existing `dist/self-catalogue` directory is reusable only when its private
-outer ownership marker matches exactly and it contains no unexpected entries or
-links. RKC's own ownership manifests govern atomic replacement and recovery of
-the `atlas` subdirectory. The wrapper never recursively deletes or adopts an
+The complete candidate directory, including the atlas and both outer receipts,
+is constructed and durably validated in a private sibling below `dist`. Only
+then is the whole directory atomically renamed into place. When a prior
+`dist/self-catalogue` exists, Linux `renameat2(RENAME_EXCHANGE)` swaps the two
+complete directories in one operation; the prior verified catalogue is retained
+under a unique `.rkc-self-catalogue-quarantine-*` sibling. Failed publication is
+rolled back, while failed pre-publication staging is marker-checked and moved to
+an explicit failed quarantine. The wrapper never mutates the last-known-good
+catalogue before success, recursively deletes a catalogue, or adopts an
 unmarked directory.

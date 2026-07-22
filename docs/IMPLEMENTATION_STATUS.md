@@ -55,7 +55,7 @@ The labels below mean:
 | FTS5 runtime search | Planned | depends on SQLite runtime writer |
 | graph paths, impact, SCCs | Implemented | bounded in-memory graph operations |
 | semantic diff | Implemented | conservative logical/signature comparison |
-| guarded self-catalogue | Implemented | clean Git staging; recursive-output and model-weight exclusion; deterministic receipts |
+| guarded self-catalogue | Implemented | immutable commit-tree blob staging; recursive-output/model-weight exclusion; atomic complete publication and deterministic receipts |
 | embeddings | Partial | exact qualified asset/runtime resolver and CLI integration implemented; committed candidate remains unqualified |
 
 ## Model subsystem
