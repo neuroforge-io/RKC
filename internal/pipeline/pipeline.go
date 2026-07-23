@@ -24,6 +24,7 @@ import (
 	"github.com/neuroforge-io/RKC/internal/lang/goast"
 	"github.com/neuroforge-io/RKC/internal/lang/tssyntax"
 	"github.com/neuroforge-io/RKC/internal/plugin"
+	"github.com/neuroforge-io/RKC/internal/scheduler"
 	"github.com/neuroforge-io/RKC/internal/security/secrets"
 	"github.com/neuroforge-io/RKC/pkg/pluginapi"
 	"github.com/neuroforge-io/RKC/pkg/rkcmodel"
@@ -70,9 +71,13 @@ type Options struct {
 	PolicyDigest     string
 	PluginLockDigest string
 	ToolchainDigest  string
+
+	// OnStageEvent receives deterministic scheduler lifecycle events. Callers
+	// must return quickly; the scheduler invokes it synchronously.
+	OnStageEvent func(scheduler.Event)
 }
 
-func Scan(ctx context.Context, opts Options) (rkcmodel.Bundle, rkcmodel.Coverage, error) {
+func scanSequential(ctx context.Context, opts Options) (rkcmodel.Bundle, rkcmodel.Coverage, error) {
 	if ctx == nil {
 		return rkcmodel.Bundle{}, rkcmodel.Coverage{}, errors.New("pipeline scan context is required")
 	}

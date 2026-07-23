@@ -1,6 +1,7 @@
 package pipeline
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/json"
@@ -12,6 +13,7 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/neuroforge-io/RKC/internal/scheduler"
 	"github.com/neuroforge-io/RKC/pkg/pluginapi"
 	"github.com/neuroforge-io/RKC/pkg/rkcmodel"
 )
@@ -57,6 +59,104 @@ func TestScanRedactsCanonicalMarkdownAndIsDeterministic(t *testing.T) {
 	}
 	if first.Snapshot.ID != second.Snapshot.ID || first.Snapshot.ContentDigest != second.Snapshot.ContentDigest || coverage.DeterministicOutputDigest != secondCoverage.DeterministicOutputDigest {
 		t.Fatalf("repeat scan was not deterministic: %s/%s vs %s/%s", first.Snapshot.ID, coverage.DeterministicOutputDigest, second.Snapshot.ID, secondCoverage.DeterministicOutputDigest)
+	}
+}
+
+func TestStagedScanMatchesSequentialOracleAndReportsEveryStage(t *testing.T) {
+	root := t.TempDir()
+	fixtures := map[string]string{
+		".env":         "DATABASE_URL=postgres://localhost/rkc\n",
+		"README.md":    "# Fixture\n\nSee `main.Run` and `greet`.\n",
+		"main.go":      "package fixture\n\nfunc Run() bool { return true }\n",
+		"src/index.ts": "export function greet(name: string): string { return `hello ${name}` }\n",
+	}
+	for path, contents := range fixtures {
+		mustWritePipelineFile(t, filepath.Join(root, filepath.FromSlash(path)), contents)
+	}
+
+	testCases := []struct {
+		name string
+		opts Options
+	}{
+		{
+			name: "mixed adapters",
+			opts: Options{
+				Root: root, ToolVersion: "test", DisablePythonAST: true,
+			},
+		},
+		{
+			name: "all optional analyzers disabled",
+			opts: Options{
+				Root: root, ToolVersion: "test", DisablePlugins: true,
+				DisableFrameworks: true, DisableSecretScan: true,
+			},
+		},
+	}
+	expectedStages := []string{
+		"coverage", "env-keys", "go-syntax", "inventory", "json-schema",
+		"manifests", "markdown", "merge", "normalize", "openapi",
+		"python-syntax", "resolve", "secret-scan", "typescript-syntax", "validate",
+	}
+
+	for _, testCase := range testCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			var events []scheduler.Event
+			testCase.opts.OnStageEvent = func(event scheduler.Event) {
+				events = append(events, event)
+			}
+			stagedBundle, stagedCoverage, err := Scan(context.Background(), testCase.opts)
+			if err != nil {
+				t.Fatalf("staged scan: %v", err)
+			}
+			oracleOptions := testCase.opts
+			oracleOptions.OnStageEvent = nil
+			oracleBundle, oracleCoverage, err := scanSequential(context.Background(), oracleOptions)
+			if err != nil {
+				t.Fatalf("sequential oracle: %v", err)
+			}
+			stagedJSON, err := rkcmodel.CanonicalJSON(stagedBundle)
+			if err != nil {
+				t.Fatalf("encode staged bundle: %v", err)
+			}
+			oracleJSON, err := rkcmodel.CanonicalJSON(oracleBundle)
+			if err != nil {
+				t.Fatalf("encode sequential bundle: %v", err)
+			}
+			if !bytes.Equal(stagedJSON, oracleJSON) {
+				t.Fatalf(
+					"staged canonical output differs from sequential oracle:\nstaged: %s\noracle: %s",
+					stagedJSON, oracleJSON,
+				)
+			}
+			stagedCoverageJSON, err := json.Marshal(stagedCoverage)
+			if err != nil {
+				t.Fatalf("encode staged coverage: %v", err)
+			}
+			oracleCoverageJSON, err := json.Marshal(oracleCoverage)
+			if err != nil {
+				t.Fatalf("encode sequential coverage: %v", err)
+			}
+			if !bytes.Equal(stagedCoverageJSON, oracleCoverageJSON) {
+				t.Fatalf(
+					"staged coverage differs from sequential oracle:\nstaged: %s\noracle: %s",
+					stagedCoverageJSON, oracleCoverageJSON,
+				)
+			}
+
+			lifecycle := make(map[string][]string, len(expectedStages))
+			for _, event := range events {
+				lifecycle[event.StageID] = append(lifecycle[event.StageID], event.State)
+			}
+			if len(lifecycle) != len(expectedStages) {
+				t.Fatalf("stage lifecycle count = %d, want %d: %+v", len(lifecycle), len(expectedStages), lifecycle)
+			}
+			for _, stageID := range expectedStages {
+				states := lifecycle[stageID]
+				if strings.Join(states, ",") != "running,complete" {
+					t.Errorf("%s lifecycle = %v, want [running complete]", stageID, states)
+				}
+			}
+		})
 	}
 }
 
