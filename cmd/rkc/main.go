@@ -38,6 +38,8 @@ func dispatch(args []string) error {
 	switch args[0] {
 	case "scan":
 		return runScan(args[1:])
+	case "plan":
+		return runPlan(args[1:])
 	case "serve":
 		return runServe(args[1:])
 	case "check":
@@ -64,6 +66,8 @@ func dispatch(args []string) error {
 		return runDoctor(args[1:])
 	case "plugins":
 		return runPlugins(args[1:])
+	case "cache":
+		return runCache(args[1:])
 	case "version", "--version", "-version":
 		if len(args) != 1 {
 			return errors.New("version does not accept arguments")
@@ -96,6 +100,7 @@ Get started:
 Core commands:
   init         Generate a complete, safe local configuration
   doctor       Diagnose configuration and optional local capabilities
+  plan         Preview the stage DAG, cache reuse, and invalidation reasons
   scan         Compile a local directory or remote Git repository
   check        Enforce coverage, integrity, and security quality gates
   serve        Browse an atlas through the read-only local HTTP server
@@ -112,6 +117,7 @@ Explore and explain:
 Storage and extension:
   snapshots    List, show, export, select, or recover snapshots
   plugins      List, validate, lock, or verify plugin manifests
+  cache        Inspect, verify, or prune the incremental stage cache
 
 Other:
   version      Print the RKC version

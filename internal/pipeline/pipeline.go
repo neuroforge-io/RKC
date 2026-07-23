@@ -72,8 +72,16 @@ type Options struct {
 	PluginLockDigest string
 	ToolchainDigest  string
 
+	// Cache enables verified persistent analyzer payload reuse. Inventory,
+	// normalization, merge, validation, and coverage remain live fail-closed
+	// stages.
+	Cache *StageCache
+
+	StageWorkers   int
+	ResourceBudget scheduler.ResourceBudget
+
 	// OnStageEvent receives deterministic scheduler lifecycle events. Callers
-	// must return quickly; the scheduler invokes it synchronously.
+	// must return quickly; callbacks are serialized across concurrent stages.
 	OnStageEvent func(scheduler.Event)
 }
 

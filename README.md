@@ -37,6 +37,11 @@ The reference build provides:
   MCP paths with immutable migrations, verified module hashes, CGO-disabled
   build gates, read-only consumers, and strict database-open health checks;
 - crash-safe filesystem snapshots and content-addressed object storage;
+- a 15-stage deterministic scan DAG with cancellation propagation, isolated
+  analyzer fragments, bounded CPU/memory/process/open-file admission, ownership
+  receipts, verified CAS payload caching,
+  selective language/configuration invalidation, clean-scan equivalence tests,
+  and `plan` plus cache inspect/verify/prune commands;
 - ranked lexical search, qualification-gated semantic and hybrid retrieval,
   graph neighbourhoods, shortest paths, impact traversal, strongly connected
   components, and semantic snapshot diffs;
@@ -113,7 +118,9 @@ not need a model, daemon, database server, or Python sandbox:
 ```sh
 make build
 ./bin/rkc doctor --repository .
+./bin/rkc plan --no-python .
 ./bin/rkc scan --no-python --out .rkc --state-dir .rkc-state --force .
+./bin/rkc cache verify
 ./bin/rkc check --coverage .rkc/coverage.json --bundle .rkc/bundle.json
 ./bin/rkc serve --dir .rkc
 ```
@@ -122,6 +129,13 @@ Open `http://127.0.0.1:8787`. The generated `.rkc` atlas is portable and the
 `.rkc-state` directory retains immutable local snapshots. Both paths are
 explicit default inventory exclusions, so rerunning RKC on its own checkout
 does not recursively ingest prior output.
+
+Incremental analyzer payloads live under the operating system's user-cache
+directory by default (for example, `$XDG_CACHE_HOME/rkc/stages` on Linux), never
+inside the scanned repository or generated atlas. `rkc plan` shows exactly
+which stages will execute or reuse verified payloads and why. Pass
+`scan --no-cache` for a clean run; clean and cache-assisted scans intentionally
+share the same snapshot identity and canonical digest.
 
 Run `./bin/rkc doctor --strict` before omitting `--no-python`. The built-in
 Python adapter intentionally requires Python 3.11 or newer and its fail-closed

@@ -11,6 +11,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -19,6 +20,7 @@ import (
 	rkcexport "github.com/neuroforge-io/RKC/internal/export"
 	"github.com/neuroforge-io/RKC/internal/pipeline"
 	"github.com/neuroforge-io/RKC/internal/safeoutput"
+	"github.com/neuroforge-io/RKC/internal/scheduler"
 	"github.com/neuroforge-io/RKC/internal/snapshot"
 	"github.com/neuroforge-io/RKC/pkg/rkcmodel"
 )
@@ -45,6 +47,10 @@ func runScanContext(ctx context.Context, args []string) error {
 	out := fs.String("out", cfg.Workspace.Output, "generated output directory")
 	stateDir := fs.String("state-dir", cfg.Exports.SnapshotStore, "optional immutable snapshot store directory")
 	databasePath := fs.String("database", "", "optional durable SQLite store; must remain outside the scanned repository")
+	cacheDir := fs.String("cache-dir", defaultStageCacheDirectory(), "verified incremental stage cache directory outside the scanned repository")
+	noCache := fs.Bool("no-cache", !cfg.Analysis.Incremental, "disable stage cache reads and writes for this clean scan")
+	stageWorkers := fs.Int("stage-workers", 4, "maximum concurrently admitted scan stages")
+	stageMemory := fs.Int64("stage-memory-mib", 2048, "total scheduler memory-admission budget in MiB")
 	maxFile := fs.Int64("max-file-bytes", cfg.Inventory.MaxFileBytes, "largest individual regular file hashed or parsed; 0 disables")
 	maxText := fs.Int64("max-text-bytes", cfg.Inventory.MaxTextBytes, "largest text file parsed or normalized")
 	maxRepository := fs.Int64("max-repository-bytes", cfg.Inventory.MaxRepositoryBytes, "maximum encountered repository bytes; 0 disables")
@@ -89,6 +95,12 @@ func runScanContext(ctx context.Context, args []string) error {
 	}
 	if *configFlag != configPath {
 		return errors.New("--config must be supplied only once; its values establish flag defaults")
+	}
+	if *stageWorkers <= 0 || *stageWorkers > 64 {
+		return errors.New("--stage-workers must be between 1 and 64")
+	}
+	if *stageMemory < 128 {
+		return errors.New("--stage-memory-mib must be at least 128")
 	}
 	if *databasePath != "" && *stateDir != "" {
 		return errors.New("--database and --state-dir are mutually exclusive")
@@ -156,6 +168,46 @@ func runScanContext(ctx context.Context, args []string) error {
 			return fmt.Errorf("%w: SQLite database must remain outside the scanned repository and generated output", safeoutput.ErrUnsafeTarget)
 		}
 	}
+	var stageCache *pipeline.StageCache
+	resolvedCache := ""
+	if !*noCache {
+		cacheTarget := *cacheDir
+		resolvedCache, err = safeoutput.ResolveTarget(cacheTarget, rootAbs)
+		if err != nil {
+			return fmt.Errorf("resolve stage cache: %w", err)
+		}
+		cacheInsideRepository, err := pathIsWithin(rootAbs, resolvedCache)
+		if err != nil {
+			return fmt.Errorf("compare repository and stage cache: %w", err)
+		}
+		if cacheInsideRepository {
+			return fmt.Errorf("%w: stage cache must remain outside the scanned repository", safeoutput.ErrUnsafeTarget)
+		}
+		cacheInsideOutput, err := pathIsWithin(outAbs, resolvedCache)
+		if err != nil {
+			return fmt.Errorf("compare output and stage cache: %w", err)
+		}
+		outputInsideCache, err := pathIsWithin(resolvedCache, outAbs)
+		if err != nil {
+			return fmt.Errorf("compare stage cache and output: %w", err)
+		}
+		if cacheInsideOutput || outputInsideCache {
+			return fmt.Errorf("%w: output and stage cache must be disjoint directories", safeoutput.ErrUnsafeTarget)
+		}
+		if resolvedDatabase != "" {
+			databaseInsideCache, err := pathIsWithin(resolvedCache, resolvedDatabase)
+			if err != nil {
+				return fmt.Errorf("compare SQLite database and stage cache: %w", err)
+			}
+			if databaseInsideCache {
+				return fmt.Errorf("%w: SQLite database cannot be stored inside the stage cache", safeoutput.ErrUnsafeTarget)
+			}
+		}
+		stageCache, err = pipeline.OpenStageCache(resolvedCache)
+		if err != nil {
+			return err
+		}
+	}
 	pluginPath := strings.TrimSpace(*pythonPlugin)
 	pythonPluginBuiltin := false
 	pythonPluginSHA256 := ""
@@ -211,6 +263,8 @@ func runScanContext(ctx context.Context, args []string) error {
 	if acquired.Kind == acquire.KindGit {
 		sourceReference = acquired.RedactedSource
 	}
+	var stageEventMu sync.Mutex
+	var stageEvents []scheduler.Event
 	bundle, coverage, err := pipeline.Scan(ctx, pipeline.Options{
 		Root: rootAbs, MaxFileBytes: *maxFile, MaxTextBytes: *maxText, MaxRepositoryBytes: *maxRepository, MaxFiles: *maxFiles,
 		Excludes: excludes, PythonInterpreter: *python, PythonPlugin: pluginPath, PluginTimeout: *pluginTimeout,
@@ -225,6 +279,19 @@ func runScanContext(ctx context.Context, args []string) error {
 		DisableJSONSchema: *noJSONSchema, DisableManifests: *noManifests, DisableEnvKeys: *noEnvKeys, DisableSecretScan: *noSecretScan,
 		ToolVersion: version, SourceReference: sourceReference, ConfigDigest: cfg.Digest(), PolicyDigest: cfg.PolicyDigest(),
 		PluginLockDigest: cfg.PluginDigest(), ToolchainDigest: toolchainDigest(*python),
+		Cache:        stageCache,
+		StageWorkers: *stageWorkers,
+		ResourceBudget: scheduler.ResourceBudget{
+			MemoryMiB: *stageMemory,
+			CPU:       *stageWorkers,
+			Processes: 8,
+			OpenFiles: 512,
+		},
+		OnStageEvent: func(event scheduler.Event) {
+			stageEventMu.Lock()
+			stageEvents = append(stageEvents, event)
+			stageEventMu.Unlock()
+		},
 	})
 	if err != nil {
 		return err
@@ -327,9 +394,17 @@ func runScanContext(ctx context.Context, args []string) error {
 		committed = true
 	}
 
+	stageEventMu.Lock()
+	cacheHits := 0
+	for _, event := range stageEvents {
+		if event.State == "cached" {
+			cacheHits++
+		}
+	}
+	stageEventMu.Unlock()
 	summary := map[string]any{
 		"snapshot_id": bundle.Snapshot.ID, "source": acquired.RedactedSource, "source_kind": acquired.Kind, "output": outAbs, "snapshot_store": *stateDir,
-		"database": resolvedDatabase, "database_noop": sqliteNoop,
+		"database": resolvedDatabase, "database_noop": sqliteNoop, "cache": resolvedCache, "cache_hits": cacheHits,
 		"artifacts": coverage.ArtifactsInventoried, "text_artifacts": coverage.TextArtifacts,
 		"syntax_parsed": coverage.ArtifactsSyntacticallyParsed, "semantic_parsed": coverage.ArtifactsSemanticallyParsed,
 		"symbols": coverage.SymbolsTotal, "edges": coverage.EdgesTotal, "unresolved_edges": coverage.UnresolvedEdges,
@@ -354,6 +429,11 @@ func runScanContext(ctx context.Context, args []string) error {
 	}
 	if resolvedDatabase != "" {
 		fmt.Printf("SQLite store: %s (idempotent=%t)\n", resolvedDatabase, sqliteNoop)
+	}
+	if resolvedCache != "" {
+		fmt.Printf("Stage cache: %s (%d hit(s))\n", resolvedCache, cacheHits)
+	} else {
+		fmt.Println("Stage cache: disabled (clean scan)")
 	}
 	fmt.Printf("Browse: rkc serve --dir %s\n", outAbs)
 	return nil

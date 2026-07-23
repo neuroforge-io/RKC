@@ -360,6 +360,29 @@ func TestReadBytesBounded(t *testing.T) {
 	}
 }
 
+func TestDeleteExactObjectIsIdempotent(t *testing.T) {
+	store, err := Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	object, err := store.PutBytes([]byte("prunable object"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Delete(object.Digest); err != nil {
+		t.Fatal(err)
+	}
+	if present, err := store.Has(object.Digest); err != nil || present {
+		t.Fatalf("Has(deleted) = %t, %v", present, err)
+	}
+	if err := store.Delete(object.Digest); err != nil {
+		t.Fatalf("repeated Delete() = %v", err)
+	}
+	if err := store.Delete("not-a-digest"); !errors.Is(err, ErrInvalidDigest) {
+		t.Fatalf("Delete(invalid) = %v, want ErrInvalidDigest", err)
+	}
+}
+
 func TestCorruptionDetectionAndUnverifiedRead(t *testing.T) {
 	store, err := Open(t.TempDir())
 	if err != nil {

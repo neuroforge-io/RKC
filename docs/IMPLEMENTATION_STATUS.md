@@ -23,8 +23,8 @@ The labels below mean:
 | Transactional storage contract | Implemented | Typed reader/writer/recovery API; atomic, immutable in-memory conformance backend with authenticated cursors and lossless export |
 | SQLite driver/bootstrap | Implemented | Pinned pure-Go driver, embedded digest-locked migrations through schema `0.4.0`, fail-closed build/publication compare-and-swap, monotonic current-pointer guards, CGO-free build gates, reader-key initialization, read-only consumers, and strict database-open health checks |
 | SQLite runtime writer/query layer | Implemented | Transactional staging/publication, OS writer leases, recovery, digest-verified canonical reads, exact coverage binding, authenticated pagination, projections, and CLI/HTTP/MCP integration |
-| Pipeline DAG and cache library | Partial | Scheduler/cache exist; scan not fully staged |
-| Clean/incremental equivalence | Planned | Deterministic clean replay passes |
+| Pipeline DAG and cache library | Partial | All 15 canonical scan stages now route through the deterministic DAG with bounded resource admission; analyzer fragments use ownership-bound, verified CAS payloads with selective cache keys and `plan`/inspect/verify/prune UX. SQLite stage journal and derived-output stages remain |
+| Clean/incremental equivalence | Partial | Warm and localized-change cache paths are differentially checked against clean canonical output; maintained multi-commit language history corpus and measured large-repository gate remain |
 
 ## Analysis
 

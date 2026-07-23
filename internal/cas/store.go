@@ -288,6 +288,36 @@ func (store *Store) Verify(digest string) error {
 	return err
 }
 
+// Delete removes one exact immutable object. Missing objects are already
+// deleted and succeed. The method verifies layout and file identity before
+// unlinking so administrative pruning cannot follow attacker-controlled links.
+func (store *Store) Delete(digest string) error {
+	digest, err := NormalizeDigest(digest)
+	if err != nil {
+		return err
+	}
+	file, path, identity, shard, err := store.openObject(digest)
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if err := file.Close(); err != nil {
+		return err
+	}
+	if err := store.validateShard(shard.path, shard.info); err != nil {
+		return err
+	}
+	if err := removeExactRegularFile(path, identity); err != nil {
+		return err
+	}
+	if err := syncDirectoryStable(shard.path, shard.info); err != nil {
+		return err
+	}
+	return store.validateLayout()
+}
+
 func (store *Store) Walk(fn func(ObjectInfo) error) error {
 	if fn == nil {
 		return errors.New("CAS walk callback is nil")

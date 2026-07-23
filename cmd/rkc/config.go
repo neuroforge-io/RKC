@@ -374,6 +374,10 @@ func (cfg Configuration) Digest() string {
 	normalized.normalize()
 	normalized.Workspace.Output = ""
 	normalized.Exports.SnapshotStore = ""
+	// Incremental execution is an optimization. A clean and cache-assisted
+	// scan of identical source and analysis policy must have the same snapshot
+	// identity and canonical digest.
+	normalized.Analysis.Incremental = false
 	// Model execution is a derived, post-scan operation. Local model paths and
 	// inference settings must not change the canonical repository snapshot.
 	normalized.Model = ModelConfig{}

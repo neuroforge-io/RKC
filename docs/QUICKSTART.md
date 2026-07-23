@@ -76,6 +76,11 @@ named root-level coverage/cache outputs. Add another exact path with a repeated
 Start with the portable deterministic profile:
 
 ```sh
+./bin/rkc plan \
+  --config rkc.json \
+  --no-python \
+  /path/to/repository
+
 ./bin/rkc scan \
   --config rkc.json \
   --no-python \
@@ -85,12 +90,32 @@ Start with the portable deterministic profile:
   /path/to/repository
 ```
 
+`rkc plan` performs inventory and normalization only, then reports the complete
+15-stage DAG, verified cache hits, misses, disabled stages, and invalidation
+reasons. Analyzer payloads are stored outside the repository in the operating
+system's user-cache directory. Use `scan --no-cache` when an explicitly clean
+run is required; clean and incremental execution produce the same snapshot
+identity and canonical digest. The scheduler admits concurrent stages within
+the `--stage-workers` and `--stage-memory-mib` bounds; the safe defaults are
+four workers and a 2048 MiB aggregate admission budget.
+
 This still performs deterministic Go and JavaScript/TypeScript syntax
 analysis, framework and document extraction, secret-pattern detection, graph
 construction, search indexing, and every configured export. If
 `./bin/rkc doctor --strict --config rkc.json --repository /path/to/repository`
 passes on Linux, omit `--no-python` to enable the built-in Python AST adapter.
 RKC never falls back to running that adapter without its isolation boundary.
+
+Inspect or maintain the cache without scanning:
+
+```sh
+./bin/rkc cache inspect --verify
+./bin/rkc cache verify
+./bin/rkc cache prune --older-than 720h --dry-run
+```
+
+`cache prune --all` requires `--yes`; every prune mode supports `--dry-run` and
+machine-readable `--json` output.
 
 `--state-dir` must be missing, empty, or already marked as an RKC snapshot
 store. RKC refuses to adopt arbitrary nonempty directories as transaction

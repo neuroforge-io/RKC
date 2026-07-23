@@ -27,6 +27,7 @@ func TestDefaultConfigurationIsValidAndDeterministic(t *testing.T) {
 	clone.Model.ContextTokens = 32768
 	clone.Documentation.ModelSynthesis = true
 	clone.Exports.SnapshotStore = "/tmp/another-state"
+	clone.Analysis.Incremental = !cfg.Analysis.Incremental
 	if got, want := clone.Digest(), cfg.Digest(); got != want {
 		t.Fatalf("operational paths changed portable digest: got %s want %s", got, want)
 	}

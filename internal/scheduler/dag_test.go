@@ -3,6 +3,7 @@ package scheduler
 import (
 	"context"
 	"errors"
+	"fmt"
 	"reflect"
 	"sort"
 	"strings"
@@ -19,6 +20,18 @@ type memoryCache struct {
 	storeErr error
 	loads    int
 	stores   int
+	invalids int
+}
+
+func (cache *memoryCache) Invalidate(ctx context.Context, key string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	cache.mu.Lock()
+	defer cache.mu.Unlock()
+	cache.invalids++
+	delete(cache.values, key)
+	return nil
 }
 
 func (cache *memoryCache) Load(ctx context.Context, key string) (Result, bool, error) {
@@ -183,24 +196,102 @@ func TestExecuteDependenciesEventsValuesAndDeterministicReport(t *testing.T) {
 func TestExecuteUsesCacheAndSkipsRunner(t *testing.T) {
 	cache := &memoryCache{values: map[string]Result{}}
 	var runs atomic.Int32
+	var restores atomic.Int32
 	stage := Stage{ID: "cached", Version: "v1", InputDigests: []string{"input"}, Run: func(context.Context, Inputs) (Result, error) {
 		runs.Add(1)
 		return Result{ObjectDigest: "object", Metadata: map[string]any{"kept": true}}, nil
+	}, Restore: func(_ context.Context, _ Inputs, result Result) error {
+		if result.ObjectDigest != "object" {
+			return errors.New("unexpected restored object")
+		}
+		restores.Add(1)
+		return nil
 	}}
 	first, err := Execute(context.Background(), []Stage{stage}, Options{Cache: cache})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if first.Results["cached"].CacheHit || cache.stores != 1 || runs.Load() != 1 {
-		t.Fatalf("first cached execution: result=%+v stores=%d runs=%d", first.Results["cached"], cache.stores, runs.Load())
+	if first.Results["cached"].CacheHit || cache.stores != 1 || runs.Load() != 1 || restores.Load() != 0 {
+		t.Fatalf("first cached execution: result=%+v stores=%d runs=%d restores=%d", first.Results["cached"], cache.stores, runs.Load(), restores.Load())
 	}
 	second, err := Execute(context.Background(), []Stage{stage}, Options{Cache: cache})
 	if err != nil {
 		t.Fatal(err)
 	}
 	result := second.Results["cached"]
-	if !result.CacheHit || result.StageID != "cached" || result.ObjectDigest != "object" || runs.Load() != 1 || cache.loads != 2 {
-		t.Fatalf("cache hit result=%+v loads=%d runs=%d", result, cache.loads, runs.Load())
+	if !result.CacheHit || result.StageID != "cached" || result.ObjectDigest != "object" || runs.Load() != 1 || restores.Load() != 1 || cache.loads != 2 {
+		t.Fatalf("cache hit result=%+v loads=%d runs=%d restores=%d", result, cache.loads, runs.Load(), restores.Load())
+	}
+	if len(second.Events) != 1 || second.Events[0].State != "cached" {
+		t.Fatalf("cache hit events = %+v", second.Events)
+	}
+}
+
+func TestExecuteSupportsDynamicKeysAndSelectiveCacheDisable(t *testing.T) {
+	cache := &memoryCache{values: map[string]Result{}}
+	var dynamicCalls atomic.Int32
+	var runs atomic.Int32
+	stage := Stage{
+		ID: "dynamic", Version: "v1", Dependencies: []string{"dependency"},
+		IgnoreDependencyDigests: true,
+		DynamicInputDigests: func(_ context.Context, inputs Inputs) ([]string, error) {
+			dynamicCalls.Add(1)
+			if inputs.Results["dependency"].ObjectDigest == "" {
+				return nil, errors.New("missing dependency result")
+			}
+			return []string{"selected-input"}, nil
+		},
+		Run: func(context.Context, Inputs) (Result, error) {
+			runs.Add(1)
+			return Result{ObjectDigest: "dynamic-output"}, nil
+		},
+	}
+	dependency := Stage{
+		ID: "dependency", Version: "v1", DisableCache: true,
+		Run: func(context.Context, Inputs) (Result, error) {
+			runs.Add(1)
+			return Result{ObjectDigest: "changing-dependency-output"}, nil
+		},
+	}
+	for attempt := 0; attempt < 2; attempt++ {
+		if _, err := Execute(context.Background(), []Stage{stage, dependency}, Options{Cache: cache}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if dynamicCalls.Load() != 2 || runs.Load() != 3 {
+		t.Fatalf("dynamic calls=%d runs=%d, want 2 and 3", dynamicCalls.Load(), runs.Load())
+	}
+	if cache.loads != 2 || cache.stores != 1 {
+		t.Fatalf("cache loads=%d stores=%d, want 2 and 1", cache.loads, cache.stores)
+	}
+}
+
+func TestExecuteRecomputesRejectedCachePayload(t *testing.T) {
+	key := mustCacheKey(t, "rejected", "v1", nil, nil)
+	cache := &memoryCache{values: map[string]Result{
+		key: {ObjectDigest: "corrupt"},
+	}}
+	var runs atomic.Int32
+	stage := Stage{
+		ID: "rejected", Version: "v1",
+		Restore: func(context.Context, Inputs, Result) error {
+			return fmt.Errorf("%w: corrupt payload", ErrCacheRejected)
+		},
+		Run: func(context.Context, Inputs) (Result, error) {
+			runs.Add(1)
+			return Result{ObjectDigest: "recomputed"}, nil
+		},
+	}
+	report, err := Execute(context.Background(), []Stage{stage}, Options{Cache: cache})
+	if err != nil {
+		t.Fatal(err)
+	}
+	result := report.Results["rejected"]
+	if result.CacheHit || result.ObjectDigest != "recomputed" || runs.Load() != 1 {
+		t.Fatalf("rejected cache result = %+v, runs=%d", result, runs.Load())
+	}
+	if cache.invalids != 1 || cache.stores != 1 {
+		t.Fatalf("cache invalidations=%d stores=%d, want 1 and 1", cache.invalids, cache.stores)
 	}
 }
 
@@ -216,6 +307,8 @@ func TestExecuteErrorPaths(t *testing.T) {
 		{name: "runner", stage: Stage{ID: "run", Run: func(context.Context, Inputs) (Result, error) { return Result{}, sentinel }}, want: "runner failed"},
 		{name: "cache load", stage: Stage{ID: "load", Run: func(context.Context, Inputs) (Result, error) { return Result{}, nil }}, options: Options{Cache: &memoryCache{loadErr: errors.New("load failed")}}, want: "load cache: load failed"},
 		{name: "cache store", stage: Stage{ID: "store", Run: func(context.Context, Inputs) (Result, error) { return Result{}, nil }}, options: Options{Cache: &memoryCache{storeErr: errors.New("store failed")}}, want: "store cache: store failed"},
+		{name: "dynamic inputs", stage: Stage{ID: "dynamic", DynamicInputDigests: func(context.Context, Inputs) ([]string, error) { return nil, errors.New("dynamic failed") }, Run: func(context.Context, Inputs) (Result, error) { return Result{}, nil }}, want: "resolve dynamic input digests: dynamic failed"},
+		{name: "cache restore", stage: Stage{ID: "restore", Restore: func(context.Context, Inputs, Result) error { return errors.New("restore failed") }, Run: func(context.Context, Inputs) (Result, error) { return Result{}, nil }}, options: Options{Cache: &memoryCache{values: map[string]Result{mustCacheKey(t, "restore", "", nil, nil): {ObjectDigest: "cached"}}}}, want: "restore cached result: restore failed"},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -262,6 +355,81 @@ func TestExecuteEmptyAndDefaultWorkerCount(t *testing.T) {
 	}
 	if len(report.Results) != 0 || len(report.Events) != 0 || report.Results == nil {
 		t.Fatalf("Execute(empty) = %+v", report)
+	}
+}
+
+func TestExecuteAdmitsStagesWithinResourceBudget(t *testing.T) {
+	var concurrent atomic.Int32
+	var maximum atomic.Int32
+	stages := make([]Stage, 0, 4)
+	for _, id := range []string{"a", "b", "c", "d"} {
+		stages = append(stages, Stage{
+			ID: id, Resources: ResourceRequest{
+				MemoryMiB: 50, CPU: 1, Processes: 1, OpenFiles: 10, IOClass: "normal",
+			},
+			Run: func(context.Context, Inputs) (Result, error) {
+				current := concurrent.Add(1)
+				for {
+					observed := maximum.Load()
+					if current <= observed || maximum.CompareAndSwap(observed, current) {
+						break
+					}
+				}
+				time.Sleep(15 * time.Millisecond)
+				concurrent.Add(-1)
+				return Result{ObjectDigest: id}, nil
+			},
+		})
+	}
+	report, err := Execute(context.Background(), stages, Options{
+		Workers: 4,
+		Budget: ResourceBudget{
+			MemoryMiB: 100, CPU: 2, Processes: 2, OpenFiles: 20,
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(report.Results) != 4 || maximum.Load() != 2 {
+		t.Fatalf("resource-admitted report=%+v maximum concurrency=%d", report, maximum.Load())
+	}
+}
+
+func TestResourceAdmissionValidationAndOversize(t *testing.T) {
+	stage := Stage{
+		ID: "oversize", Resources: ResourceRequest{MemoryMiB: 101},
+		Run: func(context.Context, Inputs) (Result, error) {
+			return Result{}, errors.New("oversized stage executed")
+		},
+	}
+	report, err := Execute(context.Background(), []Stage{stage}, Options{
+		Budget: ResourceBudget{MemoryMiB: 100},
+	})
+	if !errors.Is(err, ErrResourceBudget) || len(report.Results) != 0 {
+		t.Fatalf("oversized Execute() = %+v, %v", report, err)
+	}
+	for _, resources := range []ResourceRequest{
+		{MemoryMiB: -1},
+		{CPU: -1},
+		{Processes: -1},
+		{OpenFiles: -1},
+		{IOClass: "impossible"},
+	} {
+		if _, err := validateAndNormalize([]Stage{{ID: "invalid", Resources: resources}}); err == nil {
+			t.Errorf("resources %+v were accepted", resources)
+		}
+	}
+	batch, deferred, err := admitStages([]Stage{
+		{ID: "a", Resources: ResourceRequest{MemoryMiB: 60}},
+		{ID: "b", Resources: ResourceRequest{MemoryMiB: 40}},
+		{ID: "c", Resources: ResourceRequest{MemoryMiB: 50}},
+	}, 3, ResourceBudget{MemoryMiB: 100})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := []string{batch[0].ID, batch[1].ID}; !reflect.DeepEqual(got, []string{"a", "b"}) ||
+		len(deferred) != 1 || deferred[0].ID != "c" {
+		t.Fatalf("admitStages batch=%+v deferred=%+v", batch, deferred)
 	}
 }
 
@@ -328,4 +496,13 @@ func TestExecuteRejectsNilContext(t *testing.T) {
 	if _, err := Execute(nil, nil, Options{}); err == nil || !strings.Contains(err.Error(), "context is required") {
 		t.Fatalf("Execute nil context error = %v", err)
 	}
+}
+
+func mustCacheKey(t *testing.T, stageID, version string, inputDigests []string, configuration any) string {
+	t.Helper()
+	key, err := CacheKey(stageID, version, inputDigests, configuration)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return key
 }

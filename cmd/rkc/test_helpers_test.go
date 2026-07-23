@@ -8,6 +8,20 @@ import (
 	"testing"
 )
 
+func TestMain(main *testing.M) {
+	cacheRoot, err := os.MkdirTemp("", "rkc-cli-test-cache-")
+	if err != nil {
+		panic(err)
+	}
+	if err := os.Setenv("XDG_CACHE_HOME", cacheRoot); err != nil {
+		_ = os.RemoveAll(cacheRoot)
+		panic(err)
+	}
+	code := main.Run()
+	_ = os.RemoveAll(cacheRoot)
+	os.Exit(code)
+}
+
 func captureStdout(t *testing.T, fn func() error) (string, error) {
 	t.Helper()
 	original := os.Stdout

@@ -7,6 +7,8 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
+	"sync"
 	"time"
 
 	"github.com/neuroforge-io/RKC/internal/docparse"
@@ -52,6 +54,8 @@ var fragmentMergeOrder = []string{
 }
 
 type stagedScanState struct {
+	mu sync.Mutex
+
 	opts Options
 	root string
 
@@ -92,10 +96,27 @@ func Scan(ctx context.Context, opts Options) (rkcmodel.Bundle, rkcmodel.Coverage
 		fragments:      map[string]rkcmodel.Fragment{},
 		parsed:         map[string]struct{}{},
 	}
+	var cache scheduler.Cache
+	if opts.Cache != nil {
+		cache = opts.Cache
+	}
+	workers := opts.StageWorkers
+	if workers <= 0 {
+		workers = 4
+	}
+	budget := opts.ResourceBudget
+	if budget == (scheduler.ResourceBudget{}) {
+		budget = scheduler.ResourceBudget{
+			MemoryMiB: 2048,
+			CPU:       workers,
+			Processes: 8,
+			OpenFiles: 512,
+		}
+	}
 	report, err := scheduler.Execute(ctx, state.stages(), scheduler.Options{
-		// Stages currently share a transaction-local compiler state. Keeping one
-		// worker makes mutation order explicit until stage payloads move to CAS.
-		Workers: 1,
+		Workers: workers,
+		Budget:  budget,
+		Cache:   cache,
 		OnEvent: opts.OnStageEvent,
 	})
 	if err != nil {
@@ -127,28 +148,37 @@ func (state *stagedScanState) stages() []scheduler.Stage {
 		state.stage("normalize", []string{"inventory"}, map[string]any{
 			"redact_secrets": !state.opts.DisableSecretScan,
 		}, state.runNormalize),
-		state.stage("env-keys", []string{"normalize"}, map[string]any{
+		state.analysisStage("env-keys", []string{"normalize"}, map[string]any{
 			"enabled": !state.opts.DisableFrameworks && !state.opts.DisableEnvKeys,
+		}, func(file pluginapi.FileRef) bool {
+			return envkeys.IsCandidate(file.Path)
 		}, state.runEnvKeys),
-		state.stage("go-syntax", []string{"normalize"}, map[string]any{
-			"enabled": !state.opts.DisablePlugins && !state.opts.DisableGoAST,
-			"tool":    state.opts.ToolVersion,
-		}, state.runGoSyntax),
-		state.stage("json-schema", []string{"normalize"}, map[string]any{
+		state.analysisStage("go-syntax", []string{"normalize"}, map[string]any{
+			"enabled":            !state.opts.DisablePlugins && !state.opts.DisableGoAST,
+			"tool":               state.opts.ToolVersion,
+			"toolchain_digest":   state.opts.ToolchainDigest,
+			"plugin_lock_digest": state.opts.PluginLockDigest,
+		}, isGoCacheInput, state.runGoSyntax),
+		state.analysisStage("json-schema", []string{"normalize"}, map[string]any{
 			"enabled": !state.opts.DisableFrameworks && !state.opts.DisableJSONSchema,
+		}, func(file pluginapi.FileRef) bool {
+			return file.Language == "json"
 		}, state.runJSONSchema),
-		state.stage("manifests", []string{"normalize"}, map[string]any{
+		state.analysisStage("manifests", []string{"normalize"}, map[string]any{
 			"enabled": !state.opts.DisableFrameworks && !state.opts.DisableManifests,
-		}, state.runManifests),
-		state.stage("markdown", []string{"normalize"}, map[string]any{
+		}, nil, state.runManifests),
+		state.analysisStage("markdown", []string{"normalize"}, map[string]any{
 			"enabled": !state.opts.DisableFrameworks && !state.opts.DisableMarkdown,
-		}, state.runMarkdown),
-		state.stage("openapi", []string{"normalize"}, map[string]any{
+		}, nil, state.runMarkdown),
+		state.analysisStage("openapi", []string{"normalize"}, map[string]any{
 			"enabled": !state.opts.DisableFrameworks && !state.opts.DisableOpenAPI,
+		}, func(file pluginapi.FileRef) bool {
+			return file.Language == "json"
 		}, state.runOpenAPI),
-		state.stage("python-syntax", []string{"normalize"}, map[string]any{
+		state.analysisStage("python-syntax", []string{"normalize"}, map[string]any{
 			"enabled":              !state.opts.DisablePlugins && !state.opts.DisablePythonAST,
 			"plugin_sha256":        state.opts.PythonPluginSHA256,
+			"plugin_lock_digest":   state.opts.PluginLockDigest,
 			"toolchain_digest":     state.opts.ToolchainDigest,
 			"timeout_nanoseconds":  state.opts.PluginTimeout.Nanoseconds(),
 			"maximum_output_bytes": state.opts.PluginMaxOutput,
@@ -159,14 +189,19 @@ func (state *stagedScanState) stages() []scheduler.Stage {
 			"sandbox_required":     state.opts.PluginSandboxRequired,
 			"deny_network":         state.opts.PluginDenyNetwork,
 			"deny_process_spawn":   state.opts.PluginDenyProcessSpawn,
+		}, func(file pluginapi.FileRef) bool {
+			return file.Language == "python"
 		}, state.runPythonSyntax),
-		state.stage("secret-scan", []string{"normalize"}, map[string]any{
-			"enabled": !state.opts.DisableSecretScan,
-		}, state.runSecretScan),
-		state.stage("typescript-syntax", []string{"normalize"}, map[string]any{
-			"enabled": !state.opts.DisablePlugins && !state.opts.DisableTypeScript,
-			"tool":    state.opts.ToolVersion,
-		}, state.runTypeScriptSyntax),
+		state.analysisStage("secret-scan", []string{"normalize"}, map[string]any{
+			"enabled":       !state.opts.DisableSecretScan,
+			"policy_digest": state.opts.PolicyDigest,
+		}, nil, state.runSecretScan),
+		state.analysisStage("typescript-syntax", []string{"normalize"}, map[string]any{
+			"enabled":            !state.opts.DisablePlugins && !state.opts.DisableTypeScript,
+			"tool":               state.opts.ToolVersion,
+			"toolchain_digest":   state.opts.ToolchainDigest,
+			"plugin_lock_digest": state.opts.PluginLockDigest,
+		}, isTypeScriptCacheInput, state.runTypeScriptSyntax),
 	}
 	stages = append(stages,
 		state.stage("merge", append([]string(nil), analysisStageIDs...), nil, state.runMerge),
@@ -178,7 +213,57 @@ func (state *stagedScanState) stages() []scheduler.Stage {
 		}, state.runValidate),
 		state.stage("coverage", []string{"validate"}, nil, state.runCoverage),
 	)
+	for index := range stages {
+		stages[index].Resources = state.stageResources(stages[index].ID)
+	}
 	return stages
+}
+
+func (state *stagedScanState) stageResources(stageID string) scheduler.ResourceRequest {
+	if !stageEnabled(stageID, state.opts) {
+		return scheduler.ResourceRequest{
+			MemoryMiB: 16, CPU: 1, OpenFiles: 4, IOClass: "normal",
+		}
+	}
+	switch stageID {
+	case "inventory":
+		return scheduler.ResourceRequest{
+			MemoryMiB: 256, CPU: 1, OpenFiles: 128, IOClass: "bulk",
+		}
+	case "normalize", "secret-scan":
+		return scheduler.ResourceRequest{
+			MemoryMiB: 256, CPU: 1, OpenFiles: 64, IOClass: "bulk",
+		}
+	case "python-syntax":
+		memory := state.opts.PluginMemoryMiB + 128
+		if memory < 256 {
+			memory = 256
+		}
+		processes := state.opts.PluginProcessLimit + 1
+		if processes < 2 {
+			processes = 2
+		}
+		return scheduler.ResourceRequest{
+			MemoryMiB: memory, CPU: 1, Processes: processes,
+			OpenFiles: 64, IOClass: "normal",
+		}
+	case "go-syntax", "typescript-syntax":
+		return scheduler.ResourceRequest{
+			MemoryMiB: 512, CPU: 1, OpenFiles: 128, IOClass: "normal",
+		}
+	case "merge", "resolve", "validate":
+		return scheduler.ResourceRequest{
+			MemoryMiB: 512, CPU: 1, OpenFiles: 32, IOClass: "normal",
+		}
+	case "coverage":
+		return scheduler.ResourceRequest{
+			MemoryMiB: 128, CPU: 1, OpenFiles: 8, IOClass: "latency",
+		}
+	default:
+		return scheduler.ResourceRequest{
+			MemoryMiB: 128, CPU: 1, OpenFiles: 32, IOClass: "normal",
+		}
+	}
 }
 
 func (state *stagedScanState) stage(
@@ -192,6 +277,7 @@ func (state *stagedScanState) stage(
 		Version:       pipelineStageVersion,
 		Dependencies:  dependencies,
 		Configuration: configuration,
+		DisableCache:  true,
 		Run: func(ctx context.Context, _ scheduler.Inputs) (scheduler.Result, error) {
 			if err := ctx.Err(); err != nil {
 				return scheduler.Result{}, err
@@ -199,6 +285,59 @@ func (state *stagedScanState) stage(
 			return run(ctx)
 		},
 	}
+}
+
+func (state *stagedScanState) analysisStage(
+	id string,
+	dependencies []string,
+	configuration any,
+	cacheInput func(pluginapi.FileRef) bool,
+	run func(context.Context) (scheduler.Result, error),
+) scheduler.Stage {
+	stage := state.stage(id, dependencies, map[string]any{
+		"schema_version": rkcmodel.SchemaVersion,
+		"settings":       configuration,
+	}, run)
+	stage.DisableCache = false
+	stage.IgnoreDependencyDigests = true
+	stage.DynamicInputDigests = func(
+		ctx context.Context,
+		_ scheduler.Inputs,
+	) ([]string, error) {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		files := state.files
+		if cacheInput != nil {
+			files = filterFiles(files, cacheInput)
+		}
+		return []string{rkcmodel.DigestJSON(fileDigestInputs(files))}, nil
+	}
+	stage.Restore = func(
+		ctx context.Context,
+		_ scheduler.Inputs,
+		result scheduler.Result,
+	) error {
+		return state.restoreFragment(ctx, id, result)
+	}
+	return stage
+}
+
+func isGoCacheInput(file pluginapi.FileRef) bool {
+	path := filepath.ToSlash(file.Path)
+	base := filepath.Base(path)
+	return file.Language == "go" || base == "go.mod" || base == "go.sum" ||
+		base == "go.work" || base == "go.work.sum"
+}
+
+func isTypeScriptCacheInput(file pluginapi.FileRef) bool {
+	path := filepath.ToSlash(file.Path)
+	base := filepath.Base(path)
+	return file.Language == "typescript" || file.Language == "javascript" ||
+		base == "package.json" || base == "package-lock.json" ||
+		base == "pnpm-lock.yaml" || base == "yarn.lock" ||
+		strings.HasPrefix(base, "tsconfig") && strings.HasSuffix(base, ".json") ||
+		strings.HasPrefix(base, "jsconfig") && strings.HasSuffix(base, ".json")
 }
 
 func (state *stagedScanState) runInventory(ctx context.Context) (scheduler.Result, error) {
@@ -304,7 +443,7 @@ func (state *stagedScanState) runPythonSyntax(ctx context.Context) (scheduler.Re
 	}
 	files := filterFiles(state.files, func(file pluginapi.FileRef) bool { return file.Language == "python" })
 	if len(files) == 0 {
-		return state.fragmentResult("python-syntax", rkcmodel.Fragment{}, 0), nil
+		return state.recordFragment("python-syntax", rkcmodel.Fragment{}, nil, false)
 	}
 	legacy := make([]plugin.FileRef, 0, len(files))
 	for _, file := range files {
@@ -331,13 +470,9 @@ func (state *stagedScanState) runPythonSyntax(ctx context.Context) (scheduler.Re
 		if state.opts.FailClosedOnPluginError {
 			return scheduler.Result{}, fmt.Errorf("Python adapter failed closed: %w", runErr)
 		}
-		state.fragments["python-syntax"] = rkcmodel.Fragment{Diagnostics: []rkcmodel.Diagnostic{diagnostic}}
-		return state.valueResult(diagnostic), nil
+		return state.diagnosticResult("python-syntax", diagnostic), nil
 	}
-	rkcmodel.SortFragment(&fragment)
-	state.fragments["python-syntax"] = fragment
-	markParsed(state.parsed, files)
-	return state.fragmentResult("python-syntax", fragment, len(files)), nil
+	return state.recordFragment("python-syntax", fragment, files, true)
 }
 
 func (state *stagedScanState) runGoSyntax(context.Context) (scheduler.Result, error) {
@@ -350,13 +485,9 @@ func (state *stagedScanState) runGoSyntax(context.Context) (scheduler.Result, er
 	})
 	if err != nil {
 		diagnostic := adapterError("RKC-GO-2001", goast.PluginID, err)
-		state.fragments["go-syntax"] = rkcmodel.Fragment{Diagnostics: []rkcmodel.Diagnostic{diagnostic}}
-		return state.valueResult(diagnostic), nil
+		return state.diagnosticResult("go-syntax", diagnostic), nil
 	}
-	rkcmodel.SortFragment(&fragment)
-	state.fragments["go-syntax"] = fragment
-	markParsed(state.parsed, files)
-	return state.fragmentResult("go-syntax", fragment, len(files)), nil
+	return state.recordFragment("go-syntax", fragment, files, true)
 }
 
 func (state *stagedScanState) runTypeScriptSyntax(context.Context) (scheduler.Result, error) {
@@ -371,13 +502,9 @@ func (state *stagedScanState) runTypeScriptSyntax(context.Context) (scheduler.Re
 	})
 	if err != nil {
 		diagnostic := adapterError("RKC-TS-2001", tssyntax.PluginID, err)
-		state.fragments["typescript-syntax"] = rkcmodel.Fragment{Diagnostics: []rkcmodel.Diagnostic{diagnostic}}
-		return state.valueResult(diagnostic), nil
+		return state.diagnosticResult("typescript-syntax", diagnostic), nil
 	}
-	rkcmodel.SortFragment(&fragment)
-	state.fragments["typescript-syntax"] = fragment
-	markParsed(state.parsed, files)
-	return state.fragmentResult("typescript-syntax", fragment, len(files)), nil
+	return state.recordFragment("typescript-syntax", fragment, files, true)
 }
 
 func (state *stagedScanState) runMarkdown(context.Context) (scheduler.Result, error) {
@@ -448,15 +575,9 @@ func (state *stagedScanState) handleFragmentResult(
 ) (scheduler.Result, error) {
 	if err != nil {
 		diagnostic := adapterError(code, pluginID, err)
-		state.fragments[stage] = rkcmodel.Fragment{Diagnostics: []rkcmodel.Diagnostic{diagnostic}}
-		return state.valueResult(diagnostic), nil
+		return state.diagnosticResult(stage, diagnostic), nil
 	}
-	rkcmodel.SortFragment(&fragment)
-	state.fragments[stage] = fragment
-	if markSyntax {
-		markParsed(state.parsed, files)
-	}
-	return state.fragmentResult(stage, fragment, len(files)), nil
+	return state.recordFragment(stage, fragment, files, markSyntax)
 }
 
 func (state *stagedScanState) runMerge(context.Context) (scheduler.Result, error) {
@@ -521,17 +642,23 @@ func (state *stagedScanState) runCoverage(context.Context) (scheduler.Result, er
 }
 
 func (state *stagedScanState) disabledResult(stage string) scheduler.Result {
-	return state.valueResult(map[string]any{"stage": stage, "status": "disabled"})
+	result := state.valueResult(map[string]any{"stage": stage, "status": "disabled"})
+	result.DoNotCache = true
+	return result
 }
 
-func (state *stagedScanState) fragmentResult(stage string, fragment rkcmodel.Fragment, files int) scheduler.Result {
-	return scheduler.Result{
-		ObjectDigest: rkcmodel.DigestJSON(fragment),
-		Metadata: map[string]any{
-			"stage": stage, "files": files, "nodes": len(fragment.Nodes),
-			"edges": len(fragment.Edges), "diagnostics": len(fragment.Diagnostics),
-		},
+func (state *stagedScanState) diagnosticResult(
+	stage string,
+	diagnostic rkcmodel.Diagnostic,
+) scheduler.Result {
+	state.mu.Lock()
+	state.fragments[stage] = rkcmodel.Fragment{
+		Diagnostics: []rkcmodel.Diagnostic{diagnostic},
 	}
+	state.mu.Unlock()
+	result := state.valueResult(diagnostic)
+	result.DoNotCache = true
+	return result
 }
 
 func (state *stagedScanState) bundleResult(stage string) scheduler.Result {
