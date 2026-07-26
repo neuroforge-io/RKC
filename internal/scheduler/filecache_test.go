@@ -257,3 +257,277 @@ func TestFileCacheEntriesRejectUnexpectedState(t *testing.T) {
 		t.Fatalf("Entries(unexpected) = %v", err)
 	}
 }
+
+func TestFileCacheAdministrativeFailureContracts(t *testing.T) {
+	ctx := context.Background()
+	key := cacheKey("a")
+	var nilCache *FileCache
+	if _, err := nilCache.Entries(ctx); err == nil {
+		t.Fatal("nil cache Entries succeeded")
+	}
+	if err := nilCache.Delete(ctx, key); err == nil {
+		t.Fatal("nil cache Delete succeeded")
+	}
+	if err := nilCache.Invalidate(ctx, key); err == nil {
+		t.Fatal("nil cache Invalidate succeeded")
+	}
+
+	unbound := &FileCache{}
+	if _, _, err := unbound.Load(ctx, key); err == nil {
+		t.Fatal("unbound cache Load succeeded")
+	}
+	if err := unbound.Store(ctx, key, Result{}); err == nil {
+		t.Fatal("unbound cache Store succeeded")
+	}
+	if _, err := unbound.Entries(ctx); err == nil {
+		t.Fatal("unbound cache Entries succeeded")
+	}
+	if err := unbound.Delete(ctx, key); err == nil {
+		t.Fatal("unbound cache Delete succeeded")
+	}
+
+	cache, err := OpenFileCache(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := cache.Delete(ctx, "invalid"); err == nil {
+		t.Fatal("Delete(invalid key) succeeded")
+	}
+	if err := cache.Invalidate(ctx, "invalid"); err == nil {
+		t.Fatal("Invalidate(invalid key) succeeded")
+	}
+	if err := cache.Invalidate(ctx, key); err != nil {
+		t.Fatalf("Invalidate(missing key) = %v", err)
+	}
+
+	if err := cache.Store(ctx, key, Result{CacheKey: key}); err != nil {
+		t.Fatal(err)
+	}
+	path, err := cache.path(key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := cache.Invalidate(ctx, key); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Lstat(path); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("invalidated entry remains: %v", err)
+	}
+
+	unsafeKey := cacheKey("b")
+	unsafePath, err := cache.path(unsafeKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(unsafePath, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := cache.Delete(ctx, unsafeKey); err == nil ||
+		!strings.Contains(err.Error(), "unsafe") {
+		t.Fatalf("Delete(directory) = %v", err)
+	}
+}
+
+func TestFileCacheEntriesRejectPoisonedMetadata(t *testing.T) {
+	ctx := context.Background()
+	t.Run("directory", func(t *testing.T) {
+		cache, err := OpenFileCache(t.TempDir())
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Mkdir(filepath.Join(cache.Root, "zz"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := cache.Entries(ctx); err == nil ||
+			!strings.Contains(err.Error(), "unexpected stage cache directory") {
+			t.Fatalf("Entries(unexpected directory) = %v", err)
+		}
+	})
+	t.Run("corrupt-json", func(t *testing.T) {
+		cache, err := OpenFileCache(t.TempDir())
+		if err != nil {
+			t.Fatal(err)
+		}
+		key := cacheKey("c")
+		path, err := cache.path(key)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte("{"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := cache.Entries(ctx); err == nil ||
+			!strings.Contains(err.Error(), "decode stage cache") {
+			t.Fatalf("Entries(corrupt JSON) = %v", err)
+		}
+	})
+	t.Run("oversized", func(t *testing.T) {
+		cache, err := OpenFileCache(t.TempDir())
+		if err != nil {
+			t.Fatal(err)
+		}
+		key := cacheKey("d")
+		path, err := cache.path(key)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		oversized := make([]byte, maximumFileCacheEntryBytes+1)
+		if err := os.WriteFile(path, oversized, 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if _, _, err := cache.Load(ctx, key); err == nil ||
+			!strings.Contains(err.Error(), "exceeds") {
+			t.Fatalf("Load(oversized) = %v", err)
+		}
+		if _, err := cache.Entries(ctx); err == nil ||
+			!strings.Contains(err.Error(), "exceeds") {
+			t.Fatalf("Entries(oversized) = %v", err)
+		}
+		if err := cache.Store(ctx, key, Result{}); err == nil ||
+			!strings.Contains(err.Error(), "existing stage cache entry exceeds") {
+			t.Fatalf("Store(over oversized entry) = %v", err)
+		}
+	})
+}
+
+func TestFileCacheRejectsRootIdentityReplacement(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "cache")
+	cache, err := OpenFileCache(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	original := root + ".original"
+	if err := os.Rename(root, original); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(root, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := cache.Load(context.Background(), cacheKey("e")); err == nil ||
+		!strings.Contains(err.Error(), "identity changed") {
+		t.Fatalf("Load(replaced root) = %v", err)
+	}
+	if _, err := cache.Entries(context.Background()); err == nil ||
+		!strings.Contains(err.Error(), "identity changed") {
+		t.Fatalf("Entries(replaced root) = %v", err)
+	}
+}
+
+func TestFileCacheBoundedAndSymlinkContracts(t *testing.T) {
+	ctx := context.Background()
+	t.Run("oversized metadata", func(t *testing.T) {
+		cache, err := OpenFileCache(t.TempDir())
+		if err != nil {
+			t.Fatal(err)
+		}
+		result := Result{Metadata: map[string]any{
+			"padding": strings.Repeat("x", int(maximumFileCacheEntryBytes)),
+		}}
+		if err := cache.Store(ctx, cacheKey("1"), result); err == nil ||
+			!strings.Contains(err.Error(), "exceeds") {
+			t.Fatalf("Store(oversized metadata) = %v", err)
+		}
+	})
+	t.Run("symlink path component", func(t *testing.T) {
+		base := t.TempDir()
+		target := filepath.Join(base, "target")
+		if err := os.Mkdir(target, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		link := filepath.Join(base, "link")
+		if err := os.Symlink(target, link); err != nil {
+			t.Skipf("symlinks unavailable: %v", err)
+		}
+		if _, err := OpenFileCache(filepath.Join(link, "cache")); err == nil ||
+			!strings.Contains(err.Error(), "symlink") {
+			t.Fatalf("OpenFileCache(symlink path) = %v", err)
+		}
+	})
+	t.Run("symlink entry", func(t *testing.T) {
+		cache, err := OpenFileCache(t.TempDir())
+		if err != nil {
+			t.Fatal(err)
+		}
+		key := cacheKey("2")
+		path, err := cache.path(key)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		target := filepath.Join(cache.Root, "target")
+		if err := os.WriteFile(target, []byte("{}"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Symlink(target, path); err != nil {
+			t.Skipf("symlinks unavailable: %v", err)
+		}
+		if _, _, err := cache.Load(ctx, key); err == nil {
+			t.Fatal("Load(symlink entry) succeeded")
+		}
+		if _, err := cache.Entries(ctx); err == nil ||
+			!strings.Contains(err.Error(), "unexpected stage cache entry") {
+			t.Fatalf("Entries(symlink entry) = %v", err)
+		}
+		if err := cache.Delete(ctx, key); err == nil ||
+			!strings.Contains(err.Error(), "unsafe") {
+			t.Fatalf("Delete(symlink entry) = %v", err)
+		}
+		if err := cache.Store(ctx, key, Result{}); err == nil ||
+			!strings.Contains(err.Error(), "unsafe") {
+			t.Fatalf("Store(symlink entry) = %v", err)
+		}
+	})
+	t.Run("symlink shard", func(t *testing.T) {
+		cache, err := OpenFileCache(t.TempDir())
+		if err != nil {
+			t.Fatal(err)
+		}
+		target := t.TempDir()
+		if err := os.Symlink(target, filepath.Join(cache.Root, "33")); err != nil {
+			t.Skipf("symlinks unavailable: %v", err)
+		}
+		if err := cache.Store(ctx, cacheKey("3"), Result{}); err == nil ||
+			!strings.Contains(err.Error(), "non-symlink directory") {
+			t.Fatalf("Store(symlink shard) = %v", err)
+		}
+	})
+}
+
+func TestFileCacheIdentityHelperFailures(t *testing.T) {
+	cache, err := OpenFileCache(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := cache.ensureShard("invalid"); err == nil {
+		t.Fatal("ensureShard(invalid) succeeded")
+	}
+	if err := cache.validateShard(cache.Root, nil); err == nil {
+		t.Fatal("validateShard(nil identity) succeeded")
+	}
+
+	file := filepath.Join(t.TempDir(), "file")
+	if err := os.WriteFile(file, []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Lstat(file)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := validateStableCachePath(file, nil, info.Size()); err == nil {
+		t.Fatal("validateStableCachePath(nil identity) succeeded")
+	}
+	if err := syncStableCacheDirectory(file, info); err == nil {
+		t.Fatal("syncStableCacheDirectory(file) succeeded")
+	}
+	if err := syncStableCacheDirectory(t.TempDir(), nil); err == nil {
+		t.Fatal("syncStableCacheDirectory(nil identity) succeeded")
+	}
+}
