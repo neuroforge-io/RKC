@@ -1,6 +1,29 @@
 # Quickstart
 
-## 1. Install prerequisites
+## 1. Install
+
+The shortest source-checkout path is:
+
+```sh
+git clone https://github.com/neuroforge-io/RKC.git
+cd RKC
+./install.sh
+rkc quickstart .
+```
+
+The installer builds both CGO-free binaries, installs them under
+`$HOME/.local/bin` by default, preserves the Apache-2.0 license and notice under
+`$HOME/.local/share/doc/rkc`, and prints the first-run command. Use
+`./install.sh --prefix /another/prefix` for another user-owned destination.
+Existing symbolic-link or non-file destinations are rejected.
+
+`rkc quickstart /path/to/repository` produces an atlas, retains immutable
+snapshot state, runs the strict local integrity and quality checks, and prints
+the search, browser, and cited-answer commands. It safely replaces only a
+previous RKC-owned atlas. The portable default does not invoke Python; pass
+`--python` only after the strict doctor check succeeds.
+
+## 2. Development prerequisites
 
 For a source checkout on Linux or macOS:
 
@@ -19,7 +42,7 @@ that portable profile, while the guarded development/release automation and
 the optional Python adapter require Linux; WSL2 is the supported Windows route
 for those Linux-only paths.
 
-## 2. Verify the checkout
+## 3. Verify the checkout
 
 ```sh
 make safe-verify
@@ -43,7 +66,7 @@ make safe-test-race
 make safe-release-verify
 ```
 
-## 3. Build
+## 4. Build
 
 ```sh
 make build
@@ -54,7 +77,7 @@ make build
 On a supported Linux user-systemd host, `make safe-build` provides the same
 binary build under RKC's deliberately subordinate resource envelope.
 
-## 4. Generate configuration
+## 5. Generate configuration
 
 ```sh
 ./bin/rkc init --path rkc.json
@@ -71,7 +94,7 @@ for virtual environments, local RKC model/runtime outputs, `bin`, `dist`, and
 named root-level coverage/cache outputs. Add another exact path with a repeated
 `--exclude` flag when scanning.
 
-## 5. Scan a repository
+## 6. Scan a repository
 
 Start with the portable deterministic profile:
 
@@ -160,7 +183,7 @@ Remote Git repositories are materialized without prompts or hooks:
 Credentials should be supplied through an approved Git credential helper, not
 embedded in URLs or configuration files.
 
-## 6. Enforce quality
+## 7. Enforce quality
 
 ```sh
 ./bin/rkc check \
@@ -178,7 +201,7 @@ Edge resolution depends on analyzer precision. The reference syntax adapters
 intentionally retain unresolved relations; lower the threshold for dynamic or
 unsupported codebases rather than falsifying the denominator.
 
-## 7. Search and browse
+## 8. Search and browse
 
 ```sh
 ./bin/rkc query --dir /tmp/my-atlas --limit 20 authentication
@@ -187,7 +210,7 @@ unsupported codebases rather than falsifying the denominator.
 
 The static site is also available directly under `/tmp/my-atlas/site`.
 
-## 8. Use MCP
+## 9. Use MCP
 
 ```sh
 ./bin/rkc-mcp --dir /tmp/my-atlas
@@ -199,7 +222,7 @@ Example initialization request:
 {"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}
 ```
 
-## 9. Construct model evidence packets
+## 10. Construct model evidence packets
 
 Packet-only mode is useful even without a model:
 
@@ -254,7 +277,7 @@ low-priority user cgroup. It is CPU-only by default, limited to one CPU core at
 the cgroup boundary, runs at nice level 19 with idle I/O priority, and receives
 a hard memory limit derived from `--max-rss-mib`.
 
-## 10. Compare snapshots
+## 11. Compare snapshots
 
 ```sh
 ./bin/rkc diff /tmp/atlas-before /tmp/atlas-after
@@ -266,7 +289,7 @@ Use graph commands to inspect a changed node’s impact:
 ./bin/rkc impact --dir /tmp/atlas-after --node '<node-id>'
 ```
 
-## 11. Produce the complete distributable
+## 12. Produce the complete distributable
 
 ```sh
 make safe-complete-package

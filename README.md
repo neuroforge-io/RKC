@@ -100,6 +100,8 @@ The exact ordered work, interfaces, migrations, tests, and exit gates are in
 - [`docs/data-model.md`](docs/data-model.md): canonical records and invariants.
 - [`docs/plugin-sdk.md`](docs/plugin-sdk.md): plugin and GraphPatch contracts.
 - [`docs/MODEL_RUNTIME.md`](docs/MODEL_RUNTIME.md): bounded local-model design.
+- [`docs/MODEL_SELECTION.md`](docs/MODEL_SELECTION.md): measured default-model
+  decision, Gemma 4 comparison, and promotion gates.
 - [`docs/SELF_CATALOGUE.md`](docs/SELF_CATALOGUE.md): guarded, non-recursive
   compilation of RKC's committed source into its own verified atlas.
 - [`docs/SECURITY_MODEL.md`](docs/SECURITY_MODEL.md): hostile-repository threat model.
@@ -112,23 +114,24 @@ The exact ordered work, interfaces, migrations, tests, and exit gates are in
 
 ## One-minute local atlas
 
-The dependency-light profile works on every supported RKC platform and does
-not need a model, daemon, database server, or Python sandbox:
+From a source checkout, installation and a verified first atlas are two
+commands:
 
 ```sh
-make build
-./bin/rkc doctor --repository .
-./bin/rkc plan --no-python .
-./bin/rkc scan --no-python --out .rkc --state-dir .rkc-state --force .
-./bin/rkc cache verify
-./bin/rkc check --coverage .rkc/coverage.json --bundle .rkc/bundle.json
-./bin/rkc serve --dir .rkc
+./install.sh
+rkc quickstart .
 ```
 
-Open `http://127.0.0.1:8787`. The generated `.rkc` atlas is portable and the
-`.rkc-state` directory retains immutable local snapshots. Both paths are
-explicit default inventory exclusions, so rerunning RKC on its own checkout
-does not recursively ingest prior output.
+`quickstart` performs the scan and locked integrity/quality checks, then prints
+the exact search, browser, and cited-answer entry points. It defaults to the
+dependency-light profile and does not need a model, daemon, database server, or
+Python sandbox. Pass `--python` only after `rkc doctor --strict --repository .`
+passes.
+
+The generated `.rkc` atlas is portable and the `.rkc-state` directory retains
+immutable local snapshots. Both paths are explicit default inventory
+exclusions, so rerunning RKC on its own checkout does not recursively ingest
+prior output.
 
 Incremental analyzer payloads live under the operating system's user-cache
 directory by default (for example, `$XDG_CACHE_HOME/rkc/stages` on Linux), never

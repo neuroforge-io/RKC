@@ -588,12 +588,14 @@ class RuntimeReceiptTests(unittest.TestCase):
             archive = root / "archive.tar.gz"
             archive.write_bytes(b"locked")
             runtime_root = root / "runtime"
+            build_environments: list[dict[str, str]] = []
 
             def fake_run(
                 command: list[str],
-                _environment: dict[str, str],
+                environment: dict[str, str],
                 _timeout: float,
             ) -> None:
+                build_environments.append(environment)
                 if "--build" not in command:
                     return
                 build = Path(command[command.index("--build") + 1])
@@ -632,6 +634,11 @@ class RuntimeReceiptTests(unittest.TestCase):
                     lock, root / "downloads", runtime_root, "portable", "cmake"
                 )
                 self.assertEqual(reused, runtime)
+            self.assertEqual(len(build_environments), 2)
+            for environment in build_environments:
+                ceiling = Path(environment["GIT_CEILING_DIRECTORIES"])
+                self.assertEqual(ceiling.name, "source")
+                self.assertEqual(ceiling.parent.parent, runtime_root)
             disk_gate.assert_called_once_with(
                 runtime_root,
                 bootstrap_llama_cpp.RUNTIME_STAGING_WRITE_BYTES,

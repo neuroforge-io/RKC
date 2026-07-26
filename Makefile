@@ -5,7 +5,7 @@ PYTHON ?= $(if $(wildcard .venv/bin/python),.venv/bin/python,python3)
 MODEL_RUNTIME ?=
 MODEL_QUALIFICATION_OUTPUT ?=
 
-.PHONY: all build safe-build format-check vet test python-env-check python-test coverage safe-coverage test-race go-mod-verify contracts docs-check licenses model-lock-check model-runtime-portable model-runtime-native model-fetch-generation model-fetch-embedding model-qualify plugins smoke reproducibility smoke-api smoke-mcp smoke-git benchmark verify safe-verify safe-test safe-test-race release-verify safe-release-verify self-catalogue demo release-binaries assemble-complete-package complete-package safe-complete-package clean package
+.PHONY: all build safe-build install-check format-check vet test python-env-check python-test coverage safe-coverage test-race go-mod-verify contracts docs-check licenses model-lock-check model-runtime-portable model-runtime-native model-fetch-generation model-fetch-embedding model-qualify plugins smoke reproducibility smoke-api smoke-mcp smoke-git benchmark verify safe-verify safe-test safe-test-race release-verify safe-release-verify self-catalogue demo release-binaries assemble-complete-package complete-package safe-complete-package clean package
 
 all: verify build
 
@@ -16,6 +16,9 @@ build:
 
 safe-build:
 	sh scripts/with-rkc-limits.sh $(MAKE) build
+
+install-check: build
+	sh scripts/test_install.sh
 
 format-check:
 	@test -z "$$(gofmt -l cmd internal pkg storage)" || { echo "Go files require gofmt:"; gofmt -l cmd internal pkg storage; exit 1; }
@@ -108,7 +111,7 @@ smoke-git: build
 benchmark: build
 	sh scripts/benchmark-reference.sh
 
-verify: go-mod-verify python-env-check format-check vet coverage contracts docs-check licenses model-lock-check build plugins smoke reproducibility smoke-api smoke-mcp smoke-git
+verify: go-mod-verify python-env-check format-check vet coverage contracts docs-check licenses model-lock-check build install-check plugins smoke reproducibility smoke-api smoke-mcp smoke-git
 
 safe-verify:
 	sh scripts/with-rkc-limits.sh $(MAKE) verify

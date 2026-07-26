@@ -103,7 +103,7 @@ jobs:
             --cap-drop ALL \
             -v "$GITHUB_WORKSPACE/examples:/workspace:ro" \
             -v "$volume:/output" \
-            rkc:ci scan --no-python --out /output/atlas --force /workspace
+            rkc:ci scan --no-python --no-cache --out /output/atlas --force /workspace
           docker run --rm "${resource_limits[@]}" \
             --read-only \
             --tmpfs /tmp:size=256m,mode=1777 \

@@ -622,6 +622,10 @@ def build_runtime(
         )
         environment = {
             "HOME": os.environ.get("HOME", "/nonexistent"),
+            # The verified source archive deliberately has no .git directory.
+            # Prevent Git invoked by upstream CMake from walking into RKC's
+            # parent checkout and embedding the wrong repository identity.
+            "GIT_CEILING_DIRECTORIES": str(source),
             "LANG": "C",
             "LC_ALL": "C",
             "PATH": os.environ.get("PATH", "/usr/bin:/bin"),
