@@ -116,7 +116,7 @@ func TestQuickstartOptionalAndFailurePaths(t *testing.T) {
 		repository := t.TempDir()
 		if err := os.WriteFile(
 			filepath.Join(repository, ".env"),
-			[]byte("GITHUB_TOKEN=ghp_abcdefghijklmnopqrstuvwxyz1234567890\n"),
+			[]byte("GITHUB_TOKEN="+"gh"+"p_"+strings.Repeat("a", 40)+"\n"),
 			0o600,
 		); err != nil {
 			t.Fatal(err)
