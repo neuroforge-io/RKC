@@ -364,6 +364,9 @@ invoked. `MANIFEST.json` and `SHA256SUMS.txt` bind the source commit, ephemeral
 tool binary, snapshot, canonical files, and explicit non-recursion assertions.
 See
 [`docs/SELF_CATALOGUE.md`](docs/SELF_CATALOGUE.md) for the verification contract.
+Measured self-analysis and an immutable scan of the recent
+`img2threejs/img2threejs` project are recorded in
+[`docs/SHOWCASE_2026-07-27.md`](docs/SHOWCASE_2026-07-27.md).
 
 ## Configuration
 
