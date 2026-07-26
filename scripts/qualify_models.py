@@ -41,6 +41,7 @@ MAX_LOG_BYTES = 8 * 1024 * 1024
 HTTP_MONITOR_SECONDS = 0.25
 LONG_CONTEXT_TOKENS = 32_768
 MAX_STRESS_PADDING_CHARACTERS = 2 * 1024 * 1024
+PREFILL_BATCH_TOKENS = 512
 
 
 class QualificationError(model_assets.AssetError):
@@ -385,9 +386,11 @@ class LocalServer:
             "--threads-batch",
             "1",
             "--batch-size",
-            "128",
+            str(PREFILL_BATCH_TOKENS),
             "--ubatch-size",
-            "128",
+            str(PREFILL_BATCH_TOKENS),
+            "--flash-attn",
+            "on",
             "--parallel",
             "1",
             "--n-gpu-layers",

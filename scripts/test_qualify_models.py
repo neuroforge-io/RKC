@@ -687,6 +687,15 @@ class LocalServerTests(unittest.TestCase):
                 server.close()
             arguments = popen.call_args.args[0]
             self.assertIn("--embedding", arguments)
+            self.assertEqual(
+                arguments[arguments.index("--batch-size") + 1],
+                str(qualify_models.PREFILL_BATCH_TOKENS),
+            )
+            self.assertEqual(
+                arguments[arguments.index("--ubatch-size") + 1],
+                str(qualify_models.PREFILL_BATCH_TOKENS),
+            )
+            self.assertEqual(arguments[arguments.index("--flash-attn") + 1], "on")
             self.assertFalse(server.key_path.exists())
             self.assertEqual(server.peak_rss_bytes, 42)
 

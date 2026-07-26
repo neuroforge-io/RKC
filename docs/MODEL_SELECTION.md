@@ -22,6 +22,27 @@ The candidates become defaults only after the real two-role qualification in
 [`rkc-local-model-v1.json`](../models/qualification/rkc-local-model-v1.json)
 passes and its raw receipt is manually reviewed. Promotion is never automatic.
 
+## 2026-07-27 guarded qualification outcome
+
+No local model is promoted as the RKC default.
+
+The Qwen generation candidate was loaded through the pinned native
+`llama.cpp` runtime inside RKC's one-CPU, 2 GiB `memory.high`, 2.5 GiB
+`memory.max`, nice-19, idle-I/O guard. Explicit flash attention and a
+512-token prefill batch reduced current cgroup memory from approximately
+1.89 GiB to 1.46 GiB with no swap. The mandatory tokenizer-exact 32K case,
+however, reached only 5,632 of 32,384 input tokens after 269.08 seconds, with
+average prefill throughput declining to 20.93 tokens/second. The run was
+stopped rather than occupying the protected single CPU for an impractical
+extended period.
+
+That interrupted run is not a qualification receipt and supplies no quality
+pass. The generation and embedding assets therefore remain `unqualified`,
+`default_generation_model` and `default_embedding_model` remain `null`, and
+model-backed commands continue to fail closed unless a future candidate
+completes every gate. RKC does not substitute a weaker quantization or silently
+reduce the 32K requirement to manufacture a passing default.
+
 ## Why Gemma 4 E2B is not the RKC default
 
 Gemma 4 E2B is a strong modern Apache-2.0 candidate with a 128K context window,

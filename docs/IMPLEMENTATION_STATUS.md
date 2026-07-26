@@ -70,7 +70,7 @@ The labels below mean:
 | cgroup, priority, CPU-only and RSS policy | Partial | guarded Linux path implemented; portable non-Linux hard limits pending |
 | claim/summary validation | Implemented | citations and identifiers checked |
 | grounded repository answers | Implemented | CLI uses bounded lexical/semantic/hybrid plus graph evidence, canonical re-resolution, validation, and abstention; qualified embedding/generation bindings required for model-backed modes |
-| real GGUF benchmark below 2.5 GiB | Planned | generation and embedding candidates are unqualified and not defaults |
+| real GGUF benchmark below 2.5 GiB | Blocked on a satisfactory candidate | Qwen3.5-2B remained within the guarded memory ceiling but did not complete the required 32K operating-point gate in a practical single-CPU interval; candidates remain unqualified and no default is configured |
 | remote model providers | Planned | policy/egress controls required |
 
 ## Interfaces
