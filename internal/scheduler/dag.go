@@ -12,6 +12,7 @@ import (
 	"errors"
 	"fmt"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 )
@@ -84,6 +85,58 @@ type Report struct {
 	Duration time.Duration     `json:"duration"`
 }
 
+type JournalStage struct {
+	ID           string          `json:"id"`
+	Version      string          `json:"version"`
+	Dependencies []string        `json:"dependencies"`
+	Resources    ResourceRequest `json:"resources"`
+}
+
+type JournalKind string
+
+const (
+	JournalKindRun   JournalKind = "run"
+	JournalKindStage JournalKind = "stage"
+)
+
+type JournalState string
+
+const (
+	JournalStatePlanned   JournalState = "planned"
+	JournalStateQueued    JournalState = "queued"
+	JournalStateRunning   JournalState = "running"
+	JournalStateCached    JournalState = "cached"
+	JournalStateSucceeded JournalState = "succeeded"
+	JournalStateFailed    JournalState = "failed"
+	JournalStateCancelled JournalState = "cancelled"
+)
+
+type JournalRecord struct {
+	SchemaVersion        string          `json:"schema_version"`
+	RunID                string          `json:"run_id"`
+	Sequence             uint64          `json:"sequence"`
+	Kind                 JournalKind     `json:"kind"`
+	State                JournalState    `json:"state"`
+	Attempt              uint32          `json:"attempt,omitempty"`
+	StageID              string          `json:"stage_id,omitempty"`
+	StageVersion         string          `json:"stage_version,omitempty"`
+	CacheKey             string          `json:"cache_key,omitempty"`
+	OutputDigest         string          `json:"output_digest,omitempty"`
+	Resources            ResourceRequest `json:"resources,omitempty"`
+	Plan                 []JournalStage  `json:"plan,omitempty"`
+	PlanDigest           string          `json:"plan_digest"`
+	PreviousRecordDigest string          `json:"previous_record_digest"`
+	RecordDigest         string          `json:"record_digest"`
+	OccurredAt           time.Time       `json:"occurred_at"`
+	Duration             time.Duration   `json:"duration,omitempty"`
+	Error                string          `json:"error,omitempty"`
+}
+
+type Journal interface {
+	RunID() string
+	Append(context.Context, JournalRecord) error
+}
+
 type Cache interface {
 	Load(context.Context, string) (Result, bool, error)
 	Store(context.Context, string, Result) error
@@ -97,6 +150,8 @@ type Options struct {
 	Workers int
 	Budget  ResourceBudget
 	Cache   Cache
+	RunID   string
+	Journal Journal
 	Values  map[string]any
 	OnEvent func(Event)
 }
@@ -109,6 +164,43 @@ func Execute(ctx context.Context, stages []Stage, options Options) (Report, erro
 	normalized, err := validateAndNormalize(stages)
 	if err != nil {
 		return Report{}, err
+	}
+	planDigest := ""
+	if options.Journal != nil {
+		if err := ValidateRunID(options.RunID); err != nil {
+			return Report{}, fmt.Errorf("validate scheduler journal run ID: %w", err)
+		}
+		if options.Journal.RunID() != options.RunID {
+			return Report{}, errors.New("scheduler journal run ID does not match execution run ID")
+		}
+		plan := make([]JournalStage, 0, len(normalized))
+		for _, stage := range normalized {
+			if strings.TrimSpace(stage.Version) == "" {
+				return Report{}, fmt.Errorf(
+					"validate scheduler journal plan: stage %s has no version",
+					stage.ID,
+				)
+			}
+			plan = append(plan, JournalStage{
+				ID:           stage.ID,
+				Version:      stage.Version,
+				Dependencies: append([]string(nil), stage.Dependencies...),
+				Resources:    stage.Resources,
+			})
+		}
+		planDigest, err = JournalPlanDigest(plan)
+		if err != nil {
+			return Report{}, fmt.Errorf("digest scheduler journal plan: %w", err)
+		}
+		if err := appendJournalRecord(options.Journal, JournalRecord{
+			RunID:      options.RunID,
+			Kind:       JournalKindRun,
+			State:      JournalStateRunning,
+			Plan:       plan,
+			PlanDigest: planDigest,
+		}); err != nil {
+			return Report{}, fmt.Errorf("begin scheduler journal: %w", err)
+		}
 	}
 	if options.Workers <= 0 {
 		options.Workers = 1
@@ -125,20 +217,52 @@ func Execute(ctx context.Context, stages []Stage, options Options) (Report, erro
 		defer callbackMu.Unlock()
 		options.OnEvent(event)
 	}
+	finish := func(runErr error) (Report, error) {
+		report := Report{Results: results, Events: events, Duration: time.Since(started)}
+		state := JournalStateSucceeded
+		if runErr != nil {
+			state = JournalStateFailed
+			if ctxErr := ctx.Err(); errors.Is(ctxErr, context.Canceled) ||
+				errors.Is(ctxErr, context.DeadlineExceeded) {
+				state = JournalStateCancelled
+			}
+		}
+		if options.Journal != nil {
+			record := JournalRecord{
+				RunID:      options.RunID,
+				Kind:       JournalKindRun,
+				State:      state,
+				PlanDigest: planDigest,
+				Duration:   report.Duration,
+			}
+			if runErr != nil {
+				record.Error = runErr.Error()
+			}
+			if journalErr := appendJournalRecord(options.Journal, record); journalErr != nil {
+				journalErr = fmt.Errorf("finish scheduler journal: %w", journalErr)
+				if runErr == nil {
+					runErr = journalErr
+				} else {
+					runErr = errors.Join(runErr, journalErr)
+				}
+			}
+		}
+		return report, runErr
+	}
 
 	for len(completed) < len(normalized) {
 		if err := ctx.Err(); err != nil {
-			return Report{Results: results, Events: events, Duration: time.Since(started)}, err
+			return finish(err)
 		}
 		ready := readyStages(normalized, completed)
 		if len(ready) == 0 {
-			return Report{Results: results, Events: events, Duration: time.Since(started)}, ErrDependencyCycle
+			return finish(ErrDependencyCycle)
 		}
 		pending := ready
 		for len(pending) > 0 {
 			batch, deferred, err := admitStages(pending, options.Workers, options.Budget)
 			if err != nil {
-				return Report{Results: results, Events: events, Duration: time.Since(started)}, err
+				return finish(err)
 			}
 			pending = deferred
 			type outcome struct {
@@ -155,14 +279,71 @@ func Execute(ctx context.Context, stages []Stage, options Options) (Report, erro
 				go func() {
 					defer wg.Done()
 					stageStarted := time.Now()
+					if options.Journal != nil {
+						if journalErr := appendJournalRecord(options.Journal, JournalRecord{
+							RunID:        options.RunID,
+							Kind:         JournalKindStage,
+							State:        JournalStateRunning,
+							Attempt:      1,
+							StageID:      stage.ID,
+							StageVersion: stage.Version,
+							Resources:    stage.Resources,
+							PlanDigest:   planDigest,
+						}); journalErr != nil {
+							journalErr = fmt.Errorf("begin stage journal: %w", journalErr)
+							event := Event{
+								StageID:   stage.ID,
+								State:     "failed",
+								StartedAt: stageStarted,
+								Duration:  time.Since(stageStarted),
+								Error:     journalErr.Error(),
+							}
+							emit(onEvent, event)
+							outcomes <- outcome{id: stage.ID, event: event, err: journalErr}
+							return
+						}
+					}
 					emit(onEvent, Event{StageID: stage.ID, State: "running", StartedAt: stageStarted})
 					result, runErr := executeStage(ctx, stage, results, options)
 					event := Event{StageID: stage.ID, State: "complete", StartedAt: stageStarted, Duration: time.Since(stageStarted)}
+					journalState := JournalStateSucceeded
 					if runErr != nil {
 						event.State = "failed"
 						event.Error = runErr.Error()
+						if errors.Is(runErr, context.Canceled) || errors.Is(runErr, context.DeadlineExceeded) {
+							journalState = JournalStateCancelled
+						} else {
+							journalState = JournalStateFailed
+						}
 					} else if result.CacheHit {
 						event.State = "cached"
+						journalState = JournalStateCached
+					}
+					if options.Journal != nil {
+						record := JournalRecord{
+							RunID:        options.RunID,
+							Kind:         JournalKindStage,
+							State:        journalState,
+							Attempt:      1,
+							StageID:      stage.ID,
+							StageVersion: stage.Version,
+							CacheKey:     result.CacheKey,
+							OutputDigest: result.ObjectDigest,
+							Resources:    stage.Resources,
+							PlanDigest:   planDigest,
+							Duration:     event.Duration,
+							Error:        event.Error,
+						}
+						if journalErr := appendJournalRecord(options.Journal, record); journalErr != nil {
+							journalErr = fmt.Errorf("finish stage journal: %w", journalErr)
+							if runErr == nil {
+								runErr = journalErr
+							} else {
+								runErr = errors.Join(runErr, journalErr)
+							}
+							event.State = "failed"
+							event.Error = runErr.Error()
+						}
 					}
 					emit(onEvent, event)
 					outcomes <- outcome{id: stage.ID, result: result, event: event, err: runErr}
@@ -175,13 +356,18 @@ func Execute(ctx context.Context, stages []Stage, options Options) (Report, erro
 				collected = append(collected, item)
 			}
 			sort.Slice(collected, func(i, j int) bool { return collected[i].id < collected[j].id })
+			var batchErr error
 			for _, item := range collected {
 				events = append(events, item.event)
 				if item.err != nil {
-					return Report{Results: results, Events: events, Duration: time.Since(started)}, fmt.Errorf("stage %s: %w", item.id, item.err)
+					batchErr = errors.Join(batchErr, fmt.Errorf("stage %s: %w", item.id, item.err))
+					continue
 				}
 				results[item.id] = item.result
 				completed[item.id] = true
+			}
+			if batchErr != nil {
+				return finish(batchErr)
 			}
 		}
 	}
@@ -191,7 +377,13 @@ func Execute(ctx context.Context, stages []Stage, options Options) (Report, erro
 		}
 		return events[i].StageID < events[j].StageID
 	})
-	return Report{Results: results, Events: events, Duration: time.Since(started)}, nil
+	return finish(nil)
+}
+
+func appendJournalRecord(journal Journal, record JournalRecord) error {
+	ctx, cancel := context.WithTimeout(context.Background(), journalTerminalSyncTimeout)
+	defer cancel()
+	return journal.Append(ctx, record)
 }
 
 func executeStage(ctx context.Context, stage Stage, prior map[string]Result, options Options) (Result, error) {
