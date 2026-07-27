@@ -508,8 +508,9 @@ the same atomically published generation. Verification preserves the prior
 rebuilds binaries, SBOMs, and demo inputs in two detached checkouts with separate
 Go build and module caches, uses implementation-independent stored ZIP entries,
 and requires final byte equality before one atomic `dist/release` swap. The safe
-target gives priority to ERAIS and applies the same one-core, 2.5-GiB cgroup to
-release verification, cross-compilation, SBOM rebinding, and ZIP assembly.
+target gives priority to ERAIS and applies the same one-core, 3 GiB soft /
+3.5 GiB hard cgroup to release verification, cross-compilation, SBOM
+rebinding, and ZIP assembly.
 
 ## Security status
 
