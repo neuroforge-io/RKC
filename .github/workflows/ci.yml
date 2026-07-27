@@ -84,6 +84,7 @@ jobs:
         run: |
           set -euo pipefail
           volume="rkc-ci-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          state_volume="${volume}-state"
           resource_limits=(
             --cpus 1
             --cpu-shares 2
@@ -95,7 +96,8 @@ jobs:
             --blkio-weight 10
           )
           docker volume create "$volume" >/dev/null
-          trap 'docker volume rm -f "$volume" >/dev/null' EXIT
+          docker volume create "$state_volume" >/dev/null
+          trap 'docker volume rm -f "$volume" "$state_volume" >/dev/null' EXIT
           docker run --rm "${resource_limits[@]}" \
             --read-only \
             --tmpfs /tmp:size=256m,mode=1777 \
@@ -103,7 +105,14 @@ jobs:
             --cap-drop ALL \
             -v "$GITHUB_WORKSPACE/examples:/workspace:ro" \
             -v "$volume:/output" \
-            rkc:ci scan --no-python --no-cache --out /output/atlas --force /workspace
+            -v "$state_volume:/state" \
+            rkc:ci scan \
+              --runs-dir /state/runs \
+              --no-python \
+              --no-cache \
+              --out /output/atlas \
+              --force \
+              /workspace
           docker run --rm "${resource_limits[@]}" \
             --read-only \
             --tmpfs /tmp:size=256m,mode=1777 \
