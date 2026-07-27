@@ -363,7 +363,7 @@ func TestAnswerCoverageValidatesQualifiedProviderRequests(t *testing.T) {
 		{"output low", func(request *qualifiedGenerationRequest) { request.MaximumOutputTokens = 0 }, "max-output"},
 		{"output high", func(request *qualifiedGenerationRequest) { request.MaximumOutputTokens = 513 }, "max-output"},
 		{"rss low", func(request *qualifiedGenerationRequest) { request.MaximumRSSMiB = 255 }, "max-rss-mib"},
-		{"rss high", func(request *qualifiedGenerationRequest) { request.MaximumRSSMiB = 2561 }, "max-rss-mib"},
+		{"rss high", func(request *qualifiedGenerationRequest) { request.MaximumRSSMiB = 3585 }, "max-rss-mib"},
 		{"threads low", func(request *qualifiedGenerationRequest) { request.Threads = -1 }, "threads must be"},
 		{"threads high", func(request *qualifiedGenerationRequest) { request.Threads = 65 }, "threads must be"},
 		{"batch low", func(request *qualifiedGenerationRequest) { request.BatchSize = 0 }, "batch-size"},

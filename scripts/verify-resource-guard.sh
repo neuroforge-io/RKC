@@ -93,8 +93,8 @@ fi
         [ "${RKC_REQUIRE_IO_CONTROLLER:-0}" != "1" ] || fail "I/O controller is not delegated to the user manager"
         echo "rkc resource guard verification: user manager lacks I/O-controller delegation; enforcing idle ionice"
     fi
-    [ "$(cat "$cgroup/memory.high")" = "2147483648" ] || fail "MemoryHigh is not 2 GiB"
-    [ "$(cat "$cgroup/memory.max")" = "2684354560" ] || fail "MemoryMax is not 2.5 GiB"
+    [ "$(cat "$cgroup/memory.high")" = "3221225472" ] || fail "MemoryHigh is not 3 GiB"
+    [ "$(cat "$cgroup/memory.max")" = "3758096384" ] || fail "MemoryMax is not 3.5 GiB"
     [ "$(cat "$cgroup/memory.swap.max")" = "268435456" ] || fail "MemorySwapMax is not 256 MiB"
     [ "$(cat "$cgroup/pids.max")" = "128" ] || fail "TasksMax is not 128"
     [ "$(cat /proc/$$/oom_score_adj)" = "750" ] || fail "OOM score adjustment is not 750"

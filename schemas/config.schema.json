@@ -321,7 +321,7 @@
         "max_rss_mib": {
           "type": "integer",
           "minimum": 256,
-          "maximum": 2560
+          "maximum": 3584
         },
         "peak_memory_limit_mb": {
           "type": "integer",

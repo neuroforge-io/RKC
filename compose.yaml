@@ -5,9 +5,9 @@ services:
     read_only: true
     cpus: 1.0
     cpu_shares: 2
-    mem_limit: 2560m
-    mem_reservation: 2048m
-    memswap_limit: 2816m
+    mem_limit: 3584m
+    mem_reservation: 3072m
+    memswap_limit: 3840m
     pids_limit: 128
     oom_score_adj: 750
     blkio_config:

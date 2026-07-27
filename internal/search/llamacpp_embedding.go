@@ -197,13 +197,13 @@ func normalizeLlamaCPPEmbeddingConfig(config LlamaCPPEmbeddingConfig) (LlamaCPPE
 		return config, errors.New("embedding stderr limit must not exceed 16 MiB")
 	}
 	if config.MaximumRSSBytes == 0 {
-		config.MaximumRSSBytes = 2560 * 1024 * 1024
+		config.MaximumRSSBytes = 3584 * 1024 * 1024
 	}
 	if config.MaximumRSSBytes < 64*1024*1024 || config.MaximumRSSBytes > 64*1024*1024*1024 {
 		return config, errors.New("embedding RSS limit must be between 64 MiB and 64 GiB")
 	}
-	if !config.UnsafeDisableResourceGuard && config.MaximumRSSBytes > 2560*1024*1024 {
-		return config, errors.New("production embedding RSS limit must not exceed 2560 MiB")
+	if !config.UnsafeDisableResourceGuard && config.MaximumRSSBytes > 3584*1024*1024 {
+		return config, errors.New("production embedding RSS limit must not exceed 3584 MiB")
 	}
 	return config, nil
 }

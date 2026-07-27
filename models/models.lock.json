@@ -144,6 +144,30 @@
       "extraction_root": null
     },
     {
+      "id": "gemma-4-e2b-it-qat-q4-0-candidate",
+      "kind": "generation-model",
+      "status": "unqualified",
+      "default_eligible": false,
+      "repository": "https://huggingface.co/google/gemma-4-E2B-it-qat-q4_0-gguf",
+      "revision": "675cff42a74c774d6cb76f76d8eacb49b48c9b93",
+      "filename": "gemma-4-E2B_q4_0-it.gguf",
+      "url": "https://huggingface.co/google/gemma-4-E2B-it-qat-q4_0-gguf/resolve/675cff42a74c774d6cb76f76d8eacb49b48c9b93/gemma-4-E2B_q4_0-it.gguf?download=true",
+      "allowed_hosts": [
+        "huggingface.co",
+        ".huggingface.co",
+        ".hf.co"
+      ],
+      "sha256": "fa401b55b07ee70a54c6dae3903c783a6e65064312529ea57175cb5f8dec6634",
+      "size_bytes": 3349516256,
+      "license_spdx": "Apache-2.0",
+      "license_url": "https://huggingface.co/google/gemma-4-E2B-it-qat-q4_0-gguf/blob/675cff42a74c774d6cb76f76d8eacb49b48c9b93/README.md",
+      "redistribution": "not-bundled-download-on-demand",
+      "quantization": "Q4_0",
+      "native_context_tokens": 131072,
+      "qualification_spec": "models/qualification/rkc-local-model-v1.json",
+      "extraction_root": null
+    },
+    {
       "id": "qwen3-embedding-0.6b-q8-0-candidate",
       "kind": "embedding-model",
       "status": "unqualified",

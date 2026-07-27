@@ -13,8 +13,8 @@ import (
 var ErrLowPriorityEnvelope = errors.New("current process is outside the RKC low-priority envelope")
 
 const (
-	rkcMemoryHighBytes = int64(2 * 1024 * 1024 * 1024)
-	rkcMemoryMaxBytes  = int64(2560 * 1024 * 1024)
+	rkcMemoryHighBytes = int64(3 * 1024 * 1024 * 1024)
+	rkcMemoryMaxBytes  = int64(3584 * 1024 * 1024)
 	rkcSwapMaxBytes    = int64(256 * 1024 * 1024)
 	rkcTasksMax        = int64(128)
 	rkcNice            = 19

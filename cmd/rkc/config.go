@@ -19,7 +19,7 @@ import (
 const (
 	configurationSchemaVersion = "0.2.0"
 	configurationSchemaURI     = "https://raw.githubusercontent.com/neuroforge-io/RKC/039edfa35972e4c003bb8a09738e42a21053b2d4/schemas/config.schema.json"
-	modelMaximumRSSMiB         = int64(2560)
+	modelMaximumRSSMiB         = int64(3584)
 )
 
 type Configuration struct {
@@ -173,7 +173,7 @@ func defaultConfiguration() Configuration {
 		Frameworks:    FrameworksConfig{Enabled: true, Markdown: true, OpenAPIJSON: true, JSONSchema: true, PackageManifests: true, EnvironmentFiles: true},
 		Security:      SecurityConfig{DetectSecrets: true, RedactExports: true},
 		Documentation: DocumentationConfig{DeterministicTemplates: true, RequireEvidenceForEveryClaim: true, RejectUnknownSymbolReferences: true},
-		Model:         ModelConfig{Provider: "disabled", ContextTokens: 4096, MaxOutputTokens: 768, Temperature: 0, MaxRSSMiB: 2560},
+		Model:         ModelConfig{Provider: "disabled", ContextTokens: 4096, MaxOutputTokens: 768, Temperature: 0, MaxRSSMiB: 3584},
 		Search:        SearchConfig{Enabled: true, Lexical: true, Embeddings: false, GraphExpansionHops: 2},
 		Exports:       ExportsConfig{NormalizedSources: true, JSONLGraph: true, StaticSite: true, SearchIndex: true, Integrations: true, NotebookPackBytes: 1000000},
 		QualityGates:  QualityGatesConfig{MinInventoryAccounting: 1, MinSymbolEvidence: 1, MinEdgeResolution: 0, MinClaimCitation: 1, MaxErrorDiagnostics: 0, MaxUnresolvedEdges: -1, MaxHighConfidenceSecrets: 0, RequireDeterminism: true},
@@ -341,7 +341,7 @@ func (cfg Configuration) Validate() error {
 	if cfg.Model.MaxRSSMiB < 256 {
 		failures = append(failures, "model.max_rss_mib must be at least 256")
 	} else if cfg.Model.MaxRSSMiB > modelMaximumRSSMiB {
-		failures = append(failures, "model.max_rss_mib must not exceed the 2560 MiB safety ceiling")
+		failures = append(failures, "model.max_rss_mib must not exceed the 3584 MiB safety ceiling")
 	}
 	if cfg.Search.Embeddings {
 		failures = append(failures, "search.embeddings is not implemented in this reference build")

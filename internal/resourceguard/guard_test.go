@@ -269,7 +269,7 @@ func TestGuardValidationBranchesDoNotInspectLiveProcesses(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if defaultLimit.maximumRSSBytes != 2560*1024*1024 {
+	if defaultLimit.maximumRSSBytes != 3584*1024*1024 {
 		t.Fatalf("default RSS limit = %d", defaultLimit.maximumRSSBytes)
 	}
 	if _, err := defaultLimit.Run(nil, nil, nil); err == nil || !strings.Contains(err.Error(), "context") {

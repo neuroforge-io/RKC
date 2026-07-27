@@ -264,7 +264,7 @@ embedding candidate, and qualification commands.
   --llama-cli /usr/local/bin/llama-cli \
   --context 4096 \
   --max-output 768 \
-  --max-rss-mib 2560 \
+  --max-rss-mib 3584 \
   --limit 5 \
   --force
 ```

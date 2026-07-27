@@ -79,7 +79,7 @@ The highest-value unfinished work is:
    C/C++, Rust, Java/Kotlin, and C#;
 5. add SQL, protobuf, GraphQL, Terraform, Kubernetes, CI, and richer build packs;
 6. build the paginated TypeScript browser and editor integrations;
-7. benchmark a real quantized GGUF model below the 2.5 GiB guarded ceiling;
+7. benchmark a real quantized GGUF model below the 3.5 GiB guarded ceiling;
 8. implement PostgreSQL/object-storage team mode, authentication, authorization,
    queues, audit retention, backups, and operational telemetry;
 9. publish signed binaries and containers, container SBOMs, provenance, and
@@ -184,7 +184,7 @@ make safe-release-verify
 ```
 
 The `safe-*` targets run local builds and tests at nice level 19 and idle I/O
-priority inside a fail-closed user cgroup capped at one CPU core and 2.5 GiB RAM.
+priority inside a fail-closed user cgroup capped at one CPU core and 3.5 GiB RAM.
 CI provisions the same delegated guard around expensive verification and
 package/self-catalogue assembly inside its disposable runner.
 
@@ -452,7 +452,7 @@ The equivalent explicit Docker invocation is:
 docker build -t rkc:local .
 docker run --rm \
   --cpus 1 --cpu-shares 2 \
-  --memory 2560m --memory-reservation 2048m --memory-swap 2816m \
+  --memory 3584m --memory-reservation 3072m --memory-swap 3840m \
   --pids-limit 128 --oom-score-adj 750 --blkio-weight 10 \
   --read-only --tmpfs /tmp:size=256m,mode=1777 \
   --security-opt no-new-privileges:true --cap-drop ALL \
@@ -464,8 +464,8 @@ The static `scratch` image contains only the two CGO-free RKC executables,
 runtime contracts/configuration, and attribution material; it has no shell,
 package manager, Python, or user-systemd manager. Container scans must pass
 `--no-python` explicitly; RKC never falls back to unsandboxed Python. The
-Compose file encodes that portable profile and additionally applies a one-core quota, 2 GiB memory
-reservation, 2.5 GiB hard memory limit, 256 MiB swap allowance, 128-process
+Compose file encodes that portable profile and additionally applies a one-core quota, 3 GiB memory
+reservation, 3.5 GiB hard memory limit, 256 MiB swap allowance, 128-process
 limit, minimum CPU/block-I/O weights, high OOM-kill preference, a read-only root
 filesystem, `no-new-privileges`, and dropped Linux capabilities. Scheduling
 weights are subject to host-kernel support. Use a supported Linux host with

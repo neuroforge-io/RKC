@@ -80,7 +80,7 @@ func newCommand(ctx context.Context, config Config, priorityCheck func() error) 
 	}
 	memoryMax := config.MaximumRSSBytes
 	if memoryMax == 0 {
-		memoryMax = 2560 * 1024 * 1024
+		memoryMax = 3584 * 1024 * 1024
 	}
 	if memoryMax < 64*1024*1024 || memoryMax > 64*1024*1024*1024 {
 		return nil, errors.New("model RSS limit must be between 64 MiB and 64 GiB")
@@ -101,8 +101,12 @@ func newCommand(ctx context.Context, config Config, priorityCheck func() error) 
 			return nil, fmt.Errorf("required model resource guard command %q is unavailable: %w", executable, err)
 		}
 	}
-	memoryHigh := memoryMax * 85 / 100
-	swapMax := memoryMax / 8
+	// Keep the default 3.5 GiB model ceiling aligned with the outer
+	// development envelope's exact 3 GiB pressure threshold. Smaller explicit
+	// limits retain the same ratio, while swap remains a fixed, narrow escape
+	// hatch rather than scaling with model size.
+	memoryHigh := memoryMax * 6 / 7
+	swapMax := int64(256 * 1024 * 1024)
 	prefix := config.UnitPrefix
 	if prefix == "" {
 		prefix = "rkc-model"

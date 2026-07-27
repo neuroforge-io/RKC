@@ -2,7 +2,7 @@
 
 RKC treats model selection as a measured operating-point decision, not a model
 card popularity contest. The non-negotiable local envelope is one CPU core,
-2 GiB `memory.high`, 2.5 GiB `memory.max`, 256 MiB swap, and one model role
+3 GiB `memory.high`, 3.5 GiB `memory.max`, 256 MiB swap, and one model role
 loaded at a time. Deterministic compilation and lexical/graph retrieval remain
 the fallback if no candidate passes.
 
@@ -27,7 +27,7 @@ passes and its raw receipt is manually reviewed. Promotion is never automatic.
 No local model is promoted as the RKC default.
 
 The Qwen generation candidate was loaded through the pinned native
-`llama.cpp` runtime inside RKC's one-CPU, 2 GiB `memory.high`, 2.5 GiB
+`llama.cpp` runtime inside RKC's one-CPU, 3 GiB `memory.high`, 3.5 GiB
 `memory.max`, nice-19, idle-I/O guard. Explicit flash attention and a
 512-token prefill batch reduced current cgroup memory from approximately
 1.89 GiB to 1.46 GiB with no swap. The mandatory tokenizer-exact 32K case,

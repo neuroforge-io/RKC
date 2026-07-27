@@ -111,7 +111,7 @@ func openQualifiedGenerationProvider(request qualifiedGenerationRequest) (*quali
 		return nil, errors.New("max-output must be positive and no larger than context")
 	}
 	if request.MaximumRSSMiB < 256 || request.MaximumRSSMiB > modelMaximumRSSMiB {
-		return nil, errors.New("max-rss-mib must be between 256 and the 2560 MiB safety ceiling")
+		return nil, errors.New("max-rss-mib must be between 256 and the 3584 MiB safety ceiling")
 	}
 	if request.Threads < 0 || request.Threads > 64 {
 		return nil, errors.New("threads must be between 0 and 64")

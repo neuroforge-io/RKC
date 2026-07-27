@@ -130,8 +130,8 @@ def _validate_spec(spec: dict[str, object], lock: model_assets.ModelLock) -> Non
     resources = _mapping(spec.get("resource_policy"), "resource_policy")
     expected_resources = {
         "cpu_cores": 1,
-        "memory_high_bytes": 2 * 1024 * 1024 * 1024,
-        "memory_max_bytes": 2560 * 1024 * 1024,
+        "memory_high_bytes": 3 * 1024 * 1024 * 1024,
+        "memory_max_bytes": 3584 * 1024 * 1024,
         "memory_swap_max_bytes": 256 * 1024 * 1024,
         "maximum_tasks": 128,
         "maximum_parallel_models": 1,

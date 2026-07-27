@@ -630,8 +630,8 @@ def assert_resource_guard() -> None:
     if quota == "max" or int(quota) > int(period):
         raise AssetError("RKC resource guard exceeds one CPU core")
     expected = {
-        "memory.high": str(2 * 1024 * 1024 * 1024),
-        "memory.max": str(2560 * 1024 * 1024),
+        "memory.high": str(3 * 1024 * 1024 * 1024),
+        "memory.max": str(3584 * 1024 * 1024),
         "memory.swap.max": str(256 * 1024 * 1024),
         "pids.max": "128",
     }
