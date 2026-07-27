@@ -81,6 +81,12 @@ func TestHigherPriorityDetectionExcludesAncestorsAndAvoidsSubstrings(t *testing.
 	if err := checkHigherPriority(processes[:3], 10); err != nil {
 		t.Fatalf("ancestors or substring caused false positive: %v", err)
 	}
+	if commandHasMarker("llama-cli --offline --model model.gguf --prompt explain ERAIS safely", "erais") {
+		t.Fatal("a model prompt was mistaken for a higher-priority process")
+	}
+	if !commandHasMarker("python /home/user/erais/train.py --config run.json", "erais") {
+		t.Fatal("an ERAIS script path was not detected")
+	}
 }
 
 func TestProcSnapshotParsing(t *testing.T) {

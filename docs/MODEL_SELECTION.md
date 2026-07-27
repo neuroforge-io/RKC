@@ -8,12 +8,13 @@ the fallback if no candidate passes.
 
 ## Decision
 
-The generation candidate is
-`Qwen_Qwen3.5-2B-Q4_K_M.gguf` and the embedding candidate is
+The current generation candidate is Google's official
+`gemma-4-E2B_q4_0-it.gguf`; the retained comparison candidate is
+`Qwen_Qwen3.5-2B-Q4_K_M.gguf`; and the embedding candidate is
 `Qwen3-Embedding-0.6B-Q8_0.gguf`. Both are Apache-2.0, checksum-pinned,
 downloaded on demand, and never bundled in an RKC release. The generation
-candidate is 1,396,198,496 bytes and advertises a 262,144-token native context;
-RKC qualifies a bounded 32,768-token operating point. The embedding candidate
+candidate is 3,349,516,256 bytes and advertises a 131,072-token native context;
+RKC targets a bounded 32,768-token operating point. The embedding candidate
 is 639,150,592 bytes and is qualified separately at 8,192 tokens. Exact
 revisions, filenames, byte counts, SHA-256 digests, redirect policy, and source
 licenses are in [`models/models.lock.json`](../models/models.lock.json).
@@ -22,7 +23,7 @@ The candidates become defaults only after the real two-role qualification in
 [`rkc-local-model-v1.json`](../models/qualification/rkc-local-model-v1.json)
 passes and its raw receipt is manually reviewed. Promotion is never automatic.
 
-## 2026-07-27 guarded qualification outcome
+## 2026-07-27 guarded evaluation outcome
 
 No local model is promoted as the RKC default.
 
@@ -36,23 +37,29 @@ average prefill throughput declining to 20.93 tokens/second. The run was
 stopped rather than occupying the protected single CPU for an impractical
 extended period.
 
-That interrupted run is not a qualification receipt and supplies no quality
-pass. The generation and embedding assets therefore remain `unqualified`,
+Gemma 4 E2B was then evaluated through the checksum-pinned b10082 native
+runtime after raising the protected host envelope to 3 GiB `memory.high` and
+3.5 GiB `memory.max`. On one Ryzen 5 5500 core, a 512-token prompt ran at
+19.96 tokens/second and 32 generated tokens ran at 7.95 tokens/second. The
+cgroup recorded no pressure, max, OOM, or swap event; charged memory observed
+during the run was approximately 1.9 GiB. `/usr/bin/time` reported 4,386,940
+KiB maximum process RSS because Linux counts mmap-backed model pages in that
+per-process figure, so both measurements are retained rather than conflated.
+
+The required RKC JSON-schema generation path did not work: llama.cpp b10082
+loaded the official model but failed to initialize its grammar sampler before
+producing a token. This is a hard compatibility failure for RKC's
+citation-checked response contract. At the measured prompt rate, a 32,384-token
+prefill would also take roughly 27 minutes before generation, which is not a
+satisfactory interactive default on the guarded one-core profile.
+
+Neither run is a qualification receipt and neither supplies a quality pass.
+All generation and embedding assets therefore remain `unqualified`,
 `default_generation_model` and `default_embedding_model` remain `null`, and
-model-backed commands continue to fail closed unless a future candidate
-completes every gate. RKC does not substitute a weaker quantization or silently
-reduce the 32K requirement to manufacture a passing default.
-
-## Why Gemma 4 E2B is not the RKC default
-
-Gemma 4 E2B is a strong modern Apache-2.0 candidate with a 128K context window,
-and Google publishes an official QAT Q4 GGUF. However, the official
-`gemma-4-E2B_q4_0-it.gguf` is 3,349,516,256 bytes before KV cache, executable,
-scratch buffers, prompt buffers, or safety margin. It exceeds RKC's
-2,684,354,560-byte hard cgroup limit by 665,161,696 bytes on weights alone.
-Using a more destructive community quantization merely to fit would violate the
-quality requirement. Gemma 4 is therefore rejected for the 1.0 local default,
-not rejected as a model family.
+model-backed commands continue to fail closed. RKC does not substitute a
+weaker quantization, remove schema enforcement, or silently reduce the 32K gate
+to manufacture a passing default. Gemma 4 remains pinned for reproducible
+future runtime-compatibility testing, not selected for users.
 
 Primary sources:
 

@@ -112,6 +112,14 @@ class ModelAssetTests(unittest.TestCase):
                 ancestors,
             )
         )
+        self.assertFalse(
+            model_assets._matches_priority_process(
+                303,
+                b"llama-cli --offline --model gemma.gguf --prompt explain ERAIS safely",
+                b"llama-cli",
+                ancestors,
+            )
+        )
 
     def test_fetch_hashes_and_publishes_without_replacement(self) -> None:
         payload = (b"verified-model-bytes\n" * 257) + b"end"

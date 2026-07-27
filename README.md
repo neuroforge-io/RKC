@@ -100,8 +100,8 @@ The exact ordered work, interfaces, migrations, tests, and exit gates are in
 - [`docs/data-model.md`](docs/data-model.md): canonical records and invariants.
 - [`docs/plugin-sdk.md`](docs/plugin-sdk.md): plugin and GraphPatch contracts.
 - [`docs/MODEL_RUNTIME.md`](docs/MODEL_RUNTIME.md): bounded local-model design.
-- [`docs/MODEL_SELECTION.md`](docs/MODEL_SELECTION.md): measured default-model
-  decision, Gemma 4 comparison, and promotion gates.
+- [`docs/MODEL_SELECTION.md`](docs/MODEL_SELECTION.md): measured Gemma 4 and
+  Qwen candidate outcomes, default decision, and promotion gates.
 - [`docs/SELF_CATALOGUE.md`](docs/SELF_CATALOGUE.md): guarded, non-recursive
   compilation of RKC's committed source into its own verified atlas.
 - [`docs/SECURITY_MODEL.md`](docs/SECURITY_MODEL.md): hostile-repository threat model.

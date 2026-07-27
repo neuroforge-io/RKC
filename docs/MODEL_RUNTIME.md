@@ -131,9 +131,12 @@ cancellation terminates and reaps the whole group. Runtime staging also has a
 conservative disk-headroom gate, and failed `.building-*` trees are quarantined
 and removed only when their original inode identity is still bound.
 
-Two Apache-2.0 candidates are locked but deliberately not configured as
+Three Apache-2.0 candidates are locked but deliberately not configured as
 defaults:
 
+- `gemma-4-E2B_q4_0-it.gguf`, revision
+  `675cff42a74c774d6cb76f76d8eacb49b48c9b93`, 3,349,516,256 bytes, SHA-256
+  `fa401b55b07ee70a54c6dae3903c783a6e65064312529ea57175cb5f8dec6634`;
 - `Qwen3.5-2B-Q4_K_M.gguf`, revision
   `7d26695454df6de5fbcce2e58681e62dae06ce43`, 1,396,198,496 bytes, SHA-256
   `57a1085840f497d764a7fc5d346922dbde961efb54cc792ea81d694fd846a1d8`;
@@ -141,7 +144,8 @@ defaults:
   `370f27d7550e0def9b39c1f16d3fbaa13aa67728`, 639,150,592 bytes, SHA-256
   `06507c7b42688469c4e7298b0a1e16deff06caf291cf0a5b278c308249c3e439`.
 
-The generation candidate advertises a 262,144-token native context, and the
+The current Gemma 4 generation candidate advertises a 131,072-token native
+context, the retained Qwen comparison advertises 262,144 tokens, and the
 embedding candidate advertises 32,768 tokens. RKC's guarded qualification uses
 32,768 and 8,192 tokens respectively: upstream generation capacity beyond 32K
 is not represented as a measured local operating point. The generation stress
@@ -174,7 +178,7 @@ process group before deferring the run.
 
 ```sh
 make model-qualify \
-  MODEL_RUNTIME=.rkc-runtime/llama.cpp/b10082-fb0e6b621917-native \
+  MODEL_RUNTIME=.rkc-runtime/llama.cpp/b10082-fb0e6b621917-3e40ee1adf9e-native \
   MODEL_QUALIFICATION_OUTPUT=dist/model-qualification/run-001.json
 ```
 

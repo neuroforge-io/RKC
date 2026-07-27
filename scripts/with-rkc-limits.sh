@@ -68,6 +68,9 @@ higher_priority=$(
     printf '%s\n' "$matches" |
         while IFS=' ' read -r process_id command_line; do
             [ -n "$process_id" ] || continue
+            case "$command_line" in
+                *scripts/with-rkc-limits.sh*) continue ;;
+            esac
             case "$ancestry" in
                 *" $process_id "*) ;;
                 *) printf '%s %s\n' "$process_id" "$command_line" ;;

@@ -76,7 +76,35 @@ func checkHigherPriority(processes []processSnapshot, self int) error {
 }
 
 func commandHasMarker(commandLine, marker string) bool {
-	for _, token := range strings.FieldsFunc(strings.ToLower(commandLine), func(character rune) bool {
+	fields := strings.Fields(strings.ToLower(commandLine))
+	if len(fields) == 0 {
+		return false
+	}
+	if pathHasMarker(fields[0], marker) {
+		return true
+	}
+	for index := 0; index+1 < len(fields) && index < 8; index++ {
+		if fields[index] == "-m" && pathHasMarker(fields[index+1], marker) {
+			return true
+		}
+	}
+	// Python and shell launchers put the executable script immediately after
+	// a small prefix of interpreter options. Do not scan arbitrary later
+	// arguments: repository questions and model prompts are allowed to mention
+	// ERAIS without impersonating a higher-priority process.
+	for index := 1; index < len(fields) && index < 5; index++ {
+		if strings.HasPrefix(fields[index], "-") {
+			continue
+		}
+		if pathHasMarker(fields[index], marker) {
+			return true
+		}
+	}
+	return false
+}
+
+func pathHasMarker(value, marker string) bool {
+	for _, token := range strings.FieldsFunc(strings.ToLower(value), func(character rune) bool {
 		return !((character >= 'a' && character <= 'z') || (character >= '0' && character <= '9') || character == '_')
 	}) {
 		if token == marker {

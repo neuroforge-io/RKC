@@ -79,7 +79,7 @@ model-runtime-native:
 	sh scripts/with-rkc-limits.sh $(PYTHON) scripts/bootstrap_llama_cpp.py --profile native
 
 model-fetch-generation:
-	sh scripts/with-rkc-limits.sh $(PYTHON) scripts/model_assets.py fetch --asset qwen3.5-2b-q4-k-m-candidate --cache-root .rkc-models --accept-license Apache-2.0
+	sh scripts/with-rkc-limits.sh $(PYTHON) scripts/model_assets.py fetch --asset gemma-4-e2b-it-qat-q4-0-candidate --cache-root .rkc-models --accept-license Apache-2.0
 
 model-fetch-embedding:
 	sh scripts/with-rkc-limits.sh $(PYTHON) scripts/model_assets.py fetch --asset qwen3-embedding-0.6b-q8-0-candidate --cache-root .rkc-models --accept-license Apache-2.0

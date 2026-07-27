@@ -554,8 +554,35 @@ def _matches_priority_process(
     process_name = process_name.lower()
     if pid in ancestors and not any(name in process_name for name in PRIORITY_NAMES):
         return False
-    lowered = command.lower()
-    return any(name in lowered for name in PRIORITY_NAMES)
+    arguments = command.lower().split()
+    if any(name in _priority_path_tokens(process_name) for name in PRIORITY_NAMES):
+        return True
+    if not arguments:
+        return False
+    launch_values = [arguments[0]]
+    launch_values.extend(
+        arguments[index + 1]
+        for index, argument in enumerate(arguments[:8])
+        if argument == b"-m" and index + 1 < len(arguments)
+    )
+    launch_values.extend(
+        argument
+        for argument in arguments[1:5]
+        if argument and not argument.startswith(b"-")
+    )
+    return any(
+        name in _priority_path_tokens(value)
+        for value in launch_values
+        for name in PRIORITY_NAMES
+    )
+
+
+def _priority_path_tokens(value: bytes) -> set[bytes]:
+    return {
+        token
+        for token in re.split(rb"[^a-z0-9_]+", value.lower())
+        if token
+    }
 
 
 def active_priority_processes() -> list[tuple[int, str]]:
