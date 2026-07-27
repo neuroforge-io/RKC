@@ -23,8 +23,13 @@ func TestExtractJSONSchemaRichDocumentAndDeterminism(t *testing.T) {
   "properties": {
     "child": {"$ref": "#/$defs/Thing~1A~0B"},
     "id": {"type": ["string", "null"], "format": "uuid", "default": "none", "readOnly": true},
+    "idCopy": {"$ref": "#/properties/id"},
     "missing": {"allOf": [{"$ref": "#/missing"}]},
-    "options": {"enum": ["a", "b"], "default": {"unsafe": "object"}}
+    "options": {
+      "type": "object",
+      "default": {"unsafe": "object"},
+      "properties": {"nested": {"type": "string"}}
+    }
   },
   "$defs": {
     "Thing/A~B": {
@@ -59,7 +64,7 @@ func TestExtractJSONSchemaRichDocumentAndDeterminism(t *testing.T) {
 	for _, node := range got.Nodes {
 		byName[node.Name] = node.Attributes
 	}
-	for _, name := range []string{"Root", "Thing/A~B", "child", "id", "missing", "options", "value", "#/missing"} {
+	for _, name := range []string{"Root", "Thing/A~B", "child", "id", "idCopy", "missing", "nested", "options", "value", "#/missing"} {
 		if _, ok := byName[name]; !ok {
 			t.Errorf("missing node %q", name)
 		}
@@ -91,6 +96,16 @@ func TestExtractJSONSchemaRichDocumentAndDeterminism(t *testing.T) {
 	}
 	if resolved == 0 || unresolved == 0 {
 		t.Errorf("reference resolution counts: declared=%d unresolved=%d", resolved, unresolved)
+	}
+	var propertyPointerResolved bool
+	for _, edge := range got.Edges {
+		if edge.Kind == "references" && edge.Resolution == "declared" &&
+			edge.Attributes["ref"] == "#/properties/id" {
+			propertyPointerResolved = true
+		}
+	}
+	if !propertyPointerResolved {
+		t.Error("local property JSON Pointer was not resolved to its declared field")
 	}
 }
 
@@ -186,6 +201,13 @@ func TestJSONSchemaHelpersBoundaries(t *testing.T) {
 	})
 	if !reflect.DeepEqual(refs, []string{"#/a", "#/z"}) {
 		t.Errorf("collectRefs() = %#v", refs)
+	}
+	directRefs := collectDirectRefs(map[string]any{
+		"allOf":      []any{map[string]any{"$ref": "#/direct"}},
+		"properties": map[string]any{"nested": map[string]any{"$ref": "#/nested"}},
+	})
+	if !reflect.DeepEqual(directRefs, []string{"#/direct"}) {
+		t.Errorf("collectDirectRefs() = %#v", directRefs)
 	}
 	if !likelySchemaPath("SCHEMA.JSON") || likelySchemaPath("data.json") {
 		t.Error("likelySchemaPath classification mismatch")

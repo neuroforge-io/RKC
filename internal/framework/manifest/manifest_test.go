@@ -163,6 +163,58 @@ func TestPackageJSONRejectsTrailingJSON(t *testing.T) {
 	}
 }
 
+func TestPackageJSONStringBinAndGoReplaceBlock(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	writeManifestTestFile(t, root, "cli/package.json", `{
+  "name": "rkc-cli",
+  "bin": "bin/rkc.js"
+}`)
+	writeManifestTestFile(t, root, "go.mod", strings.Join([]string{
+		"module example.com/root",
+		"go 1.24",
+		"replace (",
+		"  example.com/one => ../one",
+		"  example.com/two v1.0.0 => example.com/two-fork v1.1.0",
+		")",
+		"",
+	}, "\n"))
+
+	fragment, err := Extract(Options{Root: root, Files: []pluginapi.FileRef{
+		{ArtifactID: "npm", Path: "cli/package.json", SHA256: "sha-npm"},
+		{ArtifactID: "go", Path: "go.mod", SHA256: "sha-go"},
+	}})
+	if err != nil {
+		t.Fatalf("Extract() error = %v", err)
+	}
+	var cliFound, oneFound, twoFound bool
+	for _, node := range fragment.Nodes {
+		if node.Kind == "cli_command" && node.Name == "rkc-cli" &&
+			node.Attributes["entrypoint"] == "bin/rkc.js" {
+			cliFound = true
+		}
+	}
+	for _, edge := range fragment.Edges {
+		if edge.Kind != "supersedes" {
+			continue
+		}
+		for _, node := range fragment.Nodes {
+			if node.ID != edge.To {
+				continue
+			}
+			switch node.Name {
+			case "example.com/one":
+				oneFound = true
+			case "example.com/two":
+				twoFound = true
+			}
+		}
+	}
+	if !cliFound || !oneFound || !twoFound {
+		t.Fatalf("string bin / replace block coverage: cli=%v one=%v two=%v", cliFound, oneFound, twoFound)
+	}
+}
+
 func TestExtractManifestRejectsPathsOutsideRoot(t *testing.T) {
 	t.Parallel()
 	parent := t.TempDir()

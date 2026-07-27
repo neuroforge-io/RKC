@@ -101,6 +101,11 @@ func (c *collector) document(document map[string]any) {
 		anchor := prefix + escape(name)
 		c.properties(known[anchor], anchor, mapValue(definitions[name]), known)
 	}
+	c.propertyRefs("#", document, known)
+	for _, name := range sortedKeys(definitions) {
+		anchor := prefix + escape(name)
+		c.propertyRefs(anchor, mapValue(definitions[name]), known)
+	}
 	c.refs(rootID, "#", document, known)
 	for _, name := range sortedKeys(definitions) {
 		anchor := prefix + escape(name)
@@ -115,20 +120,24 @@ func (c *collector) properties(parentID, anchor string, schema map[string]any, k
 		property := mapValue(properties[name])
 		propertyAnchor := anchor + "/properties/" + escape(name)
 		id := rkcmodel.StableID("node", "field", c.file.Path, propertyAnchor)
+		known[propertyAnchor] = id
 		evidence := c.evidence("jsonschema.property", propertyAnchor, name)
 		c.addNode(rkcmodel.Node{ID: id, LogicalID: rkcmodel.StableID("logical", "jsonschema-field", c.file.Path, propertyAnchor), Kind: "field", Name: name, QualifiedName: c.file.Path + propertyAnchor, Signature: propertySignature(name, property, requiredSet[name]), Language: "jsonschema", Visibility: "public", ArtifactID: c.file.ArtifactID, Source: source(c.file, propertyAnchor), EvidenceIDs: []string{evidence}, Attributes: map[string]any{"type": schemaType(property), "format": stringValue(property["format"]), "description": stringValue(property["description"]), "required": requiredSet[name], "default": safeScalar(property["default"]), "read_only": boolValue(property["readOnly"]), "write_only": boolValue(property["writeOnly"]), "deprecated": boolValue(property["deprecated"])}})
 		c.addEdge("declares", parentID, id, "declared", evidence, nil)
-		if ref := stringValue(property["$ref"]); ref != "" {
+		c.properties(id, propertyAnchor, property, known)
+	}
+}
+func (c *collector) propertyRefs(anchor string, schema map[string]any, known map[string]string) {
+	for _, name := range sortedKeys(mapValue(schema["properties"])) {
+		property := mapValue(mapValue(schema["properties"])[name])
+		propertyAnchor := anchor + "/properties/" + escape(name)
+		from := known[propertyAnchor]
+		evidence := rkcmodel.StableID("evidence", PluginID, c.file.ArtifactID, "jsonschema.property", propertyAnchor, name)
+		for _, ref := range collectDirectRefs(property) {
 			to, resolution := resolve(c, ref, known)
-			c.addEdge("references", id, to, resolution, evidence, map[string]any{"ref": ref})
+			c.addEdge("references", from, to, resolution, evidence, map[string]any{"ref": ref})
 		}
-		for _, ref := range collectRefs(property) {
-			if ref == stringValue(property["$ref"]) {
-				continue
-			}
-			to, resolution := resolve(c, ref, known)
-			c.addEdge("references", id, to, resolution, evidence, map[string]any{"ref": ref})
-		}
+		c.propertyRefs(propertyAnchor, property, known)
 	}
 }
 func (c *collector) refs(from, anchor string, schema map[string]any, known map[string]string) {
@@ -272,6 +281,39 @@ func collectRefs(value any) []string {
 				seen[ref] = struct{}{}
 			}
 			for _, key := range sortedKeys(typed) {
+				walk(typed[key])
+			}
+		case []any:
+			for _, item := range typed {
+				walk(item)
+			}
+		}
+	}
+	walk(value)
+	refs := make([]string, 0, len(seen))
+	for ref := range seen {
+		refs = append(refs, ref)
+	}
+	sort.Strings(refs)
+	return refs
+}
+
+// collectDirectRefs attributes references to the nearest declared field while
+// leaving nested properties and definitions to their own graph nodes.
+func collectDirectRefs(value any) []string {
+	seen := map[string]struct{}{}
+	var walk func(any)
+	walk = func(current any) {
+		switch typed := current.(type) {
+		case map[string]any:
+			if ref := stringValue(typed["$ref"]); ref != "" {
+				seen[ref] = struct{}{}
+			}
+			for _, key := range sortedKeys(typed) {
+				switch key {
+				case "properties", "$defs", "definitions":
+					continue
+				}
 				walk(typed[key])
 			}
 		case []any:

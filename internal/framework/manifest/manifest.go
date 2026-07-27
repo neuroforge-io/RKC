@@ -102,8 +102,15 @@ func (c *collector) packageJSON(root string, file pluginapi.FileRef) {
 		c.addNode(rkcmodel.Node{ID: id, LogicalID: rkcmodel.StableID("logical", "npm-script", name, script), Kind: "build_target", Name: script, QualifiedName: name + " script " + script, Signature: command, Language: "shell", Visibility: "repository", ArtifactID: file.ArtifactID, Source: source(file, "#/scripts/"+escapeJSONPointer(script)), EvidenceIDs: []string{evidence}, Attributes: map[string]any{"command": command, "ecosystem": "npm"}})
 		c.addEdgeWithEvidence("builds", projectID, id, "declared", evidence, nil)
 	}
-	for _, bin := range sortedKeys(mapValue(document["bin"])) {
-		path := stringValue(mapValue(document["bin"])[bin])
+	binaries := mapValue(document["bin"])
+	if path := stringValue(document["bin"]); path != "" {
+		binaries = map[string]any{name: path}
+	}
+	for _, bin := range sortedKeys(binaries) {
+		path := stringValue(binaries[bin])
+		if path == "" {
+			continue
+		}
 		id := rkcmodel.StableID("node", "cli_command", file.Path, bin)
 		evidence := c.addEvidence(file, "package.json.bin", "#/bin/"+escapeJSONPointer(bin), bin)
 		c.addNode(rkcmodel.Node{ID: id, LogicalID: rkcmodel.StableID("logical", "cli", bin), Kind: "cli_command", Name: bin, QualifiedName: name + " CLI " + bin, Signature: bin, Language: "javascript", Visibility: "public", PublicSurface: true, ArtifactID: file.ArtifactID, Source: source(file, "#/bin/"+escapeJSONPointer(bin)), EvidenceIDs: []string{evidence}, Attributes: map[string]any{"entrypoint": path, "ecosystem": "npm"}})
@@ -170,18 +177,19 @@ func (c *collector) goMod(root string, file pluginapi.FileRef) {
 			continue
 		}
 		requireLine := inRequire
+		inlineReplace := false
 		if fields[0] == "require" {
 			fields = fields[1:]
 			requireLine = true
 		} else if fields[0] == "replace" {
 			fields = fields[1:]
-			inReplace = true
+			inlineReplace = true
 		}
 		if requireLine && len(fields) >= 2 {
 			dependencyID := c.dependency(file, "go", fields[0], fields[1], fmt.Sprintf("line:%d", index+1))
 			c.addEdge("depends_on", projectID, dependencyID, "declared", file, "go.mod.require", fmt.Sprintf("line:%d", index+1), map[string]any{"constraint": fields[1], "indirect": strings.Contains(raw, "// indirect")})
 		}
-		if inReplace {
+		if inReplace || inlineReplace {
 			arrow := indexOf(fields, "=>")
 			if arrow > 0 && arrow+1 < len(fields) {
 				from, to := fields[0], fields[arrow+1]
@@ -189,7 +197,6 @@ func (c *collector) goMod(root string, file pluginapi.FileRef) {
 				toID := c.dependency(file, "go", to, joinAfter(fields, arrow+2), fmt.Sprintf("line:%d", index+1))
 				c.addEdge("supersedes", toID, fromID, "declared", file, "go.mod.replace", fmt.Sprintf("line:%d", index+1), nil)
 			}
-			inReplace = false
 		}
 	}
 }

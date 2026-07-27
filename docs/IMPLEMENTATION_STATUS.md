@@ -46,8 +46,8 @@ The labels below mean:
 | JavaScript/TypeScript | Implemented | Conservative dependency-free syntax tier |
 | Markdown | Implemented | headings, hierarchy, links, fenced blocks |
 | OpenAPI | Implemented | Bounded strict JSON and YAML 3.x plus Swagger 2 surfaces; duplicate keys, unsafe YAML constructs, parser limits, and external-reference fetching fail closed |
-| JSON Schema | Partial | JSON documents and references |
-| package/build manifests | Partial | npm, Go, Python requirements, Docker |
+| JSON Schema | Implemented | Strict bounded JSON documents, nested properties, definitions, deterministic local JSON Pointer reference resolution, unresolved-reference placeholders, and fail-closed diagnostics |
+| package/build manifests | Implemented | Deterministic npm, Go module, Python requirements, and Docker extraction with all dependency scopes, string/object CLI bins, multi-entry replacements, bounded readers, and secret-default redaction |
 | environment templates | Implemented | keys, defaults, required/secret metadata |
 | secret detection/redaction | Implemented | pattern scanner; not a complete DLP system |
 | compiler-grade semantic adapters | Planned | Python, TypeScript, Go first |
