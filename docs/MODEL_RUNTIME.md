@@ -181,6 +181,13 @@ long-context timeout stops the generation role, terminates its process group,
 and produces a bounded failed result instead of consuming the machine for
 hours. The retained Qwen3.5 2B Q4_K_M candidate is not eligible for promotion:
 its measured 32K path was only 16% complete at the five-minute boundary.
+The smaller official Qwen3.5 0.8B Q4_0 candidate also failed the unchanged
+gate: only two of six generation cases passed, the required cited-fact and
+abstention contracts failed, and the exact 32K request timed out after
+`300,155.577 ms`. Its peak protected-cgroup charge was only
+`1,551,167,488` bytes, so the rejection is quality and CPU responsiveness,
+not memory capacity. The paired Qwen3 embedding role passed every retrieval
+threshold, but pair-level promotion remains fail-closed.
 
 Qualification HTTP is restricted to credential-free IP-literal loopback URLs.
 It uses an explicit no-proxy opener, refuses every redirect, revalidates the

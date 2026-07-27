@@ -34,6 +34,34 @@ must pass every grounded repository-answer, injection, exact-32K, latency,
 memory, and embedding-pair gate before it can be considered for manual
 promotion. Upstream positioning alone is not a production-quality claim.
 
+The full guarded qualification confirmed that the 0.8B candidate is not
+satisfactory for RKC's production intelligence role. It completed the five
+short cases in 2.80–7.42 seconds, with roughly 69–74 prompt tokens/second and
+21–22 generated tokens/second, but passed only two of six cases overall. It
+omitted required cited facts in the exact-signature and injection cases and
+failed the explicit unresolved-question requirement for insufficient evidence.
+The tokenizer-exact 32,384-token request reached the five-minute deadline
+without completing. Generation metrics were:
+
+- case pass rate `0.3333333333`;
+- schema-valid rate `0.8333333333`;
+- citation-valid rate `0.5`;
+- required-fact recall `0.5`;
+- injection-canary and unsupported-claim rates `0.0`;
+- maximum short-case latency `7,419.040 ms`;
+- long-context latency `300,155.577 ms`, over the `300,000 ms` ceiling;
+- peak process RSS `1,653,170,176` bytes and peak protected-cgroup charge
+  `1,551,167,488` bytes, with no memory-pressure, swap, max, or OOM event.
+
+The independently loaded Qwen3 Embedding 0.6B Q8_0 role passed: recall-at-1 was
+`1.0`, minimum cosine margin `0.0731974186`, maximum norm error
+`0.0000000474562`, peak RSS `1,242,824,704` bytes, and wall time
+`12,661.429 ms`. RKC's promotion contract requires both roles, so this isolated
+embedding pass is retained as evidence but is not promoted around the failed
+generation role. The private raw report SHA-256 is
+`e3f29b1dac6f95237b6b796755c6914bd76f881d1b1efe3762ee79e5672c8eac`;
+it records `promotion_performed: false` and `defaults_changed: false`.
+
 The Qwen generation candidate was loaded through the pinned native
 `llama.cpp` runtime inside RKC's one-CPU, 3 GiB `memory.high`, 3.5 GiB
 `memory.max`, nice-19, idle-I/O guard. Explicit flash attention and a
@@ -60,13 +88,15 @@ citation-checked response contract. At the measured prompt rate, a 32,384-token
 prefill would also take roughly 27 minutes before generation, which is not a
 satisfactory interactive default on the guarded one-core profile.
 
-Neither run is a qualification receipt and neither supplies a quality pass.
-All generation and embedding assets therefore remain `unqualified`,
+The earlier Gemma and Qwen 2B runs were bounded measurements rather than
+qualification receipts. The complete Qwen 0.8B/Qwen embedding run is a failed
+qualification receipt and cannot supply a pair-level quality pass. All
+generation and embedding assets therefore remain `unqualified`,
 `default_generation_model` and `default_embedding_model` remain `null`, and
 model-backed commands continue to fail closed. RKC does not substitute a
 weaker quantization, remove schema enforcement, or silently reduce the 32K gate
-to manufacture a passing default. Gemma 4 remains pinned for reproducible
-future runtime-compatibility testing, not selected for users.
+to manufacture a passing default. The rejected candidates remain pinned for
+reproducible comparison, not selected for users.
 
 Primary sources:
 

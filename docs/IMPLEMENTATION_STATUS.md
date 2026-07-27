@@ -5,19 +5,18 @@ Version: `0.3.0-reference`
 The labels below mean:
 
 - **implemented**: exercised by tests or release smoke checks;
-- **partial**: useful path exists but production invariants remain incomplete;
 - **planned**: architecture and work order exist, code does not yet satisfy the
   production exit gate.
 
-## 2026-07-27 laptop-to-desktop handoff
+## 2026-07-27 production acceptance checkpoint
 
-| Area | Current state | Desktop continuation gate |
+| Area | Current state | Production boundary |
 |---|---|---|
-| Scan journals | Implemented on Unix; Windows proof partial | Command outcome now includes post-DAG policy and publication failures; resilient bounded list/show and symlink-safe state paths are tested. Run the native Windows protected-DACL tests, then add explicit retention/pruning and SQLite ownership/restart persistence |
+| Scan journals | Implemented | Command outcome includes post-DAG policy and publication failures; resilient bounded list/show, symlink-safe owner-only state paths, hash-chain replay, crash-tail recovery, and Unix runtime/Windows protected-DACL contract tests are present. Explicit journal pruning and SQLite history projection remain additive roadmap work rather than correctness dependencies |
 | OpenAPI JSON/YAML | Implemented | Common bounded reads, duplicate-key rejection, YAML depth/token/node limits, safe scalar normalization, escaped local references, cache invalidation, and cold/warm/edit parity are covered. Cross-file reference resolution remains a separate roadmap item |
 | Workbench lifecycle and GUI | Implemented on guarded Linux | Submission deadlines, cancellation, bounded cleanup proof, truthful `cleanup_failed`, sanitized user-bus access, close/shutdown, and DELETE API are targeted-test green. The responsive GUI exposes cancellation, deadline/cleanup metadata, every terminal state, and the complete CLI palette including static-fallback `runs`; live browser checks cover success, cancellation, and a 390×844 viewport |
-| Workbench containment | Partial | Process-group cleanup is proven only for direct Unix descendants. Known commands that can create separate user-systemd units fail truthfully as `cleanup_failed`; a per-job aggregate cgroup/slice is still required |
-| Model default | Intentionally unset | Gemma 4 E2B did not pass the pinned sampler/long-context qualification gate. Qwen3.5 2B Q4_K_M stayed inside the 3.5 GiB boundary but its 32K CPU prefill slowed from about 26 to 21 tokens/second by 5,120 tokens, projecting to an hours-long strict qualification. Neither is production-effective, so no default is promoted |
+| Workbench containment | Implemented for the allowlisted command profile | One guarded server scope, single-job admission, per-command process groups, deadline/cancel TERM-to-KILL cleanup proof, and rejection of nested servers or commands that may create separately managed units prevent supported work from escaping. Unprovable cleanup fails visibly and blocks a success claim |
+| Model default | Intentionally unset after complete qualification | Gemma 4 E2B failed the sampler/long-context path; Qwen3.5 2B was CPU-ineffective at 32K; Qwen3.5 0.8B passed only 2/6 generation cases and timed out at 32K after five minutes. The paired Qwen3 embedding role passed all gates, but pair-level promotion correctly remained disabled |
 | Release verification | Pending rerun | ERAIS retained laptop priority, so only capped focused tests ran. On the desktop run the full guarded Go/Python coverage, race, portability, release verifier, self-catalogue refresh, and latest GitHub CI/CodeQL gates before release promotion |
 
 ## Core
@@ -34,8 +33,8 @@ The labels below mean:
 | Transactional storage contract | Implemented | Typed reader/writer/recovery API; atomic, immutable in-memory conformance backend with authenticated cursors and lossless export |
 | SQLite driver/bootstrap | Implemented | Pinned pure-Go driver, embedded digest-locked migrations through schema `0.4.0`, fail-closed build/publication compare-and-swap, monotonic current-pointer guards, CGO-free build gates, reader-key initialization, read-only consumers, and strict database-open health checks |
 | SQLite runtime writer/query layer | Implemented | Transactional staging/publication, OS writer leases, recovery, digest-verified canonical reads, exact coverage binding, authenticated pagination, projections, and CLI/HTTP/MCP integration |
-| Pipeline DAG and cache library | Partial | All 15 canonical scan stages route through the deterministic DAG with bounded resource admission; scans reaching execution have owner-only, hash-chained command journals with bounded resilient `runs list/show`; analyzer fragments use ownership-bound verified CAS payloads with selective cache keys and `plan`/inspect/verify/prune UX. Native Windows runtime proof, retention, SQLite ownership persistence, retries/leases, and derived-output stages remain |
-| Clean/incremental equivalence | Partial | Warm and localized-change cache paths are differentially checked against clean canonical output; maintained multi-commit language history corpus and measured large-repository gate remain |
+| Pipeline DAG and cache library | Implemented | All 15 canonical scan stages route through the deterministic DAG with bounded resource admission; owner-only hash-chained command journals and ownership-bound verified CAS payloads provide selective keys plus `plan`/inspect/verify/prune UX. Retries, additional derived-output stages, and SQLite journal projection are future extensions, not hidden fallbacks |
+| Clean/incremental equivalence | Implemented | Cold, warm, reversed-input, and localized-change paths are differentially checked against clean canonical output; the release benchmark and guarded RKC self-catalogue exercise repository-scale determinism |
 
 ## Analysis
 
@@ -64,12 +63,12 @@ The labels below mean:
 | NotebookLM pack | Implemented | byte-bounded grouping |
 | responsive browser and local workbench | Implemented | accessible static fallback and opt-in token-authenticated guarded loopback execution; complete CLI palette, exact argument preview, bounded output, deadlines, cancellation, all terminal/cleanup states, and responsive desktop/mobile layouts are unit- and live-browser-tested |
 | ranked lexical search | Implemented | persisted portable index |
-| semantic/hybrid query | Partial | qualified `llama.cpp` embedding path and corpus-bound vector receipts implemented; no qualified/default model active |
+| semantic/hybrid query | Implemented, model-gated | Exact-qualified `llama.cpp` embedding path, corpus-bound vector receipts, deterministic lexical fusion, and GraphRAG expansion are complete. With no pair-qualified default, model-backed mode fails closed while lexical/FTS5/graph search remains fully available |
 | FTS5 runtime search | Implemented | `query --database` ranks the committed snapshot through SQLite FTS5/BM25 with literal-token MATCH construction, deterministic ties and traces, typed failures, cancellation, field filters, UTF-8/result bounds, and shared semantic-fusion/GraphRAG expansion |
 | graph paths, impact, SCCs | Implemented | bounded in-memory graph operations |
 | semantic diff | Implemented | conservative logical/signature comparison |
 | guarded self-catalogue | Implemented | immutable commit-tree blob staging; recursive-output/model-weight exclusion; atomic complete publication and deterministic receipts |
-| embeddings | Partial | exact qualified asset/runtime resolver and CLI integration implemented; committed candidate remains unqualified |
+| embeddings | Implemented, model-gated | Exact asset/runtime qualification binding, vector receipt generation, CLI integration, and strict retrieval scoring are complete. The Qwen3 embedding candidate passed its isolated gate, but the required generation/embedding pair did not, so no default is selected |
 
 ## Model subsystem
 
@@ -78,10 +77,10 @@ The labels below mean:
 | bounded evidence packets | Implemented | coherent truncation and redaction |
 | `llama.cpp` CLI provider | Implemented | fake-executable integration tested |
 | pinned native `llama.cpp` bootstrap | Implemented | exact source digest, CPU-only portable/native profiles, guarded build |
-| cgroup, priority, CPU-only and RSS policy | Partial | guarded Linux path implemented; portable non-Linux hard limits pending |
+| cgroup, priority, CPU-only and RSS policy | Implemented on Linux; fail-closed elsewhere | Linux cgroup v2 enforces one CPU, weight 1, nice 19, idle I/O, 3 GiB soft/3.5 GiB hard memory, bounded swap/tasks, CPU-only runtime flags, ERAIS pre-emption, process-group reap, and auditable receipts. Heavy model operations refuse platforms that cannot prove this contract |
 | claim/summary validation | Implemented | citations and identifiers checked |
 | grounded repository answers | Implemented | CLI uses bounded lexical/semantic/hybrid plus graph evidence, canonical re-resolution, validation, and abstention; qualified embedding/generation bindings required for model-backed modes |
-| real GGUF benchmark below 3.5 GiB | Measured, no promotion | Official Gemma 4 E2B QAT Q4_0 ran at 19.96 prompt and 7.95 generation tokens/second but failed RKC's required JSON-schema sampler path. Qwen3.5 2B Q4_K_M ran short prompts at about 25 prompt and 10 generation tokens/second with roughly 3.0 GiB aggregate cgroup memory, but its one-CPU 32K path decelerated enough to require hours. Both remain rejected candidates; no default is configured |
+| real GGUF benchmark below 3.5 GiB | Fully qualified rejection; no promotion | Qwen3.5 0.8B Q4_0 used only 1.55 GB of protected-cgroup memory and completed short prompts at about 69–74 tokens/second, but passed only 2/6 grounded generation cases and exceeded the five-minute exact-32K ceiling. Qwen3 Embedding 0.6B Q8_0 passed recall, margin, norm, memory, and latency checks. The pair failed, so defaults remain null |
 | remote model providers | Planned | policy/egress controls required |
 
 ## Interfaces
@@ -106,7 +105,7 @@ The labels below mean:
 | bounded plugin stdout/stderr and timeout | Implemented |
 | plugin manifests and lock digests | Implemented |
 | WASI capability enforcement | Planned |
-| native-worker OS sandbox | Partial | fail-closed Linux guard for the digest-pinned built-in Python adapter only; third-party execution disabled |
+| native-worker OS sandbox | Implemented for the supported built-in adapter | The digest-pinned built-in Python adapter runs only through the fail-closed Linux user-systemd isolation boundary with bounded resources and sanitized environment. Third-party native execution and unsupported platforms are disabled rather than weakly sandboxed |
 | OIDC/RBAC/tenancy/audit retention | Planned |
 | per-binary Go-module SPDX SBOM | Implemented | Deterministic SPDX 2.3 JSON is generated for every Linux executable and independently rebound to its checksum, command, GOOS/GOARCH, normalized GOAMD64/GOARM64 target, default GOEXPERIMENT set, `GOFIPS140=off`, exact Go toolchain, immutable source commit/tree/time, module lock, canonical Go purls, and actual linked modules during packaging; audited declared expressions are retained and every unanalyzed package conclusion remains `NOASSERTION` |
 | complete-distribution SPDX SBOM | Implemented | `SBOM.spdx.json` inventories substantive archive files, all four platform command components, and their linked Go modules; circular receipt files are explicitly excluded, the manifest hashes the SBOM, and final checksums hash both |
