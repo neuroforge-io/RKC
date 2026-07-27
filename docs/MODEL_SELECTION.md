@@ -8,28 +8,43 @@ the fallback if no candidate passes.
 
 ## Decision
 
-The active generation candidate is IBM Granite 4.0 H 1B Q5_K_M. It is an
-Apache-2.0, 1.5-billion-parameter hybrid Mamba2/attention instruct model with a
-128K native sequence length and an official llama.cpp-compatible GGUF. The
-locked candidate is 1,048,556,768 bytes; RKC tests it at the stricter
-interactive 32,768-token operating point. The embedding candidate remains
-Qwen3 Embedding 0.6B Q8_0, qualified separately at 8,192 tokens.
+No generation model is selected as RKC's default. IBM Granite 4.0 H 1B
+Q5_K_M was the strongest plausible Apache-2.0 candidate in the protected local
+envelope, but the complete RKC qualification rejected it. The locked
+qualification specification remains pointed at that exact rejected asset so
+the result can be reproduced; this does not make it an active or recommended
+default. The embedding candidate remains Qwen3 Embedding 0.6B Q8_0, qualified
+separately at 8,192 tokens.
 
-Granite was selected for the next measured run because its official evaluation
-reports `82.37` strict instruction compliance, `73` HumanEval, `68` HumanEval+,
-`69` MBPP, `60` MBPP+, and `50.21` BFCL v3 for the hybrid 1B variant. Its model
-card explicitly includes extraction, question answering, RAG, code, and
-function calling among intended capabilities. These upstream scores only
-justify evaluation; they do not override RKC's repository-specific gates.
+Granite is an Apache-2.0, 1.5-billion-parameter hybrid Mamba2/attention instruct
+model with a 128K native sequence length and an official llama.cpp-compatible
+GGUF. The locked Q5_K_M asset is 1,048,556,768 bytes. It was evaluated because
+its official results report `82.37` strict instruction compliance, `73`
+HumanEval, `68` HumanEval+, `69` MBPP, `60` MBPP+, and `50.21` BFCL v3 for the
+hybrid 1B variant. Its model card explicitly includes extraction, question
+answering, RAG, code, and function calling among intended capabilities. Those
+upstream scores justified evaluation; they did not override RKC's
+repository-specific gates.
 
-Qwen3 1.7B Q8_0 and SmolLM3 3B are the next Apache-2.0 comparison candidates.
-Qwen3 has strong reasoning and instruction-following evidence but its only
-official GGUF is 1,834,426,016 bytes. SmolLM3 offers 64K context and strong
-small-model reasoning, but its 3B weight and context footprint leave less
-headroom under RKC's 3.5 GiB ceiling. LFM2.5 1.2B and Falcon-H1 1.5B publish
-excellent edge or small-model results, but are excluded because their model
-licenses are not Apache-2.0. Gemma 4 E2B, Qwen3.5 2B, and Qwen3.5 0.8B remain
-retained measured comparisons.
+The guarded run passed only two of six generation cases. It achieved
+`0.8333333333` schema validity, `0.8333333333` citation validity, `0.75`
+required-fact recall, a `0.3571428571` unsupported-claim rate, and a
+`0.1666666667` injection-canary rate. The five standard cases peaked at
+`61,800.716` ms. The tokenizer-exact 32,384-token case reached its
+`300,178.653` ms deadline after processing only about 3,072 prompt tokens,
+roughly 12 tokens/second. Peak process RSS was `2,702,090,240` bytes and peak
+protected-cgroup charge was `1,688,436,736` bytes with no memory failure.
+The paired Qwen3 embedding role passed again. Pair-level qualification therefore
+failed, no defaults changed, and the private report SHA-256 is
+`42361cdc5cd687eb6ceb31fd69d955da20a731f32291fafda8f3256d4f169faa`.
+
+Qwen3 1.7B Q8_0 and SmolLM3 3B were considered as Apache-2.0 comparisons, but
+their larger dense footprints cannot close the measured prompt-throughput gap
+under the same one-core ceiling. Qwen's official GGUF is 1,834,426,016 bytes
+and SmolLM3 has 3B parameters. LFM2.5 1.2B and Falcon-H1 1.5B publish excellent
+edge or small-model results, but are excluded because their model licenses are
+not Apache-2.0. Gemma 4 E2B, Qwen3.5 2B, and Qwen3.5 0.8B remain retained
+measured comparisons.
 
 Every included asset is checksum-pinned, downloaded on demand, and never
 bundled in an RKC release. Exact revisions, filenames, byte counts, SHA-256
