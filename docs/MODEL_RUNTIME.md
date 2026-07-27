@@ -131,9 +131,12 @@ cancellation terminates and reaps the whole group. Runtime staging also has a
 conservative disk-headroom gate, and failed `.building-*` trees are quarantined
 and removed only when their original inode identity is still bound.
 
-Three Apache-2.0 candidates are locked but deliberately not configured as
+Four Apache-2.0 candidates are locked but deliberately not configured as
 defaults:
 
+- `Qwen3.5-0.8B-Q4_0.gguf`, revision
+  `8fea620810c4afa23dd6443f999a48574c1611a3`, 563,036,064 bytes, SHA-256
+  `57d1997790d1744fba5b40a7317df71ea5e2acee28c47e78f0cce39c0703f8cf`;
 - `gemma-4-E2B_q4_0-it.gguf`, revision
   `675cff42a74c774d6cb76f76d8eacb49b48c9b93`, 3,349,516,256 bytes, SHA-256
   `fa401b55b07ee70a54c6dae3903c783a6e65064312529ea57175cb5f8dec6634`;
@@ -144,12 +147,12 @@ defaults:
   `370f27d7550e0def9b39c1f16d3fbaa13aa67728`, 639,150,592 bytes, SHA-256
   `06507c7b42688469c4e7298b0a1e16deff06caf291cf0a5b278c308249c3e439`.
 
-The current Gemma 4 generation candidate advertises a 131,072-token native
-context, the retained Qwen comparison advertises 262,144 tokens, and the
-embedding candidate advertises 32,768 tokens. RKC's guarded qualification uses
-32,768 and 8,192 tokens respectively: upstream generation capacity beyond 32K
-is not represented as a measured local operating point. The generation stress
-case asks llama.cpp's chat-tokenizer endpoint to construct an exact 32,384-token
+The active Qwen3.5 0.8B candidate and retained Qwen3.5 2B comparison advertise
+262,144-token native contexts; Gemma 4 advertises 131,072 and the embedding
+candidate advertises 32,768 tokens. RKC's guarded qualification uses 32,768 and
+8,192 tokens respectively: upstream generation capacity beyond 32K is not
+represented as a measured local operating point. The generation stress case
+asks llama.cpp's chat-tokenizer endpoint to construct an exact 32,384-token
 input and reserves 384 tokens for structured output, filling the 32,768-token
 runtime context without a character-count proxy. Generation and embedding are
 loaded sequentially, never concurrently.

@@ -8,14 +8,14 @@ the fallback if no candidate passes.
 
 ## Decision
 
-The current generation candidate is Google's official
-`gemma-4-E2B_q4_0-it.gguf`; the retained comparison candidate is
-`Qwen_Qwen3.5-2B-Q4_K_M.gguf`; and the embedding candidate is
-`Qwen3-Embedding-0.6B-Q8_0.gguf`. Both are Apache-2.0, checksum-pinned,
-downloaded on demand, and never bundled in an RKC release. The generation
-candidate is 3,349,516,256 bytes and advertises a 131,072-token native context;
-RKC targets a bounded 32,768-token operating point. The embedding candidate
-is 639,150,592 bytes and is qualified separately at 8,192 tokens. Exact
+The active generation candidate is the official llama.cpp conversion of
+Qwen3.5 0.8B Q4_0. Gemma 4 E2B QAT Q4_0 and Qwen3.5 2B Q4_K_M remain retained
+comparison candidates; the embedding candidate is Qwen3 Embedding 0.6B Q8_0.
+All are Apache-2.0, checksum-pinned, downloaded on demand, and never bundled
+in an RKC release. The active generation candidate is 563,036,064 bytes and
+advertises a 262,144-token native context; RKC targets a bounded 32,768-token
+operating point. The embedding candidate is 639,150,592 bytes and is qualified
+separately at 8,192 tokens. Exact
 revisions, filenames, byte counts, SHA-256 digests, redirect policy, and source
 licenses are in [`models/models.lock.json`](../models/models.lock.json).
 
@@ -26,6 +26,13 @@ passes and its raw receipt is manually reviewed. Promotion is never automatic.
 ## 2026-07-27 guarded evaluation outcome
 
 No local model is promoted as the RKC default.
+
+Qwen's own 0.8B model card positions this parameter scale for prototyping,
+task-specific fine-tuning, and research or development. RKC therefore treats
+the official 563 MB Q4_0 conversion only as a tightly scoped candidate: it
+must pass every grounded repository-answer, injection, exact-32K, latency,
+memory, and embedding-pair gate before it can be considered for manual
+promotion. Upstream positioning alone is not a production-quality claim.
 
 The Qwen generation candidate was loaded through the pinned native
 `llama.cpp` runtime inside RKC's one-CPU, 3 GiB `memory.high`, 3.5 GiB
@@ -67,6 +74,8 @@ Primary sources:
 - [official Gemma 4 E2B model](https://huggingface.co/google/gemma-4-E2B-it)
 - [official Gemma 4 E2B QAT Q4 GGUF](https://huggingface.co/google/gemma-4-E2B-it-qat-q4_0-gguf)
 - [Qwen3.5-2B model card](https://huggingface.co/Qwen/Qwen3.5-2B)
+- [Qwen3.5-0.8B model card](https://huggingface.co/Qwen/Qwen3.5-0.8B)
+- [official llama.cpp Qwen3.5-0.8B GGUF](https://huggingface.co/ggml-org/Qwen3.5-0.8B-GGUF)
 - [Qwen3 embedding GGUF model card](https://huggingface.co/Qwen/Qwen3-Embedding-0.6B-GGUF)
 
 ## Qualification gates

@@ -13,7 +13,7 @@
     "require_erais_idle": true
   },
   "generation": {
-    "asset_id": "gemma-4-e2b-it-qat-q4-0-candidate",
+    "asset_id": "qwen3.5-0.8b-q4-0-candidate",
     "runtime_profile": "native",
     "context_tokens": 32768,
     "maximum_output_tokens": 384,
