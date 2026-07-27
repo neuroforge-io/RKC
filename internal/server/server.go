@@ -35,8 +35,8 @@ const (
 	maximumExportManifestFileSize   = 16 * 1024 * 1024
 	maximumCanonicalDatasetFileSize = 512 * 1024 * 1024
 	maximumDatasetFileCount         = 500000
-	maximumStaticSiteFileSize       = 128 * 1024 * 1024
-	maximumStaticSiteTotalBytes     = 128 * 1024 * 1024
+	maximumStaticSiteFileSize       = 512 * 1024 * 1024
+	maximumStaticSiteTotalBytes     = 512 * 1024 * 1024
 	maximumStaticSiteFileCount      = 4096
 	maximumLegacyManifestFileSize   = 1 * 1024 * 1024
 	maximumLegacyMetadataFileSize   = 16 * 1024 * 1024

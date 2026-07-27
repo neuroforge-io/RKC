@@ -27,6 +27,13 @@ func TestCanonicalDatasetCapacitySupportsLargeProductionAtlases(t *testing.T) {
 	if maximumCanonicalDatasetFileSize < 512*1024*1024 {
 		t.Fatalf("canonical dataset file ceiling = %d", maximumCanonicalDatasetFileSize)
 	}
+	if maximumStaticSiteFileSize < 512*1024*1024 || maximumStaticSiteTotalBytes < 512*1024*1024 {
+		t.Fatalf(
+			"static site ceilings = file %d total %d",
+			maximumStaticSiteFileSize,
+			maximumStaticSiteTotalBytes,
+		)
+	}
 }
 
 func TestHandlerAllAPIRoutesAndSecurityHeaders(t *testing.T) {
