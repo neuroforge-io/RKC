@@ -8,13 +8,22 @@ the fallback if no candidate passes.
 
 ## Decision
 
-No generation model is selected as RKC's default. IBM Granite 4.0 H 1B
-Q5_K_M was the strongest plausible Apache-2.0 candidate in the protected local
-envelope, but the complete RKC qualification rejected it. The locked
-qualification specification remains pointed at that exact rejected asset so
-the result can be reproduced; this does not make it an active or recommended
-default. The embedding candidate remains Qwen3 Embedding 0.6B Q8_0, qualified
-separately at 8,192 tokens.
+No generation model is selected as RKC's default. The active qualification
+candidate is now Qwen3.5 4B Q4_0 under the 4 GiB operating / 4.5 GiB hard
+envelope. It remains `unqualified` and ineligible for defaults until the exact
+locked asset passes every repeated generation, injection, exact-32K, latency,
+memory, and paired-embedding gate. The embedding candidate remains Qwen3
+Embedding 0.6B Q8_0, qualified separately at 8,192 tokens.
+
+Qwen's official Qwen3.5-4B model is Apache-2.0, has 4B language parameters,
+uses a Gated DeltaNet/attention hybrid, and declares 262,144 native context
+tokens. The pinned GGUF is an independently converted Unsloth Q4_0 artifact,
+not an official Qwen conversion: revision
+`e87f176479d0855a907a41277aca2f8ee7a09523`, 2,583,221,408 bytes, SHA-256
+`298fcb5fe7a77ccc79745ae24751560c5ac56874caff4bb39b1f2055bd72b8bb`.
+That leaves materially more runtime and KV-cache headroom than the 3.14 GB
+Q5_K_M, 3.53 GB Q6_K, or 4.48 GB Q8_0 variants. RKC does not assume the
+lower-bit artifact is good enough; the repository-specific gate decides.
 
 Granite is an Apache-2.0, 1.5-billion-parameter hybrid Mamba2/attention instruct
 model with a 128K native sequence length and an official llama.cpp-compatible
@@ -42,6 +51,8 @@ failed, no defaults changed, and the private report SHA-256 is
 
 | Candidate | License / context | Why it was considered | RKC decision |
 |---|---|---|---|
+| Qwen3.5 4B Q4_0 | Apache-2.0 / 262K | Newer 4B hybrid architecture; 2.58 GB weights leave the best plausible quality/headroom balance | Active exact-pinned qualification candidate; not a default |
+| Qwen3 4B Q4_K_M | Apache-2.0 / 32K native, 131K YaRN | Official 2.50 GB GGUF and strong dense Qwen baseline | Retained as fallback research candidate; Qwen3.5 hybrid is tested first |
 | Granite 4 H 1B Q5_K_M | Apache-2.0 / 128K | Strong instruction, code, function-calling, RAG, and hybrid-architecture evidence at 1.5B parameters | Fully measured; rejected on quality, injection, unsupported claims, and exact-32K latency |
 | Qwen3 1.7B Q8_0 | Apache-2.0 / 32K | Strong modern small-model reasoning and instruction following | Official 1.83 GB dense GGUF cannot plausibly close the measured one-core prefill gap |
 | SmolLM3 3B | Apache-2.0 / 64K | Competitive reasoning and long-context positioning | 3B dense compute and context footprint are outside the viable guarded operating point |
@@ -53,14 +64,16 @@ failed, no defaults changed, and the private report SHA-256 is
 The production latency gate requires at least about 108 prompt tokens/second to
 consume 32,384 input tokens within 300 seconds. The guarded measurements were
 about 12 tokens/second for Granite 4 H 1B and about 21 tokens/second for Qwen3.5
-0.8B. A larger dense Apache-2.0 candidate cannot bridge that gap on the same
-one-core host. The only researched model claiming the required edge-class speed
-has a non-Apache license and weaker task positioning. Further heavyweight
-downloads would therefore consume resources without a plausible promotion
-path.
+0.8B. Qwen3.5 4B is nevertheless admitted for one guarded test because its
+hybrid recurrent/attention architecture and larger capacity create a materially
+different quality operating point. Failure remains the expected outcome unless
+measurement proves otherwise; the gate is not relaxed.
 
-Qwen3 1.7B Q8_0 and SmolLM3 3B were considered as Apache-2.0 comparisons, but
-their larger dense footprints cannot close the measured prompt-throughput gap
+Qwen3 4B Q4_K_M, Qwen3 1.7B Q8_0, and SmolLM3 3B were considered as
+Apache-2.0 comparisons. The official Qwen3 4B Q4_K_M is 2,497,280,256 bytes,
+but its dense architecture is less promising for the one-core long-context
+latency gate than the similarly sized Qwen3.5 hybrid. The other candidates'
+larger dense footprints cannot close the measured prompt-throughput gap
 under the same one-core ceiling. Qwen's official GGUF is 1,834,426,016 bytes
 and SmolLM3 has 3B parameters. LFM2.5 1.2B and Falcon-H1 1.5B publish excellent
 edge or small-model results, but are excluded because their model licenses are
@@ -165,6 +178,9 @@ Primary sources:
 - [official Gemma 4 E2B model](https://huggingface.co/google/gemma-4-E2B-it)
 - [official Gemma 4 E2B QAT Q4 GGUF](https://huggingface.co/google/gemma-4-E2B-it-qat-q4_0-gguf)
 - [Qwen3.5-2B model card](https://huggingface.co/Qwen/Qwen3.5-2B)
+- [Qwen3.5-4B model card](https://huggingface.co/Qwen/Qwen3.5-4B)
+- [pinned Qwen3.5-4B GGUF conversion](https://huggingface.co/unsloth/Qwen3.5-4B-GGUF)
+- [official Qwen3-4B GGUF](https://huggingface.co/Qwen/Qwen3-4B-GGUF)
 - [Qwen3.5-0.8B model card](https://huggingface.co/Qwen/Qwen3.5-0.8B)
 - [official llama.cpp Qwen3.5-0.8B GGUF](https://huggingface.co/ggml-org/Qwen3.5-0.8B-GGUF)
 - [Qwen3 embedding GGUF model card](https://huggingface.co/Qwen/Qwen3-Embedding-0.6B-GGUF)

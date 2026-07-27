@@ -144,6 +144,30 @@
       "extraction_root": null
     },
     {
+      "id": "qwen3.5-4b-q4-0-candidate",
+      "kind": "generation-model",
+      "status": "unqualified",
+      "default_eligible": false,
+      "repository": "https://huggingface.co/unsloth/Qwen3.5-4B-GGUF",
+      "revision": "e87f176479d0855a907a41277aca2f8ee7a09523",
+      "filename": "Qwen3.5-4B-Q4_0.gguf",
+      "url": "https://huggingface.co/unsloth/Qwen3.5-4B-GGUF/resolve/e87f176479d0855a907a41277aca2f8ee7a09523/Qwen3.5-4B-Q4_0.gguf?download=true",
+      "allowed_hosts": [
+        "huggingface.co",
+        ".huggingface.co",
+        ".hf.co"
+      ],
+      "sha256": "298fcb5fe7a77ccc79745ae24751560c5ac56874caff4bb39b1f2055bd72b8bb",
+      "size_bytes": 2583221408,
+      "license_spdx": "Apache-2.0",
+      "license_url": "https://huggingface.co/unsloth/Qwen3.5-4B-GGUF/blob/e87f176479d0855a907a41277aca2f8ee7a09523/README.md",
+      "redistribution": "not-bundled-download-on-demand",
+      "quantization": "Q4_0",
+      "native_context_tokens": 262144,
+      "qualification_spec": "models/qualification/rkc-local-model-v1.json",
+      "extraction_root": null
+    },
+    {
       "id": "qwen3.5-0.8b-q4-0-candidate",
       "kind": "generation-model",
       "status": "unqualified",

@@ -13,7 +13,7 @@
     "require_erais_idle": true
   },
   "generation": {
-    "asset_id": "granite-4.0-h-1b-q5-k-m-candidate",
+    "asset_id": "qwen3.5-4b-q4-0-candidate",
     "runtime_profile": "native",
     "context_tokens": 32768,
     "maximum_output_tokens": 384,
