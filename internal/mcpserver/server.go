@@ -86,9 +86,6 @@ func (s *Server) Serve(ctx context.Context, input io.Reader, output io.Writer) e
 	scanner := bufio.NewScanner(bufio.NewReaderSize(input, 64*1024))
 	scanner.Buffer(make([]byte, 64*1024), maximumRequestBytes)
 	for scanner.Scan() {
-		if err := ctx.Err(); err != nil {
-			return err
-		}
 		line := bytes.TrimSpace(scanner.Bytes())
 		if len(line) == 0 {
 			continue
