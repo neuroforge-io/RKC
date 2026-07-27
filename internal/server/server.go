@@ -612,6 +612,7 @@ func (dataset *Dataset) HandlerWithWorkbench(workbench *Workbench) http.Handler 
 		mux.HandleFunc("GET /api/v1/workbench/session", workbench.handleSession)
 		mux.HandleFunc("POST /api/v1/workbench/jobs", workbench.handleJobs)
 		mux.HandleFunc("GET /api/v1/workbench/jobs/{jobID}", workbench.handleJob)
+		mux.HandleFunc("DELETE /api/v1/workbench/jobs/{jobID}", workbench.handleCancelJob)
 	}
 	mux.HandleFunc("/", dataset.handleStaticSite)
 	return securityHeaders(mux)

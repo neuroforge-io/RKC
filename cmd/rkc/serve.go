@@ -9,15 +9,17 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/neuroforge-io/RKC/internal/resourceguard"
 	"github.com/neuroforge-io/RKC/internal/server"
 )
 
-func runServe(args []string) error {
+func runServe(args []string) (resultErr error) {
 	fs := flag.NewFlagSet("serve", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
 	dir := fs.String("dir", ".rkc", "generated RKC output directory")
@@ -55,6 +57,11 @@ func runServe(args []string) error {
 		if err != nil {
 			return err
 		}
+		defer func() {
+			closeContext, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			resultErr = errors.Join(resultErr, workbench.Close(closeContext))
+		}()
 	}
 	dataset, err := loadSelectedDataset(context.Background(), *dir, *database, *snapshotID, *repositoryID, flagWasSet(fs, "dir"))
 	if err != nil {
@@ -75,11 +82,35 @@ func runServe(args []string) error {
 	if workbench != nil {
 		fmt.Printf("Local command workbench enabled for %s\n", *workspace)
 	}
-	err = httpServer.Serve(listener)
-	if err == http.ErrServerClosed {
-		return nil
+	signalContext, stopSignals := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stopSignals()
+	serveDone := make(chan error, 1)
+	go func() { serveDone <- httpServer.Serve(listener) }()
+	select {
+	case err = <-serveDone:
+		if errors.Is(err, http.ErrServerClosed) {
+			return nil
+		}
+		return err
+	case <-signalContext.Done():
+		shutdownContext, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		shutdownErr := httpServer.Shutdown(shutdownContext)
+		cancel()
+		var forceCloseErr error
+		if shutdownErr != nil {
+			forceCloseErr = httpServer.Close()
+		}
+		var serveErr error
+		select {
+		case serveErr = <-serveDone:
+		case <-time.After(2 * time.Second):
+			serveErr = errors.New("HTTP server did not stop within the shutdown bound")
+		}
+		if errors.Is(serveErr, http.ErrServerClosed) {
+			serveErr = nil
+		}
+		return errors.Join(shutdownErr, forceCloseErr, serveErr)
 	}
-	return err
 }
 
 func loopbackListenAddress(address string) bool {
