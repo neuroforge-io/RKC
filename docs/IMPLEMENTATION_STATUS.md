@@ -15,9 +15,9 @@ The labels below mean:
 |---|---|---|
 | Scan journals | Implemented on Unix; Windows proof partial | Command outcome now includes post-DAG policy and publication failures; resilient bounded list/show and symlink-safe state paths are tested. Run the native Windows protected-DACL tests, then add explicit retention/pruning and SQLite ownership/restart persistence |
 | OpenAPI JSON/YAML | Implemented | Common bounded reads, duplicate-key rejection, YAML depth/token/node limits, safe scalar normalization, escaped local references, cache invalidation, and cold/warm/edit parity are covered. Cross-file reference resolution remains a separate roadmap item |
-| Workbench lifecycle backend | Implemented on guarded Linux | Submission deadlines, cancellation, bounded cleanup proof, truthful `cleanup_failed`, sanitized user-bus access, close/shutdown, and DELETE API are targeted-test green. The GUI Cancel control, `canceled`/`cleanup_failed` terminal rendering, deadline display, and static-fallback `runs` palette remain partial |
+| Workbench lifecycle and GUI | Implemented on guarded Linux | Submission deadlines, cancellation, bounded cleanup proof, truthful `cleanup_failed`, sanitized user-bus access, close/shutdown, and DELETE API are targeted-test green. The responsive GUI exposes cancellation, deadline/cleanup metadata, every terminal state, and the complete CLI palette including static-fallback `runs`; live browser checks cover success, cancellation, and a 390×844 viewport |
 | Workbench containment | Partial | Process-group cleanup is proven only for direct Unix descendants. Known commands that can create separate user-systemd units fail truthfully as `cleanup_failed`; a per-job aggregate cgroup/slice is still required |
-| Model default | Intentionally unset | Gemma 4 E2B did not pass the pinned sampler/long-context qualification gate. Do not promote a default until a candidate passes quality, 3.5 GiB, context, licensing, and runtime gates |
+| Model default | Intentionally unset | Gemma 4 E2B did not pass the pinned sampler/long-context qualification gate. Qwen3.5 2B Q4_K_M stayed inside the 3.5 GiB boundary but its 32K CPU prefill slowed from about 26 to 21 tokens/second by 5,120 tokens, projecting to an hours-long strict qualification. Neither is production-effective, so no default is promoted |
 | Release verification | Pending rerun | ERAIS retained laptop priority, so only capped focused tests ran. On the desktop run the full guarded Go/Python coverage, race, portability, release verifier, self-catalogue refresh, and latest GitHub CI/CodeQL gates before release promotion |
 
 ## Core
@@ -62,7 +62,7 @@ The labels below mean:
 | Markdown documentation | Implemented | deterministic facts and symbol pages |
 | normalized source envelopes | Implemented | likely secrets redacted by default |
 | NotebookLM pack | Implemented | byte-bounded grouping |
-| responsive browser and local workbench | Partial | accessible static fallback and opt-in token-authenticated guarded loopback execution; backend cancellation/deadline/cleanup is implemented, while GUI cancellation, terminal cleanup states, deadline rendering, and static-fallback `runs` parity remain |
+| responsive browser and local workbench | Implemented | accessible static fallback and opt-in token-authenticated guarded loopback execution; complete CLI palette, exact argument preview, bounded output, deadlines, cancellation, all terminal/cleanup states, and responsive desktop/mobile layouts are unit- and live-browser-tested |
 | ranked lexical search | Implemented | persisted portable index |
 | semantic/hybrid query | Partial | qualified `llama.cpp` embedding path and corpus-bound vector receipts implemented; no qualified/default model active |
 | FTS5 runtime search | Partial | SQLite FTS storage exists; the bounded runtime query path is not yet wired |
@@ -81,7 +81,7 @@ The labels below mean:
 | cgroup, priority, CPU-only and RSS policy | Partial | guarded Linux path implemented; portable non-Linux hard limits pending |
 | claim/summary validation | Implemented | citations and identifiers checked |
 | grounded repository answers | Implemented | CLI uses bounded lexical/semantic/hybrid plus graph evidence, canonical re-resolution, validation, and abstention; qualified embedding/generation bindings required for model-backed modes |
-| real GGUF benchmark below 3.5 GiB | Measured, no promotion | Official Gemma 4 E2B QAT Q4_0 ran at 19.96 prompt and 7.95 generation tokens/second with no cgroup pressure/OOM event, but b10082 failed RKC's required JSON-schema sampler path and 32K prefill is impractically slow; no default is configured |
+| real GGUF benchmark below 3.5 GiB | Measured, no promotion | Official Gemma 4 E2B QAT Q4_0 ran at 19.96 prompt and 7.95 generation tokens/second but failed RKC's required JSON-schema sampler path. Qwen3.5 2B Q4_K_M ran short prompts at about 25 prompt and 10 generation tokens/second with roughly 3.0 GiB aggregate cgroup memory, but its one-CPU 32K path decelerated enough to require hours. Both remain rejected candidates; no default is configured |
 | remote model providers | Planned | policy/egress controls required |
 
 ## Interfaces

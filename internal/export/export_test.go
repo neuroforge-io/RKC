@@ -241,7 +241,8 @@ func TestBrowserAssetsAccessibilityAndSerializationContract(t *testing.T) {
 		"styles.css": {
 			":focus-visible", "prefers-reduced-motion", "prefers-contrast",
 			"forced-colors", "@media (max-width: 560px)", ".coverage-grid",
-			"max-height: min(48vh, 420px)", ".command-layout",
+			"max-height: min(48vh, 420px)", ".command-layout", ".danger",
+			".job-meta",
 		},
 		"app.js": {
 			"handleListKeys", "clearFilters", "aria-selected", "role=\"progressbar\"",
@@ -250,6 +251,8 @@ func TestBrowserAssetsAccessibilityAndSerializationContract(t *testing.T) {
 			"<th scope=\"row\">", "argument.default??''", "Object.create(null)",
 			"event.key==='Enter'||event.key===' '", "Not applicable", "coverage.claims_total?",
 			"/api/v1/nodes?limit=120", "runWorkbenchCommand", "parseCommandArguments",
+			"cancelWorkbenchJob", "cleanup_failed", "deadline_at",
+			"['runs','Inspect validated scheduler run journals.','read']",
 		},
 	} {
 		content := string(assets[name])

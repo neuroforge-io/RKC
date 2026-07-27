@@ -1092,6 +1092,9 @@ pre { padding: 14px; white-space: pre-wrap; overflow: auto; background: var(--pa
 textarea { width: 100%; min-height: 96px; resize: vertical; padding: 11px; color: var(--text); background: var(--panel2); border: 1px solid var(--line); border-radius: 9px; font: 13px/1.5 ui-monospace, SFMono-Regular, Consolas, monospace; }
 .primary { min-height: 42px; padding: 8px 14px; border: 1px solid color-mix(in srgb, var(--accent) 70%, var(--line)); border-radius: 8px; color: var(--bg); background: linear-gradient(135deg, var(--accent), var(--accent2)); font-weight: 700; cursor: pointer; }
 .primary:disabled { cursor: not-allowed; opacity: .48; filter: saturate(.3); }
+.danger { min-height: 42px; padding: 8px 14px; border: 1px solid color-mix(in srgb, var(--bad) 70%, var(--line)); border-radius: 8px; color: var(--bad); background: color-mix(in srgb, var(--bad) 9%, var(--panel)); font-weight: 700; cursor: pointer; }
+.danger:hover { background: color-mix(in srgb, var(--bad) 16%, var(--panel)); }
+.danger:disabled { cursor: not-allowed; opacity: .48; }
 .button-row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-top: 12px; }
 .command-layout { display: grid; grid-template-columns: minmax(250px, .75fr) minmax(360px, 1.5fr); gap: 16px; }
 .command-palette { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 8px; max-height: 480px; overflow: auto; padding-right: 4px; }
@@ -1101,8 +1104,11 @@ textarea { width: 100%; min-height: 96px; resize: vertical; padding: 11px; color
 .command-choice.active { border-color: var(--accent2); box-shadow: inset 3px 0 0 var(--accent2); }
 .command-mode { float: right; color: var(--muted); font-size: 10px; text-transform: uppercase; letter-spacing: .08em; }
 .job-output { min-height: 190px; max-height: 48vh; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; }
+.job-meta { display: grid; grid-template-columns: repeat(auto-fit, minmax(145px, 1fr)); gap: 8px; margin: 12px 0; }
+.job-meta .stat strong { font-size: 13px; }
 .status-good { color: var(--good); }
 .status-bad { color: var(--bad); }
+.status-warn { color: var(--warn); }
 .table-wrap { width: 100%; overflow-x: auto; }
 table { width: 100%; border-collapse: collapse; }
 th, td { text-align: left; vertical-align: top; padding: 8px; border-bottom: 1px solid var(--line); }
@@ -1459,7 +1465,7 @@ function renderDiagnostics(){const diagnostics=state.bundle.diagnostics||[],coun
 function renderCoverage(){const coverage=state.coverage,ratios={'Inventory accounting':coverage.inventory_accounting_ratio,'Syntactic parse':coverage.syntactic_parse_ratio,'Semantic parse':coverage.semantic_parse_ratio,'Symbol evidence':coverage.symbol_evidence_ratio,'Public documentation':coverage.public_documentation_ratio,'Edge resolution':coverage.edge_resolution_ratio,'Claim citation':coverage.claims_total?coverage.claim_citation_ratio:null};$('content').innerHTML='<div class="card"><h2>Coverage and completeness</h2><p>Each ratio is backed by explicit numerators and denominators in <code>coverage.json</code>.</p>'+Object.entries(ratios).map(([name,value])=>progress(name,value)).join('')+'</div><div class="grid coverage-grid"><div class="card"><h3>Artifacts</h3>'+tableObject('Artifact statuses',coverage.artifact_statuses)+'</div><div class="card"><h3>Node kinds</h3>'+tableObject('Node kinds',coverage.node_kinds)+'</div><div class="card"><h3>Edge kinds</h3>'+tableObject('Edge kinds',coverage.edge_kinds)+'</div><div class="card"><h3>Evidence kinds</h3>'+tableObject('Evidence kinds',coverage.evidence_kinds)+'</div></div><div class="card"><h3>Deterministic digest</h3><p class="mono">'+esc(coverage.deterministic_output_digest)+'</p></div>'}
 
 function defaultCommands(){return[
-  ['quickstart','Build and verify a ready-to-search atlas.','writes'],['init','Create a complete local configuration.','writes'],['doctor','Diagnose repository and optional capabilities.','read'],['plan','Preview the stage DAG and cache decisions.','read'],['scan','Compile a local or remote repository.','writes'],['check','Enforce coverage, integrity, and security gates.','read'],['query','Search a compiled repository atlas.','read'],['answer','Produce a citation-checked answer.','model'],['synthesize','Build evidence packets or use a qualified model.','model'],['path','Find a bounded path between graph nodes.','read'],['impact','Traverse bounded impact relationships.','read'],['components','List strongly connected components.','read'],['diff','Compare two compiled snapshots.','read'],['snapshots','Inspect, export, select, or recover snapshots.','writes'],['plugins','Inspect, validate, lock, or verify plugins.','writes'],['cache','Inspect, verify, or prune the stage cache.','writes'],['version','Print the RKC version.','read'],['help','Show command help.','read']
+  ['quickstart','Build and verify a ready-to-search atlas.','writes'],['init','Create a complete local configuration.','writes'],['doctor','Diagnose repository and optional capabilities.','read'],['plan','Preview the stage DAG and cache decisions.','read'],['scan','Compile a local or remote repository.','writes'],['check','Enforce coverage, integrity, and security gates.','read'],['query','Search a compiled repository atlas.','read'],['answer','Produce a citation-checked answer.','model'],['synthesize','Build evidence packets or use a qualified model.','model'],['path','Find a bounded path between graph nodes.','read'],['impact','Traverse bounded impact relationships.','read'],['components','List strongly connected components.','read'],['diff','Compare two compiled snapshots.','read'],['snapshots','Inspect, export, select, or recover snapshots.','writes'],['runs','Inspect validated scheduler run journals.','read'],['plugins','Inspect, validate, lock, or verify plugins.','writes'],['cache','Inspect, verify, or prune the stage cache.','writes'],['version','Print the RKC version.','read'],['help','Show command help.','read']
 ].map(([name,description,mode])=>({name,description,mode}))}
 
 function renderCommands(){
@@ -1467,7 +1473,8 @@ function renderCommands(){
   if(!commands.some(item=>item.name===state.commandName))state.commandName=commands[0]?.name||'help';
   const enabled=Boolean(session.enabled);
   const workspace=enabled?session.workspace:'Start with rkc serve --workbench inside the protected resource wrapper.';
-  $('content').innerHTML='<div class="card"><span class="eyebrow">Complete CLI surface</span><h2>Command center</h2><p>Build, inspect, search, explain, validate, and maintain RKC from one responsive workspace. Commands are passed as exact argument arrays—never through a shell—and only one job runs at a time.</p><div class="grid">'+stat('Execution',enabled?'Enabled · token authenticated':'Read-only preview')+stat('Workspace',workspace)+stat('Resource policy','1 CPU · 3.5 GiB hard ceiling')+stat('Output bound',enabled?number(session.maximum_output_bytes)+' bytes':'2 MiB')+'</div></div><div class="command-layout"><div class="card"><h3>Choose a workflow</h3><div class="command-palette" id="command-palette">'+commands.map(command=>'<button type="button" class="command-choice '+(command.name===state.commandName?'active':'')+'" data-command="'+esc(command.name)+'"><span class="command-mode">'+esc(command.mode)+'</span><strong>'+esc(command.name)+'</strong><span>'+esc(command.description)+'</span></button>').join('')+'</div></div><div class="card"><span class="kind">rkc '+esc(state.commandName)+'</span><h3>Arguments</h3><label class="search-label" for="command-args">Enter the same options and values you would put after the command</label><textarea id="command-args" spellcheck="false" aria-describedby="command-guidance" placeholder="--help">'+esc(defaultCommandArgs(state.commandName))+'</textarea><p id="command-guidance" class="help-text">Quotes and backslash escapes are supported. The preview shows the exact command before it runs.</p><pre id="command-preview">'+esc(commandPreview())+'</pre><div class="button-row"><button type="button" class="secondary" id="copy-command">Copy command</button><button type="button" class="primary" id="run-command" '+(enabled?'':'disabled')+'>Run protected command</button><span id="command-status" class="muted" role="status" aria-live="polite">'+(enabled?'Ready':'Execution is disabled in a static or read-only server.')+'</span></div><h3>Job output</h3><pre id="job-output" class="job-output" tabindex="0">No command has run in this session.</pre></div></div>';
+  $('content').innerHTML='<div class="card"><span class="eyebrow">Complete CLI surface</span><h2>Command center</h2><p>Build, inspect, search, explain, validate, and maintain RKC from one responsive workspace. Commands are passed as exact argument arrays—never through a shell—and only one job runs at a time.</p><div class="grid">'+stat('Execution',enabled?'Enabled · token authenticated':'Read-only preview')+stat('Workspace',workspace)+stat('Resource policy','1 CPU · 3.5 GiB hard ceiling')+stat('Output bound',enabled?number(session.maximum_output_bytes)+' bytes':'2 MiB')+'</div></div><div class="command-layout"><div class="card"><h3>Choose a workflow</h3><div class="command-palette" id="command-palette">'+commands.map(command=>'<button type="button" class="command-choice '+(command.name===state.commandName?'active':'')+'" data-command="'+esc(command.name)+'"><span class="command-mode">'+esc(command.mode)+'</span><strong>'+esc(command.name)+'</strong><span>'+esc(command.description)+'</span></button>').join('')+'</div></div><div class="card"><span class="kind">rkc '+esc(state.commandName)+'</span><h3>Arguments</h3><label class="search-label" for="command-args">Enter the same options and values you would put after the command</label><textarea id="command-args" spellcheck="false" aria-describedby="command-guidance" placeholder="--help">'+esc(defaultCommandArgs(state.commandName))+'</textarea><p id="command-guidance" class="help-text">Quotes and backslash escapes are supported. The preview shows the exact command before it runs.</p><pre id="command-preview">'+esc(commandPreview())+'</pre><div class="button-row"><button type="button" class="secondary" id="copy-command">Copy command</button><button type="button" class="primary" id="run-command" '+(enabled?'':'disabled')+'>Run protected command</button><button type="button" class="danger" id="cancel-command" hidden>Cancel command</button><span id="command-status" class="muted" role="status" aria-live="polite">'+(enabled?'Ready':'Execution is disabled in a static or read-only server.')+'</span></div><div id="job-meta" class="job-meta" hidden aria-label="Current job details"></div><h3>Job output</h3><pre id="job-output" class="job-output" tabindex="0" aria-live="polite">No command has run in this session.</pre></div></div>';
+  $('command-preview').textContent=commandPreview();
   for(const button of $('command-palette').querySelectorAll('[data-command]'))button.addEventListener('click',()=>{state.commandName=button.dataset.command;renderCommands()});
   $('command-args').addEventListener('input',()=>{$('command-preview').textContent=commandPreview()});
   $('copy-command').addEventListener('click',copyCommand);
@@ -1501,16 +1508,19 @@ function commandPreview(){try{return currentCommand().map(shellQuote).join(' ')}
 async function copyCommand(){try{await navigator.clipboard.writeText(commandPreview());$('command-status').textContent='Command copied.'}catch(_error){$('command-status').textContent='Clipboard unavailable; select the preview to copy.'}}
 
 async function runWorkbenchCommand(){
-  const run=$('run-command'),status=$('command-status'),output=$('job-output');
+  const run=$('run-command'),cancel=$('cancel-command'),status=$('command-status'),output=$('job-output');
   let args;try{args=currentCommand()}catch(error){status.textContent=error.message;return}
   run.disabled=true;status.textContent='Submitting…';output.textContent='Queued '+args.map(shellQuote).join(' ')+'…';
   try{
     const response=await fetch('/api/v1/workbench/jobs',{method:'POST',headers:{'Content-Type':'application/json','Accept':'application/json','X-RKC-Workbench-Token':state.workbench.token},body:JSON.stringify({args})});
     const job=await response.json();
     if(!response.ok)throw new Error(job.detail||job.title||'Command request failed');
-    await pollWorkbenchJob(job.id,status,output);
+    cancel.hidden=false;cancel.disabled=false;
+    const cancelHandler=()=>cancelWorkbenchJob(job.id,cancel,status);
+    cancel.addEventListener('click',cancelHandler);
+    try{await pollWorkbenchJob(job.id,status,output)}finally{cancel.removeEventListener('click',cancelHandler)}
   }catch(error){status.textContent='Command failed to start';status.className='status-bad';output.textContent=String(error?.message||error)}
-  finally{run.disabled=!state.workbench?.enabled}
+  finally{run.disabled=!state.workbench?.enabled;cancel.hidden=true;cancel.disabled=false}
 }
 
 async function pollWorkbenchJob(id,status,output){
@@ -1518,13 +1528,30 @@ async function pollWorkbenchJob(id,status,output){
     const response=await fetch('/api/v1/workbench/jobs/'+encodeURIComponent(id),{cache:'no-store',headers:{Accept:'application/json','X-RKC-Workbench-Token':state.workbench.token}});
     const job=await response.json();
     if(!response.ok)throw new Error(job.detail||'Cannot read workbench job');
-    status.textContent=job.status+(job.exit_code!==undefined?' · exit '+job.exit_code:'');
-    status.className=job.status==='succeeded'?'status-good':(job.status==='failed'||job.status==='timed_out'?'status-bad':'muted');
+    status.textContent=workbenchStatusLabel(job.status)+(job.exit_code!==undefined&&job.exit_code!==null?' · exit '+job.exit_code:'');
+    status.className=job.status==='succeeded'?'status-good':(['failed','timed_out','cleanup_failed'].includes(job.status)?'status-bad':(job.status==='canceled'?'status-warn':'muted'));
+    renderJobMeta(job);
     output.textContent=(job.output||'')+(job.truncated?'\n\n[output truncated at the 2 MiB safety bound]':'')+(job.error?'\n\n'+job.error:'');
-    if(['succeeded','failed','timed_out'].includes(job.status))return;
+    if(['succeeded','failed','timed_out','canceled','cleanup_failed'].includes(job.status))return;
     await new Promise(resolve=>setTimeout(resolve,650));
   }
 }
+async function cancelWorkbenchJob(id,button,status){
+  button.disabled=true;status.textContent='Canceling safely…';status.className='status-warn';
+  try{
+    const response=await fetch('/api/v1/workbench/jobs/'+encodeURIComponent(id),{method:'DELETE',headers:{Accept:'application/json','X-RKC-Workbench-Token':state.workbench.token}});
+    const job=await response.json();
+    if(!response.ok)throw new Error(job.detail||job.title||'Cancellation failed');
+    status.textContent=workbenchStatusLabel(job.status);
+  }catch(error){status.textContent='Cancellation could not be proven';status.className='status-bad';$('job-output').textContent+='\n\n'+String(error?.message||error)}
+}
+function renderJobMeta(job){
+  const container=$('job-meta');if(!container)return;
+  const deadline=job.deadline_at?new Date(job.deadline_at):null,finished=job.finished_at?new Date(job.finished_at):null;
+  container.hidden=false;
+  container.innerHTML=stat('Job',short(job.id))+stat('State',workbenchStatusLabel(job.status))+stat('Deadline',deadline&&!Number.isNaN(deadline.valueOf())?deadline.toLocaleString():'n/a')+stat('Finished',finished&&!Number.isNaN(finished.valueOf())?finished.toLocaleString():'pending')+stat('Cleanup scope',job.cleanup_scope||'n/a');
+}
+function workbenchStatusLabel(status){return({queued:'Queued',running:'Running',succeeded:'Succeeded',failed:'Failed',timed_out:'Timed out',canceled:'Canceled safely',cleanup_failed:'Cleanup unproven'})[status]||String(status||'Unknown')}
 function progress(name,value){if(!Number.isFinite(value))return '<div class="bar-row"><span>'+esc(name)+'</span><span class="muted" role="status">Not applicable</span><strong>n/a</strong></div>';const amount=Math.max(0,Math.min(100,value*100));return '<div class="bar-row"><span>'+esc(name)+'</span><div class="bar" role="progressbar" aria-label="'+esc(name)+'" aria-valuemin="0" aria-valuemax="100" aria-valuenow="'+amount.toFixed(1)+'"><span style="width:'+amount+'%"></span></div><strong>'+percent(value)+'</strong></div>'}
 function stat(name,value){return '<div class="stat"><span class="muted">'+esc(name)+'</span><strong class="'+(String(value).length>28?'mono':'')+'">'+esc(value)+'</strong></div>'}
 function countBy(values,keyFn){const result=Object.create(null);for(const value of values){const key=keyFn(value)||'unknown';result[key]=(result[key]||0)+1}return result}
