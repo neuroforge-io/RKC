@@ -344,6 +344,7 @@ func TestProviderAndRequestFailuresAreFailClosed(t *testing.T) {
 		{MaximumNodes: -1},
 		{MaximumNodes: hardMaximumNodes + 1},
 		{MinimumEvidence: 2, MaximumEvidence: 1},
+		{MaximumRepairPasses: hardMaximumRepairPasses + 1},
 	} {
 		if _, err := New(testProvider(), options); !errors.Is(err, ErrInvalidRequest) {
 			t.Fatalf("invalid options %+v error = %v", options, err)
@@ -366,6 +367,11 @@ func TestProviderAndRequestFailuresAreFailClosed(t *testing.T) {
 		if _, err := service.Answer(context.Background(), invalid); !errors.Is(err, ErrInvalidRequest) {
 			t.Errorf("question %q error = %v", question, err)
 		}
+	}
+	invalidPass := valid
+	invalidPass.VerificationPass = 3
+	if _, err := service.Answer(context.Background(), invalidPass); !errors.Is(err, ErrInvalidRequest) {
+		t.Fatalf("invalid verification pass error = %v", err)
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()

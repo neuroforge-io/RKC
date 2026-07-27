@@ -36,6 +36,7 @@ const (
 	defaultMaximumPromptBytes      = 256 * 1024
 	defaultMaximumClaims           = 12
 	defaultMaximumUnresolved       = 16
+	defaultMaximumRepairPasses     = 2
 	hardMaximumRetrievalHits       = 1_000
 	hardMaximumNodes               = 256
 	hardMaximumEdges               = 1_024
@@ -46,6 +47,7 @@ const (
 	hardMaximumPromptBytes         = 8 * 1024 * 1024
 	hardMaximumClaims              = 128
 	hardMaximumUnresolved          = 128
+	hardMaximumRepairPasses        = 2
 	maximumStableIdentifierBytes   = 512
 )
 
@@ -84,16 +86,18 @@ type Options struct {
 	MaximumPromptBytes      int
 	MaximumClaims           int
 	MaximumUnresolved       int
+	MaximumRepairPasses     int
 	AllowInference          bool
 }
 
 type Request struct {
-	Question  string
-	Retrieval search.Response
-	Bundle    rkcmodel.Bundle
-	Task      modelruntime.Task
-	Inference modelruntime.InferenceOptions
-	Deadline  *time.Time
+	Question         string
+	Retrieval        search.Response
+	Bundle           rkcmodel.Bundle
+	Task             modelruntime.Task
+	Inference        modelruntime.InferenceOptions
+	VerificationPass int
+	Deadline         *time.Time
 }
 
 // Citation binds one allowed evidence record to every canonical node that used
@@ -177,17 +181,42 @@ type Audit struct {
 	UntrustedUnresolvedQuestions []string                     `json:"untrusted_unresolved_questions,omitempty"`
 }
 
+// VerificationPass records one independently validated model attempt. Repair
+// queries are retained as untrusted search inputs; only canonical evidence
+// selected from their results can support the compiled answer.
+type VerificationPass struct {
+	Pass                int                `json:"pass"`
+	Kind                string             `json:"kind"`
+	RepairQueries       []string           `json:"repair_queries,omitempty"`
+	RequestID           string             `json:"request_id"`
+	Status              Status             `json:"status"`
+	AcceptedClaims      int                `json:"accepted_claims"`
+	RejectedClaims      int                `json:"rejected_claims"`
+	UnresolvedQuestions int                `json:"unresolved_questions"`
+	SelectedEvidence    int                `json:"selected_evidence"`
+	PromptBytes         int                `json:"prompt_bytes"`
+	Usage               modelruntime.Usage `json:"usage,omitempty"`
+}
+
+type Verification struct {
+	State       string             `json:"state"`
+	Passes      []VerificationPass `json:"passes"`
+	TotalUsage  modelruntime.Usage `json:"total_usage,omitempty"`
+	RepairLimit int                `json:"repair_limit"`
+}
+
 type Result struct {
-	ProtocolVersion string      `json:"protocol_version"`
-	RequestID       string      `json:"request_id"`
-	Status          Status      `json:"status"`
-	Question        string      `json:"question"`
-	Claims          []Claim     `json:"claims,omitempty"`
-	Citations       []Citation  `json:"citations,omitempty"`
-	Abstention      *Abstention `json:"abstention,omitempty"`
-	Provenance      Provenance  `json:"provenance"`
-	Truncation      Truncation  `json:"truncation"`
-	Audit           Audit       `json:"audit"`
+	ProtocolVersion string       `json:"protocol_version"`
+	RequestID       string       `json:"request_id"`
+	Status          Status       `json:"status"`
+	Question        string       `json:"question"`
+	Claims          []Claim      `json:"claims,omitempty"`
+	Citations       []Citation   `json:"citations,omitempty"`
+	Abstention      *Abstention  `json:"abstention,omitempty"`
+	Provenance      Provenance   `json:"provenance"`
+	Truncation      Truncation   `json:"truncation"`
+	Audit           Audit        `json:"audit"`
+	Verification    Verification `json:"verification"`
 }
 
 type Service struct {
@@ -229,6 +258,7 @@ func normalizeOptions(options Options) (Options, error) {
 		{"maximum prompt bytes", &options.MaximumPromptBytes, defaultMaximumPromptBytes, hardMaximumPromptBytes},
 		{"maximum claims", &options.MaximumClaims, defaultMaximumClaims, hardMaximumClaims},
 		{"maximum unresolved questions", &options.MaximumUnresolved, defaultMaximumUnresolved, hardMaximumUnresolved},
+		{"maximum repair passes", &options.MaximumRepairPasses, defaultMaximumRepairPasses, hardMaximumRepairPasses},
 	}
 	for _, item := range values {
 		if *item.value == 0 {
@@ -242,6 +272,22 @@ func normalizeOptions(options Options) (Options, error) {
 		return Options{}, fmt.Errorf("%w: minimum evidence exceeds maximum evidence", ErrInvalidRequest)
 	}
 	return options, nil
+}
+
+// MaximumRepairPasses returns the normalized orchestration bound. Repair is
+// owned by answerapp because only that layer can perform canonical retrieval.
+func (service *Service) MaximumRepairPasses() int {
+	if service == nil {
+		return 0
+	}
+	return service.options.MaximumRepairPasses
+}
+
+func (service *Service) MaximumRetrievalHits() int {
+	if service == nil {
+		return 0
+	}
+	return service.options.MaximumRetrievalHits
 }
 
 func nilInterface(value any) bool {
@@ -281,6 +327,9 @@ func (service *Service) Answer(ctx context.Context, request Request) (Result, er
 	if question != request.Question {
 		return Result{}, fmt.Errorf("%w: question must not have surrounding whitespace", ErrInvalidRequest)
 	}
+	if request.VerificationPass < 0 || request.VerificationPass > 2 {
+		return Result{}, fmt.Errorf("%w: verification pass must be between 0 and 2", ErrInvalidRequest)
+	}
 	if !utf8.ValidString(question) || strings.IndexByte(question, 0) >= 0 {
 		return Result{}, fmt.Errorf("%w: question must be valid NUL-free UTF-8", ErrInvalidRequest)
 	}
@@ -295,7 +344,7 @@ func (service *Service) Answer(ctx context.Context, request Request) (Result, er
 		return Result{}, fmt.Errorf("%w: %s", ErrUnsupportedModelTask, task)
 	}
 
-	prepared, err := prepareContext(question, task, request.Retrieval, request.Bundle, service.options)
+	prepared, err := prepareContext(question, task, request.Retrieval, request.Bundle, request.VerificationPass, service.options)
 	if err != nil {
 		return Result{}, err
 	}
@@ -304,6 +353,7 @@ func (service *Service) Answer(ctx context.Context, request Request) (Result, er
 		prepared.retrieval.Query, prepared.retrieval.Mode, prepared.retrieval.IndexVersion,
 		strings.Join(prepared.retrieval.HitIDs, ","), service.descriptor.ID,
 		service.descriptor.Digest, service.descriptor.RuntimeDigest,
+		fmt.Sprintf("verification-pass:%d", request.VerificationPass),
 	)
 	result := Result{
 		ProtocolVersion: ProtocolVersion,
@@ -355,11 +405,12 @@ func (service *Service) Answer(ctx context.Context, request Request) (Result, er
 		deadline = &copy
 	}
 	modelRequest := modelruntime.Request{
-		RequestID: requestID,
-		Task:      task,
-		Packet:    providerPacket,
-		Options:   request.Inference,
-		Deadline:  deadline,
+		RequestID:      requestID,
+		Task:           task,
+		Packet:         providerPacket,
+		Options:        request.Inference,
+		ValidationPass: request.VerificationPass,
+		Deadline:       deadline,
 	}
 	modelResponse, err := service.provider.Generate(ctx, modelRequest)
 	if err != nil {
@@ -451,7 +502,7 @@ type bundleCatalog struct {
 	artifactNodes map[string][]string
 }
 
-func prepareContext(question string, task modelruntime.Task, retrieval search.Response, bundle rkcmodel.Bundle, options Options) (preparedContext, error) {
+func prepareContext(question string, task modelruntime.Task, retrieval search.Response, bundle rkcmodel.Bundle, verificationPass int, options Options) (preparedContext, error) {
 	if _, err := json.Marshal(bundle); err != nil {
 		return preparedContext{}, fmt.Errorf("%w: encode bundle: %v", ErrInvalidBundle, err)
 	}
@@ -615,7 +666,9 @@ func prepareContext(question string, task modelruntime.Task, retrieval search.Re
 	packet.PacketID = rkcmodel.StableID(
 		"grounded_answer_packet", canonical.Snapshot.ID, string(task), contentDigest(packetWithoutID),
 	)
-	prompt, err := modelruntime.BuildPrompt(modelruntime.Request{Task: task, Packet: packet})
+	prompt, err := modelruntime.BuildPrompt(modelruntime.Request{
+		Task: task, Packet: packet, ValidationPass: verificationPass,
+	})
 	if err != nil {
 		return preparedContext{}, fmt.Errorf("build grounded-answer prompt: %w", err)
 	}

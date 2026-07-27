@@ -154,6 +154,7 @@ func runAnswerContext(ctx context.Context, args []string, dependencies answerDep
 	maximumPromptBytes := fs.Int("max-prompt-bytes", 256*1024, "maximum serialized prompt bytes")
 	maximumClaims := fs.Int("max-claims", 8, "maximum publishable grounded claims")
 	maximumUnresolved := fs.Int("max-unresolved", 8, "maximum untrusted unresolved questions retained for audit")
+	repairPasses := fs.Int("repair-passes", 2, "bounded validator repair passes, 1 or 2")
 	jsonOutput := fs.Bool("json", false, "print the complete machine-readable answer envelope")
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -191,13 +192,20 @@ func runAnswerContext(ctx context.Context, args []string, dependencies answerDep
 	if *graphNodeLimit < 1 || *graphNodeLimit > 5_000 {
 		return errors.New("graph-node-limit must be between 1 and 5000")
 	}
+	maximumRetrievalHits := *limit
+	if *repairPasses >= 1 && *repairPasses <= 2 {
+		maximumRetrievalHits *= *repairPasses + 1
+		if maximumRetrievalHits > 1_000 {
+			maximumRetrievalHits = 1_000
+		}
+	}
 	groundingOptions := groundedanswer.Options{
-		MaximumRetrievalHits: *limit,
+		MaximumRetrievalHits: maximumRetrievalHits,
 		MaximumNodes:         *maximumNodes, MaximumEdges: *maximumEdges,
 		MaximumEvidence: *maximumEvidence, MinimumEvidence: *minimumEvidence,
 		MaximumContextTextBytes: *maximumContextBytes, MaximumFieldBytes: *maximumFieldBytes,
 		MaximumPromptBytes: *maximumPromptBytes, MaximumClaims: *maximumClaims,
-		MaximumUnresolved: *maximumUnresolved,
+		MaximumUnresolved: *maximumUnresolved, MaximumRepairPasses: *repairPasses,
 	}
 	if err := validateAnswerGroundingOptions(question, groundingOptions); err != nil {
 		return err
@@ -322,6 +330,7 @@ func validateAnswerGroundingOptions(question string, options groundedanswer.Opti
 		{"max-prompt-bytes", options.MaximumPromptBytes, 8 * 1024 * 1024},
 		{"max-claims", options.MaximumClaims, 128},
 		{"max-unresolved", options.MaximumUnresolved, 128},
+		{"repair-passes", options.MaximumRepairPasses, 2},
 	}
 	for _, item := range values {
 		if item.value < 1 || item.value > item.maximum {
@@ -337,6 +346,14 @@ func validateAnswerGroundingOptions(question string, options groundedanswer.Opti
 func writeAnswerText(writer io.Writer, result groundedanswer.Result) error {
 	if _, err := fmt.Fprintf(writer, "Status: %s\nQuestion: %s\n", result.Status, terminalLine(result.Question)); err != nil {
 		return err
+	}
+	if result.Verification.State != "" {
+		if _, err := fmt.Fprintf(
+			writer, "Verification: %s (%d pass(es), %d repair pass(es) allowed)\n",
+			terminalLine(result.Verification.State), len(result.Verification.Passes), result.Verification.RepairLimit,
+		); err != nil {
+			return err
+		}
 	}
 	if result.Status == groundedanswer.StatusAbstained {
 		if result.Abstention == nil {

@@ -29,6 +29,24 @@ func TestPromptMarksRepositoryDataUntrusted(t *testing.T) {
 	}
 }
 
+func TestRepairPromptUsesOnlyFixedValidatorInstructions(t *testing.T) {
+	prompt, err := BuildPrompt(Request{
+		Task: TaskSymbolSummary, ValidationPass: 2,
+		Packet: EvidencePacket{PacketID: "p", Subject: rkcmodel.Node{ID: "n", Name: "N"}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, required := range []string{"bounded validator repair pass", "VALIDATION_PASS: 2", "one atomic statement"} {
+		if !strings.Contains(prompt, required) {
+			t.Fatalf("repair prompt missing %q: %s", required, prompt)
+		}
+	}
+	if _, err := BuildPrompt(Request{ValidationPass: 3}); err == nil {
+		t.Fatal("out-of-policy validation pass unexpectedly accepted")
+	}
+}
+
 func TestLlamaCPPProviderRunsThroughLiveUserServiceGuard(t *testing.T) {
 	if runtime.GOOS != "linux" {
 		t.Skip("Linux user-systemd resource guard")

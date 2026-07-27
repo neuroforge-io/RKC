@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/neuroforge-io/RKC/internal/graph"
 	"github.com/neuroforge-io/RKC/internal/groundedanswer"
@@ -25,6 +26,34 @@ type answerProvider struct {
 type answerEmbedder struct {
 	descriptor search.EmbeddingDescriptor
 	calls      int
+}
+
+type repairAnswerProvider struct {
+	descriptor modelruntime.ModelDescriptor
+	requests   []modelruntime.Request
+}
+
+func (provider *repairAnswerProvider) Descriptor() modelruntime.ModelDescriptor {
+	return provider.descriptor
+}
+func (provider *repairAnswerProvider) Supports(modelruntime.Task) bool { return true }
+func (provider *repairAnswerProvider) Close() error                    { return nil }
+func (provider *repairAnswerProvider) Generate(_ context.Context, request modelruntime.Request) (modelruntime.Response, error) {
+	provider.requests = append(provider.requests, request)
+	response := modelruntime.Response{RequestID: request.RequestID, ModelID: provider.descriptor.ID}
+	if request.ValidationPass == 0 {
+		response.Claims = []modelruntime.ClaimDraft{{
+			Text: "Beta is declared.", Category: "answer", Certainty: "supported",
+			EvidenceIDs: []string{"e-beta"},
+		}}
+		response.UnresolvedQuestions = []string{"Where is Beta declared?"}
+		return response, nil
+	}
+	response.Claims = []modelruntime.ClaimDraft{{
+		Text: "Beta is declared.", Category: "answer", Certainty: "supported",
+		EvidenceIDs: []string{"e-beta"},
+	}}
+	return response, nil
 }
 
 func (embedder *answerEmbedder) Descriptor() search.EmbeddingDescriptor {
@@ -121,6 +150,58 @@ func TestAnswerCancellationStopsBeforeRetrievalOrGeneration(t *testing.T) {
 	_, err = service.Answer(ctx, Request{Question: "What is Alpha?", Limit: 10, GraphNodeLimit: 100})
 	if !errors.Is(err, context.Canceled) || len(provider.requests) != 0 {
 		t.Fatalf("cancelled answer error=%v provider calls=%d", err, len(provider.requests))
+	}
+}
+
+func TestAnswerRepairsRejectedClaimsWithCanonicalRetrieval(t *testing.T) {
+	bundle := answerBundle()
+	provider := &repairAnswerProvider{descriptor: modelruntime.ModelDescriptor{ID: "repair-model"}}
+	service, err := New(
+		bundle,
+		&retrieval.Engine{Lexical: search.BuildFromBundle(bundle), Graph: graph.Build(bundle.Nodes, bundle.Edges)},
+		provider,
+		groundedanswer.Options{MaximumRetrievalHits: 3, MaximumRepairPasses: 2},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := service.Answer(context.Background(), Request{
+		Question: "What is Alpha?", Limit: 1, GraphNodeLimit: 100,
+		Task: modelruntime.TaskModuleSummary,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Status != groundedanswer.StatusAnswered || len(result.Claims) != 1 ||
+		!reflect.DeepEqual(result.Claims[0].EvidenceIDs, []string{"e-beta"}) {
+		t.Fatalf("repaired result = %+v", result)
+	}
+	if result.Verification.State != "verified" || len(result.Verification.Passes) != 2 ||
+		result.Verification.Passes[0].RejectedClaims != 1 ||
+		!reflect.DeepEqual(result.Verification.Passes[1].RepairQueries, []string{"Beta is declared.", "Where is Beta declared?"}) {
+		t.Fatalf("verification audit = %+v", result.Verification)
+	}
+	if len(provider.requests) != 2 || provider.requests[0].ValidationPass != 0 ||
+		provider.requests[1].ValidationPass != 1 {
+		t.Fatalf("provider requests = %+v", provider.requests)
+	}
+	foundBeta := false
+	for _, evidence := range provider.requests[1].Packet.Evidence {
+		foundBeta = foundBeta || evidence.ID == "e-beta"
+	}
+	if !foundBeta {
+		t.Fatalf("repair packet did not bind canonical beta evidence: %+v", provider.requests[1].Packet)
+	}
+}
+
+func TestRepairQueriesNeutralizeFiltersControlsAndBounds(t *testing.T) {
+	input := "kind:secret\npath:../../ " + strings.Repeat("β", 400)
+	query := sanitizeRepairQuery(input)
+	if strings.ContainsAny(query, ":\n\r\\") || len(query) > maximumRepairBytes || !utf8.ValidString(query) {
+		t.Fatalf("unsafe repair query = %q (%d bytes)", query, len(query))
+	}
+	if sanitizeRepairQuery("\x00\n\t") != "" {
+		t.Fatalf("control-only repair query was retained")
 	}
 }
 
@@ -282,9 +363,13 @@ func TestAnswerCopiesMutableRequestInputs(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(provider.requests) != 1 || provider.requests[0].Deadline == nil ||
-		provider.requests[0].Deadline == &deadline || !provider.requests[0].Deadline.Equal(deadline) {
+	if len(provider.requests) != 2 || provider.requests[1].ValidationPass != 1 {
 		t.Fatalf("provider deadline = %+v", provider.requests)
+	}
+	for _, request := range provider.requests {
+		if request.Deadline == nil || request.Deadline == &deadline || !request.Deadline.Equal(deadline) {
+			t.Fatalf("provider deadline = %+v", provider.requests)
+		}
 	}
 }
 

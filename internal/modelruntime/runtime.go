@@ -10,6 +10,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/neuroforge-io/RKC/pkg/rkcmodel"
 )
@@ -166,11 +168,12 @@ type PacketPolicy struct {
 }
 
 type Request struct {
-	RequestID string           `json:"request_id"`
-	Task      Task             `json:"task"`
-	Packet    EvidencePacket   `json:"packet"`
-	Options   InferenceOptions `json:"options"`
-	Deadline  *time.Time       `json:"deadline,omitempty"`
+	RequestID      string           `json:"request_id"`
+	Task           Task             `json:"task"`
+	Packet         EvidencePacket   `json:"packet"`
+	Options        InferenceOptions `json:"options"`
+	ValidationPass int              `json:"validation_pass,omitempty"`
+	Deadline       *time.Time       `json:"deadline,omitempty"`
 }
 
 type ClaimDraft struct {
@@ -251,6 +254,9 @@ func ValidateResponse(packet EvidencePacket, response Response, generatorVersion
 		}
 		if containsUnsafeMarkup(draft.Text) {
 			reasons = append(reasons, "claim contains unsafe markup")
+		}
+		if !isAtomicClaim(draft.Text) {
+			reasons = append(reasons, "claim must contain one atomic statement")
 		}
 		if len(allowedCategories) > 0 {
 			if _, ok := allowedCategories[draft.Category]; !ok {
@@ -333,6 +339,29 @@ func ValidateResponse(packet EvidencePacket, response Response, generatorVersion
 func containsUnsafeMarkup(value string) bool {
 	lower := strings.ToLower(value)
 	return strings.ContainsAny(value, "<>") || strings.Contains(lower, "javascript:") || strings.Contains(lower, "data:text/html")
+}
+
+func isAtomicClaim(value string) bool {
+	value = strings.TrimSpace(value)
+	if value == "" || strings.ContainsAny(value, ";\r\n") {
+		return false
+	}
+	for index, character := range value {
+		if character != '.' && character != '?' && character != '!' {
+			continue
+		}
+		if index+1 < len(value) {
+			next, _ := utf8.DecodeRuneInString(value[index+1:])
+			if !unicode.IsSpace(next) {
+				continue
+			}
+		}
+		remainder := strings.TrimSpace(value[index+1:])
+		if remainder != "" {
+			return false
+		}
+	}
+	return true
 }
 
 func identifierTerms(value string) []string {

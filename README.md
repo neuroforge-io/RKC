@@ -348,8 +348,13 @@ asset; RKC does not silently download, select, or trust a model.
 expansion with the grounded-answer validator. Lexical remains the zero-model
 default; semantic and hybrid modes reuse the same qualified, corpus-bound
 vector path documented above. The generation model receives only a
-size-limited canonical evidence packet. Output is either citation-backed claims
-or an explicit abstention, and it is written to standard output rather than fed
+size-limited canonical evidence packet. Every claim is compiled as one atomic
+statement. Unsupported claims and unresolved questions can trigger up to two
+bounded repair passes: their text is sanitized into search-only queries,
+retrieval is expanded, and every candidate source is re-resolved from the
+canonical bundle before the model sees it again. The best independently
+validated pass becomes either citation-backed claims or an explicit
+abstention. Generated output is written to standard output and is never fed
 back into the atlas:
 
 ```sh
@@ -368,13 +373,15 @@ back into the atlas:
   --model /path/to/model.gguf \
   --llama-cli /path/to/llama-cli \
   --runtime-receipt /path/to/build-receipt.json \
+  --repair-passes 2 \
   'How does snapshot publication fail closed?'
 ```
 
 The same exact model/runtime qualification boundary applies to both retrieval
 and generation. With the committed lock's current null defaults, the command
 intentionally refuses model execution rather than presenting an unqualified
-answer.
+answer. JSON output includes every verification pass, repair query, selected
+evidence count, rejection count, usage total, and whether gaps remained.
 
 ## Build evidence packets without running a model
 

@@ -68,6 +68,7 @@ func TestValidateResponseExercisesPublicationPolicy(t *testing.T) {
 		{Text: "uncertain", Category: "purpose", Certainty: "uncertain", EvidenceIDs: []string{"e1"}},
 		{Text: "contradicted", Category: "purpose", Certainty: "contradicted", EvidenceIDs: []string{"e1"}},
 		{Text: "`MissingSymbol` exists", Category: "purpose", Certainty: "supported", EvidenceIDs: []string{"e1"}},
+		{Text: "Login exists. Helper exists.", Category: "purpose", Certainty: "supported", EvidenceIDs: []string{"e1"}},
 	}}
 	validation := ValidateResponse(packet, response, "v1")
 	if len(validation.Accepted) != 1 || len(validation.Rejected) != len(response.Claims)-1 {
@@ -89,6 +90,9 @@ func TestValidateResponseExercisesPublicationPolicy(t *testing.T) {
 	}
 	if len(validation.Diagnostics) != len(validation.Rejected)+1 {
 		t.Fatalf("each rejection must be auditable: %+v", validation.Diagnostics)
+	}
+	if !containsString(validation.Rejected[len(validation.Rejected)-1].Reasons, "claim must contain one atomic statement") {
+		t.Fatalf("compound claim was not rejected: %+v", validation.Rejected)
 	}
 
 	inferred := ValidateResponse(EvidencePacket{

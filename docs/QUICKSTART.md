@@ -342,7 +342,11 @@ embedding candidate, and qualification commands.
 ```
 
 RKC rejects claims that cite unavailable evidence, reference unknown code
-identifiers, omit certainty, or violate packet policy.
+identifiers, contain multiple statements, omit certainty, or violate packet
+policy. `rkc answer` uses two bounded repair passes by default: rejected text can
+only become a sanitized retrieval query, while the final claims must cite
+canonical evidence selected during an independently validated pass. Use
+`--repair-passes 1` for a lower-latency single repair.
 
 On Linux, model execution additionally fails closed unless it can enter a
 low-priority user cgroup. It is CPU-only by default, limited to one CPU core at

@@ -178,8 +178,9 @@ remains future scope.
 
 A model receives one bounded evidence packet containing selected subject facts,
 related nodes, edges, evidence, and redacted excerpts. It returns structured
-claims. The validator rejects unknown citations, unknown code identifiers,
-unsupported inference, malformed certainty, and excess output.
+atomic claims. The validator rejects compound statements, unknown citations,
+unknown code identifiers, unsupported inference, malformed certainty, and
+excess output.
 
 Model results are written under `derived/` and cannot mutate `bundle.json`.
 The user-facing `rkc answer` path likewise writes only to standard output. It
@@ -187,7 +188,10 @@ uses lexical, semantic, or hybrid retrieval plus bounded graph expansion,
 re-resolves every selected record against the canonical bundle, and either
 returns validated cited claims or abstains. Lexical remains the zero-model
 default; model-backed modes require exact qualified retrieval and generation
-bindings.
+bindings. Rejected claims and unresolved questions can drive at most two
+sanitized, filter-neutralized retrieval repairs. Generated text never becomes
+evidence, prompt instructions, or canonical graph input; every repair pass
+starts from a newly bounded packet and repeats the complete validator.
 
 Semantic and hybrid query modes use a vector index outside the verified atlas.
 They are fail-closed: the model lock, GGUF digest, Apache-2.0 qualification

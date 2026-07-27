@@ -1482,7 +1482,7 @@ function renderCommands(){
 }
 
 function defaultCommandArgs(name){
-  const defaults={quickstart:'.',doctor:'--repository .',plan:'--config rkc.json .',scan:'--config rkc.json --no-python --out .rkc --state-dir .rkc-state .',check:'--dir .rkc',query:'--dir .rkc --query \"resource guard\"',version:'',help:''};
+  const defaults={quickstart:'.',doctor:'--repository .',plan:'--config rkc.json .',scan:'--config rkc.json --no-python --out .rkc --state-dir .rkc-state .',check:'--dir .rkc',query:'--dir .rkc --query \"resource guard\"',answer:'--dir .rkc --repair-passes 2 \"How does this repository work?\"',version:'',help:''};
   return Object.prototype.hasOwnProperty.call(defaults,name)?defaults[name]:'--help';
 }
 

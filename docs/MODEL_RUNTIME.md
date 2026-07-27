@@ -256,6 +256,7 @@ memory from the operating system through positive thinking.
 
 A claim is rejected when it:
 
+- contains more than one atomic statement;
 - has no evidence citation;
 - cites an ID not present in the packet;
 - names a code identifier absent from the subject/related records;
@@ -264,6 +265,17 @@ A claim is rejected when it:
 - exceeds claim or output limits;
 - contains malformed structured output;
 - uses a certainty state outside the packet policy.
+
+`rkc answer` then performs at most two bounded repair passes by default. A
+rejected claim or unresolved question may be converted into a size-limited,
+control-free search query; query filter syntax is neutralized, and the text is
+never treated as trusted instructions or evidence. Each pass expands retrieval,
+re-resolves hits from the immutable canonical bundle, runs the model from
+scratch with fixed validator guidance, and applies the complete validator
+again. The final compiler selects the attempt with the most accepted claims and
+fewest unresolved gaps. It never merges uncited prose across attempts. One
+absolute command deadline and the same process/memory guard cover the complete
+sequence.
 
 Protocol v1 does not provide an evidence-ID mapping for a free-form summary, so
 all provider-authored `summary` values are retained only in the audit record and
@@ -288,7 +300,7 @@ Model output is never reused when source evidence changes.
 
 ## Real-model benchmark gate
 
-Before claiming the under-4-GiB profile, publish:
+Before claiming the protected 4 GiB operating / 4.5 GiB hard profile, publish:
 
 1. exact model and GGUF SHA-256;
 2. model license;

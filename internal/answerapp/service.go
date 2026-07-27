@@ -8,8 +8,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/neuroforge-io/RKC/internal/groundedanswer"
 	"github.com/neuroforge-io/RKC/internal/modelruntime"
@@ -22,6 +25,8 @@ const (
 	maximumResultLimit    = 1_000
 	maximumGraphHops      = 4
 	maximumGraphNodeLimit = 5_000
+	maximumRepairQueries  = 3
+	maximumRepairBytes    = 512
 )
 
 var ErrInvalidRequest = errors.New("invalid answer request")
@@ -125,18 +130,267 @@ func (service *Service) Answer(ctx context.Context, request Request) (groundedan
 	if err != nil {
 		return groundedanswer.Result{}, fmt.Errorf("retrieve answer evidence: %w", err)
 	}
-	result, err := service.grounder.Answer(ctx, groundedanswer.Request{
-		Question:  question,
-		Retrieval: retrieved,
-		Bundle:    service.bundle,
-		Task:      request.Task,
-		Inference: request.Inference,
-		Deadline:  copyDeadline(request.Deadline),
-	})
-	if err != nil {
-		return groundedanswer.Result{}, fmt.Errorf("ground answer: %w", err)
+	return service.verifyAndCompile(ctx, request, question, mode, retrieved)
+}
+
+func (service *Service) verifyAndCompile(
+	ctx context.Context,
+	request Request,
+	question string,
+	mode retrieval.Mode,
+	retrieved search.Response,
+) (groundedanswer.Result, error) {
+	maximumPasses := service.grounder.MaximumRepairPasses()
+	maximumHits := service.grounder.MaximumRetrievalHits()
+	current := retrieved
+	var attempts []groundedanswer.Result
+	var audit []groundedanswer.VerificationPass
+	var totalUsage modelruntime.Usage
+	var incomingQueries []string
+	verificationState := "repair_exhausted"
+
+	for pass := 0; pass <= maximumPasses; pass++ {
+		result, err := service.grounder.Answer(ctx, groundedanswer.Request{
+			Question:         question,
+			Retrieval:        current,
+			Bundle:           service.bundle,
+			Task:             request.Task,
+			Inference:        request.Inference,
+			VerificationPass: pass,
+			Deadline:         copyDeadline(request.Deadline),
+		})
+		if err != nil {
+			return groundedanswer.Result{}, fmt.Errorf("ground answer pass %d: %w", pass, err)
+		}
+		attempts = append(attempts, result)
+		totalUsage = addUsage(totalUsage, result.Provenance.Usage)
+		kind := "initial"
+		if pass > 0 {
+			kind = "repair"
+		}
+		audit = append(audit, groundedanswer.VerificationPass{
+			Pass: pass, Kind: kind, RepairQueries: append([]string(nil), incomingQueries...),
+			RequestID: result.RequestID, Status: result.Status,
+			AcceptedClaims: len(result.Claims), RejectedClaims: len(result.Audit.RejectedClaims),
+			UnresolvedQuestions: len(result.Audit.UntrustedUnresolvedQuestions),
+			SelectedEvidence:    len(result.Provenance.SelectedEvidence),
+			PromptBytes:         result.Provenance.PromptBytes, Usage: result.Provenance.Usage,
+		})
+
+		if !needsRepair(result) {
+			verificationState = "verified"
+			break
+		}
+		queries := repairQueries(result)
+		if pass == maximumPasses {
+			break
+		}
+		if len(queries) == 0 {
+			break
+		}
+		additions := make([]search.Response, 0, len(queries))
+		for _, queryText := range queries {
+			if err := ctx.Err(); err != nil {
+				return groundedanswer.Result{}, err
+			}
+			response, err := service.retrieval.Search(ctx, search.Query{
+				Text:        queryText,
+				Kinds:       copySet(request.Kinds),
+				Languages:   copySet(request.Languages),
+				ObjectTypes: copySet(request.ObjectTypes),
+				PathPrefix:  request.PathPrefix,
+				Limit:       request.Limit,
+			}, retrieval.Options{
+				Mode: mode, GraphHops: request.GraphHops, GraphNodeLimit: request.GraphNodeLimit,
+			})
+			if err != nil {
+				return groundedanswer.Result{}, fmt.Errorf("retrieve repair evidence pass %d: %w", pass+1, err)
+			}
+			additions = append(additions, response)
+		}
+		hitLimit := request.Limit * (pass + 2)
+		if hitLimit > maximumHits {
+			hitLimit = maximumHits
+		}
+		current = mergeRetrieval(question, current, additions, hitLimit)
+		incomingQueries = queries
 	}
-	return result, nil
+
+	best := selectBestAttempt(attempts)
+	if verificationState == "repair_exhausted" {
+		if best.Status == groundedanswer.StatusAnswered {
+			verificationState = "grounded_with_unresolved_gaps"
+		} else {
+			verificationState = "abstained_after_repairs"
+		}
+	}
+	best.Verification = groundedanswer.Verification{
+		State: verificationState, Passes: audit, TotalUsage: totalUsage, RepairLimit: maximumPasses,
+	}
+	return best, nil
+}
+
+func needsRepair(result groundedanswer.Result) bool {
+	if len(result.Audit.RejectedClaims) > 0 || len(result.Audit.UntrustedUnresolvedQuestions) > 0 {
+		return true
+	}
+	return result.Abstention != nil && result.Abstention.Code == groundedanswer.AbstentionNoValidClaims
+}
+
+func repairQueries(result groundedanswer.Result) []string {
+	if result.Abstention != nil && result.Abstention.Code == groundedanswer.AbstentionInsufficientEvidence {
+		return nil
+	}
+	candidates := make([]string, 0, len(result.Audit.RejectedClaims)+len(result.Audit.UntrustedUnresolvedQuestions))
+	for _, rejected := range result.Audit.RejectedClaims {
+		candidates = append(candidates, rejected.Claim.Text)
+	}
+	candidates = append(candidates, result.Audit.UntrustedUnresolvedQuestions...)
+	seen := map[string]struct{}{}
+	queries := make([]string, 0, maximumRepairQueries)
+	for _, candidate := range candidates {
+		query := sanitizeRepairQuery(candidate)
+		if query == "" {
+			continue
+		}
+		key := strings.ToLower(query)
+		if _, duplicate := seen[key]; duplicate {
+			continue
+		}
+		seen[key] = struct{}{}
+		queries = append(queries, query)
+		if len(queries) == maximumRepairQueries {
+			break
+		}
+	}
+	return queries
+}
+
+func sanitizeRepairQuery(value string) string {
+	value = strings.ToValidUTF8(value, " ")
+	value = strings.Map(func(character rune) rune {
+		switch {
+		case character == ':' || character == '\\':
+			return ' '
+		case unicode.IsControl(character):
+			return ' '
+		default:
+			return character
+		}
+	}, value)
+	value = strings.Join(strings.Fields(value), " ")
+	if len(value) > maximumRepairBytes {
+		value = value[:maximumRepairBytes]
+		for !utf8.ValidString(value) {
+			value = value[:len(value)-1]
+		}
+		value = strings.TrimSpace(value)
+	}
+	return value
+}
+
+func mergeRetrieval(question string, base search.Response, additions []search.Response, limit int) search.Response {
+	if limit < 1 {
+		limit = 1
+	}
+	type ranked struct {
+		hit     search.Hit
+		score   float64
+		reasons map[string]struct{}
+	}
+	accumulated := map[string]*ranked{}
+	responses := append([]search.Response{base}, additions...)
+	truncated := false
+	for responseIndex, response := range responses {
+		truncated = truncated || response.Truncated
+		for rank, hit := range response.Hits {
+			id := hit.Document.ID
+			if id == "" {
+				continue
+			}
+			current := accumulated[id]
+			if current == nil {
+				current = &ranked{hit: hit, reasons: map[string]struct{}{}}
+				accumulated[id] = current
+			}
+			current.score += 1 / float64(60+rank+1)
+			for _, reason := range hit.Reasons {
+				current.reasons[reason] = struct{}{}
+			}
+			current.reasons[fmt.Sprintf("verification_query:%d", responseIndex)] = struct{}{}
+		}
+	}
+	hits := make([]search.Hit, 0, len(accumulated))
+	for _, current := range accumulated {
+		current.hit.Score = current.score
+		current.hit.Reasons = current.hit.Reasons[:0]
+		for reason := range current.reasons {
+			current.hit.Reasons = append(current.hit.Reasons, reason)
+		}
+		sort.Strings(current.hit.Reasons)
+		hits = append(hits, current.hit)
+	}
+	sort.Slice(hits, func(left, right int) bool {
+		if hits[left].Score == hits[right].Score {
+			return hits[left].Document.ID < hits[right].Document.ID
+		}
+		return hits[left].Score > hits[right].Score
+	})
+	if len(hits) > limit {
+		hits = hits[:limit]
+		truncated = true
+	}
+	return search.Response{
+		Query: question, Hits: hits, Truncated: truncated,
+		Mode: base.Mode + "+verification", IndexVersion: base.IndexVersion,
+	}
+}
+
+func selectBestAttempt(attempts []groundedanswer.Result) groundedanswer.Result {
+	best := attempts[0]
+	for _, candidate := range attempts[1:] {
+		if betterAttempt(candidate, best) {
+			best = candidate
+		}
+	}
+	return best
+}
+
+func betterAttempt(candidate, current groundedanswer.Result) bool {
+	if len(candidate.Claims) != len(current.Claims) {
+		return len(candidate.Claims) > len(current.Claims)
+	}
+	candidateGaps := len(candidate.Audit.RejectedClaims) + len(candidate.Audit.UntrustedUnresolvedQuestions)
+	currentGaps := len(current.Audit.RejectedClaims) + len(current.Audit.UntrustedUnresolvedQuestions)
+	if candidateGaps != currentGaps {
+		return candidateGaps < currentGaps
+	}
+	return candidate.Status == groundedanswer.StatusAnswered && current.Status != groundedanswer.StatusAnswered
+}
+
+func addUsage(total, next modelruntime.Usage) modelruntime.Usage {
+	total.PromptTokens = boundedAddInt(total.PromptTokens, next.PromptTokens)
+	total.OutputTokens = boundedAddInt(total.OutputTokens, next.OutputTokens)
+	total.WallTimeMillis = boundedAddInt64(total.WallTimeMillis, next.WallTimeMillis)
+	if next.PeakRSSBytes > total.PeakRSSBytes {
+		total.PeakRSSBytes = next.PeakRSSBytes
+	}
+	return total
+}
+
+func boundedAddInt(left, right int) int {
+	if right > 0 && left > int(^uint(0)>>1)-right {
+		return int(^uint(0) >> 1)
+	}
+	return left + right
+}
+
+func boundedAddInt64(left, right int64) int64 {
+	const maximum = int64(^uint64(0) >> 1)
+	if right > 0 && left > maximum-right {
+		return maximum
+	}
+	return left + right
 }
 
 func copySet(values map[string]struct{}) map[string]struct{} {
