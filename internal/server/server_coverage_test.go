@@ -23,6 +23,12 @@ import (
 	"github.com/neuroforge-io/RKC/internal/search"
 )
 
+func TestCanonicalDatasetCapacitySupportsLargeProductionAtlases(t *testing.T) {
+	if maximumCanonicalDatasetFileSize < 512*1024*1024 {
+		t.Fatalf("canonical dataset file ceiling = %d", maximumCanonicalDatasetFileSize)
+	}
+}
+
 func TestHandlerAllAPIRoutesAndSecurityHeaders(t *testing.T) {
 	dataset := richDataset()
 	handler := dataset.Handler()

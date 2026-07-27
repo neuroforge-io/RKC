@@ -23,7 +23,7 @@ func (d *Database) Abort(ctx context.Context, buildID rkcstore.BuildID, reason e
 	if err := writerValidIdentifier(operation, "build_id", string(buildID)); err != nil {
 		return err
 	}
-	reasonText := writerLimitedReason(reason, rkcstore.DefaultMemoryOptions().MaxMetadataBytes)
+	reasonText := writerLimitedReason(reason, rkcstore.DefaultDurableOptions().MaxMetadataBytes)
 	if d == nil {
 		return writerOperationError(rkcstore.CodeConflict, operation, buildID, "", "database", ErrClosed)
 	}
@@ -139,7 +139,7 @@ func (d *Database) Recover(ctx context.Context) (rkcstore.RecoveryResult, error)
 	}
 	defer lease.close()
 	err = d.writerTransactionLocked(ctx, operation, func(transaction *sql.Tx) error {
-		limit := rkcstore.DefaultMemoryOptions().MaxOpenBuilds
+		limit := rkcstore.DefaultDurableOptions().MaxOpenBuilds
 		rows, err := transaction.QueryContext(
 			ctx,
 			"SELECT build_id FROM builds WHERE state = 'open' ORDER BY build_id LIMIT ?",

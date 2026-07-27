@@ -156,7 +156,7 @@ func (d *Database) BeginBuild(ctx context.Context, options rkcstore.BuildOptions
 			}
 		}
 
-		limits := rkcstore.DefaultMemoryOptions()
+		limits := rkcstore.DefaultDurableOptions()
 		var openBuilds int
 		if err := transaction.QueryRowContext(ctx, "SELECT COUNT(*) FROM builds WHERE state = 'open'").Scan(&openBuilds); err != nil {
 			return writerDatabaseError(operation, "builds", "", "", err)
@@ -600,7 +600,7 @@ func writerPutBatch[T any](
 		if _, err := writerLoadOpenBuild(ctx, transaction, operation, buildID); err != nil {
 			return err
 		}
-		limits := rkcstore.DefaultMemoryOptions()
+		limits := rkcstore.DefaultDurableOptions()
 		var count, bytes int64
 		if err := transaction.QueryRowContext(
 			ctx,
@@ -672,7 +672,7 @@ func writerPrepareBatch[T any](
 	if err := writerCheckContext(ctx, operation); err != nil {
 		return writerPreparedBatch{}, err
 	}
-	limits := rkcstore.DefaultMemoryOptions()
+	limits := rkcstore.DefaultDurableOptions()
 	if len(values) > rkcstore.MaxBatchSize {
 		return writerPreparedBatch{}, writerResource(operation, "", "values", "batch exceeds MaxBatchSize")
 	}
@@ -777,7 +777,7 @@ func writerLoadStagedBundle(
 	}
 	defer rows.Close()
 
-	limits := rkcstore.DefaultMemoryOptions()
+	limits := rkcstore.DefaultDurableOptions()
 	ordinals := make(map[string]int64)
 	var records, bytes int64
 	for rows.Next() {
@@ -902,7 +902,7 @@ func writerValidateBundle(bundle rkcmodel.Bundle, provided *rkcmodel.Coverage, e
 }
 
 func writerPrepareMetadata(operation string, values map[string]string) (string, error) {
-	limits := rkcstore.DefaultMemoryOptions()
+	limits := rkcstore.DefaultDurableOptions()
 	if len(values) > limits.MaxMetadataKeys {
 		return "", writerResource(operation, "", "metadata", "metadata exceeds MaxMetadataKeys")
 	}
@@ -932,7 +932,7 @@ func writerPrepareJSON(operation, field string, value any) ([]byte, error) {
 	if err != nil {
 		return nil, writerInvalid(operation, field, "value is not canonically serializable: "+err.Error())
 	}
-	if int64(len(body)) > rkcstore.DefaultMemoryOptions().MaxRecordBytes {
+	if int64(len(body)) > rkcstore.DefaultDurableOptions().MaxRecordBytes {
 		return nil, writerResource(operation, "", field, "value exceeds MaxRecordBytes")
 	}
 	return body, nil

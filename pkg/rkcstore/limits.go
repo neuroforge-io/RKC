@@ -37,6 +37,17 @@ func DefaultMemoryOptions() MemoryOptions {
 	}
 }
 
+// DefaultDurableOptions returns bounded staging limits sized for durable
+// stores. Durable writers stream staged records to disk, so they can safely
+// admit production atlases that exceed the deliberately smaller in-memory
+// store envelope while retaining per-record, per-batch, and open-build bounds.
+func DefaultDurableOptions() MemoryOptions {
+	options := DefaultMemoryOptions()
+	options.MaxBuildRecords = 1_000_000
+	options.MaxBuildBytes = 1 << 30
+	return options
+}
+
 func validateMemoryOptions(options MemoryOptions) error {
 	const operation = "create memory store"
 	positiveInts := []struct {

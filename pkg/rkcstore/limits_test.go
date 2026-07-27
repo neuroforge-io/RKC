@@ -81,6 +81,19 @@ func TestMemoryOptionsValidationAndDefaults(t *testing.T) {
 	}
 }
 
+func TestDefaultDurableOptionsRaiseOnlyAggregateBuildCapacity(t *testing.T) {
+	memory := DefaultMemoryOptions()
+	durable := DefaultDurableOptions()
+	if durable.MaxBuildRecords != 1_000_000 || durable.MaxBuildBytes != 1<<30 {
+		t.Fatalf("durable aggregate limits = %+v", durable)
+	}
+	durable.MaxBuildRecords = memory.MaxBuildRecords
+	durable.MaxBuildBytes = memory.MaxBuildBytes
+	if !reflect.DeepEqual(durable, memory) {
+		t.Fatalf("durable non-aggregate limits differ: durable=%+v memory=%+v", durable, memory)
+	}
+}
+
 func TestMemoryMetadataAndOpenBuildLimits(t *testing.T) {
 	options := DefaultMemoryOptions()
 	options.MaxMetadataKeys = 1

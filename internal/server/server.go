@@ -33,7 +33,7 @@ const (
 	exportManifestName              = "rkc-export-manifest.json"
 	maximumOwnershipMarkerFileSize  = 64 * 1024
 	maximumExportManifestFileSize   = 16 * 1024 * 1024
-	maximumCanonicalDatasetFileSize = 256 * 1024 * 1024
+	maximumCanonicalDatasetFileSize = 512 * 1024 * 1024
 	maximumDatasetFileCount         = 500000
 	maximumStaticSiteFileSize       = 128 * 1024 * 1024
 	maximumStaticSiteTotalBytes     = 128 * 1024 * 1024
