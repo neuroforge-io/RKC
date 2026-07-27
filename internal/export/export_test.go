@@ -51,6 +51,13 @@ func TestWriteAllProducesCompleteDeterministicRedactedExport(t *testing.T) {
 				t.Errorf("missing %s: %v", relative, err)
 			}
 		}
+		app, err := os.ReadFile(filepath.Join(output, "site", "app.js"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !bytes.Contains(app, []byte("hasOwnProperty.call(defaults,name)")) {
+			t.Fatal("command defaults must preserve intentionally empty argument lists")
+		}
 		normalized, err := os.ReadFile(filepath.Join(output, "normalized", "src", "login.go.md"))
 		if err != nil {
 			t.Fatal(err)

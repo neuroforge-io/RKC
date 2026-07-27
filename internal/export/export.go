@@ -1475,7 +1475,8 @@ function renderCommands(){
 }
 
 function defaultCommandArgs(name){
-  return ({quickstart:'.',doctor:'--repository .',plan:'--config rkc.json .',scan:'--config rkc.json --no-python --out .rkc --state-dir .rkc-state .',check:'--dir .rkc',query:'--dir .rkc --query \"resource guard\"',version:'',help:''})[name]||'--help';
+  const defaults={quickstart:'.',doctor:'--repository .',plan:'--config rkc.json .',scan:'--config rkc.json --no-python --out .rkc --state-dir .rkc-state .',check:'--dir .rkc',query:'--dir .rkc --query \"resource guard\"',version:'',help:''};
+  return Object.prototype.hasOwnProperty.call(defaults,name)?defaults[name]:'--help';
 }
 
 function parseCommandArguments(value){
