@@ -1446,18 +1446,38 @@ if yaml is not None:
         implemented = yaml.safe_load(
             (ROOT / "api" / "openapi.yaml").read_text(encoding="utf-8")
         )
-        documented_paths = set(implemented["paths"])
+        supported_methods = {
+            "get",
+            "post",
+            "put",
+            "patch",
+            "delete",
+            "head",
+            "options",
+        }
+        documented_routes = {
+            (method.upper(), path)
+            for path, operations in implemented["paths"].items()
+            if isinstance(operations, dict)
+            for method in operations
+            if method in supported_methods
+        }
         source = (ROOT / "internal" / "server" / "server.go").read_text(
             encoding="utf-8"
         )
-        coded_paths = set(
-            re.findall(r'mux\.HandleFunc\("GET ([^"{]+(?:\{[^}]+\})?)"', source)
+        coded_routes = set(
+            re.findall(
+                r'mux\.HandleFunc\("([A-Z]+) ([^"{]+(?:\{[^}]+\})?)"',
+                source,
+            )
         )
         # Go path variables and OpenAPI variables use the same spelling in this project.
+        only_documented = sorted(documented_routes - coded_routes)
+        only_code = sorted(coded_routes - documented_routes)
         record(
             "implemented OpenAPI route parity",
-            documented_paths == coded_paths,
-            f"only documented={sorted(documented_paths-coded_paths)}, only code={sorted(coded_paths-documented_paths)}",
+            documented_routes == coded_routes,
+            f"only documented={only_documented}, only code={only_code}",
         )
     except Exception as exc:
         record("implemented OpenAPI route parity", False, str(exc))

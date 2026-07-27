@@ -1,13 +1,15 @@
 openapi: 3.1.0
 info:
-  title: Repository Knowledge Compiler Local Read API
+  title: Repository Knowledge Compiler Local API
   version: 0.3.0-reference
   license:
     name: Apache-2.0
     identifier: Apache-2.0
   description: |
-    Read-only API implemented by `rkc serve`. It exposes one exported RKC
-    dataset. The larger multi-repository service contract is retained in
+    Local API implemented by `rkc serve`. It exposes one exported RKC dataset.
+    The optional workbench routes exist only when a user explicitly enables the
+    token-authenticated, loopback-only command surface under RKC's resource
+    guard. The larger multi-repository service contract is retained in
     `openapi-service-future.yaml` and is not falsely advertised as implemented.
 servers:
   - url: http://127.0.0.1:8787
@@ -36,6 +38,15 @@ paths:
       responses:
         '200':
           description: Auditable coverage report.
+          content:
+            application/json:
+              schema: { type: object, additionalProperties: true }
+  /api/v1/facets:
+    get:
+      operationId: getFacets
+      responses:
+        '200':
+          description: Bounded node, language, and edge-resolution facet values.
           content:
             application/json:
               schema: { type: object, additionalProperties: true }
@@ -183,6 +194,66 @@ paths:
               schema: { type: object, additionalProperties: true }
         '400': { $ref: '#/components/responses/Problem' }
         '404': { $ref: '#/components/responses/Problem' }
+  /api/v1/workbench/session:
+    get:
+      operationId: getWorkbenchSession
+      description: Available only for an explicitly enabled loopback workbench.
+      responses:
+        '200':
+          description: Ephemeral same-origin token, command catalogue, and bounds.
+          headers:
+            Cache-Control:
+              schema: { type: string }
+          content:
+            application/json:
+              schema: { type: object, additionalProperties: true }
+        '403': { $ref: '#/components/responses/Problem' }
+  /api/v1/workbench/jobs:
+    post:
+      operationId: createWorkbenchJob
+      description: Runs one allow-listed RKC argument vector without a shell.
+      parameters:
+        - $ref: '#/components/parameters/WorkbenchToken'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [args]
+              additionalProperties: false
+              properties:
+                args:
+                  type: array
+                  minItems: 1
+                  maxItems: 128
+                  items: { type: string, minLength: 1, maxLength: 4096 }
+      responses:
+        '202':
+          description: Accepted bounded job.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/WorkbenchJob' }
+        '400': { $ref: '#/components/responses/Problem' }
+        '403': { $ref: '#/components/responses/Problem' }
+        '429': { $ref: '#/components/responses/Problem' }
+  /api/v1/workbench/jobs/{jobID}:
+    get:
+      operationId: getWorkbenchJob
+      parameters:
+        - { name: jobID, in: path, required: true, schema: { type: string } }
+        - $ref: '#/components/parameters/WorkbenchToken'
+      responses:
+        '200':
+          description: Current bounded job state and captured output.
+          headers:
+            Cache-Control:
+              schema: { type: string }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/WorkbenchJob' }
+        '403': { $ref: '#/components/responses/Problem' }
+        '404': { $ref: '#/components/responses/Problem' }
 components:
   parameters:
     Limit:
@@ -194,6 +265,11 @@ components:
       in: query
       schema: { type: string, enum: [incoming, outgoing, both], default: both }
       description: Other supported traversal parameters are max_depth, hops, max_nodes, edge_kinds, resolutions, include_unresolved, and limit.
+    WorkbenchToken:
+      name: X-RKC-Workbench-Token
+      in: header
+      required: true
+      schema: { type: string }
   schemas:
     Health:
       type: object
@@ -218,6 +294,20 @@ components:
         items: { type: array, items: {} }
         truncated: { type: boolean }
         total: { type: integer }
+    WorkbenchJob:
+      type: object
+      required: [id, args, status, created_at, output, truncated]
+      properties:
+        id: { type: string }
+        args: { type: array, items: { type: string } }
+        status: { type: string, enum: [queued, running, succeeded, failed, timed_out] }
+        created_at: { type: string, format: date-time }
+        started_at: { type: string, format: date-time }
+        finished_at: { type: string, format: date-time }
+        exit_code: { type: integer }
+        output: { type: string }
+        truncated: { type: boolean }
+        error: { type: string }
       additionalProperties: true
   responses:
     ItemPage:

@@ -121,7 +121,10 @@ class ModelAssetTests(unittest.TestCase):
             )
         )
 
-    def test_fetch_hashes_and_publishes_without_replacement(self) -> None:
+    @mock.patch.object(model_assets, "assert_disk_headroom")
+    def test_fetch_hashes_and_publishes_without_replacement(
+        self, _headroom: mock.Mock
+    ) -> None:
         payload = (b"verified-model-bytes\n" * 257) + b"end"
         asset = fixture_asset(payload)
         with tempfile.TemporaryDirectory() as temporary:
@@ -153,7 +156,8 @@ class ModelAssetTests(unittest.TestCase):
             self.assertEqual(reused, path)
             self.assertEqual(path.read_bytes(), payload)
 
-    def test_hash_mismatch_is_never_published(self) -> None:
+    @mock.patch.object(model_assets, "assert_disk_headroom")
+    def test_hash_mismatch_is_never_published(self, _headroom: mock.Mock) -> None:
         payload = b"expected"
         asset = fixture_asset(payload)
         with tempfile.TemporaryDirectory() as temporary:
@@ -191,7 +195,10 @@ class ModelAssetTests(unittest.TestCase):
             self.assertEqual(opener.requests, [])
             self.assertEqual(list(cache.iterdir()), [])
 
-    def test_size_header_mismatch_is_rejected_before_publication(self) -> None:
+    @mock.patch.object(model_assets, "assert_disk_headroom")
+    def test_size_header_mismatch_is_rejected_before_publication(
+        self, _headroom: mock.Mock
+    ) -> None:
         payload = b"expected"
         asset = fixture_asset(payload)
         with tempfile.TemporaryDirectory() as temporary:
@@ -554,7 +561,10 @@ class ModelAssetTests(unittest.TestCase):
                 else:
                     model_assets._fsync_directory(1)
 
-    def test_fetch_handles_concurrent_identical_publication(self) -> None:
+    @mock.patch.object(model_assets, "assert_disk_headroom")
+    def test_fetch_handles_concurrent_identical_publication(
+        self, _headroom: mock.Mock
+    ) -> None:
         payload = b"concurrent"
         asset = fixture_asset(payload)
         real_link = os.link
@@ -576,7 +586,10 @@ class ModelAssetTests(unittest.TestCase):
                 )
             self.assertEqual(path.read_bytes(), payload)
 
-    def test_download_cleanup_refuses_replaced_temporary_inode(self) -> None:
+    @mock.patch.object(model_assets, "assert_disk_headroom")
+    def test_download_cleanup_refuses_replaced_temporary_inode(
+        self, _headroom: mock.Mock
+    ) -> None:
         asset = fixture_asset(b"expected")
         with tempfile.TemporaryDirectory() as temporary:
             cache = Path(temporary) / "cache"
@@ -1089,7 +1102,10 @@ class ModelAssetTests(unittest.TestCase):
             finally:
                 os.close(descriptor)
 
-    def test_exact_temporary_cleanup_and_publication_fail_closed(self) -> None:
+    @mock.patch.object(model_assets, "assert_disk_headroom")
+    def test_exact_temporary_cleanup_and_publication_fail_closed(
+        self, _headroom: mock.Mock
+    ) -> None:
         payload = b"expected"
         asset = fixture_asset(payload)
         with tempfile.TemporaryDirectory() as temporary:
