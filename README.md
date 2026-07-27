@@ -1,9 +1,26 @@
 # Repository Knowledge Compiler (RKC)
 
-RKC compiles a source repository into an immutable, evidence-backed Repository
-Knowledge Representation and derives documentation, graph navigation, search,
-NotebookLM-ready text, CI quality reports, integration exports, and optional
-local-model explanations from that representation.
+**Turn a codebase into a cited, searchable map—without trusting an LLM to
+invent the map.**
+
+[![CI](https://github.com/neuroforge-io/RKC/actions/workflows/ci.yml/badge.svg)](https://github.com/neuroforge-io/RKC/actions/workflows/ci.yml)
+[![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
+
+RKC compiles a local directory or Git repository into an immutable,
+evidence-backed atlas. Search symbols and signatures, follow compiler-resolved
+relationships, inspect source and diagnostics, generate documentation, query
+GraphRAG context, serve the responsive local workbench, or hand a bounded
+evidence packet to an optional local model.
+
+```sh
+./install.sh
+rkc quickstart /path/to/repository
+rkc query --dir /path/to/repository/.rkc "where is authentication enforced?"
+rkc serve --dir /path/to/repository/.rkc
+```
+
+No model, daemon, database server, package-manager hook, or network connection
+is required for the default local workflow.
 
 The governing rule is deliberately unromantic:
 
@@ -11,9 +28,24 @@ The governing rule is deliberately unromantic:
 > establish facts. A language model may explain bounded facts, but it may not
 > invent repository truth.
 
-The current release is a runnable, dependency-light reference platform. It is
-substantially beyond a toy scanner, while still stating the remaining
-commercial-production work instead of assigning it a heroic version number.
+## Why RKC
+
+- **Evidence before prose.** Every compiler, syntax, manifest, schema, and
+  framework fact keeps its source and producer.
+- **Compiler intelligence when available.** Import one or more SCIP indexes for
+  exact definitions, references, implementations, signatures, documentation,
+  diagnostics, and UTF-8/16/32 source ranges.
+- **Useful without AI.** Lexical/FTS5 search, graph traversal, GraphRAG
+  expansion, deterministic docs, browser exploration, HTTP, MCP, SQLite, and
+  portable JSON/JSONL work with no model.
+- **LLM output cannot become input truth.** Model products live outside the
+  verified atlas, cite bounded evidence, and are never recursively scanned by
+  the guarded self-catalogue.
+- **Hostile-repository posture.** Normal scans do not execute repository code.
+  Inputs, outputs, caches, journals, snapshots, and optional models have
+  explicit containment and resource contracts.
+- **Portable and commercially usable.** RKC-owned code is Apache-2.0, builds
+  CGO-free binaries, and retains deterministic SPDX evidence.
 
 ## Implemented now
 
@@ -23,6 +55,10 @@ The reference build provides:
 - complete artifact accounting, SHA-256 hashing, language/media classification,
   explicit exclusion records, and repository/file limits;
 - deterministic Python AST, Go AST, and JavaScript/TypeScript syntax adapters;
+- a streaming, dependency-free SCIP semantic adapter for compiler-produced
+  indexes, covering Python, JavaScript/TypeScript, Go, C/C++/CUDA, Rust,
+  Java/Kotlin/Scala, C#/Visual Basic, Ruby, Dart, PHP, and any conforming SCIP
+  producer;
 - Markdown structure, package/build manifest, bounded OpenAPI JSON/YAML, JSON Schema,
   environment-template, Docker, and secret-pattern extraction;
 - a versioned language-neutral graph containing artifacts, nodes, typed edges,
@@ -37,7 +73,7 @@ The reference build provides:
   MCP paths with immutable migrations, verified module hashes, CGO-disabled
   build gates, read-only consumers, and strict database-open health checks;
 - crash-safe filesystem snapshots and content-addressed object storage;
-- a 15-stage deterministic scan DAG with cancellation propagation, isolated
+- a 16-stage deterministic scan DAG with cancellation propagation, isolated
   analyzer fragments, bounded CPU/memory/process/open-file admission, ownership
   receipts, verified CAS payload caching,
   selective language/configuration invalidation, clean-scan equivalence tests,
@@ -66,29 +102,24 @@ The reference build provides:
   self-reference exclusions are explicit, `MANIFEST.json` hashes the SBOM, and
   `SHA256SUMS.txt` hashes both receipts;
 
-## What remains before commercial production 1.0
+## Honest boundaries
 
-The highest-value unfinished work is:
+RKC does not silently install or execute language toolchains. Compiler index
+generation is an explicit, separately authorized build step; RKC then imports
+the resulting `index.scip` as inert, digest-bound data. See
+[`docs/SCIP_SEMANTIC_ADAPTERS.md`](docs/SCIP_SEMANTIC_ADAPTERS.md).
 
-1. **Completed on current `main`:** make the durable SQLite `rkcstore`
-   writer/query implementation available across local CLI, HTTP, and MCP paths,
-   with transactional staging, recovery, pagination, and read-only consumers;
-2. route every scan stage through the deterministic DAG scheduler and cache;
-3. enforce plugin capabilities with a WASI host and isolated native workers;
-4. add compiler-grade semantic adapters, beginning with Python, TypeScript, Go,
-   C/C++, Rust, Java/Kotlin, and C#;
-5. add SQL, protobuf, GraphQL, Terraform, Kubernetes, CI, and richer build packs;
-6. build the paginated TypeScript browser and editor integrations;
-7. benchmark a real quantized GGUF model below the 3.5 GiB guarded ceiling;
-8. implement PostgreSQL/object-storage team mode, authentication, authorization,
-   queues, audit retention, backups, and operational telemetry;
-9. publish signed binaries and containers, container SBOMs, provenance, and
-   measured adapter accuracy over a maintained benchmark corpus; per-binary
-   Go-module and complete-distribution SPDX SBOMs are already generated and
-   packaged.
+No tested Apache-2.0 generation model currently meets every RKC quality,
+prompt-injection, exact-32K, latency, and 3.5 GiB gate on the protected one-core
+CPU profile. RKC therefore ships no weak or misleading default. Deterministic
+retrieval and GraphRAG remain complete, while model-backed commands fail closed.
+The measurements and rejection receipts are in
+[`docs/MODEL_SELECTION.md`](docs/MODEL_SELECTION.md).
 
-The exact ordered work, interfaces, migrations, tests, and exit gates are in
-[`docs/REMAINDER_IMPLEMENTATION_PLAN.md`](docs/REMAINDER_IMPLEMENTATION_PLAN.md).
+Team-service tenancy, general third-party worker containment, and signed public
+release attestations remain explicit future scopes. Current claims and exact
+boundaries are maintained in
+[`docs/IMPLEMENTATION_STATUS.md`](docs/IMPLEMENTATION_STATUS.md).
 
 ## Start here
 
@@ -97,11 +128,13 @@ The exact ordered work, interfaces, migrations, tests, and exit gates are in
 - [`docs/IMPLEMENTATION_STATUS.md`](docs/IMPLEMENTATION_STATUS.md): implemented,
   partial, and planned features.
 - [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md): system boundaries and data flow.
+- [`docs/SCIP_SEMANTIC_ADAPTERS.md`](docs/SCIP_SEMANTIC_ADAPTERS.md):
+  compiler-grade language indexing and safe import.
 - [`docs/data-model.md`](docs/data-model.md): canonical records and invariants.
 - [`docs/plugin-sdk.md`](docs/plugin-sdk.md): plugin and GraphPatch contracts.
 - [`docs/MODEL_RUNTIME.md`](docs/MODEL_RUNTIME.md): bounded local-model design.
-- [`docs/MODEL_SELECTION.md`](docs/MODEL_SELECTION.md): measured Gemma 4 and
-  Qwen candidate outcomes, default decision, and promotion gates.
+- [`docs/MODEL_SELECTION.md`](docs/MODEL_SELECTION.md): current small-model
+  research, measured candidates, rejection evidence, and promotion gates.
 - [`docs/SELF_CATALOGUE.md`](docs/SELF_CATALOGUE.md): guarded, non-recursive
   compilation of RKC's committed source into its own verified atlas.
 - [`docs/SECURITY_MODEL.md`](docs/SECURITY_MODEL.md): hostile-repository threat model.
@@ -127,6 +160,16 @@ the exact search, browser, and cited-answer entry points. It defaults to the
 dependency-light profile and does not need a model, daemon, database server, or
 Python sandbox. Pass `--python` only after `rkc doctor --strict --repository .`
 passes.
+
+If a compiler indexer has produced `index.scip`, add compiler-grade semantics
+without changing the safe scan boundary:
+
+```sh
+rkc quickstart --scip-index /path/to/index.scip /path/to/repository
+```
+
+Repeat `--scip-index` for polyglot workspaces. The same flag is available on
+`plan` and `scan`, and in the GUI command center.
 
 The generated `.rkc` atlas is portable and the `.rkc-state` directory retains
 immutable local snapshots. Both paths are explicit default inventory

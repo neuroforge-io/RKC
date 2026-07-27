@@ -139,6 +139,23 @@ Remote acquisition should:
 Archives require bounded entry count, decompression ratio, total bytes, nesting,
 and path containment before production support is enabled.
 
+## Compiler-semantic index input
+
+`--scip-index` accepts compiler-produced SCIP as untrusted inert data. RKC does
+not invoke the compiler, package manager, language server, or repository build
+that produced it. The importer rejects symbolic-link inputs, unsafe document
+paths, documents absent from the inventoried source tree, malformed Protobuf,
+ambiguous source encodings, invalid ranges, and bounded-resource violations.
+It hashes the index before scheduling, verifies the digest while streaming it,
+and hashes it again before merge so verified cache reuse cannot hide a changed
+external input. The semantic digest enters snapshot identity and every imported
+fact retains its compiler/indexer provenance.
+
+Generating an index may execute project-specific build logic and is outside the
+normal-scan trust boundary. Operators must run that separately authorized step
+under controls appropriate to the repository. See
+[`SCIP_SEMANTIC_ADAPTERS.md`](SCIP_SEMANTIC_ADAPTERS.md).
+
 ## Secret handling
 
 Secret findings retain kind, source location, confidence, and a non-reversible

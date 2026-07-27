@@ -14,6 +14,7 @@ local path or constrained Git URL
   -> Python AST adapter
   -> Go AST adapter
   -> JavaScript/TypeScript syntax adapter
+  -> optional compiler-produced SCIP semantic indexes
   -> Markdown, OpenAPI, JSON Schema, manifest, environment, secret packs
   -> merge and deduplication
   -> conservative unique-target resolution
@@ -49,6 +50,22 @@ spelling, calls, and conservative Express-style routes.
 It is explicitly a syntax adapter. The TypeScript compiler API remains the
 semantic source for overloads, project references, path mappings, inferred
 types, and resolved symbols.
+
+### Compiler semantics through SCIP
+
+The streaming SCIP importer preserves compiler/indexer-resolved symbols,
+definitions, references, implementations, signatures, documentation,
+diagnostics, and UTF-8/16/32 source ranges. The same adapter accepts indexes
+from scip-python, scip-typescript, scip-go, rust-analyzer/scip-rust,
+scip-clang, scip-java, scip-dotnet, and other conforming producers. Explicit
+indexes are supplied with repeatable `--scip-index` flags on `quickstart`,
+`plan`, or `scan`.
+
+RKC does not execute those indexers. It rejects unsafe paths, symlinks,
+malformed or oversized Protobuf, ambiguous positions, non-inventoried
+documents, and inputs that change before merge. Every compiler fact is bound
+to the exact index digest and remains distinguishable from syntax inference.
+See [`SCIP_SEMANTIC_ADAPTERS.md`](SCIP_SEMANTIC_ADAPTERS.md).
 
 ## Framework behavior
 
@@ -107,8 +124,10 @@ The reference model runtime:
 - validates claim citations, certainty, inference policy, and identifiers;
 - writes only derived records.
 
-A fake executable is used in tests. A real-model benchmark is intentionally not
-claimed because no GGUF file is bundled or measured in this release.
+Fake executables provide deterministic integration tests. Real guarded runs of
+Gemma 4 E2B, Qwen3.5 2B/0.8B, Granite 4 H 1B, and Qwen3 Embedding 0.6B are
+documented in [`MODEL_SELECTION.md`](MODEL_SELECTION.md). No generation model
+passed the unchanged pair-level production gate, so no default is promoted.
 
 ## Security limitations
 
@@ -147,11 +166,11 @@ mixed-language demonstration atlas plus a complete-distribution SPDX SBOM.
 |---|---|
 | filesystem bundle/snapshot | transactional SQLite local runtime |
 | portable in-memory lexical index | SQLite FTS5/BM25 query implementation for durable snapshots |
-| integrated sequential scan | journalled DAG stages and invalidation cache |
-| trusted Python worker | WASI or OS-sandboxed native worker |
-| syntax adapters | compiler/indexer semantic adapters |
+| journalled 16-stage DAG and verified invalidation cache | additional distributed scheduling |
+| guarded built-in Python worker | general WASI or OS-sandboxed third-party workers |
+| syntax plus SCIP compiler semantics | measured per-indexer accuracy corpus |
 | compact static browser | chunked TypeScript application with pagination |
 | single local dataset | multi-repository PostgreSQL/object-store service |
 | local unauthenticated API | OIDC/RBAC/tenant-aware service API |
-| fake model executable tests | measured real-GGUF resource benchmark |
+| fake integration tests plus rejected real-GGUF receipts | a model that passes every unchanged gate |
 | source checksums plus binary/distribution SPDX SBOMs | signed releases, container SBOM, provenance, transparency records |

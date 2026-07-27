@@ -49,8 +49,9 @@ internal/inventory
 
 internal/lang/goast
 internal/lang/tssyntax
+internal/lang/scipindex
 plugins/python-ast
-  current language syntax adapters
+  syntax adapters plus streaming compiler-semantic index ingestion
 
 internal/docparse
 internal/framework/*
@@ -91,6 +92,7 @@ A source-truth snapshot is derived from:
 ```text
 repository content digest
 Git commit or working-tree digest
+optional compiler-semantic input digest
 analysis-affecting configuration digest
 policy digest
 plugin lock digest
@@ -123,8 +125,11 @@ cannot partially replace a committed snapshot.
 | 6 | model | validated derived explanations only |
 
 The current release implements Tiers 0–2 broadly for Python, Go, and
-JavaScript/TypeScript, selected Tier-4 packs, and Tier-6 packet/provider
-infrastructure. Compiler-grade Tier 3 and authorized Tier 5 remain planned.
+JavaScript/TypeScript, Tier 3 through validated compiler-produced SCIP indexes,
+selected Tier-4 packs, and Tier-6 packet/provider infrastructure. SCIP provides
+one deterministic semantic boundary for Python, JavaScript/TypeScript, Go,
+C/C++/CUDA, Rust, Java/Kotlin/Scala, C#/Visual Basic, and other conforming
+producers. Authorized Tier 5 remains planned.
 
 ## Graph merge policy
 
@@ -163,10 +168,11 @@ Plugins declare identity, input selection, outputs, limits, determinism, and
 capabilities. They return a versioned GraphPatch and never receive database
 handles or publication authority.
 
-Pure analyzers should use a capability-scoped WASI component. Compiler and
-language-server integrations use isolated native workers. The current release
-validates manifests and lockfiles but has not yet implemented enforced runtime
-sandboxing.
+Pure analyzers should use a capability-scoped WASI component. RKC does not
+execute compiler indexers during a scan: operators generate SCIP in a separately
+authorized environment, and the streaming importer treats it as bounded,
+digest-bound untrusted data. General third-party native-worker sandboxing
+remains future scope.
 
 ## Model boundary
 

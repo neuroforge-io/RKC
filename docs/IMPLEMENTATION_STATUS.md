@@ -33,7 +33,7 @@ The labels below mean:
 | Transactional storage contract | Implemented | Typed reader/writer/recovery API; atomic, immutable in-memory conformance backend with authenticated cursors and lossless export |
 | SQLite driver/bootstrap | Implemented | Pinned pure-Go driver, embedded digest-locked migrations through schema `0.4.0`, fail-closed build/publication compare-and-swap, monotonic current-pointer guards, CGO-free build gates, reader-key initialization, read-only consumers, and strict database-open health checks |
 | SQLite runtime writer/query layer | Implemented | Transactional staging/publication, OS writer leases, recovery, digest-verified canonical reads, exact coverage binding, authenticated pagination, projections, and CLI/HTTP/MCP integration |
-| Pipeline DAG and cache library | Implemented | All 15 canonical scan stages route through the deterministic DAG with bounded resource admission; owner-only hash-chained command journals and ownership-bound verified CAS payloads provide selective keys plus `plan`/inspect/verify/prune UX. Retries, additional derived-output stages, and SQLite journal projection are future extensions, not hidden fallbacks |
+| Pipeline DAG and cache library | Implemented | All 16 canonical scan stages route through the deterministic DAG with bounded resource admission; owner-only hash-chained command journals and ownership-bound verified CAS payloads provide selective keys plus `plan`/inspect/verify/prune UX. Retries, additional derived-output stages, and SQLite journal projection are future extensions, not hidden fallbacks |
 | Clean/incremental equivalence | Implemented | Cold, warm, reversed-input, and localized-change paths are differentially checked against clean canonical output; the release benchmark and guarded RKC self-catalogue exercise repository-scale determinism |
 
 ## Analysis
@@ -49,7 +49,7 @@ The labels below mean:
 | package/build manifests | Implemented | Deterministic npm, Go module, Python requirements, and Docker extraction with all dependency scopes, string/object CLI bins, multi-entry replacements, bounded readers, and secret-default redaction |
 | environment templates | Implemented | keys, defaults, required/secret metadata |
 | secret detection/redaction | Implemented | pattern scanner; not a complete DLP system |
-| compiler-grade semantic adapters | Planned | Python, TypeScript, Go first |
+| compiler-grade semantic adapters | Implemented through SCIP import | Streaming dependency-free SCIP ingestion preserves compiler-resolved symbols, definitions, references, implementations, signatures, documentation, diagnostics, roles, and exact UTF-8/16/32 source ranges. Repeatable `--scip-index` integration is available in `quickstart`, `plan`, `scan`, and the complete GUI command center for Python, JavaScript/TypeScript, Go, C/C++/CUDA, Rust, Java/Kotlin/Scala, C#/Visual Basic, and any conforming producer. RKC deliberately does not execute indexers during normal scans |
 | Tree-sitter universal host | Planned | grammar registry and queries specified |
 | runtime evidence | Planned | disabled by default and sandbox-dependent |
 

@@ -253,6 +253,7 @@ func TestBrowserAssetsAccessibilityAndSerializationContract(t *testing.T) {
 			"/api/v1/nodes?limit=120", "runWorkbenchCommand", "parseCommandArguments",
 			"cancelWorkbenchJob", "cleanup_failed", "deadline_at",
 			"['runs','Inspect validated scheduler run journals.','read']",
+			"--scip-index /path/index.scip", "Compiler evidence",
 		},
 	} {
 		content := string(assets[name])

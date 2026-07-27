@@ -114,7 +114,7 @@ Start with the portable deterministic profile:
 ```
 
 `rkc plan` performs inventory and normalization only, then reports the complete
-15-stage DAG, verified cache hits, misses, disabled stages, and invalidation
+16-stage DAG, verified cache hits, misses, disabled stages, and invalidation
 reasons. Analyzer payloads are stored outside the repository in the operating
 system's user-cache directory. Use `scan --no-cache` when an explicitly clean
 run is required; clean and incremental execution produce the same snapshot
@@ -144,6 +144,34 @@ construction, search indexing, and every configured export. If
 `./bin/rkc doctor --strict --config rkc.json --repository /path/to/repository`
 passes on Linux, omit `--no-python` to enable the built-in Python AST adapter.
 RKC never falls back to running that adapter without its isolation boundary.
+
+### Add compiler-grade semantics
+
+Generate a SCIP index with the appropriate compiler-backed indexer in a
+separately authorized build environment, then import it as inert data:
+
+```sh
+./bin/rkc plan \
+  --scip-index /path/to/index.scip \
+  --no-python \
+  /path/to/repository
+
+./bin/rkc scan \
+  --scip-index /path/to/index.scip \
+  --no-python \
+  --out /tmp/my-atlas \
+  --state-dir /tmp/my-atlas-state \
+  --force \
+  /path/to/repository
+```
+
+Repeat `--scip-index` for a polyglot repository. RKC imports compiler-resolved
+symbols, definitions, references, relationships, signatures, documentation,
+diagnostics, and exact source ranges for Python, JavaScript/TypeScript, Go,
+C/C++/CUDA, Rust, Java/Kotlin/Scala, C#/Visual Basic, and other conforming SCIP
+producers. It does not run the indexer or repository build. Full setup,
+language routes, GUI usage, and security limits are in
+[`SCIP_SEMANTIC_ADAPTERS.md`](SCIP_SEMANTIC_ADAPTERS.md).
 
 Inspect or maintain the cache without scanning:
 

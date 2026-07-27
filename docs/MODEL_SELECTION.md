@@ -38,6 +38,27 @@ The paired Qwen3 embedding role passed again. Pair-level qualification therefore
 failed, no defaults changed, and the private report SHA-256 is
 `42361cdc5cd687eb6ceb31fd69d955da20a731f32291fafda8f3256d4f169faa`.
 
+## Current small-model research snapshot
+
+| Candidate | License / context | Why it was considered | RKC decision |
+|---|---|---|---|
+| Granite 4 H 1B Q5_K_M | Apache-2.0 / 128K | Strong instruction, code, function-calling, RAG, and hybrid-architecture evidence at 1.5B parameters | Fully measured; rejected on quality, injection, unsupported claims, and exact-32K latency |
+| Qwen3 1.7B Q8_0 | Apache-2.0 / 32K | Strong modern small-model reasoning and instruction following | Official 1.83 GB dense GGUF cannot plausibly close the measured one-core prefill gap |
+| SmolLM3 3B | Apache-2.0 / 64K | Competitive reasoning and long-context positioning | 3B dense compute and context footprint are outside the viable guarded operating point |
+| LFM2.5 1.2B Instruct | LFM license / 32K | Excellent published edge-CPU throughput and sub-2B results | Excluded: not Apache-2.0, and upstream does not position it as a programming/knowledge default |
+| Falcon-H1 1.5B Instruct | Falcon/custom / long context | Strong published small-model benchmark results | Excluded by the required Apache-2.0 model-license policy |
+| Gemma 4 E2B QAT Q4 | Gemma terms / 32K test point | New efficient architecture and official quantization | Measured; rejected on grammar compatibility and roughly 27-minute projected 32K prefill |
+| Laguna XS.2 | Apache-2.0 / 262K | Very strong current agentic-code and SWE benchmark positioning with 3B active parameters | 33B total weights cannot fit the 3.5 GiB hard ceiling |
+
+The production latency gate requires at least about 108 prompt tokens/second to
+consume 32,384 input tokens within 300 seconds. The guarded measurements were
+about 12 tokens/second for Granite 4 H 1B and about 21 tokens/second for Qwen3.5
+0.8B. A larger dense Apache-2.0 candidate cannot bridge that gap on the same
+one-core host. The only researched model claiming the required edge-class speed
+has a non-Apache license and weaker task positioning. Further heavyweight
+downloads would therefore consume resources without a plausible promotion
+path.
+
 Qwen3 1.7B Q8_0 and SmolLM3 3B were considered as Apache-2.0 comparisons, but
 their larger dense footprints cannot close the measured prompt-throughput gap
 under the same one-core ceiling. Qwen's official GGUF is 1,834,426,016 bytes
@@ -139,6 +160,7 @@ Primary sources:
 - [SmolLM3 3B model card](https://huggingface.co/HuggingFaceTB/SmolLM3-3B)
 - [LFM2.5 1.2B Instruct model card](https://huggingface.co/LiquidAI/LFM2.5-1.2B-Instruct)
 - [Falcon-H1 1.5B Instruct model card](https://huggingface.co/tiiuae/Falcon-H1-1.5B-Instruct)
+- [Poolside Laguna XS.2 model card](https://huggingface.co/poolside/Laguna-XS.2)
 - [Gemma 4 overview](https://ai.google.dev/gemma/docs/core)
 - [official Gemma 4 E2B model](https://huggingface.co/google/gemma-4-E2B-it)
 - [official Gemma 4 E2B QAT Q4 GGUF](https://huggingface.co/google/gemma-4-E2B-it-qat-q4_0-gguf)
