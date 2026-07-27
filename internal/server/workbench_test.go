@@ -2,6 +2,7 @@ package server
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -14,6 +15,173 @@ import (
 	"testing"
 	"time"
 )
+
+func TestWorkbenchCloseCancelsActiveJobsAndRejectsSubmissions(t *testing.T) {
+	var nilWorkbench *Workbench
+	if err := nilWorkbench.Close(context.Background()); err != nil {
+		t.Fatalf("nil Close() = %v", err)
+	}
+
+	workspace := t.TempDir()
+	ready := filepath.Join(workspace, "ready")
+	executable := filepath.Join(t.TempDir(), "close")
+	script := "#!/bin/sh\nprintf ready > \"$2\"\nwhile :; do sleep 1; done\n"
+	if err := os.WriteFile(executable, []byte(script), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	workbench, err := NewWorkbench(WorkbenchConfig{
+		Workspace: workspace, Executable: executable, Timeout: 5 * time.Second,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := workbench.Close(nil); err == nil {
+		t.Fatal("Close(nil) succeeded")
+	}
+	job, err := workbench.createJob([]string{"help", ready})
+	if err != nil {
+		t.Fatal(err)
+	}
+	go workbench.runJob(job.ID)
+	waitForFile(t, ready, 2*time.Second)
+
+	closeContext, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	if err := workbench.Close(closeContext); err != nil {
+		t.Fatalf("Close() = %v", err)
+	}
+	completed := waitForWorkbenchJob(t, workbench, job.ID, time.Second)
+	if completed.Status != "canceled" || completed.FinishedAt == nil {
+		t.Fatalf("closed active job = %+v", completed)
+	}
+	if _, err := workbench.createJob([]string{"help"}); !errors.Is(err, ErrWorkbenchClosed) {
+		t.Fatalf("create after Close() = %v", err)
+	}
+	response := httptest.NewRecorder()
+	workbench.handleJobs(response, authorizedWorkbenchRequest(
+		workbench, http.MethodPost, "/api/v1/workbench/jobs", `{"args":["help"]}`,
+	))
+	if response.Code != http.StatusServiceUnavailable {
+		t.Fatalf("closed submission status = %d body=%s", response.Code, response.Body.String())
+	}
+	if err := workbench.Close(context.Background()); err != nil {
+		t.Fatalf("idempotent Close() = %v", err)
+	}
+}
+
+func TestWorkbenchCloseReportsUnprovenCleanup(t *testing.T) {
+	workbench, err := NewWorkbench(WorkbenchConfig{
+		Workspace: t.TempDir(), Executable: os.Args[0], Timeout: time.Second,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	finished := time.Now().UTC()
+	exitCode := -1
+	workbench.jobs["failed-cleanup"] = &workbenchJob{
+		ID: "failed-cleanup", Status: "cleanup_failed", FinishedAt: &finished,
+		ExitCode: &exitCode,
+	}
+	err = workbench.Close(context.Background())
+	if !errors.Is(err, ErrWorkbenchCleanupUnproven) ||
+		!strings.Contains(err.Error(), "failed-cleanup") {
+		t.Fatalf("Close() cleanup failure = %v", err)
+	}
+}
+
+func TestWorkbenchCloseHonorsCallerDeadline(t *testing.T) {
+	workbench, err := NewWorkbench(WorkbenchConfig{
+		Workspace: t.TempDir(), Executable: os.Args[0], Timeout: time.Second,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	jobContext, cancelJob := context.WithCancel(context.Background())
+	defer cancelJob()
+	workbench.jobs["stuck"] = &workbenchJob{
+		ID: "stuck", Status: "running", context: jobContext,
+		cancel: cancelJob, done: make(chan struct{}),
+	}
+	closeContext, cancelClose := context.WithCancel(context.Background())
+	cancelClose()
+	err = workbench.Close(closeContext)
+	if !errors.Is(err, ErrWorkbenchCleanupUnproven) ||
+		!strings.Contains(err.Error(), context.Canceled.Error()) {
+		t.Fatalf("Close() deadline failure = %v", err)
+	}
+}
+
+func TestWorkbenchManagedUnitRiskClassification(t *testing.T) {
+	tests := []struct {
+		name string
+		args []string
+		want bool
+	}{
+		{name: "empty"},
+		{name: "answer", args: []string{"answer"}, want: true},
+		{name: "synthesize", args: []string{"synthesize"}, want: true},
+		{name: "packet only", args: []string{"synthesize", "--packet-only"}},
+		{name: "semantic", args: []string{"query", "--mode", "semantic"}, want: true},
+		{name: "hybrid equals", args: []string{"query", "--mode=hybrid"}, want: true},
+		{name: "lexical", args: []string{"query", "--mode", "lexical"}},
+		{name: "build vector", args: []string{"query", "--build-vector-index"}, want: true},
+		{name: "embedding model", args: []string{"query", "--embedding-model=x"}, want: true},
+		{name: "embedding asset", args: []string{"query", "--embedding-asset", "x"}, want: true},
+		{name: "embedding receipt", args: []string{"query", "--embedding-runtime-receipt=x"}, want: true},
+		{name: "scan", args: []string{"scan"}, want: true},
+		{name: "scan without python", args: []string{"scan", "--no-python"}},
+		{name: "scan without plugins", args: []string{"scan", "--no-plugins"}},
+		{name: "quickstart python", args: []string{"quickstart", "--python"}, want: true},
+		{name: "quickstart", args: []string{"quickstart"}},
+		{name: "other", args: []string{"help"}},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if got := workbenchMayLaunchManagedUnits(test.args); got != test.want {
+				t.Fatalf("workbenchMayLaunchManagedUnits(%q) = %t, want %t", test.args, got, test.want)
+			}
+		})
+	}
+}
+
+func TestWorkbenchEnvironmentRejectsUnsafeSystemdAndCGOState(t *testing.T) {
+	if _, err := sanitizedWorkbenchEnvironment([]string{"CGO_ENABLED=invalid"}); err == nil {
+		t.Fatal("invalid CGO_ENABLED was accepted")
+	}
+	for _, environment := range [][]string{
+		{"XDG_RUNTIME_DIR=/run/user/1000"},
+		{"DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/1000/bus"},
+		{"XDG_RUNTIME_DIR=relative", "DBUS_SESSION_BUS_ADDRESS=unix:path=relative/bus"},
+		{"XDG_RUNTIME_DIR=/tmp/../tmp", "DBUS_SESSION_BUS_ADDRESS=unix:path=/tmp/bus"},
+	} {
+		if _, err := sanitizedWorkbenchEnvironment(environment); err == nil {
+			t.Errorf("unsafe systemd environment was accepted: %q", environment)
+		}
+	}
+	insecure := filepath.Join(t.TempDir(), "runtime")
+	if err := os.Mkdir(insecure, 0o777); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(insecure, 0o777); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := sanitizedWorkbenchEnvironment([]string{
+		"XDG_RUNTIME_DIR=" + insecure,
+		"DBUS_SESSION_BUS_ADDRESS=unix:path=" + filepath.ToSlash(filepath.Join(insecure, "bus")),
+	}); err == nil {
+		t.Fatal("insecure runtime directory was accepted")
+	}
+	private := filepath.Join(t.TempDir(), "runtime")
+	if err := os.Mkdir(private, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := sanitizedWorkbenchEnvironment([]string{
+		"XDG_RUNTIME_DIR=" + private,
+		"DBUS_SESSION_BUS_ADDRESS=unix:path=" + filepath.ToSlash(filepath.Join(private, "other")),
+	}); err == nil {
+		t.Fatal("off-path user bus was accepted")
+	}
+}
 
 func TestWorkbenchRunsOneAuthenticatedBoundedCommand(t *testing.T) {
 	workspace := t.TempDir()

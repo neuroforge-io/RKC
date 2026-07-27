@@ -3,6 +3,9 @@ package main
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -13,6 +16,7 @@ import (
 
 	"github.com/neuroforge-io/RKC/internal/graph"
 	"github.com/neuroforge-io/RKC/internal/groundedanswer"
+	"github.com/neuroforge-io/RKC/internal/modelassets"
 	"github.com/neuroforge-io/RKC/internal/modelruntime"
 	"github.com/neuroforge-io/RKC/internal/search"
 	"github.com/neuroforge-io/RKC/internal/server"
@@ -423,5 +427,201 @@ func TestAnswerCoverageSemanticPreparationFailsClosedBeforeModelExecution(t *tes
 
 	if err := (&answerSemanticSession{}).Close(); err != nil {
 		t.Fatalf("empty semantic close = %v", err)
+	}
+}
+
+func TestAnswerCoverageSemanticPreparationBindsQualifiedPersistedIndex(t *testing.T) {
+	model := newCLIModelFixture(t)
+	root := filepath.Dir(model.lockPath)
+	embeddingModel := filepath.Join(root, "embedding.gguf")
+	embeddingExecutable := filepath.Join(root, "runtime", "build", "bin", "llama-embedding")
+	writeTestFile(t, embeddingModel, "GGUFembedding")
+	writeExecutable(t, embeddingExecutable, `#!/bin/sh
+printf '%s\n' '{"object":"list","data":[{"object":"embedding","index":0,"embedding":[0.6,0.8]}]}'
+`)
+
+	var lock map[string]any
+	lockData, err := os.ReadFile(model.lockPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(lockData, &lock); err != nil {
+		t.Fatal(err)
+	}
+	assets := lock["assets"].([]any)
+	embedding := assets[2].(map[string]any)
+	embedding["status"] = "qualified"
+	embedding["default_eligible"] = true
+	embedding["filename"] = filepath.Base(embeddingModel)
+	embedding["sha256"] = digestFile(t, embeddingModel)
+	embedding["size_bytes"] = fileSize(t, embeddingModel)
+	lock["default_embedding_model"] = "embedding"
+	lockData, err = json.Marshal(lock)
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeTestFile(t, model.lockPath, string(lockData))
+
+	var receipt map[string]any
+	receiptData, err := os.ReadFile(model.receiptPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(receiptData, &receipt); err != nil {
+		t.Fatal(err)
+	}
+	lockDigest := sha256.Sum256(lockData)
+	receipt["lock_sha256"] = hex.EncodeToString(lockDigest[:])
+	for _, value := range receipt["binaries"].([]any) {
+		binary := value.(map[string]any)
+		if binary["path"] == "build/bin/llama-embedding" {
+			binary["sha256"] = digestFile(t, embeddingExecutable)
+			binary["size_bytes"] = fileSize(t, embeddingExecutable)
+		}
+	}
+	receiptData, err = json.Marshal(receipt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeTestFile(t, model.receiptPath, string(receiptData))
+
+	binding, err := modelassets.ResolveEmbedding(modelassets.EmbeddingRequest{
+		LockPath: model.lockPath, RuntimeReceiptPath: model.receiptPath,
+		ExecutablePath: embeddingExecutable, ModelPath: embeddingModel,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	lexical := semanticQueryTestLexical()
+	atlas := filepath.Join(root, "atlas")
+	derived := filepath.Join(root, "derived")
+	if err := os.Mkdir(atlas, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(derived, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	indexPath := filepath.Join(derived, "vector-index.json")
+	if err := publishQueryVectorIndex(
+		indexPath, semanticQueryTestVectorIndex(lexical, binding), lexical, binding,
+	); err != nil {
+		t.Fatal(err)
+	}
+	options := semanticQueryOptions{
+		VectorIndexPath: indexPath, ModelPath: embeddingModel,
+		ExecutablePath: embeddingExecutable, ModelLockPath: model.lockPath,
+		RuntimeReceiptPath: model.receiptPath,
+	}
+	vector, embedder, err := prepareSemanticQuery(
+		context.Background(), atlas, lexical, options,
+	)
+	skipGuardRefusal(t, err)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if vector == nil || embedder == nil || vector.Descriptor.Model != "embedding" {
+		t.Fatalf("prepared semantic resources = vector %+v embedder %v", vector, embedder)
+	}
+	if err := embedder.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	session, err := prepareQualifiedAnswerSemantic(
+		context.Background(), atlas, lexical, options,
+	)
+	skipGuardRefusal(t, err)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if session.Vector == nil || session.Embedder == nil {
+		t.Fatalf("answer semantic session = %+v", session)
+	}
+	if err := session.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := session.Close(); err != nil {
+		t.Fatalf("idempotent semantic close = %v", err)
+	}
+
+	builtPath := filepath.Join(derived, "built-vector-index.json")
+	builtOptions := options
+	builtOptions.VectorIndexPath = builtPath
+	builtOptions.BuildVectorIndex = true
+	built, builder, err := prepareSemanticQuery(
+		context.Background(), atlas, lexical, builtOptions,
+	)
+	skipGuardRefusal(t, err)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if built == nil || builder == nil || len(built.Vectors) != len(lexical.Documents) {
+		t.Fatalf("built semantic resources = vector %+v embedder %v", built, builder)
+	}
+	if err := builder.Close(); err != nil {
+		t.Fatal(err)
+	}
+	for _, path := range []string{builtPath, queryVectorReceiptPath(builtPath)} {
+		if info, err := os.Stat(path); err != nil || !info.Mode().IsRegular() {
+			t.Fatalf("built semantic artifact %s = %v, %v", path, info, err)
+		}
+	}
+
+	for _, test := range []struct {
+		name    string
+		options semanticQueryOptions
+	}{
+		{"whitespace index", func() semanticQueryOptions {
+			value := options
+			value.VectorIndexPath = " " + indexPath
+			return value
+		}()},
+		{"missing index option", func() semanticQueryOptions {
+			value := options
+			value.VectorIndexPath = ""
+			return value
+		}()},
+		{"index inside atlas", func() semanticQueryOptions {
+			value := options
+			value.VectorIndexPath = filepath.Join(atlas, "inside.json")
+			return value
+		}()},
+		{"missing index file", func() semanticQueryOptions {
+			value := options
+			value.VectorIndexPath = filepath.Join(derived, "missing.json")
+			return value
+		}()},
+		{"build over existing index", func() semanticQueryOptions {
+			value := options
+			value.BuildVectorIndex = true
+			return value
+		}()},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			vector, failedEmbedder, err := prepareSemanticQuery(
+				context.Background(), atlas, lexical, test.options,
+			)
+			if err == nil || vector != nil || failedEmbedder != nil {
+				if failedEmbedder != nil {
+					_ = failedEmbedder.Close()
+				}
+				t.Fatalf("invalid semantic options returned vector=%v embedder=%v err=%v", vector, failedEmbedder, err)
+			}
+		})
+	}
+	defaultOptions := options
+	defaultOptions.VectorIndexPath = ""
+	defaultOptions.BuildVectorIndex = true
+	defaultBuilt, defaultBuilder, err := prepareSemanticQuery(
+		context.Background(), atlas, lexical, defaultOptions,
+	)
+	skipGuardRefusal(t, err)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if defaultBuilt == nil || defaultBuilder == nil {
+		t.Fatal("default semantic index path did not build resources")
+	}
+	if err := defaultBuilder.Close(); err != nil {
+		t.Fatal(err)
 	}
 }

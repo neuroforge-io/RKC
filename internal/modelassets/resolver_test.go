@@ -212,6 +212,60 @@ func TestResolverPolicyValidationRejectsInvalidShapes(t *testing.T) {
 	}
 }
 
+func TestResolverResidualLockShapeAndBindingFailures(t *testing.T) {
+	fixture := newResolverFixture(t)
+	lockBytes, err := os.ReadFile(fixture.lockPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tests := []struct {
+		name   string
+		mutate func(*lockDocument)
+	}{
+		{"schema", func(lock *lockDocument) { lock.Schema = "other" }},
+		{"llama provenance", func(lock *lockDocument) { lock.LlamaCPP.Tag = "bad tag" }},
+		{"asset count", func(lock *lockDocument) { lock.Assets = lock.Assets[:2] }},
+		{"asset id", func(lock *lockDocument) { lock.Assets[1].ID = "bad id" }},
+		{"duplicate asset", func(lock *lockDocument) { lock.Assets[1].ID = lock.Assets[0].ID }},
+		{"default id", func(lock *lockDocument) { lock.DefaultGenerationModel = stringPointer("bad id") }},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			candidate := fixture.lock
+			candidate.Assets = append([]lockAsset(nil), fixture.lock.Assets...)
+			test.mutate(&candidate)
+			if err := validateLockShape(lockBytes, candidate); err == nil {
+				t.Fatal("invalid lock shape was accepted")
+			}
+		})
+	}
+	if err := validateLockShape([]byte(`{}`), fixture.lock); err == nil {
+		t.Fatal("lock with missing top-level keys was accepted")
+	}
+	if _, err := resolveModelBinding(ModelRequest{}, "other"); err == nil {
+		t.Fatal("unsupported model binding kind was accepted")
+	}
+	if err := validateEmbeddingAsset(fixture.lock.Assets[1]); err == nil {
+		t.Fatal("generation asset was accepted as an embedding asset")
+	}
+
+	missingModel := fixture.request()
+	missingModel.ModelPath = filepath.Join(fixture.root, "missing.gguf")
+	if _, err := ResolveGeneration(missingModel); err == nil {
+		t.Fatal("missing model file was accepted")
+	}
+	missingExecutable := fixture.request()
+	missingExecutable.ExecutablePath = "rkc-definitely-missing-llama-cli"
+	if _, err := ResolveGeneration(missingExecutable); err == nil {
+		t.Fatal("missing executable was accepted")
+	}
+	missingReceipt := fixture.request()
+	missingReceipt.RuntimeReceiptPath = filepath.Join(fixture.root, "missing-receipt.json")
+	if _, err := ResolveGeneration(missingReceipt); err == nil {
+		t.Fatal("missing receipt was accepted")
+	}
+}
+
 func TestResolveGenerationRejectsUnqualifiedOrMismatchedArtifacts(t *testing.T) {
 	tests := []struct {
 		name   string

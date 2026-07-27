@@ -738,6 +738,423 @@ func TestFileJournalConcurrentAppendOrdering(t *testing.T) {
 	}
 }
 
+func TestJournalRecordValidationRejectsEveryMalformedEnvelopeClass(t *testing.T) {
+	validRun := func() JournalRecord {
+		return JournalRecord{
+			SchemaVersion:        journalSchemaVersion,
+			RunID:                testRunID,
+			Sequence:             1,
+			Kind:                 JournalKindRun,
+			State:                JournalStateRunning,
+			Plan:                 []JournalStage{},
+			PlanDigest:           strings.Repeat("a", 64),
+			PreviousRecordDigest: strings.Repeat("0", 64),
+			RecordDigest:         strings.Repeat("b", 64),
+			OccurredAt:           time.Now().UTC(),
+		}
+	}
+	validStage := func() JournalRecord {
+		record := validRun()
+		record.Kind = JournalKindStage
+		record.State = JournalStateRunning
+		record.StageID = "stage"
+		record.StageVersion = "v1"
+		record.Attempt = 1
+		record.Plan = nil
+		return record
+	}
+	tests := []struct {
+		name   string
+		record func() JournalRecord
+		mutate func(*JournalRecord)
+	}{
+		{"schema", validRun, func(r *JournalRecord) { r.SchemaVersion = "other" }},
+		{"run id", validRun, func(r *JournalRecord) { r.RunID = "BAD" }},
+		{"sequence", validRun, func(r *JournalRecord) { r.Sequence = 0 }},
+		{"occurrence", validRun, func(r *JournalRecord) { r.OccurredAt = time.Time{} }},
+		{"plan digest", validRun, func(r *JournalRecord) { r.PlanDigest = "bad" }},
+		{"previous digest", validRun, func(r *JournalRecord) { r.PreviousRecordDigest = "bad" }},
+		{"record digest", validRun, func(r *JournalRecord) { r.RecordDigest = "bad" }},
+		{"negative duration", validRun, func(r *JournalRecord) { r.Duration = -1 }},
+		{"large error", validRun, func(r *JournalRecord) { r.Error = strings.Repeat("x", 64*1024+1) }},
+		{"run attempt", validRun, func(r *JournalRecord) { r.Attempt = 1 }},
+		{"run resources", validRun, func(r *JournalRecord) { r.Resources.CPU = 1 }},
+		{"run stage field", validRun, func(r *JournalRecord) { r.StageID = "stage" }},
+		{"running duration", validRun, func(r *JournalRecord) { r.Duration = time.Second }},
+		{"running error", validRun, func(r *JournalRecord) { r.Error = "bad" }},
+		{"succeeded plan", validRun, func(r *JournalRecord) {
+			r.State = JournalStateSucceeded
+			r.Plan = []JournalStage{{ID: "stage", Version: "v1"}}
+		}},
+		{"succeeded error", validRun, func(r *JournalRecord) { r.State = JournalStateSucceeded; r.Plan = nil; r.Error = "bad" }},
+		{"failed missing error", validRun, func(r *JournalRecord) { r.State = JournalStateFailed; r.Plan = nil }},
+		{"cancelled plan", validRun, func(r *JournalRecord) {
+			r.State = JournalStateCancelled
+			r.Error = "cancelled"
+			r.Plan = []JournalStage{{ID: "stage", Version: "v1"}}
+		}},
+		{"run state", validRun, func(r *JournalRecord) { r.State = "other" }},
+		{"stage plan", validStage, func(r *JournalRecord) {
+			r.Plan = []JournalStage{{ID: "stage", Version: "v1"}}
+		}},
+		{"stage attempt", validStage, func(r *JournalRecord) { r.Attempt = 0 }},
+		{"stage id", validStage, func(r *JournalRecord) { r.StageID = " stage " }},
+		{"stage version", validStage, func(r *JournalRecord) { r.StageVersion = "" }},
+		{"stage resources", validStage, func(r *JournalRecord) { r.Resources.CPU = -1 }},
+		{"nonterminal duration", validStage, func(r *JournalRecord) { r.Duration = time.Second }},
+		{"nonterminal result", validStage, func(r *JournalRecord) { r.CacheKey = "stage:" + strings.Repeat("a", 64) }},
+		{"successful error", validStage, func(r *JournalRecord) { r.State = JournalStateSucceeded; r.Error = "bad" }},
+		{"successful cache key", validStage, func(r *JournalRecord) {
+			r.State = JournalStateSucceeded
+			r.CacheKey = "bad"
+			r.OutputDigest = strings.Repeat("b", 64)
+		}},
+		{"successful output", validStage, func(r *JournalRecord) {
+			r.State = JournalStateCached
+			r.CacheKey = "stage:" + strings.Repeat("a", 64)
+			r.OutputDigest = "bad"
+		}},
+		{"failed missing error", validStage, func(r *JournalRecord) { r.State = JournalStateFailed }},
+		{"failed result", validStage, func(r *JournalRecord) {
+			r.State = JournalStateCancelled
+			r.Error = "cancelled"
+			r.OutputDigest = strings.Repeat("b", 64)
+		}},
+		{"stage state", validStage, func(r *JournalRecord) { r.State = "other" }},
+		{"kind", validRun, func(r *JournalRecord) { r.Kind = "other" }},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			record := test.record()
+			test.mutate(&record)
+			if err := validateJournalRecord(record); err == nil {
+				t.Fatalf("malformed record was accepted: %+v", record)
+			}
+		})
+	}
+
+	for _, state := range []JournalState{JournalStatePlanned, JournalStateQueued, JournalStateRunning} {
+		record := validStage()
+		record.State = state
+		if err := validateJournalRecord(record); err != nil {
+			t.Errorf("valid %s stage = %v", state, err)
+		}
+	}
+	for _, state := range []JournalState{JournalStateSucceeded, JournalStateCached} {
+		record := validStage()
+		record.State = state
+		record.CacheKey = "stage:" + strings.Repeat("a", 64)
+		record.OutputDigest = "sha256:" + strings.Repeat("b", 64)
+		if err := validateJournalRecord(record); err != nil {
+			t.Errorf("valid %s stage = %v", state, err)
+		}
+	}
+	for _, state := range []JournalState{JournalStateFailed, JournalStateCancelled} {
+		record := validStage()
+		record.State = state
+		record.Error = "bounded failure"
+		if err := validateJournalRecord(record); err != nil {
+			t.Errorf("valid %s stage = %v", state, err)
+		}
+	}
+}
+
+func TestJournalPlanAndDecoderValidationEdges(t *testing.T) {
+	plans := [][]JournalStage{
+		{{ID: "", Version: "v1"}},
+		{{ID: "a", Version: ""}},
+		{{ID: "b", Version: "v1"}, {ID: "a", Version: "v1"}},
+		{{ID: "a", Version: "v1"}, {ID: "a", Version: "v2"}},
+		{{ID: "a", Version: "v1", Resources: ResourceRequest{CPU: -1}}},
+		{{ID: "a", Version: "v1", Dependencies: []string{"b", "b"}}, {ID: "b", Version: "v1"}},
+		{{ID: "a", Version: "v1", Dependencies: []string{"a"}}},
+		{{ID: "a", Version: "v1", Dependencies: []string{"missing"}}},
+		{{ID: "a", Version: "v1", Dependencies: []string{"b"}}, {ID: "b", Version: "v1", Dependencies: []string{"a"}}},
+	}
+	for index, plan := range plans {
+		if err := validateJournalPlan(plan); err == nil {
+			t.Errorf("invalid plan %d was accepted: %+v", index, plan)
+		}
+		if _, err := JournalPlanDigest(plan); err == nil {
+			t.Errorf("invalid plan %d was digested", index)
+		}
+	}
+	if !equalStrings([]string{"a"}, []string{"a"}) ||
+		equalStrings([]string{"a"}, []string{"a", "b"}) ||
+		equalStrings([]string{"a"}, []string{"b"}) {
+		t.Fatal("equalStrings contract mismatch")
+	}
+	for _, data := range [][]byte{
+		[]byte(`{"schema_version":"x","schema_version":"x"}`),
+		[]byte(`[{"a":1}]`),
+		[]byte(`{"a":[{"b":1,"b":2}]}`),
+		[]byte(`{"a":1} {"b":2}`),
+		[]byte(`{"unknown":true}`),
+	} {
+		if _, err := decodeJournalRecord(data); err == nil {
+			t.Errorf("malformed journal JSON was accepted: %s", data)
+		}
+	}
+}
+
+func TestFileJournalAppendRejectsInvalidReceiverAndContext(t *testing.T) {
+	var nilJournal *FileJournal
+	if err := nilJournal.Append(context.Background(), JournalRecord{}); err == nil {
+		t.Fatal("nil journal append succeeded")
+	}
+	if err := (&FileJournal{}).Append(context.Background(), JournalRecord{}); err == nil {
+		t.Fatal("uninitialized journal append succeeded")
+	}
+	journal := openTestJournal(t, t.TempDir(), testRunID)
+	if err := journal.Append(nil, JournalRecord{}); err == nil {
+		t.Fatal("nil context append succeeded")
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if err := journal.Append(ctx, JournalRecord{}); !errors.Is(err, context.Canceled) {
+		t.Fatalf("cancelled append = %v", err)
+	}
+	if err := journal.Close(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestJournalLifecycleRejectsOrderingDependencyAndRetryDrift(t *testing.T) {
+	genesis := JournalRecord{
+		SchemaVersion: journalSchemaVersion,
+		RunID:         testRunID,
+		Sequence:      1,
+		Kind:          JournalKindRun,
+		State:         JournalStateRunning,
+		Plan: []JournalStage{
+			{ID: "a", Version: "v1", Resources: ResourceRequest{CPU: 1}},
+			{ID: "b", Version: "v1", Dependencies: []string{"a"}},
+		},
+		PlanDigest:           "",
+		PreviousRecordDigest: zeroJournalDigest,
+		RecordDigest:         strings.Repeat("a", 64),
+		OccurredAt:           time.Now().UTC(),
+	}
+	digest, err := JournalPlanDigest(genesis.Plan)
+	if err != nil {
+		t.Fatal(err)
+	}
+	genesis.PlanDigest = digest
+	newLifecycle := func(t *testing.T) journalLifecycle {
+		t.Helper()
+		var lifecycle journalLifecycle
+		if err := lifecycle.accept(genesis); err != nil {
+			t.Fatal(err)
+		}
+		return lifecycle
+	}
+	followup := func() JournalRecord {
+		return JournalRecord{
+			SchemaVersion: journalSchemaVersion, RunID: testRunID,
+			Sequence: 2, Kind: JournalKindStage, State: JournalStateRunning,
+			Attempt: 1, StageID: "a", StageVersion: "v1",
+			Resources: ResourceRequest{CPU: 1}, PlanDigest: digest,
+			PreviousRecordDigest: strings.Repeat("a", 64),
+			RecordDigest:         strings.Repeat("b", 64),
+			OccurredAt:           genesis.OccurredAt.Add(time.Second),
+		}
+	}
+	tests := []struct {
+		name    string
+		prepare func(*journalLifecycle)
+		mutate  func(*JournalRecord)
+	}{
+		{"sequence", nil, func(r *JournalRecord) { r.Sequence = 3 }},
+		{"time", nil, func(r *JournalRecord) { r.OccurredAt = genesis.OccurredAt.Add(-time.Second) }},
+		{"digest", nil, func(r *JournalRecord) { r.PlanDigest = strings.Repeat("f", 64) }},
+		{"run restart", nil, func(r *JournalRecord) { r.Kind = JournalKindRun }},
+		{"run nonterminal", nil, func(r *JournalRecord) { r.Kind = JournalKindRun; r.State = JournalStateQueued }},
+		{"run success incomplete", nil, func(r *JournalRecord) { r.Kind = JournalKindRun; r.State = JournalStateSucceeded }},
+		{"unknown kind", nil, func(r *JournalRecord) { r.Kind = "other" }},
+		{"unknown stage", nil, func(r *JournalRecord) { r.StageID = "missing" }},
+		{"version", nil, func(r *JournalRecord) { r.StageVersion = "v2" }},
+		{"resources", nil, func(r *JournalRecord) { r.Resources.CPU = 2 }},
+		{"attempt", nil, func(r *JournalRecord) { r.Attempt = 2 }},
+		{"dependency", nil, func(r *JournalRecord) {
+			r.StageID = "b"
+			r.Resources = ResourceRequest{}
+		}},
+		{"terminal before running", nil, func(r *JournalRecord) {
+			r.State = JournalStateSucceeded
+			r.CacheKey = "stage:" + strings.Repeat("a", 64)
+			r.OutputDigest = strings.Repeat("b", 64)
+		}},
+		{"invalid stage state", nil, func(r *JournalRecord) { r.State = "other" }},
+		{"after terminal", func(l *journalLifecycle) { l.terminal = true }, func(*JournalRecord) {}},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			lifecycle := newLifecycle(t)
+			if test.prepare != nil {
+				test.prepare(&lifecycle)
+			}
+			record := followup()
+			test.mutate(&record)
+			if err := lifecycle.accept(record); err == nil {
+				t.Fatalf("invalid transition was accepted: %+v", record)
+			}
+		})
+	}
+
+	lifecycle := newLifecycle(t)
+	planned := followup()
+	planned.State = JournalStatePlanned
+	if err := lifecycle.accept(planned); err != nil {
+		t.Fatal(err)
+	}
+	planned.Sequence++
+	planned.OccurredAt = planned.OccurredAt.Add(time.Second)
+	if err := lifecycle.accept(planned); err == nil {
+		t.Fatal("duplicate planned transition succeeded")
+	}
+
+	lifecycle = newLifecycle(t)
+	running := followup()
+	if err := lifecycle.accept(running); err != nil {
+		t.Fatal(err)
+	}
+	duplicate := running
+	duplicate.Sequence++
+	duplicate.OccurredAt = duplicate.OccurredAt.Add(time.Second)
+	if err := lifecycle.accept(duplicate); err == nil {
+		t.Fatal("duplicate running transition succeeded")
+	}
+	completed := duplicate
+	completed.State = JournalStateSucceeded
+	completed.CacheKey = "stage:" + strings.Repeat("a", 64)
+	completed.OutputDigest = strings.Repeat("b", 64)
+	if err := lifecycle.accept(completed); err != nil {
+		t.Fatal(err)
+	}
+	after := completed
+	after.Sequence++
+	after.OccurredAt = after.OccurredAt.Add(time.Second)
+	if err := lifecycle.accept(after); err == nil {
+		t.Fatal("completed stage accepted another transition")
+	}
+}
+
+func TestFileJournalAppendRejectsCallerAssignedIntegrityFields(t *testing.T) {
+	for name, record := range map[string]JournalRecord{
+		"plan digest": {
+			RunID: testRunID, Kind: JournalKindRun, State: JournalStateRunning,
+			Plan: testJournalPlan("stage"), PlanDigest: strings.Repeat("f", 64),
+		},
+		"previous digest": {
+			RunID: testRunID, Kind: JournalKindRun, State: JournalStateRunning,
+			Plan: testJournalPlan("stage"), PreviousRecordDigest: strings.Repeat("f", 64),
+		},
+		"record digest": {
+			RunID: testRunID, Kind: JournalKindRun, State: JournalStateRunning,
+			Plan: testJournalPlan("stage"), RecordDigest: strings.Repeat("f", 64),
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			journal := openTestJournal(t, t.TempDir(), testRunID)
+			if err := journal.Append(context.Background(), record); err == nil {
+				t.Fatal("caller-assigned integrity field was accepted")
+			}
+			if err := journal.Close(); err != nil {
+				t.Fatal(err)
+			}
+		})
+	}
+	journal := openTestJournal(t, t.TempDir(), testRunID)
+	appendTestRecord(t, journal, JournalRecord{
+		RunID: testRunID, Kind: JournalKindRun, State: JournalStateRunning,
+		Plan: testJournalPlan("stage"),
+	})
+	for name, record := range map[string]JournalRecord{
+		"changed plan": {
+			RunID: testRunID, Kind: JournalKindStage, State: JournalStateRunning,
+			StageID: "stage", StageVersion: "v1", Attempt: 1,
+			PlanDigest: strings.Repeat("f", 64),
+		},
+		"changed previous": {
+			RunID: testRunID, Kind: JournalKindStage, State: JournalStateRunning,
+			StageID: "stage", StageVersion: "v1", Attempt: 1,
+			PreviousRecordDigest: strings.Repeat("f", 64),
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if err := journal.Append(context.Background(), record); err == nil {
+				t.Fatal("changed integrity chain was accepted")
+			}
+		})
+	}
+	if err := journal.Close(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestJournalLifecycleGenesisAndQueueTransitionsFailClosed(t *testing.T) {
+	valid := JournalRecord{
+		Sequence: 1, Kind: JournalKindRun, State: JournalStateRunning,
+		Plan:                 []JournalStage{{ID: "stage", Version: "v1"}},
+		PreviousRecordDigest: zeroJournalDigest,
+		OccurredAt:           time.Now().UTC(),
+	}
+	digest, err := JournalPlanDigest(valid.Plan)
+	if err != nil {
+		t.Fatal(err)
+	}
+	valid.PlanDigest = digest
+	for name, mutate := range map[string]func(*JournalRecord){
+		"sequence":  func(r *JournalRecord) { r.Sequence = 2 },
+		"kind":      func(r *JournalRecord) { r.Kind = JournalKindStage },
+		"state":     func(r *JournalRecord) { r.State = JournalStateSucceeded },
+		"previous":  func(r *JournalRecord) { r.PreviousRecordDigest = strings.Repeat("a", 64) },
+		"plan":      func(r *JournalRecord) { r.Plan[0].ID = "" },
+		"plan hash": func(r *JournalRecord) { r.PlanDigest = strings.Repeat("f", 64) },
+	} {
+		t.Run(name, func(t *testing.T) {
+			record := valid
+			record.Plan = append([]JournalStage(nil), valid.Plan...)
+			mutate(&record)
+			var lifecycle journalLifecycle
+			if err := lifecycle.accept(record); err == nil {
+				t.Fatal("invalid genesis was accepted")
+			}
+		})
+	}
+
+	var lifecycle journalLifecycle
+	if err := lifecycle.accept(valid); err != nil {
+		t.Fatal(err)
+	}
+	queued := JournalRecord{
+		Sequence: 2, Kind: JournalKindStage, State: JournalStateQueued,
+		StageID: "stage", StageVersion: "v1", Attempt: 1,
+		PlanDigest: digest, OccurredAt: valid.OccurredAt.Add(time.Second),
+	}
+	if err := lifecycle.accept(queued); err != nil {
+		t.Fatal(err)
+	}
+	duplicate := queued
+	duplicate.Sequence++
+	duplicate.OccurredAt = duplicate.OccurredAt.Add(time.Second)
+	if err := lifecycle.accept(duplicate); err == nil {
+		t.Fatal("duplicate queue transition succeeded")
+	}
+	running := duplicate
+	running.State = JournalStateRunning
+	if err := lifecycle.accept(running); err != nil {
+		t.Fatal(err)
+	}
+	requeued := running
+	requeued.Sequence++
+	requeued.State = JournalStateQueued
+	requeued.OccurredAt = requeued.OccurredAt.Add(time.Second)
+	if err := lifecycle.accept(requeued); err == nil {
+		t.Fatal("running stage was requeued")
+	}
+}
+
 func openTestJournal(t *testing.T, root, runID string) *FileJournal {
 	t.Helper()
 	if err := os.Chmod(root, 0o700); err != nil && !errors.Is(err, os.ErrNotExist) {

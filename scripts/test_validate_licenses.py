@@ -75,6 +75,7 @@ class LicenseValidationTests(unittest.TestCase):
             "RKC-owned source code Apache-2.0\n"
             "Go runtime and standard library BSD-3-Clause LICENSES/Go.txt\n"
             "modernc.org/sqlite v1.54.0 modernc.org/libc v1.74.1\n"
+            "gopkg.in/yaml.v3 v3.0.1\n"
             "third_party/go-modules.lock.json LICENSES/go-modules/\n"
             "do not bundle model weights\nllama.cpp is MIT licensed\n"
             "Qwen3.5-2B Qwen3-Embedding-0.6B models/models.lock.json\n",

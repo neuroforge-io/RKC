@@ -332,6 +332,168 @@ func TestMCPServerConcurrentReadSafety(t *testing.T) {
 	wg.Wait()
 }
 
+func TestMCPArgumentAndRequestValidatorsCoverProtocolBoundaries(t *testing.T) {
+	invalidArguments := []struct {
+		name  string
+		value any
+		rule  toolArgumentRule
+	}{
+		{"string type", 1, toolArgumentRule{kind: toolArgumentString, max: 4}},
+		{"string length", "12345", toolArgumentRule{kind: toolArgumentString, max: 4}},
+		{"integer type", 1, toolArgumentRule{kind: toolArgumentInteger, min: 1, max: 2}},
+		{"integer syntax", json.Number("1.5"), toolArgumentRule{kind: toolArgumentInteger, min: 1, max: 2}},
+		{"integer range", json.Number("3"), toolArgumentRule{kind: toolArgumentInteger, min: 1, max: 2}},
+		{"boolean type", "true", toolArgumentRule{kind: toolArgumentBoolean}},
+		{"list type", 1, toolArgumentRule{kind: toolArgumentStringList, max: 2}},
+		{"list count", []any{"a", "b", "c"}, toolArgumentRule{kind: toolArgumentStringList, max: 2}},
+		{"list item type", []any{1}, toolArgumentRule{kind: toolArgumentStringList, max: 2}},
+		{"list item length", []any{strings.Repeat("x", maximumArgumentTextBytes+1)}, toolArgumentRule{kind: toolArgumentStringList, max: 2}},
+		{"rule kind", "x", toolArgumentRule{kind: 255}},
+	}
+	for _, test := range invalidArguments {
+		t.Run(test.name, func(t *testing.T) {
+			if err := validateToolArgument("value", test.value, test.rule); err == nil {
+				t.Fatalf("invalid argument was accepted: %#v", test.value)
+			}
+		})
+	}
+	for _, value := range []any{
+		strings.Repeat("x", maximumArgumentTextBytes+1),
+		[]any{strings.Repeat("x", maximumArgumentTextBytes+1)},
+	} {
+		if err := validateStringListArgument("items", value, 2); err == nil {
+			t.Fatalf("oversized string list was accepted: %T", value)
+		}
+	}
+	if err := validateToolArguments("rkc.search", map[string]any{"unknown": true}); err == nil {
+		t.Fatal("unknown search argument was accepted")
+	}
+	if err := validateToolArguments("third.party", map[string]any{"anything": true}); err != nil {
+		t.Fatalf("unknown extension tool arguments were rejected: %v", err)
+	}
+
+	requests := []request{
+		{JSONRPC: "1.0", Method: "ping"},
+		{JSONRPC: "2.0", Method: ""},
+		{JSONRPC: "2.0", Method: " ping "},
+		{JSONRPC: "2.0", Method: strings.Repeat("x", 257)},
+		{JSONRPC: "2.0", ID: json.RawMessage(`{"bad":true}`), Method: "ping"},
+		{JSONRPC: "2.0", ID: json.RawMessage(`"` + strings.Repeat("x", 257) + `"`), Method: "ping"},
+		{JSONRPC: "2.0", Params: json.RawMessage(`[]`), Method: "ping"},
+		{JSONRPC: "2.0", Params: json.RawMessage(`{"a":1,"a":2}`), Method: "ping"},
+	}
+	for index, request := range requests {
+		if err := validateRequest(request); err == nil {
+			t.Errorf("invalid request %d was accepted: %+v", index, request)
+		}
+	}
+	for _, id := range []json.RawMessage{nil, json.RawMessage("null"), json.RawMessage("1"), json.RawMessage(`"id"`)} {
+		if err := validateRequest(request{JSONRPC: "2.0", ID: id, Method: "ping"}); err != nil {
+			t.Errorf("valid request ID %s = %v", id, err)
+		}
+	}
+}
+
+func TestMCPTransportToolAndDecoderResidualBoundaries(t *testing.T) {
+	s := New(mcpDataset(), "test")
+	if err := s.Serve(nil, strings.NewReader(""), io.Discard); err == nil {
+		t.Fatal("nil context succeeded")
+	}
+	if err := s.Serve(context.Background(), nil, io.Discard); err == nil {
+		t.Fatal("nil input succeeded")
+	}
+	if err := s.Serve(context.Background(), strings.NewReader(""), nil); err == nil {
+		t.Fatal("nil output succeeded")
+	}
+	if err := (*Server)(nil).Serve(context.Background(), strings.NewReader(""), io.Discard); err == nil {
+		t.Fatal("nil server succeeded")
+	}
+	if err := New(nil, "test").Serve(context.Background(), strings.NewReader(""), io.Discard); err == nil {
+		t.Fatal("nil dataset succeeded")
+	}
+	if err := s.Serve(context.Background(), strings.NewReader("\n \t\n"), io.Discard); err != nil {
+		t.Fatalf("blank frames = %v", err)
+	}
+
+	cancelled, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, rpcErr := s.readResource(
+		cancelled, json.RawMessage(`{"uri":"rkc://snapshot/manifest"}`),
+	); rpcErr == nil || rpcErr.Code != -32800 {
+		t.Fatalf("cancelled resource = %+v", rpcErr)
+	}
+	for _, params := range []string{
+		`{"name":"rkc.neighborhood","arguments":{"node":"missing"}}`,
+		`{"name":"rkc.find_path","arguments":{"from":"missing","to":"b"}}`,
+		`{"name":"rkc.find_path","arguments":{"from":"a","to":"missing"}}`,
+		`{"name":"rkc.impact","arguments":{"node":"missing"}}`,
+		`{"name":"rkc.impact","arguments":{"node":"a","direction":"sideways"}}`,
+	} {
+		result, rpcErr := s.callTool(context.Background(), json.RawMessage(params))
+		if rpcErr != nil {
+			t.Fatal(rpcErr)
+		}
+		wrapper, ok := result.(map[string]any)
+		if !ok || wrapper["isError"] != true {
+			t.Fatalf("tool failure wrapper = %#v", result)
+		}
+	}
+
+	dataset := mcpDataset()
+	node := dataset.NodeByID["a"]
+	node.EvidenceIDs = make([]string, maximumRelatedRecords+1)
+	for index := range node.EvidenceIDs {
+		node.EvidenceIDs[index] = "missing"
+	}
+	dataset.NodeByID["a"] = node
+	dataset.Bundle.Nodes[0] = node
+	dataset.Graph.Incoming["a"] = make([]rkcmodel.Edge, maximumRelatedRecords+1)
+	dataset.Graph.Outgoing["a"] = make([]rkcmodel.Edge, maximumRelatedRecords+1)
+	result, err := New(dataset, "test").toolGetSymbol(map[string]any{"node": "a"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	encoded, err := json.Marshal(result)
+	if err != nil || !strings.Contains(string(encoded), `"truncated":true`) {
+		t.Fatalf("truncated symbol = %s, %v", encoded, err)
+	}
+
+	for _, data := range [][]byte{
+		[]byte(`{} {}`),
+		[]byte(`[1,2]`),
+		[]byte(`{"a":[1,{"b":2}]}`),
+		[]byte(`{"a":`),
+	} {
+		var target map[string]any
+		err := decodeStrict(data, &target)
+		if string(data) == `{"a":[1,{"b":2}]}` {
+			if err != nil {
+				t.Errorf("valid nested JSON = %v", err)
+			}
+		} else if err == nil {
+			t.Errorf("invalid strict JSON accepted: %s", data)
+		}
+	}
+	if err := writeResponse(io.Discard, response{
+		JSONRPC: "2.0", ID: json.RawMessage("1"), Result: make(chan int),
+	}); err == nil {
+		t.Fatal("unencodable response succeeded")
+	}
+	if got := intArg(map[string]any{"bad": json.Number("not-a-number")}, "bad", 7, 0, 10); got != 7 {
+		t.Fatalf("invalid numeric argument = %d", got)
+	}
+	missingNodeDataset := mcpDataset()
+	delete(missingNodeDataset.NodeByID, "a")
+	searchResult, err := New(missingNodeDataset, "test").toolSearch(map[string]any{"query": "Alpha"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	searchJSON, err := json.Marshal(searchResult)
+	if err != nil || strings.Contains(string(searchJSON), "pkg.Alpha") {
+		t.Fatalf("search retained a missing node: %s, %v", searchJSON, err)
+	}
+}
+
 func mcpDataset() *server.Dataset {
 	evidence := rkcmodel.Evidence{ID: "evidence-a", Kind: "syntax_derived", Method: "test", Confidence: 1}
 	a := rkcmodel.Node{ID: "a", LogicalID: "logical-a", Kind: "function", Name: "Alpha", QualifiedName: "pkg.Alpha", Language: "go", EvidenceIDs: []string{evidence.ID}}

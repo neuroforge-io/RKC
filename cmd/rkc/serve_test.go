@@ -2,10 +2,14 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
+	"time"
 )
 
 func TestPublishServeReadyFileIsAtomicAndNoClobber(t *testing.T) {
@@ -62,5 +66,166 @@ func TestPublishServeReadyFileOptionalAndRejectsExistingSymlink(t *testing.T) {
 	data, err := os.ReadFile(target)
 	if err != nil || string(data) != "keep" {
 		t.Fatalf("symlink target changed: %q, error = %v", data, err)
+	}
+}
+
+func TestLoopbackListenAddressStrictlyRejectsRemoteAndMalformedHosts(t *testing.T) {
+	for _, address := range []string{
+		"127.0.0.1:0", "127.1.2.3:8787", "[::1]:0", "localhost:8787", "LOCALHOST:1",
+	} {
+		if !loopbackListenAddress(address) {
+			t.Errorf("loopback address rejected: %q", address)
+		}
+	}
+	for _, address := range []string{
+		"", "127.0.0.1", "0.0.0.0:8787", "[::]:8787", "example.com:8787", "localhost",
+	} {
+		if loopbackListenAddress(address) {
+			t.Errorf("non-loopback or malformed address accepted: %q", address)
+		}
+	}
+}
+
+func TestRunServePublishesReadyServesAndShutsDownCleanly(t *testing.T) {
+	root := t.TempDir()
+	repository := filepath.Join(root, "repository")
+	writeTestFile(t, filepath.Join(repository, "main.go"), "package fixture\n\nfunc Run() bool { return true }\n")
+	atlas := filepath.Join(root, "atlas")
+	if err := runScan([]string{
+		"--out", atlas, "--state-dir", filepath.Join(root, "state"),
+		"--runs-dir", filepath.Join(root, "runs"), "--no-cache", "--no-plugins",
+		"--no-frameworks", "--no-secret-scan", repository,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	ready := filepath.Join(root, "ready.json")
+	done := make(chan error, 1)
+	go func() {
+		done <- runServe([]string{
+			"--dir", atlas, "--addr", "127.0.0.1:0", "--ready-file", ready,
+			"--read-timeout", "2s", "--write-timeout", "2s",
+		})
+	}()
+	waitDeadline := time.Now().Add(5 * time.Second)
+	for {
+		data, err := os.ReadFile(ready)
+		if err == nil {
+			var receipt serveReadyReceipt
+			if err := json.Unmarshal(data, &receipt); err != nil {
+				t.Fatal(err)
+			}
+			response, err := http.Get(receipt.URL + "/api/v1/health")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if closeErr := response.Body.Close(); closeErr != nil {
+				t.Fatal(closeErr)
+			}
+			if response.StatusCode != http.StatusOK {
+				t.Fatalf("health status = %d", response.StatusCode)
+			}
+			break
+		}
+		if !errors.Is(err, os.ErrNotExist) {
+			t.Fatal(err)
+		}
+		if time.Now().After(waitDeadline) {
+			t.Fatal("serve readiness receipt was not published")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if err := syscall.Kill(os.Getpid(), syscall.SIGINT); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("runServe() = %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("runServe did not stop after SIGINT")
+	}
+
+	workbenchReady := filepath.Join(root, "workbench-ready.json")
+	workbenchDone := make(chan error, 1)
+	go func() {
+		workbenchDone <- runServe([]string{
+			"--dir", atlas, "--addr", "127.0.0.1:0", "--ready-file", workbenchReady,
+			"--workbench", "--workspace", repository, "--workbench-timeout", "2s",
+		})
+	}()
+	var workbenchReceipt serveReadyReceipt
+	waitDeadline = time.Now().Add(5 * time.Second)
+	for {
+		data, err := os.ReadFile(workbenchReady)
+		if err == nil {
+			if err := json.Unmarshal(data, &workbenchReceipt); err != nil {
+				t.Fatal(err)
+			}
+			break
+		}
+		if !errors.Is(err, os.ErrNotExist) {
+			t.Fatal(err)
+		}
+		if time.Now().After(waitDeadline) {
+			select {
+			case err := <-workbenchDone:
+				t.Fatalf("workbench serve stopped before readiness: %v", err)
+			default:
+			}
+			t.Fatal("workbench readiness receipt was not published")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	response, err := http.Get(workbenchReceipt.URL + "/api/v1/workbench/session")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var session struct {
+		Enabled bool   `json:"enabled"`
+		Token   string `json:"token"`
+	}
+	if err := json.NewDecoder(response.Body).Decode(&session); err != nil {
+		_ = response.Body.Close()
+		t.Fatal(err)
+	}
+	if err := response.Body.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if response.StatusCode != http.StatusOK || !session.Enabled || session.Token == "" {
+		t.Fatalf("workbench session = status %d, %+v", response.StatusCode, session)
+	}
+	if err := syscall.Kill(os.Getpid(), syscall.SIGINT); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case err := <-workbenchDone:
+		if err != nil {
+			t.Fatalf("workbench runServe() = %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("workbench runServe did not stop after SIGINT")
+	}
+
+	if err := runServe([]string{"unexpected"}); err == nil {
+		t.Fatal("serve positional argument succeeded")
+	}
+	if err := runServe([]string{"--workbench", "--addr", "0.0.0.0:0", "--dir", atlas}); err == nil ||
+		!strings.Contains(err.Error(), "loopback") {
+		t.Fatalf("remote workbench serve = %v", err)
+	}
+	if err := runServe([]string{"--dir", filepath.Join(root, "missing"), "--addr", "127.0.0.1:0"}); err == nil {
+		t.Fatal("serve accepted a missing dataset")
+	}
+	if err := runServe([]string{"--dir", atlas, "--addr", "not-an-address"}); err == nil ||
+		!strings.Contains(err.Error(), "listen") {
+		t.Fatalf("malformed listen address = %v", err)
+	}
+	existingReady := filepath.Join(root, "existing-ready.json")
+	writeTestFile(t, existingReady, "keep")
+	if err := runServe([]string{
+		"--dir", atlas, "--addr", "127.0.0.1:0", "--ready-file", existingReady,
+	}); err == nil || !strings.Contains(err.Error(), "already exists") {
+		t.Fatalf("existing readiness target = %v", err)
 	}
 }
