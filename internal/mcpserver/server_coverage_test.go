@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"strings"
 	"sync"
@@ -92,7 +93,7 @@ func TestToolCallsSuccessAndBoundedFailures(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			result, rpcErr := s.callTool(json.RawMessage(tc.params))
+			result, rpcErr := s.callTool(context.Background(), json.RawMessage(tc.params))
 			if tc.wantRPC != 0 {
 				if rpcErr == nil || rpcErr.Code != tc.wantRPC || !strings.Contains(rpcErr.Message, tc.want) {
 					t.Fatalf("rpcErr=%+v want %d/%q", rpcErr, tc.wantRPC, tc.want)
@@ -141,11 +142,145 @@ func TestServeJSONRPCFramingNotificationsAndErrors(t *testing.T) {
 	if !strings.Contains(lines[0], "invalid JSON-RPC version") || !strings.Contains(lines[1], `"id":2`) || !strings.Contains(lines[2], "method not found") {
 		t.Fatalf("unexpected responses: %s", output.String())
 	}
-	if err := s.Serve(context.Background(), strings.NewReader("{"), io.Discard); err == nil || !strings.Contains(err.Error(), "decode MCP request") {
-		t.Fatalf("expected decode failure, got %v", err)
+	var malformed bytes.Buffer
+	if err := s.Serve(context.Background(), strings.NewReader("{"), &malformed); err != nil ||
+		!strings.Contains(malformed.String(), "parse error") {
+		t.Fatalf("malformed request response=%q err=%v", malformed.String(), err)
 	}
 	if err := s.Serve(context.Background(), strings.NewReader(`{"jsonrpc":"2.0","id":1,"method":"ping"}`), failingWriter{}); err == nil || !strings.Contains(err.Error(), "encode MCP response") {
 		t.Fatalf("expected encode failure, got %v", err)
+	}
+}
+
+func TestMCPTransportAndPayloadBoundsFailClosed(t *testing.T) {
+	s := New(mcpDataset(), "test")
+
+	oversized := strings.NewReader(strings.Repeat("x", maximumRequestBytes+1))
+	if err := s.Serve(context.Background(), oversized, io.Discard); err == nil ||
+		!strings.Contains(err.Error(), "exceeds") {
+		t.Fatalf("oversized request error = %v", err)
+	}
+
+	for _, payload := range []string{
+		`{"jsonrpc":"2.0","jsonrpc":"2.0","id":1,"method":"ping"}`,
+		`{"jsonrpc":"2.0","id":1,"method":"ping","unknown":true}`,
+	} {
+		var output bytes.Buffer
+		if err := s.Serve(context.Background(), strings.NewReader(payload), &output); err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(output.String(), `"code":-32700`) {
+			t.Fatalf("strict request response = %s", output.String())
+		}
+	}
+
+	var invalidID bytes.Buffer
+	if err := s.Serve(
+		context.Background(),
+		strings.NewReader(`{"jsonrpc":"2.0","id":{"bad":true},"method":"ping"}`),
+		&invalidID,
+	); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(invalidID.String(), `"code":-32600`) {
+		t.Fatalf("invalid ID response = %s", invalidID.String())
+	}
+
+	for _, params := range []string{
+		`{"name":"rkc.search","arguments":{"query":"x","unknown":true}}`,
+		`{"name":"rkc.search","arguments":{"query":"x","limit":"many"}}`,
+		`{"name":"rkc.neighborhood","arguments":{"node":"a","max_nodes":5001}}`,
+	} {
+		if _, rpcErr := s.callTool(context.Background(), json.RawMessage(params)); rpcErr == nil ||
+			rpcErr.Code != -32602 {
+			t.Fatalf("invalid tool arguments %s produced %+v", params, rpcErr)
+		}
+	}
+
+	cancelled, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, rpcErr := s.callTool(
+		cancelled,
+		json.RawMessage(`{"name":"rkc.coverage","arguments":{}}`),
+	); rpcErr == nil || rpcErr.Code != -32800 {
+		t.Fatalf("cancelled tool call = %+v", rpcErr)
+	}
+
+	var bounded bytes.Buffer
+	if err := writeResponse(&bounded, response{
+		JSONRPC: "2.0",
+		ID:      json.RawMessage("7"),
+		Result:  strings.Repeat("x", maximumResponseBytes),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if bounded.Len() >= maximumResponseBytes ||
+		!strings.Contains(bounded.String(), "response too large") {
+		t.Fatalf("bounded response bytes=%d body=%s", bounded.Len(), bounded.String())
+	}
+}
+
+func TestMCPResourceAndStructuredResultsAreBounded(t *testing.T) {
+	dataset := mcpDataset()
+	dataset.Bundle.Diagnostics = make([]rkcmodel.Diagnostic, maximumResourceItems+1)
+	for index := range dataset.Bundle.Diagnostics {
+		dataset.Bundle.Diagnostics[index] = rkcmodel.Diagnostic{
+			ID:       fmt.Sprintf("diagnostic-%04d", index),
+			Severity: "warning",
+			Code:     "TEST",
+			Message:  "bounded fixture",
+		}
+	}
+	s := New(dataset, "test")
+	result, rpcErr := s.handle(
+		context.Background(),
+		"resources/read",
+		json.RawMessage(`{"uri":"rkc://snapshot/diagnostics"}`),
+	)
+	if rpcErr != nil {
+		t.Fatal(rpcErr)
+	}
+	resource, ok := result.(map[string]any)
+	if !ok {
+		t.Fatalf("bounded diagnostics resource type = %T", result)
+	}
+	contents, ok := resource["contents"].([]map[string]any)
+	if !ok || len(contents) != 1 {
+		t.Fatalf("bounded diagnostics contents = %#v", resource["contents"])
+	}
+	text, _ := contents[0]["text"].(string)
+	var page struct {
+		Items     []rkcmodel.Diagnostic `json:"items"`
+		Total     int                   `json:"total"`
+		Truncated bool                  `json:"truncated"`
+	}
+	if err := json.Unmarshal([]byte(text), &page); err != nil {
+		t.Fatal(err)
+	}
+	if !page.Truncated || page.Total != maximumResourceItems+1 ||
+		len(page.Items) != maximumResourceItems {
+		t.Fatalf(
+			"bounded diagnostics page = total %d items %d truncated %t",
+			page.Total,
+			len(page.Items),
+			page.Truncated,
+		)
+	}
+
+	large := mcpDataset()
+	evidence := large.EvidenceByID["evidence-a"]
+	evidence.Detail = strings.Repeat("x", maximumStructuredBytes+1)
+	large.EvidenceByID["evidence-a"] = evidence
+	result, rpcErr = New(large, "test").callTool(
+		context.Background(),
+		json.RawMessage(`{"name":"rkc.get_evidence","arguments":{"evidence_id":"evidence-a"}}`),
+	)
+	if rpcErr != nil {
+		t.Fatal(rpcErr)
+	}
+	wrapper, ok := result.(map[string]any)
+	if !ok || wrapper["isError"] != true {
+		t.Fatalf("oversized structured result = %#v", result)
 	}
 }
 

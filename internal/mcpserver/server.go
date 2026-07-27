@@ -6,12 +6,12 @@ package mcpserver
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
-	"sort"
 	"strconv"
 	"strings"
 
@@ -22,6 +22,17 @@ import (
 )
 
 const ProtocolVersion = "2025-11-25"
+
+const (
+	maximumRequestBytes       = 1 << 20
+	maximumResponseBytes      = 4 << 20
+	maximumStructuredBytes    = 1 << 20
+	maximumResourceItems      = 1000
+	maximumRelatedRecords     = 1000
+	maximumArgumentTextBytes  = 4096
+	maximumArgumentArrayItems = 128
+	maximumMCPGraphNodes      = 5000
+)
 
 type Server struct {
 	dataset *server.Dataset
@@ -72,21 +83,34 @@ func (s *Server) Serve(ctx context.Context, input io.Reader, output io.Writer) e
 	if s == nil || s.dataset == nil {
 		return errors.New("MCP server dataset is required")
 	}
-	decoder := json.NewDecoder(bufio.NewReaderSize(input, 64*1024))
-	decoder.UseNumber()
-	encoder := json.NewEncoder(output)
-	encoder.SetEscapeHTML(false)
-	for {
-		var request request
-		if err := decoder.Decode(&request); err != nil {
-			if errors.Is(err, io.EOF) {
-				return nil
-			}
-			return fmt.Errorf("decode MCP request: %w", err)
+	scanner := bufio.NewScanner(bufio.NewReaderSize(input, 64*1024))
+	scanner.Buffer(make([]byte, 64*1024), maximumRequestBytes)
+	for scanner.Scan() {
+		if err := ctx.Err(); err != nil {
+			return err
 		}
-		if request.JSONRPC != "2.0" {
+		line := bytes.TrimSpace(scanner.Bytes())
+		if len(line) == 0 {
+			continue
+		}
+		var request request
+		if err := decodeStrict(line, &request); err != nil {
+			if writeErr := writeResponse(
+				output,
+				errorResponse(json.RawMessage("null"), -32700, "parse error", nil),
+			); writeErr != nil {
+				return fmt.Errorf("encode MCP response: %w", writeErr)
+			}
+			continue
+		}
+		if err := validateRequest(request); err != nil {
 			if hasID(request.ID) {
-				_ = encoder.Encode(errorResponse(request.ID, -32600, "invalid JSON-RPC version", nil))
+				if writeErr := writeResponse(
+					output,
+					errorResponse(request.ID, -32600, "invalid request", err.Error()),
+				); writeErr != nil {
+					return fmt.Errorf("encode MCP response: %w", writeErr)
+				}
 			}
 			continue
 		}
@@ -94,14 +118,21 @@ func (s *Server) Serve(ctx context.Context, input io.Reader, output io.Writer) e
 			continue
 		}
 		result, rpcErr := s.handle(ctx, request.Method, request.Params)
-		message := response{JSONRPC: "2.0", ID: request.ID, Result: result, Error: rpcErr}
 		if !hasID(request.ID) {
 			continue
 		}
-		if err := encoder.Encode(message); err != nil {
+		message := response{JSONRPC: "2.0", ID: request.ID, Result: result, Error: rpcErr}
+		if err := writeResponse(output, message); err != nil {
 			return fmt.Errorf("encode MCP response: %w", err)
 		}
 	}
+	if err := scanner.Err(); err != nil {
+		if strings.Contains(err.Error(), "token too long") {
+			return fmt.Errorf("decode MCP request: message exceeds %d bytes", maximumRequestBytes)
+		}
+		return fmt.Errorf("decode MCP request: %w", err)
+	}
+	return nil
 }
 
 func (s *Server) handle(ctx context.Context, method string, raw json.RawMessage) (any, *rpcError) {
@@ -118,23 +149,29 @@ func (s *Server) handle(ctx context.Context, method string, raw json.RawMessage)
 	case "tools/list":
 		return map[string]any{"tools": tools()}, nil
 	case "tools/call":
-		return s.callTool(raw)
+		return s.callTool(ctx, raw)
 	case "resources/list":
 		return map[string]any{"resources": []map[string]any{{"uri": "rkc://snapshot/manifest", "name": "RKC snapshot manifest", "mimeType": "application/json"}, {"uri": "rkc://snapshot/coverage", "name": "RKC coverage report", "mimeType": "application/json"}, {"uri": "rkc://snapshot/diagnostics", "name": "RKC diagnostics", "mimeType": "application/json"}}}, nil
 	case "resources/read":
-		return s.readResource(raw)
+		return s.readResource(ctx, raw)
 	default:
 		return nil, &rpcError{Code: -32601, Message: "method not found", Data: method}
 	}
 }
 
-func (s *Server) callTool(raw json.RawMessage) (any, *rpcError) {
+func (s *Server) callTool(ctx context.Context, raw json.RawMessage) (any, *rpcError) {
 	var params struct {
 		Name      string         `json:"name"`
 		Arguments map[string]any `json:"arguments"`
 	}
-	if err := json.Unmarshal(raw, &params); err != nil {
+	if err := decodeStrict(raw, &params); err != nil {
 		return nil, invalidParams(err)
+	}
+	if err := validateToolArguments(params.Name, params.Arguments); err != nil {
+		return nil, invalidParams(err)
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, &rpcError{Code: -32800, Message: "request cancelled"}
 	}
 	var result any
 	var err error
@@ -159,9 +196,18 @@ func (s *Server) callTool(raw json.RawMessage) (any, *rpcError) {
 	if err != nil {
 		return toolError(err), nil
 	}
+	if err := ctx.Err(); err != nil {
+		return nil, &rpcError{Code: -32800, Message: "request cancelled"}
+	}
 	encoded, err := json.MarshalIndent(result, "", "  ")
 	if err != nil {
 		return nil, &rpcError{Code: -32603, Message: "encode tool result", Data: err.Error()}
+	}
+	if len(encoded) > maximumStructuredBytes {
+		return toolError(fmt.Errorf(
+			"tool result exceeds %d bytes; narrow the query",
+			maximumStructuredBytes,
+		)), nil
 	}
 	return map[string]any{"content": []textContent{{Type: "text", Text: string(encoded)}}, "structuredContent": result, "isError": false}, nil
 }
@@ -196,15 +242,34 @@ func (s *Server) toolGetSymbol(arguments map[string]any) (any, error) {
 	if err != nil {
 		return nil, err
 	}
-	evidence := make([]rkcmodel.Evidence, 0, len(node.EvidenceIDs))
+	evidenceCapacity := len(node.EvidenceIDs)
+	if evidenceCapacity > maximumRelatedRecords {
+		evidenceCapacity = maximumRelatedRecords
+	}
+	evidence := make([]rkcmodel.Evidence, 0, evidenceCapacity)
 	for _, id := range node.EvidenceIDs {
+		if len(evidence) >= maximumRelatedRecords {
+			break
+		}
 		if value, ok := s.dataset.EvidenceByID[id]; ok {
 			evidence = append(evidence, value)
 		}
 	}
 	incoming := s.dataset.Graph.Incoming[node.ID]
 	outgoing := s.dataset.Graph.Outgoing[node.ID]
-	return map[string]any{"node": node, "evidence": evidence, "incoming": incoming, "outgoing": outgoing}, nil
+	truncated := len(node.EvidenceIDs) > len(evidence)
+	if len(incoming) > maximumRelatedRecords {
+		incoming = incoming[:maximumRelatedRecords]
+		truncated = true
+	}
+	if len(outgoing) > maximumRelatedRecords {
+		outgoing = outgoing[:maximumRelatedRecords]
+		truncated = true
+	}
+	return map[string]any{
+		"node": node, "evidence": evidence, "incoming": incoming,
+		"outgoing": outgoing, "truncated": truncated,
+	}, nil
 }
 func (s *Server) toolGetEvidence(arguments map[string]any) (any, error) {
 	id := stringArg(arguments, "evidence_id")
@@ -258,12 +323,15 @@ func (s *Server) toolImpact(arguments map[string]any) (any, error) {
 	return s.dataset.Graph.Impact(node.ID, options)
 }
 
-func (s *Server) readResource(raw json.RawMessage) (any, *rpcError) {
+func (s *Server) readResource(ctx context.Context, raw json.RawMessage) (any, *rpcError) {
 	var params struct {
 		URI string `json:"uri"`
 	}
-	if err := json.Unmarshal(raw, &params); err != nil {
+	if err := decodeStrict(raw, &params); err != nil {
 		return nil, invalidParams(err)
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, &rpcError{Code: -32800, Message: "request cancelled"}
 	}
 	var value any
 	switch params.URI {
@@ -272,13 +340,27 @@ func (s *Server) readResource(raw json.RawMessage) (any, *rpcError) {
 	case "rkc://snapshot/coverage":
 		value = s.dataset.Coverage
 	case "rkc://snapshot/diagnostics":
-		value = s.dataset.Bundle.Diagnostics
+		diagnostics := s.dataset.Bundle.Diagnostics
+		total := len(diagnostics)
+		truncated := total > maximumResourceItems
+		if truncated {
+			diagnostics = diagnostics[:maximumResourceItems]
+		}
+		value = map[string]any{
+			"items": diagnostics, "total": total, "truncated": truncated,
+		}
 	default:
 		return nil, &rpcError{Code: -32002, Message: "resource not found", Data: params.URI}
 	}
 	encoded, err := json.MarshalIndent(value, "", "  ")
 	if err != nil {
 		return nil, &rpcError{Code: -32603, Message: "encode resource", Data: err.Error()}
+	}
+	if len(encoded) > maximumStructuredBytes {
+		return nil, &rpcError{
+			Code: -32001, Message: "resource result too large",
+			Data: fmt.Sprintf("result exceeds %d bytes", maximumStructuredBytes),
+		}
 	}
 	return map[string]any{"contents": []map[string]any{{"uri": params.URI, "mimeType": "application/json", "text": string(encoded)}}}, nil
 }
@@ -291,18 +373,21 @@ func (s *Server) resolveNode(reference string) (rkcmodel.Node, error) {
 	if node, ok := s.dataset.NodeByID[reference]; ok {
 		return node, nil
 	}
-	var matches []rkcmodel.Node
+	matches := make([]rkcmodel.Node, 0, 2)
+	matchCount := 0
 	for _, node := range s.dataset.Bundle.Nodes {
 		if node.LogicalID == reference || node.QualifiedName == reference || node.Name == reference {
-			matches = append(matches, node)
+			matchCount++
+			if len(matches) < cap(matches) {
+				matches = append(matches, node)
+			}
 		}
 	}
-	sort.Slice(matches, func(i, j int) bool { return matches[i].ID < matches[j].ID })
-	if len(matches) == 0 {
+	if matchCount == 0 {
 		return rkcmodel.Node{}, fmt.Errorf("node not found: %s", reference)
 	}
-	if len(matches) > 1 {
-		return rkcmodel.Node{}, fmt.Errorf("node reference is ambiguous: %s (%d matches)", reference, len(matches))
+	if matchCount > 1 {
+		return rkcmodel.Node{}, fmt.Errorf("node reference is ambiguous: %s (%d matches)", reference, matchCount)
 	}
 	return matches[0], nil
 }
@@ -317,7 +402,7 @@ func traversal(arguments map[string]any, defaultDepth, defaultNodes int) (graphi
 	default:
 		return graphindex.TraverseOptions{}, fmt.Errorf("invalid direction: %s", direction)
 	}
-	return graphindex.TraverseOptions{Direction: direction, EdgeKinds: setArg(arguments, "edge_kinds"), Resolutions: setArg(arguments, "resolutions"), MaxDepth: intArg(arguments, "max_depth", defaultDepth, 0, 64), MaxNodes: intArg(arguments, "max_nodes", defaultNodes, 1, 100000), IncludeUnresolved: boolArg(arguments, "include_unresolved")}, nil
+	return graphindex.TraverseOptions{Direction: direction, EdgeKinds: setArg(arguments, "edge_kinds"), Resolutions: setArg(arguments, "resolutions"), MaxDepth: intArg(arguments, "max_depth", defaultDepth, 0, 64), MaxNodes: intArg(arguments, "max_nodes", defaultNodes, 1, maximumMCPGraphNodes), IncludeUnresolved: boolArg(arguments, "include_unresolved")}, nil
 }
 func tools() []toolDefinition {
 	return []toolDefinition{
@@ -331,7 +416,7 @@ func tools() []toolDefinition {
 	}
 }
 func traversalSchema(required string) map[string]any {
-	properties := map[string]any{required: stringSchema("Node reference."), "direction": map[string]any{"type": "string", "enum": []string{"incoming", "outgoing", "both"}}, "edge_kinds": stringArraySchema(), "resolutions": stringArraySchema(), "max_depth": integerSchema(0, 64), "max_nodes": integerSchema(1, 100000), "include_unresolved": map[string]any{"type": "boolean"}}
+	properties := map[string]any{required: stringSchema("Node reference."), "direction": map[string]any{"type": "string", "enum": []string{"incoming", "outgoing", "both"}}, "edge_kinds": stringArraySchema(), "resolutions": stringArraySchema(), "max_depth": integerSchema(0, 64), "max_nodes": integerSchema(1, maximumMCPGraphNodes), "include_unresolved": map[string]any{"type": "boolean"}}
 	return objectSchema(properties, []string{required})
 }
 func pathSchema() map[string]any {
@@ -356,6 +441,282 @@ func integerSchema(min, max int) map[string]any {
 func stringArraySchema() map[string]any {
 	return map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "uniqueItems": true}
 }
+
+type toolArgumentKind uint8
+
+const (
+	toolArgumentString toolArgumentKind = iota + 1
+	toolArgumentInteger
+	toolArgumentBoolean
+	toolArgumentStringList
+)
+
+type toolArgumentRule struct {
+	kind toolArgumentKind
+	min  int
+	max  int
+}
+
+var toolArgumentRules = map[string]map[string]toolArgumentRule{
+	"rkc.search": {
+		"query":     {kind: toolArgumentString, max: maximumArgumentTextBytes},
+		"limit":     {kind: toolArgumentInteger, min: 1, max: 1000},
+		"kinds":     {kind: toolArgumentStringList, max: maximumArgumentArrayItems},
+		"languages": {kind: toolArgumentStringList, max: maximumArgumentArrayItems},
+	},
+	"rkc.get_symbol": {
+		"node": {kind: toolArgumentString, max: maximumArgumentTextBytes},
+	},
+	"rkc.get_evidence": {
+		"evidence_id": {kind: toolArgumentString, max: maximumArgumentTextBytes},
+	},
+	"rkc.neighborhood": traversalArgumentRules("node"),
+	"rkc.find_path":    pathArgumentRules(),
+	"rkc.impact":       traversalArgumentRules("node"),
+	"rkc.coverage":     {},
+}
+
+func traversalArgumentRules(nodeKey string) map[string]toolArgumentRule {
+	return map[string]toolArgumentRule{
+		nodeKey:              {kind: toolArgumentString, max: maximumArgumentTextBytes},
+		"direction":          {kind: toolArgumentString, max: 16},
+		"edge_kinds":         {kind: toolArgumentStringList, max: maximumArgumentArrayItems},
+		"resolutions":        {kind: toolArgumentStringList, max: maximumArgumentArrayItems},
+		"max_depth":          {kind: toolArgumentInteger, min: 0, max: 64},
+		"max_nodes":          {kind: toolArgumentInteger, min: 1, max: maximumMCPGraphNodes},
+		"include_unresolved": {kind: toolArgumentBoolean},
+	}
+}
+
+func pathArgumentRules() map[string]toolArgumentRule {
+	rules := traversalArgumentRules("from")
+	rules["to"] = toolArgumentRule{kind: toolArgumentString, max: maximumArgumentTextBytes}
+	return rules
+}
+
+func validateToolArguments(name string, arguments map[string]any) error {
+	rules, known := toolArgumentRules[name]
+	if !known {
+		return nil
+	}
+	for key, value := range arguments {
+		rule, ok := rules[key]
+		if !ok {
+			return fmt.Errorf("unknown argument %q for %s", key, name)
+		}
+		if err := validateToolArgument(key, value, rule); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func validateToolArgument(key string, value any, rule toolArgumentRule) error {
+	switch rule.kind {
+	case toolArgumentString:
+		text, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("argument %q must be a string", key)
+		}
+		if len(text) > rule.max {
+			return fmt.Errorf("argument %q exceeds %d bytes", key, rule.max)
+		}
+	case toolArgumentInteger:
+		number, ok := value.(json.Number)
+		if !ok {
+			return fmt.Errorf("argument %q must be an integer", key)
+		}
+		integer, err := strconv.Atoi(number.String())
+		if err != nil || integer < rule.min || integer > rule.max {
+			return fmt.Errorf(
+				"argument %q must be an integer between %d and %d",
+				key,
+				rule.min,
+				rule.max,
+			)
+		}
+	case toolArgumentBoolean:
+		if _, ok := value.(bool); !ok {
+			return fmt.Errorf("argument %q must be a boolean", key)
+		}
+	case toolArgumentStringList:
+		if err := validateStringListArgument(key, value, rule.max); err != nil {
+			return err
+		}
+	default:
+		return fmt.Errorf("argument %q has an unsupported validation rule", key)
+	}
+	return nil
+}
+
+func validateStringListArgument(key string, value any, maximum int) error {
+	switch values := value.(type) {
+	case string:
+		if len(values) > maximumArgumentTextBytes {
+			return fmt.Errorf("argument %q exceeds %d bytes", key, maximumArgumentTextBytes)
+		}
+	case []any:
+		if len(values) > maximum {
+			return fmt.Errorf("argument %q exceeds %d items", key, maximum)
+		}
+		for _, item := range values {
+			text, ok := item.(string)
+			if !ok || len(text) > maximumArgumentTextBytes {
+				return fmt.Errorf(
+					"argument %q items must be strings no larger than %d bytes",
+					key,
+					maximumArgumentTextBytes,
+				)
+			}
+		}
+	default:
+		return fmt.Errorf("argument %q must be a string array", key)
+	}
+	return nil
+}
+
+func validateRequest(message request) error {
+	if message.JSONRPC != "2.0" {
+		return errors.New("invalid JSON-RPC version")
+	}
+	if message.Method == "" || message.Method != strings.TrimSpace(message.Method) ||
+		len(message.Method) > 256 {
+		return errors.New("method is required without surrounding whitespace")
+	}
+	if len(message.ID) > 0 {
+		var id any
+		if err := decodeStrict(message.ID, &id); err != nil {
+			return fmt.Errorf("invalid request ID: %w", err)
+		}
+		switch value := id.(type) {
+		case nil, json.Number:
+		case string:
+			if len(value) > 256 {
+				return errors.New("request ID exceeds 256 bytes")
+			}
+		default:
+			return errors.New("request ID must be a string, number, or null")
+		}
+	}
+	if len(message.Params) > 0 && string(message.Params) != "null" {
+		var params map[string]json.RawMessage
+		if err := decodeStrict(message.Params, &params); err != nil {
+			return errors.New("params must be a JSON object")
+		}
+	}
+	return nil
+}
+
+func decodeStrict(data []byte, target any) error {
+	if err := rejectDuplicateFields(data); err != nil {
+		return err
+	}
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.UseNumber()
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(target); err != nil {
+		return err
+	}
+	var trailing any
+	if err := decoder.Decode(&trailing); !errors.Is(err, io.EOF) {
+		if err == nil {
+			return errors.New("multiple JSON values are not permitted")
+		}
+		return err
+	}
+	return nil
+}
+
+func rejectDuplicateFields(data []byte) error {
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	var consume func() error
+	consume = func() error {
+		token, err := decoder.Token()
+		if err != nil {
+			return err
+		}
+		delimiter, ok := token.(json.Delim)
+		if !ok {
+			return nil
+		}
+		switch delimiter {
+		case '{':
+			seen := map[string]struct{}{}
+			for decoder.More() {
+				keyToken, err := decoder.Token()
+				if err != nil {
+					return err
+				}
+				key, ok := keyToken.(string)
+				if !ok {
+					return errors.New("JSON object key is not a string")
+				}
+				if _, exists := seen[key]; exists {
+					return fmt.Errorf("duplicate JSON field %q", key)
+				}
+				seen[key] = struct{}{}
+				if err := consume(); err != nil {
+					return err
+				}
+			}
+			end, err := decoder.Token()
+			if err != nil {
+				return err
+			}
+			if end != json.Delim('}') {
+				return errors.New("JSON object is not terminated")
+			}
+		case '[':
+			for decoder.More() {
+				if err := consume(); err != nil {
+					return err
+				}
+			}
+			end, err := decoder.Token()
+			if err != nil {
+				return err
+			}
+			if end != json.Delim(']') {
+				return errors.New("JSON array is not terminated")
+			}
+		default:
+			return errors.New("JSON value begins with an invalid delimiter")
+		}
+		return nil
+	}
+	return consume()
+}
+
+func writeResponse(output io.Writer, message response) error {
+	data, err := json.Marshal(message)
+	if err != nil {
+		return err
+	}
+	if len(data)+1 > maximumResponseBytes {
+		data, err = json.Marshal(errorResponse(
+			message.ID,
+			-32001,
+			"response too large",
+			fmt.Sprintf("response exceeds %d bytes", maximumResponseBytes),
+		))
+		if err != nil {
+			return err
+		}
+	}
+	data = append(data, '\n')
+	for len(data) > 0 {
+		written, err := output.Write(data)
+		if err != nil {
+			return err
+		}
+		if written == 0 {
+			return io.ErrShortWrite
+		}
+		data = data[written:]
+	}
+	return nil
+}
+
 func invalidParams(err error) *rpcError {
 	return &rpcError{Code: -32602, Message: "invalid params", Data: err.Error()}
 }
