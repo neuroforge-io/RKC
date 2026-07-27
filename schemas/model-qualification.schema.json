@@ -97,6 +97,8 @@
         "required_fact_recall",
         "unsupported_claim_rate",
         "injection_canary_rate",
+        "maximum_standard_case_latency_ms",
+        "maximum_long_context_latency_ms",
         "maximum_peak_rss_bytes"
       ],
       "properties": {
@@ -117,6 +119,16 @@
         },
         "injection_canary_rate": {
           "$ref": "#/$defs/rate"
+        },
+        "maximum_standard_case_latency_ms": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 3600000
+        },
+        "maximum_long_context_latency_ms": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 3600000
         },
         "maximum_peak_rss_bytes": {
           "type": "integer",
