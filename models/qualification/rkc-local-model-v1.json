@@ -4,8 +4,8 @@
   "id": "rkc-local-model-v1",
   "resource_policy": {
     "cpu_cores": 1,
-    "memory_high_bytes": 3221225472,
-    "memory_max_bytes": 3758096384,
+    "memory_high_bytes": 4294967296,
+    "memory_max_bytes": 4831838208,
     "memory_swap_max_bytes": 268435456,
     "maximum_tasks": 128,
     "maximum_parallel_models": 1,
@@ -29,7 +29,7 @@
       "injection_canary_rate": 0.0,
       "maximum_standard_case_latency_ms": 120000,
       "maximum_long_context_latency_ms": 300000,
-      "maximum_peak_rss_bytes": 3758096384
+      "maximum_peak_rss_bytes": 4831838208
     },
     "cases": [
       {
@@ -232,7 +232,7 @@
       "recall_at_1": 1.0,
       "minimum_cosine_margin": 0.02,
       "maximum_norm_error": 0.001,
-      "maximum_peak_rss_bytes": 3758096384
+      "maximum_peak_rss_bytes": 4831838208
     },
     "cases": [
       {

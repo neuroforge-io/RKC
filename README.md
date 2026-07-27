@@ -110,7 +110,7 @@ the resulting `index.scip` as inert, digest-bound data. See
 [`docs/SCIP_SEMANTIC_ADAPTERS.md`](docs/SCIP_SEMANTIC_ADAPTERS.md).
 
 No tested Apache-2.0 generation model currently meets every RKC quality,
-prompt-injection, exact-32K, latency, and 3.5 GiB gate on the protected one-core
+prompt-injection, exact-32K, latency, and 4.5 GiB gate on the protected one-core
 CPU profile. RKC therefore ships no weak or misleading default. Deterministic
 retrieval and GraphRAG remain complete, while model-backed commands fail closed.
 The measurements and rejection receipts are in
@@ -237,7 +237,7 @@ make safe-release-verify
 ```
 
 The `safe-*` targets run local builds and tests at nice level 19 and idle I/O
-priority inside a fail-closed user cgroup capped at one CPU core and 3.5 GiB RAM.
+priority inside a fail-closed user cgroup capped at one CPU core and 4.5 GiB RAM.
 CI provisions the same delegated guard around expensive verification and
 package/self-catalogue assembly inside its disposable runner.
 
@@ -289,7 +289,7 @@ scripts/with-rkc-limits.sh ./bin/rkc serve \
 
 Workbench jobs use exact argument arrays without a shell, require a random
 same-origin token, run one at a time, cap captured output, and inherit the
-one-core / 3.5 GiB / idle-I/O envelope. Static exports and ordinary `serve`
+one-core / 4.5 GiB / idle-I/O envelope. Static exports and ordinary `serve`
 remain read-only.
 
 For a durable canonical store, place the database beneath an owner-only
@@ -525,7 +525,7 @@ The equivalent explicit Docker invocation is:
 docker build -t rkc:local .
 docker run --rm \
   --cpus 1 --cpu-shares 2 \
-  --memory 3584m --memory-reservation 3072m --memory-swap 3840m \
+  --memory 4608m --memory-reservation 4096m --memory-swap 4864m \
   --pids-limit 128 --oom-score-adj 750 --blkio-weight 10 \
   --read-only --tmpfs /tmp:size=256m,mode=1777 \
   --security-opt no-new-privileges:true --cap-drop ALL \
@@ -537,8 +537,8 @@ The static `scratch` image contains only the two CGO-free RKC executables,
 runtime contracts/configuration, and attribution material; it has no shell,
 package manager, Python, or user-systemd manager. Container scans must pass
 `--no-python` explicitly; RKC never falls back to unsandboxed Python. The
-Compose file encodes that portable profile and additionally applies a one-core quota, 3 GiB memory
-reservation, 3.5 GiB hard memory limit, 256 MiB swap allowance, 128-process
+Compose file encodes that portable profile and additionally applies a one-core quota, 4 GiB memory
+reservation, 4.5 GiB hard memory limit, 256 MiB swap allowance, 128-process
 limit, minimum CPU/block-I/O weights, high OOM-kill preference, a read-only root
 filesystem, `no-new-privileges`, and dropped Linux capabilities. Scheduling
 weights are subject to host-kernel support. Use a supported Linux host with
@@ -562,8 +562,8 @@ the same atomically published generation. Verification preserves the prior
 rebuilds binaries, SBOMs, and demo inputs in two detached checkouts with separate
 Go build and module caches, uses implementation-independent stored ZIP entries,
 and requires final byte equality before one atomic `dist/release` swap. The safe
-target gives priority to ERAIS and applies the same one-core, 3 GiB soft /
-3.5 GiB hard cgroup to release verification, cross-compilation, SBOM
+target gives priority to ERAIS and applies the same one-core, 4 GiB operating /
+4.5 GiB hard cgroup to release verification, cross-compilation, SBOM
 rebinding, and ZIP assembly.
 
 ## Security status

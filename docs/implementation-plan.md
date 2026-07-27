@@ -1910,7 +1910,7 @@ Do not overwrite human documentation automatically. Generate proposed patches or
 
 ### 21.1 Design objective
 
-Run useful documentation synthesis and repository Q&A on CPU and ordinary RAM while keeping peak resident memory below a configurable limit, with `3584 MiB` as the practical default ceiling on a 4 GB budget.
+Run useful documentation synthesis and repository Q&A on CPU and ordinary RAM while keeping peak resident memory below a configurable limit, with `4096 MiB` as the operating target and `4608 MiB` as the hard stability ceiling.
 
 ### 21.2 Candidate model class
 
@@ -3168,7 +3168,7 @@ Initial production objectives, to be revised by benchmark data:
 - bounded neighborhood p95 under 1 s for 1,000-node result;
 - cancellation response under 2 s for compliant plugins;
 - no-model local daemon idle RSS under 300 MiB;
-- strict local model profile peak RSS under configured 3.5 GiB;
+- strict local model profile peak RSS under the configured 4.5 GiB hard ceiling;
 - deterministic clean rebuild equality at 100%;
 - incremental output equality at 100% for supported fixtures.
 

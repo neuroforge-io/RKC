@@ -223,7 +223,7 @@ func prepareSemanticQuery(ctx context.Context, datasetRoot string, lexical *sear
 		Executable: binding.ExecutablePath, ModelPath: binding.ModelPath, ModelID: binding.AssetID,
 		ExpectedExecutableSHA256: binding.RuntimeSHA256, ExpectedModelSHA256: binding.ModelSHA256,
 		Dimensions: dimensions, ContextTokens: contextTokens, Threads: 1, Timeout: 5 * time.Minute,
-		MaximumInputBytes: queryVectorTextBytes, MaximumRSSBytes: 3584 * 1024 * 1024,
+		MaximumInputBytes: queryVectorTextBytes, MaximumRSSBytes: 4608 * 1024 * 1024,
 	})
 	if err != nil {
 		return nil, nil, err

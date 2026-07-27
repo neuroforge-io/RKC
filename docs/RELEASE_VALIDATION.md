@@ -164,7 +164,7 @@ The byte-reproducible package builder:
     the namespace back before returning an error.
 
 CI runs this complete release-verification, cross-platform binary/SBOM, and ZIP
-assembly path inside the delegated one-core, 3 GiB soft / 3.5 GiB hard
+assembly path inside the delegated one-core, 4 GiB operating / 4.5 GiB hard
 low-priority resource guard. CI uploads the one coherent `dist/release`
 generation, including the ZIP, all SPDX documents, and the exact raw
 validation/benchmark evidence that is intentionally excluded from the

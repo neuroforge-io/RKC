@@ -2,7 +2,7 @@
 
 RKC treats model selection as a measured operating-point decision, not a model
 card popularity contest. The non-negotiable local envelope is one CPU core,
-3 GiB `memory.high`, 3.5 GiB `memory.max`, 256 MiB swap, and one model role
+4 GiB `memory.high`, 4.5 GiB `memory.max`, 256 MiB swap, and one model role
 loaded at a time. Deterministic compilation and lexical/graph retrieval remain
 the fallback if no candidate passes.
 
@@ -48,7 +48,7 @@ failed, no defaults changed, and the private report SHA-256 is
 | LFM2.5 1.2B Instruct | LFM license / 32K | Excellent published edge-CPU throughput and sub-2B results | Excluded: not Apache-2.0, and upstream does not position it as a programming/knowledge default |
 | Falcon-H1 1.5B Instruct | Falcon/custom / long context | Strong published small-model benchmark results | Excluded by the required Apache-2.0 model-license policy |
 | Gemma 4 E2B QAT Q4 | Gemma terms / 32K test point | New efficient architecture and official quantization | Measured; rejected on grammar compatibility and roughly 27-minute projected 32K prefill |
-| Laguna XS.2 | Apache-2.0 / 262K | Very strong current agentic-code and SWE benchmark positioning with 3B active parameters | 33B total weights cannot fit the 3.5 GiB hard ceiling |
+| Laguna XS.2 | Apache-2.0 / 262K | Very strong current agentic-code and SWE benchmark positioning with 3B active parameters | 33B total weights cannot fit the 4.5 GiB hard ceiling |
 
 The production latency gate requires at least about 108 prompt tokens/second to
 consume 32,384 input tokens within 300 seconds. The guarded measurements were
@@ -116,7 +116,7 @@ generation role. The private raw report SHA-256 is
 it records `promotion_performed: false` and `defaults_changed: false`.
 
 The Qwen generation candidate was loaded through the pinned native
-`llama.cpp` runtime inside RKC's one-CPU, 3 GiB `memory.high`, 3.5 GiB
+`llama.cpp` runtime inside RKC's former one-CPU, 3 GiB `memory.high`, 3.5 GiB
 `memory.max`, nice-19, idle-I/O guard. Explicit flash attention and a
 512-token prefill batch reduced current cgroup memory from approximately
 1.89 GiB to 1.46 GiB with no swap. The mandatory tokenizer-exact 32K case,
@@ -126,8 +126,8 @@ stopped rather than occupying the protected single CPU for an impractical
 extended period.
 
 Gemma 4 E2B was then evaluated through the checksum-pinned b10082 native
-runtime after raising the protected host envelope to 3 GiB `memory.high` and
-3.5 GiB `memory.max`. On one Ryzen 5 5500 core, a 512-token prompt ran at
+runtime under the then-current 3 GiB `memory.high` and 3.5 GiB `memory.max`
+policy. On one Ryzen 5 5500 core, a 512-token prompt ran at
 19.96 tokens/second and 32 generated tokens ran at 7.95 tokens/second. The
 cgroup recorded no pressure, max, OOM, or swap event; charged memory observed
 during the run was approximately 1.9 GiB. `/usr/bin/time` reported 4,386,940

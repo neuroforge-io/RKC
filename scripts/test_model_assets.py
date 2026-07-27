@@ -467,8 +467,8 @@ class ModelAssetTests(unittest.TestCase):
             files = {
                 "cpu.weight": "1",
                 "cpu.max": "100000 100000",
-                "memory.high": str(3 * 1024 * 1024 * 1024),
-                "memory.max": str(3584 * 1024 * 1024),
+                "memory.high": str(4 * 1024 * 1024 * 1024),
+                "memory.max": str(4608 * 1024 * 1024),
                 "memory.swap.max": str(256 * 1024 * 1024),
                 "pids.max": "128",
                 "io.weight": "default 1",
@@ -969,8 +969,8 @@ class ModelAssetTests(unittest.TestCase):
             values = {
                 "cpu.weight": "1",
                 "cpu.max": "max 100000",
-                "memory.high": str(3 * 1024 * 1024 * 1024),
-                "memory.max": str(3584 * 1024 * 1024),
+                "memory.high": str(4 * 1024 * 1024 * 1024),
+                "memory.max": str(4608 * 1024 * 1024),
                 "memory.swap.max": str(256 * 1024 * 1024),
                 "pids.max": "128",
             }

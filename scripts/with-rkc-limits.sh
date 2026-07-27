@@ -1,7 +1,7 @@
 #!/bin/sh
 # Run an RKC development or inference workload in a deliberately subordinate
 # cgroup. The defaults protect concurrent, higher-priority training workloads:
-# at most one CPU core, 3 GiB soft / 3.5 GiB hard memory, idle I/O scheduling,
+# at most one CPU core, 4 GiB soft / 4.5 GiB hard memory, idle I/O scheduling,
 # lowest CPU niceness, idle I/O scheduling (plus IOWeight=1 when the user
 # manager delegates that controller), and a high OOM-kill preference.
 set -eu
@@ -98,8 +98,8 @@ case "$mode" in
             --property CPUWeight=1 \
             --property IOWeight=1 \
             --property CPUQuota=100% \
-            --property MemoryHigh=3072M \
-            --property MemoryMax=3584M \
+            --property MemoryHigh=4096M \
+            --property MemoryMax=4608M \
             --property MemorySwapMax=256M \
             --property TasksMax=128 \
             --property OOMPolicy=stop \
@@ -137,8 +137,8 @@ case "$mode" in
             --property CPUWeight=1 \
             --property IOWeight=1 \
             --property CPUQuota=100% \
-            --property MemoryHigh=3072M \
-            --property MemoryMax=3584M \
+            --property MemoryHigh=4096M \
+            --property MemoryMax=4608M \
             --property MemorySwapMax=256M \
             --property TasksMax=128 \
             --property OOMPolicy=stop \

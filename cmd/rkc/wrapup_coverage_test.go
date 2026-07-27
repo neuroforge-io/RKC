@@ -191,7 +191,7 @@ func TestWrapupCLIParserAndSelectorFailures(t *testing.T) {
 		{"synthesize rejects high limit", func() error { return runSynthesizeContext(context.Background(), []string{"--limit", "10001"}) }, "limit must be"},
 		{"synthesize rejects high context", func() error { return runSynthesizeContext(context.Background(), []string{"--context", "262145"}) }, "context must be"},
 		{"synthesize rejects zero output", func() error { return runSynthesizeContext(context.Background(), []string{"--max-output", "0"}) }, "max-output"},
-		{"synthesize rejects high RSS", func() error { return runSynthesizeContext(context.Background(), []string{"--max-rss-mib", "3585"}) }, "safety ceiling"},
+		{"synthesize rejects high RSS", func() error { return runSynthesizeContext(context.Background(), []string{"--max-rss-mib", "4609"}) }, "safety ceiling"},
 		{"synthesize rejects negative threads", func() error { return runSynthesizeContext(context.Background(), []string{"--threads", "-1"}) }, "threads must be"},
 		{"synthesize rejects high batch", func() error { return runSynthesizeContext(context.Background(), []string{"--batch-size", "4097"}) }, "batch-size must be"},
 		{"synthesize selector needs database", func() error { return runSynthesizeContext(context.Background(), []string{"--snapshot", "one"}) }, "require --database"},

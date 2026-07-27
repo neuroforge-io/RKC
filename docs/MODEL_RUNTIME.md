@@ -123,8 +123,8 @@ make model-runtime-native
 
 Every fetch, build, and real-model qualification command fails if ERAIS is
 active and must prove it is inside the low-priority Linux cgroup before doing
-heavy work. That guard limits the workload to one CPU core, 3 GiB soft memory,
-3.5 GiB hard memory, 256 MiB swap, 128 tasks, nice 19, idle I/O, and high
+heavy work. That guard limits the workload to one CPU core, 4 GiB operating memory,
+4.5 GiB hard memory, 256 MiB swap, 128 tasks, nice 19, idle I/O, and high
 OOM-kill preference. Configure and build commands run in private process groups
 with fixed deadlines and sub-second ERAIS polling; priority, timeout, or
 cancellation terminates and reaps the whole group. Runtime staging also has a
@@ -215,7 +215,7 @@ quantization: q4
 context_tokens: 4096
 max_output_tokens: 768
 parallel_requests: 1
-max_rss_mib: 3584
+max_rss_mib: 4608
 embeddings: disabled-or-sequential
 fallback: deterministic
 ```
@@ -303,5 +303,5 @@ Before claiming the under-4-GiB profile, publish:
 11. comparison with model-disabled documentation;
 12. raw logs and reproducible command line.
 
-Until that gate is met, 3.5 GiB is a guarded engineering ceiling, not a
+Until that gate is met, 4.5 GiB is a guarded engineering ceiling, not a
 marketing measurement or evidence that any candidate model is satisfactory.

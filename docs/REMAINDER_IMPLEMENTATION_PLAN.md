@@ -1404,7 +1404,7 @@ dynamic frameworks, and history sequences.
 Initial targets, subject to published revision:
 
 - no-model local daemon idle RSS below 300 MiB;
-- strict local model peak RSS below 3.5 GiB on declared hardware;
+- strict local model peak RSS below the 4.5 GiB hard ceiling on declared hardware;
 - warm exact symbol query p95 below 100 ms;
 - warm lexical query p95 below 200 ms on medium corpus;
 - 1,000-node neighbourhood p95 below one second;

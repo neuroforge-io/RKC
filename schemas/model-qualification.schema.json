@@ -65,10 +65,10 @@
           "const": 1
         },
         "memory_high_bytes": {
-          "const": 3221225472
+          "const": 4294967296
         },
         "memory_max_bytes": {
-          "const": 3758096384
+          "const": 4831838208
         },
         "memory_swap_max_bytes": {
           "const": 268435456

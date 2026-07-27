@@ -139,7 +139,7 @@ func runSynthesizeContext(modelContext context.Context, args []string) error {
 		return errors.New("max-output must be positive and no larger than context")
 	}
 	if *maxRSSMiB < 256 || *maxRSSMiB > modelMaximumRSSMiB {
-		return errors.New("max-rss-mib must be between 256 and the 3584 MiB safety ceiling")
+		return errors.New("max-rss-mib must be between 256 and the 4608 MiB safety ceiling")
 	}
 	if *threads < 0 || *threads > 64 {
 		return errors.New("threads must be between 0 and 64")

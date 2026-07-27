@@ -68,11 +68,11 @@ func TestInitCommandStdoutCreateAndForce(t *testing.T) {
 	if cfg.SchemaURI != configurationSchemaURI {
 		t.Fatalf("stdout configuration schema URI = %q, want %q", cfg.SchemaURI, configurationSchemaURI)
 	}
-	if modelMaximumRSSMiB != 3584 {
-		t.Fatalf("modelMaximumRSSMiB = %d, want 3584", modelMaximumRSSMiB)
+	if modelMaximumRSSMiB != 4608 {
+		t.Fatalf("modelMaximumRSSMiB = %d, want 4608", modelMaximumRSSMiB)
 	}
 	if cfg.Model.MaxRSSMiB != modelMaximumRSSMiB {
-		t.Fatalf("stdout configuration model RSS ceiling = %d MiB, want 3584 MiB", cfg.Model.MaxRSSMiB)
+		t.Fatalf("stdout configuration model RSS ceiling = %d MiB, want 4608 MiB", cfg.Model.MaxRSSMiB)
 	}
 
 	path := filepath.Join(t.TempDir(), "nested", "rkc.json")
