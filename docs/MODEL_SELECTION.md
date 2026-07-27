@@ -8,16 +8,33 @@ the fallback if no candidate passes.
 
 ## Decision
 
-The active generation candidate is the official llama.cpp conversion of
-Qwen3.5 0.8B Q4_0. Gemma 4 E2B QAT Q4_0 and Qwen3.5 2B Q4_K_M remain retained
-comparison candidates; the embedding candidate is Qwen3 Embedding 0.6B Q8_0.
-All are Apache-2.0, checksum-pinned, downloaded on demand, and never bundled
-in an RKC release. The active generation candidate is 563,036,064 bytes and
-advertises a 262,144-token native context; RKC targets a bounded 32,768-token
-operating point. The embedding candidate is 639,150,592 bytes and is qualified
-separately at 8,192 tokens. Exact
-revisions, filenames, byte counts, SHA-256 digests, redirect policy, and source
-licenses are in [`models/models.lock.json`](../models/models.lock.json).
+The active generation candidate is IBM Granite 4.0 H 1B Q5_K_M. It is an
+Apache-2.0, 1.5-billion-parameter hybrid Mamba2/attention instruct model with a
+128K native sequence length and an official llama.cpp-compatible GGUF. The
+locked candidate is 1,048,556,768 bytes; RKC tests it at the stricter
+interactive 32,768-token operating point. The embedding candidate remains
+Qwen3 Embedding 0.6B Q8_0, qualified separately at 8,192 tokens.
+
+Granite was selected for the next measured run because its official evaluation
+reports `82.37` strict instruction compliance, `73` HumanEval, `68` HumanEval+,
+`69` MBPP, `60` MBPP+, and `50.21` BFCL v3 for the hybrid 1B variant. Its model
+card explicitly includes extraction, question answering, RAG, code, and
+function calling among intended capabilities. These upstream scores only
+justify evaluation; they do not override RKC's repository-specific gates.
+
+Qwen3 1.7B Q8_0 and SmolLM3 3B are the next Apache-2.0 comparison candidates.
+Qwen3 has strong reasoning and instruction-following evidence but its only
+official GGUF is 1,834,426,016 bytes. SmolLM3 offers 64K context and strong
+small-model reasoning, but its 3B weight and context footprint leave less
+headroom under RKC's 3.5 GiB ceiling. LFM2.5 1.2B and Falcon-H1 1.5B publish
+excellent edge or small-model results, but are excluded because their model
+licenses are not Apache-2.0. Gemma 4 E2B, Qwen3.5 2B, and Qwen3.5 0.8B remain
+retained measured comparisons.
+
+Every included asset is checksum-pinned, downloaded on demand, and never
+bundled in an RKC release. Exact revisions, filenames, byte counts, SHA-256
+digests, redirect policy, and source licenses are in
+[`models/models.lock.json`](../models/models.lock.json).
 
 The candidates become defaults only after the real two-role qualification in
 [`rkc-local-model-v1.json`](../models/qualification/rkc-local-model-v1.json)
@@ -100,6 +117,13 @@ reproducible comparison, not selected for users.
 
 Primary sources:
 
+- [IBM Granite 4.0 H 1B model card](https://huggingface.co/ibm-granite/granite-4.0-h-1b)
+- [official IBM Granite 4.0 H 1B GGUF](https://huggingface.co/ibm-granite/granite-4.0-h-1b-GGUF)
+- [Qwen3 1.7B model card](https://huggingface.co/Qwen/Qwen3-1.7B)
+- [official Qwen3 1.7B GGUF](https://huggingface.co/Qwen/Qwen3-1.7B-GGUF)
+- [SmolLM3 3B model card](https://huggingface.co/HuggingFaceTB/SmolLM3-3B)
+- [LFM2.5 1.2B Instruct model card](https://huggingface.co/LiquidAI/LFM2.5-1.2B-Instruct)
+- [Falcon-H1 1.5B Instruct model card](https://huggingface.co/tiiuae/Falcon-H1-1.5B-Instruct)
 - [Gemma 4 overview](https://ai.google.dev/gemma/docs/core)
 - [official Gemma 4 E2B model](https://huggingface.co/google/gemma-4-E2B-it)
 - [official Gemma 4 E2B QAT Q4 GGUF](https://huggingface.co/google/gemma-4-E2B-it-qat-q4_0-gguf)

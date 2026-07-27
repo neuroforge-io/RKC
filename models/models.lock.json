@@ -168,6 +168,30 @@
       "extraction_root": null
     },
     {
+      "id": "granite-4.0-h-1b-q5-k-m-candidate",
+      "kind": "generation-model",
+      "status": "unqualified",
+      "default_eligible": false,
+      "repository": "https://huggingface.co/ibm-granite/granite-4.0-h-1b-GGUF",
+      "revision": "c2cb1972f511add21f3bae244990b8ff3a3ffb23",
+      "filename": "granite-4.0-h-1b-Q5_K_M.gguf",
+      "url": "https://huggingface.co/ibm-granite/granite-4.0-h-1b-GGUF/resolve/c2cb1972f511add21f3bae244990b8ff3a3ffb23/granite-4.0-h-1b-Q5_K_M.gguf?download=true",
+      "allowed_hosts": [
+        "huggingface.co",
+        ".huggingface.co",
+        ".hf.co"
+      ],
+      "sha256": "016a6e46b88fee09f55860253f2c1a263372624bd57060dad6c3f344c89941ba",
+      "size_bytes": 1048556768,
+      "license_spdx": "Apache-2.0",
+      "license_url": "https://huggingface.co/ibm-granite/granite-4.0-h-1b-GGUF/blob/c2cb1972f511add21f3bae244990b8ff3a3ffb23/README.md",
+      "redistribution": "not-bundled-download-on-demand",
+      "quantization": "Q5_K_M",
+      "native_context_tokens": 131072,
+      "qualification_spec": "models/qualification/rkc-local-model-v1.json",
+      "extraction_root": null
+    },
+    {
       "id": "gemma-4-e2b-it-qat-q4-0-candidate",
       "kind": "generation-model",
       "status": "unqualified",
