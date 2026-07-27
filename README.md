@@ -23,7 +23,7 @@ The reference build provides:
 - complete artifact accounting, SHA-256 hashing, language/media classification,
   explicit exclusion records, and repository/file limits;
 - deterministic Python AST, Go AST, and JavaScript/TypeScript syntax adapters;
-- Markdown structure, package/build manifest, OpenAPI JSON, JSON Schema,
+- Markdown structure, package/build manifest, bounded OpenAPI JSON/YAML, JSON Schema,
   environment-template, Docker, and secret-pattern extraction;
 - a versioned language-neutral graph containing artifacts, nodes, typed edges,
   evidence, diagnostics, conflicts, documents, claims, and execution paths;
@@ -139,6 +139,16 @@ inside the scanned repository or generated atlas. `rkc plan` shows exactly
 which stages will execute or reuse verified payloads and why. Pass
 `scan --no-cache` for a clean run; clean and cache-assisted scans intentionally
 share the same snapshot identity and canonical digest.
+
+Each scan that reaches DAG execution creates a new owner-only, append-only
+command journal outside the repository (for example,
+`$XDG_CACHE_HOME/rkc/runs` on Linux). Its terminal result covers later policy,
+SQLite, atlas, and snapshot-publication failures—not only DAG completion. The
+scan summary prints its unguessable run ID and exact path. Inspect recent runs
+with `rkc runs list`, or strictly replay one complete lifecycle with
+`rkc runs show <run-id>`. Use `scan --runs-dir <path>` and the corresponding
+inspection flag when an explicit state location is required; RKC never
+overwrites an existing run journal.
 
 Run `./bin/rkc doctor --strict` before omitting `--no-python`. The built-in
 Python adapter intentionally requires Python 3.11 or newer and its fail-closed

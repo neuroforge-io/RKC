@@ -18,14 +18,15 @@ RKC executables are built with Go and contain linked portions of the Go runtime
 and standard library. The exact toolchain version used for an executable remains
 available in its Go build metadata.
 
-### CGO-free SQLite Go module graph
+### Selected and reviewed Go module graph
 
-RKC uses `modernc.org/sqlite v1.54.0` as its CGO-free SQLite driver. The exact
-selected module graph, Go module checksums, immutable Go proxy source URLs,
-license expressions, and SHA-256 hashes of every preserved license file are
-locked in [`third_party/go-modules.lock.json`](third_party/go-modules.lock.json).
-The dependency is BSD-3-Clause licensed and embeds SQLite, whose deliverable
-code is dedicated to the public domain. `modernc.org/libc v1.74.1` is the exact
+RKC uses `modernc.org/sqlite v1.54.0` as its CGO-free SQLite driver and
+`gopkg.in/yaml.v3 v3.0.1` as its bounded OpenAPI YAML parser. The exact selected
+module graph, Go module checksums, immutable Go proxy source URLs, license
+expressions, and SHA-256 hashes of every preserved license file are locked in
+[`third_party/go-modules.lock.json`](third_party/go-modules.lock.json). The
+SQLite driver is BSD-3-Clause licensed and embeds SQLite, whose deliverable code
+is dedicated to the public domain. `modernc.org/libc v1.74.1` is the exact
 selected libc implementation; its upstream third-party notice includes the Go,
 musl libc, go-netdb, and NixOS/nixpkgs terms and attributions used by that
 module.
@@ -48,6 +49,11 @@ The complete reviewed graph and preserved upstream license texts are:
   [`LICENSES/go-modules/github.com/remyoudompheng/bigfft@v0.0.0-20230129092748-24d4a6f8daec/LICENSE`](LICENSES/go-modules/github.com/remyoudompheng/bigfft@v0.0.0-20230129092748-24d4a6f8daec/LICENSE)
 - `golang.org/x/sys v0.46.0` — BSD-3-Clause —
   [`LICENSES/go-modules/golang.org/x/sys@v0.46.0/LICENSE`](LICENSES/go-modules/golang.org/x/sys@v0.46.0/LICENSE)
+- `gopkg.in/check.v1 v0.0.0-20161208181325-20d25e280405` — BSD-2-Clause —
+  [`LICENSES/go-modules/gopkg.in/check.v1@v0.0.0-20161208181325-20d25e280405/LICENSE`](LICENSES/go-modules/gopkg.in/check.v1@v0.0.0-20161208181325-20d25e280405/LICENSE)
+- `gopkg.in/yaml.v3 v3.0.1` — MIT and Apache-2.0 —
+  [`LICENSES/go-modules/gopkg.in/yaml.v3@v3.0.1/LICENSE`](LICENSES/go-modules/gopkg.in/yaml.v3@v3.0.1/LICENSE),
+  [`LICENSES/go-modules/gopkg.in/yaml.v3@v3.0.1/NOTICE`](LICENSES/go-modules/gopkg.in/yaml.v3@v3.0.1/NOTICE)
 - `modernc.org/fileutil v1.4.0` — BSD-3-Clause —
   [`LICENSES/go-modules/modernc.org/fileutil@v1.4.0/LICENSE`](LICENSES/go-modules/modernc.org/fileutil@v1.4.0/LICENSE)
 - `modernc.org/libc v1.74.1` — BSD-3-Clause plus preserved upstream component

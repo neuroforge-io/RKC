@@ -77,6 +77,10 @@ func Scan(ctx context.Context, opts Options) (rkcmodel.Bundle, rkcmodel.Coverage
 	if ctx == nil {
 		return rkcmodel.Bundle{}, rkcmodel.Coverage{}, errors.New("pipeline scan context is required")
 	}
+	if (opts.RunID == "") != (opts.Journal == nil) {
+		return rkcmodel.Bundle{}, rkcmodel.Coverage{},
+			errors.New("pipeline run ID and journal must be supplied together")
+	}
 	root, err := filepath.Abs(opts.Root)
 	if err != nil {
 		return rkcmodel.Bundle{}, rkcmodel.Coverage{}, fmt.Errorf("resolve root: %w", err)
@@ -114,10 +118,13 @@ func Scan(ctx context.Context, opts Options) (rkcmodel.Bundle, rkcmodel.Coverage
 		}
 	}
 	report, err := scheduler.Execute(ctx, state.stages(), scheduler.Options{
-		Workers: workers,
-		Budget:  budget,
-		Cache:   cache,
-		OnEvent: opts.OnStageEvent,
+		Workers:                workers,
+		Budget:                 budget,
+		Cache:                  cache,
+		RunID:                  opts.RunID,
+		Journal:                opts.Journal,
+		DeferJournalCompletion: opts.DeferJournalCompletion,
+		OnEvent:                opts.OnStageEvent,
 	})
 	if err != nil {
 		return rkcmodel.Bundle{}, rkcmodel.Coverage{}, fmt.Errorf("execute scan DAG: %w", err)
@@ -171,10 +178,10 @@ func (state *stagedScanState) stages() []scheduler.Stage {
 			"enabled": !state.opts.DisableFrameworks && !state.opts.DisableMarkdown,
 		}, nil, state.runMarkdown),
 		state.analysisStage("openapi", []string{"normalize"}, map[string]any{
-			"enabled": !state.opts.DisableFrameworks && !state.opts.DisableOpenAPI,
-		}, func(file pluginapi.FileRef) bool {
-			return file.Language == "json"
-		}, state.runOpenAPI),
+			"enabled":        !state.opts.DisableFrameworks && !state.opts.DisableOpenAPI,
+			"plugin_id":      openapi.PluginID,
+			"plugin_version": openapi.PluginVersion,
+		}, isOpenAPICacheInput, state.runOpenAPI),
 		state.analysisStage("python-syntax", []string{"normalize"}, map[string]any{
 			"enabled":              !state.opts.DisablePlugins && !state.opts.DisablePythonAST,
 			"plugin_sha256":        state.opts.PythonPluginSHA256,
@@ -525,9 +532,13 @@ func (state *stagedScanState) runOpenAPI(context.Context) (scheduler.Result, err
 	if state.opts.DisableFrameworks || state.opts.DisableOpenAPI {
 		return state.disabledResult("openapi"), nil
 	}
-	files := filterFiles(state.files, func(file pluginapi.FileRef) bool { return file.Language == "json" })
+	files := filterFiles(state.files, isOpenAPICacheInput)
 	fragment, err := openapi.Extract(openapi.Options{Root: state.root, Files: files})
 	return state.handleFragmentResult("openapi", files, fragment, err, "RKC-API-2001", openapi.PluginID, false)
+}
+
+func isOpenAPICacheInput(file pluginapi.FileRef) bool {
+	return file.Language == "json" || file.Language == "yaml"
 }
 
 func (state *stagedScanState) runJSONSchema(context.Context) (scheduler.Result, error) {

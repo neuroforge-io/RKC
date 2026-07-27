@@ -33,7 +33,7 @@ func runScan(args []string) error {
 	return runScanContext(ctx, args)
 }
 
-func runScanContext(ctx context.Context, args []string) error {
+func runScanContext(ctx context.Context, args []string) (resultErr error) {
 	if err := scanCancellation(ctx); err != nil {
 		return err
 	}
@@ -42,6 +42,7 @@ func runScanContext(ctx context.Context, args []string) error {
 	if err != nil {
 		return err
 	}
+	defaultRunsDirectory, defaultRunsErr := runJournalFlagDefault(args)
 
 	fs := flag.NewFlagSet("scan", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
@@ -50,6 +51,7 @@ func runScanContext(ctx context.Context, args []string) error {
 	stateDir := fs.String("state-dir", cfg.Exports.SnapshotStore, "optional immutable snapshot store directory")
 	databasePath := fs.String("database", "", "optional durable SQLite store; must remain outside the scanned repository")
 	cacheDir := fs.String("cache-dir", defaultStageCacheDirectory(), "verified incremental stage cache directory outside the scanned repository")
+	runsDir := fs.String("runs-dir", defaultRunsDirectory, "owner-only scheduler run journal directory outside the scanned repository")
 	noCache := fs.Bool("no-cache", !cfg.Analysis.Incremental, "disable stage cache reads and writes for this clean scan")
 	stageWorkers := fs.Int("stage-workers", 4, "maximum concurrently admitted scan stages")
 	stageMemory := fs.Int64("stage-memory-mib", 2048, "total scheduler memory-admission budget in MiB")
@@ -67,7 +69,7 @@ func runScanContext(ctx context.Context, args []string) error {
 	noTypeScript := fs.Bool("no-typescript", !cfg.Plugins.TypeScriptSyntax.Enabled, "disable the JavaScript and TypeScript syntax adapter")
 	noFrameworks := fs.Bool("no-frameworks", !cfg.Frameworks.Enabled, "disable all deterministic framework and document extractors")
 	noMarkdown := fs.Bool("no-markdown", !cfg.Frameworks.Markdown, "disable Markdown document structure extraction")
-	noOpenAPI := fs.Bool("no-openapi", !cfg.Frameworks.OpenAPIJSON, "disable JSON OpenAPI extraction")
+	noOpenAPI := fs.Bool("no-openapi", !cfg.Frameworks.OpenAPIJSON, "disable OpenAPI JSON/YAML extraction")
 	noJSONSchema := fs.Bool("no-json-schema", !cfg.Frameworks.JSONSchema, "disable JSON Schema extraction")
 	noManifests := fs.Bool("no-manifests", !cfg.Frameworks.PackageManifests, "disable package and build manifest extraction")
 	noEnvKeys := fs.Bool("no-env-keys", !cfg.Frameworks.EnvironmentFiles, "disable environment template key extraction")
@@ -97,6 +99,9 @@ func runScanContext(ctx context.Context, args []string) error {
 	}
 	if *configFlag != configPath {
 		return errors.New("--config must be supplied only once; its values establish flag defaults")
+	}
+	if *runsDir == "" && defaultRunsErr != nil {
+		return defaultRunsErr
 	}
 	if *stageWorkers <= 0 || *stageWorkers > 64 {
 		return errors.New("--stage-workers must be between 1 and 64")
@@ -170,6 +175,56 @@ func runScanContext(ctx context.Context, args []string) error {
 			return fmt.Errorf("%w: SQLite database must remain outside the scanned repository and generated output", safeoutput.ErrUnsafeTarget)
 		}
 	}
+	resolvedRuns, err := safeoutput.ResolveTarget(*runsDir, rootAbs)
+	if err != nil {
+		return fmt.Errorf("resolve run journal directory: %w", err)
+	}
+	runsInsideRepository, err := pathIsWithin(rootAbs, resolvedRuns)
+	if err != nil {
+		return fmt.Errorf("compare repository and run journal directory: %w", err)
+	}
+	runsInsideOutput, err := pathIsWithin(outAbs, resolvedRuns)
+	if err != nil {
+		return fmt.Errorf("compare output and run journal directory: %w", err)
+	}
+	outputInsideRuns, err := pathIsWithin(resolvedRuns, outAbs)
+	if err != nil {
+		return fmt.Errorf("compare run journal directory and output: %w", err)
+	}
+	if runsInsideRepository || runsInsideOutput || outputInsideRuns {
+		return fmt.Errorf(
+			"%w: run journals must remain outside the scanned repository and generated output",
+			safeoutput.ErrUnsafeTarget,
+		)
+	}
+	if *stateDir != "" {
+		runsInsideState, err := pathIsWithin(*stateDir, resolvedRuns)
+		if err != nil {
+			return fmt.Errorf("compare snapshot store and run journal directory: %w", err)
+		}
+		stateInsideRuns, err := pathIsWithin(resolvedRuns, *stateDir)
+		if err != nil {
+			return fmt.Errorf("compare run journal directory and snapshot store: %w", err)
+		}
+		if runsInsideState || stateInsideRuns {
+			return fmt.Errorf(
+				"%w: run journal and snapshot-store directories must be disjoint",
+				safeoutput.ErrUnsafeTarget,
+			)
+		}
+	}
+	if resolvedDatabase != "" {
+		databaseInsideRuns, err := pathIsWithin(resolvedRuns, resolvedDatabase)
+		if err != nil {
+			return fmt.Errorf("compare SQLite database and run journal directory: %w", err)
+		}
+		if databaseInsideRuns {
+			return fmt.Errorf(
+				"%w: SQLite database cannot be stored inside the run journal directory",
+				safeoutput.ErrUnsafeTarget,
+			)
+		}
+	}
 	var stageCache *pipeline.StageCache
 	resolvedCache := ""
 	if !*noCache {
@@ -195,6 +250,20 @@ func runScanContext(ctx context.Context, args []string) error {
 		}
 		if cacheInsideOutput || outputInsideCache {
 			return fmt.Errorf("%w: output and stage cache must be disjoint directories", safeoutput.ErrUnsafeTarget)
+		}
+		runsInsideCache, err := pathIsWithin(resolvedCache, resolvedRuns)
+		if err != nil {
+			return fmt.Errorf("compare stage cache and run journal directory: %w", err)
+		}
+		cacheInsideRuns, err := pathIsWithin(resolvedRuns, resolvedCache)
+		if err != nil {
+			return fmt.Errorf("compare run journal directory and stage cache: %w", err)
+		}
+		if runsInsideCache || cacheInsideRuns {
+			return fmt.Errorf(
+				"%w: stage cache and run journal directories must be disjoint",
+				safeoutput.ErrUnsafeTarget,
+			)
 		}
 		if resolvedDatabase != "" {
 			databaseInsideCache, err := pathIsWithin(resolvedCache, resolvedDatabase)
@@ -267,7 +336,39 @@ func runScanContext(ctx context.Context, args []string) error {
 	}
 	var stageEventMu sync.Mutex
 	var stageEvents []scheduler.Event
-	bundle, coverage, err := pipeline.Scan(ctx, pipeline.Options{
+	runID, err := scheduler.NewRunID()
+	if err != nil {
+		return err
+	}
+	runJournal, err := scheduler.OpenFileJournal(resolvedRuns, runID)
+	if err != nil {
+		return fmt.Errorf("open scheduler run journal: %w", err)
+	}
+	runJournalStarted := time.Now()
+	runJournalFinalized := false
+	defer func() {
+		if runJournalFinalized {
+			return
+		}
+		cause := resultErr
+		if cause == nil {
+			cause = errors.New("scan exited before successful command finalization")
+		}
+		_, finalizeErr := finalizeScanRunJournal(
+			runJournal,
+			cause,
+			time.Since(runJournalStarted),
+		)
+		runJournalFinalized = true
+		if finalizeErr != nil {
+			resultErr = errors.Join(
+				resultErr,
+				fmt.Errorf("finalize failed scan journal: %w", finalizeErr),
+			)
+		}
+	}()
+	runJournalPath := runJournal.Path()
+	bundle, coverage, scanErr := pipeline.Scan(ctx, pipeline.Options{
 		Root: rootAbs, MaxFileBytes: *maxFile, MaxTextBytes: *maxText, MaxRepositoryBytes: *maxRepository, MaxFiles: *maxFiles,
 		Excludes: excludes, PythonInterpreter: *python, PythonPlugin: pluginPath, PluginTimeout: *pluginTimeout,
 		PluginMaxOutput: *pluginOutput, PluginMaxStderr: 2 * 1024 * 1024,
@@ -281,8 +382,11 @@ func runScanContext(ctx context.Context, args []string) error {
 		DisableJSONSchema: *noJSONSchema, DisableManifests: *noManifests, DisableEnvKeys: *noEnvKeys, DisableSecretScan: *noSecretScan,
 		ToolVersion: version, SourceReference: sourceReference, ConfigDigest: cfg.Digest(), PolicyDigest: cfg.PolicyDigest(),
 		PluginLockDigest: cfg.PluginDigest(), ToolchainDigest: toolchainDigest(*python),
-		Cache:        stageCache,
-		StageWorkers: *stageWorkers,
+		Cache:                  stageCache,
+		StageWorkers:           *stageWorkers,
+		RunID:                  runID,
+		Journal:                runJournal,
+		DeferJournalCompletion: true,
 		ResourceBudget: scheduler.ResourceBudget{
 			MemoryMiB: *stageMemory,
 			CPU:       *stageWorkers,
@@ -295,8 +399,13 @@ func runScanContext(ctx context.Context, args []string) error {
 			stageEventMu.Unlock()
 		},
 	})
-	if err != nil {
-		return err
+	if scanErr != nil {
+		return fmt.Errorf(
+			"scan run %s (journal %s): %w",
+			runID,
+			runJournalPath,
+			scanErr,
+		)
 	}
 	if err := scanCancellation(ctx); err != nil {
 		return err
@@ -415,6 +524,30 @@ func runScanContext(ctx context.Context, args []string) error {
 		}
 	}
 
+	runReport, journalErr := finalizeScanRunJournal(
+		runJournal,
+		nil,
+		time.Since(runJournalStarted),
+	)
+	runJournalFinalized = true
+	if journalErr != nil {
+		return fmt.Errorf(
+			"scan run %s journal %s did not finalize and replay cleanly: %w",
+			runID,
+			runJournalPath,
+			journalErr,
+		)
+	}
+	if !runReport.Terminal || runReport.Interrupted ||
+		scheduler.JournalState(runReport.State) != scheduler.JournalStateSucceeded {
+		return fmt.Errorf(
+			"scan run %s journal %s has unexpected terminal state %q",
+			runID,
+			runJournalPath,
+			runReport.State,
+		)
+	}
+
 	stageEventMu.Lock()
 	cacheHits := 0
 	for _, event := range stageEvents {
@@ -426,6 +559,7 @@ func runScanContext(ctx context.Context, args []string) error {
 	summary := map[string]any{
 		"snapshot_id": bundle.Snapshot.ID, "source": acquired.RedactedSource, "source_kind": acquired.Kind, "output": outAbs, "snapshot_store": *stateDir, "snapshot_store_noop": snapshotStoreNoop,
 		"database": resolvedDatabase, "database_noop": sqliteNoop, "cache": resolvedCache, "cache_hits": cacheHits,
+		"run_id": runID, "run_journal": runJournalPath,
 		"artifacts": coverage.ArtifactsInventoried, "text_artifacts": coverage.TextArtifacts,
 		"syntax_parsed": coverage.ArtifactsSyntacticallyParsed, "semantic_parsed": coverage.ArtifactsSemanticallyParsed,
 		"symbols": coverage.SymbolsTotal, "edges": coverage.EdgesTotal, "unresolved_edges": coverage.UnresolvedEdges,
@@ -445,6 +579,7 @@ func runScanContext(ctx context.Context, args []string) error {
 	fmt.Printf("Graph: %d symbols; %d edges; %d unresolved; evidence ratio %.4f\n",
 		coverage.SymbolsTotal, coverage.EdgesTotal, coverage.UnresolvedEdges, coverage.SymbolEvidenceRatio)
 	fmt.Printf("Output: %s\n", outAbs)
+	fmt.Printf("Run journal: %s (%s)\n", runJournalPath, runID)
 	if *stateDir != "" {
 		fmt.Printf("Snapshot store: %s (reused=%t)\n", *stateDir, snapshotStoreNoop)
 	}
@@ -465,6 +600,43 @@ func scanCancellation(ctx context.Context) error {
 		return fmt.Errorf("scan cancelled; staged output was not published: %w", err)
 	}
 	return nil
+}
+
+func finalizeScanRunJournal(
+	journal *scheduler.FileJournal,
+	runErr error,
+	duration time.Duration,
+) (scheduler.JournalReport, error) {
+	if journal == nil {
+		return scheduler.JournalReport{}, errors.New("scheduler run journal is nil")
+	}
+	path := journal.Path()
+	state := scheduler.JournalStateSucceeded
+	if runErr != nil {
+		state = scheduler.JournalStateFailed
+		if errors.Is(runErr, context.Canceled) ||
+			errors.Is(runErr, context.DeadlineExceeded) {
+			state = scheduler.JournalStateCancelled
+		}
+	}
+	record := scheduler.JournalRecord{
+		RunID:    journal.RunID(),
+		Kind:     scheduler.JournalKindRun,
+		State:    state,
+		Duration: duration,
+	}
+	if runErr != nil {
+		record.Error = runErr.Error()
+	}
+	appendContext, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	appendErr := journal.Append(appendContext, record)
+	cancel()
+	closeErr := journal.Close()
+	report, replayErr := scheduler.ReadFileJournal(path)
+	if appendErr != nil || closeErr != nil || replayErr != nil {
+		return report, errors.Join(appendErr, closeErr, replayErr)
+	}
+	return report, nil
 }
 
 func publishExport(root, output string, force bool, bundle rkcmodel.Bundle, coverage rkcmodel.Coverage, options rkcexport.Options) error {

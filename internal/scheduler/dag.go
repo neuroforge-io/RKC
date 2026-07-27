@@ -152,8 +152,12 @@ type Options struct {
 	Cache   Cache
 	RunID   string
 	Journal Journal
-	Values  map[string]any
-	OnEvent func(Event)
+	// DeferJournalCompletion leaves a validated journal non-terminal after the
+	// DAG finishes so an owning command can bind later publication work to the
+	// same final run outcome. The caller must append one terminal run record.
+	DeferJournalCompletion bool
+	Values                 map[string]any
+	OnEvent                func(Event)
 }
 
 func Execute(ctx context.Context, stages []Stage, options Options) (Report, error) {
@@ -227,7 +231,7 @@ func Execute(ctx context.Context, stages []Stage, options Options) (Report, erro
 				state = JournalStateCancelled
 			}
 		}
-		if options.Journal != nil {
+		if options.Journal != nil && !options.DeferJournalCompletion {
 			record := JournalRecord{
 				RunID:      options.RunID,
 				Kind:       JournalKindRun,

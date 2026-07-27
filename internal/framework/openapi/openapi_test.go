@@ -1,13 +1,16 @@
 package openapi
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/neuroforge-io/RKC/pkg/pluginapi"
 	"github.com/neuroforge-io/RKC/pkg/rkcmodel"
+	"gopkg.in/yaml.v3"
 )
 
 func TestExtractOpenAPIRichDocumentsAndDeterminism(t *testing.T) {
@@ -163,6 +166,418 @@ func TestExtractOpenAPIRejectsTrailingJSON(t *testing.T) {
 	}
 }
 
+func TestOpenAPIJSONIsBoundedAndRejectsDuplicateMembers(t *testing.T) {
+	t.Parallel()
+	var document map[string]any
+	duplicate := []byte(`{"openapi":"3.1.0","openapi":"3.0.0","paths":{}}`)
+	if err := decodeJSONObject(duplicate, &document); err == nil ||
+		!strings.Contains(err.Error(), "duplicate JSON object member") {
+		t.Fatalf("duplicate JSON error = %v", err)
+	}
+	if err := decodeJSONObject(
+		make([]byte, maximumOpenAPIDocumentBytes+1),
+		&document,
+	); err == nil || !strings.Contains(err.Error(), "byte safety limit") {
+		t.Fatalf("oversized JSON error = %v", err)
+	}
+}
+
+func TestEquivalentJSONAndYAMLProduceIdenticalFragments(t *testing.T) {
+	t.Parallel()
+	jsonData := []byte(`{
+  "openapi": "3.1.0",
+  "info": {"title": "Parity API", "version": "1.0"},
+  "servers": [{"url": "https://api.example"}],
+  "components": {
+    "schemas": {
+      "Item": {
+        "type": "object",
+        "required": ["id"],
+        "properties": {"id": {"type": "integer"}},
+        "deprecated": false
+      }
+    }
+  },
+  "paths": {
+    "/items": {
+      "get": {
+        "operationId": "listItems",
+        "tags": ["items"],
+        "responses": {
+          "200": {
+            "description": "ok",
+            "content": {
+              "application/json": {
+                "schema": {"$ref": "#/components/schemas/Item"}
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}`)
+	yamlData := []byte(`openapi: 3.1.0
+info:
+  title: Parity API
+  version: "1.0"
+servers:
+  - url: https://api.example
+components:
+  schemas:
+    Item:
+      type: object
+      required: [id]
+      properties:
+        id:
+          type: integer
+      deprecated: false
+paths:
+  /items:
+    get:
+      operationId: listItems
+      tags: [items]
+      responses:
+        "200":
+          description: ok
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Item"
+`)
+
+	var jsonDocument, yamlDocument map[string]any
+	if err := decodeOpenAPIDocument(jsonData, documentFormatJSON, &jsonDocument); err != nil {
+		t.Fatalf("decode JSON: %v", err)
+	}
+	if err := decodeOpenAPIDocument(yamlData, documentFormatYAML, &yamlDocument); err != nil {
+		t.Fatalf("decode YAML: %v", err)
+	}
+	if !reflect.DeepEqual(jsonDocument, yamlDocument) {
+		t.Fatalf("canonical documents differ:\nJSON: %#v\nYAML: %#v", jsonDocument, yamlDocument)
+	}
+
+	file := pluginapi.FileRef{ArtifactID: "api", Path: "api/openapi.spec", SHA256: "sha"}
+	jsonFragment := rkcmodel.Fragment{}
+	yamlFragment := rkcmodel.Fragment{}
+	extractDocument(&jsonFragment, file, jsonDocument)
+	extractDocument(&yamlFragment, file, yamlDocument)
+	rkcmodel.SortFragment(&jsonFragment)
+	rkcmodel.SortFragment(&yamlFragment)
+	if !reflect.DeepEqual(jsonFragment, yamlFragment) {
+		t.Fatalf("equivalent JSON and YAML fragments differ:\nJSON: %#v\nYAML: %#v", jsonFragment, yamlFragment)
+	}
+}
+
+func TestExtractOpenAPIYAMLAndExternalReferenceIsolation(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	writeOpenAPITestFile(t, root, "api/openapi.yaml", `openapi: 3.1.0
+info:
+  title: YAML API
+  version: "1"
+paths:
+  /items:
+    get:
+      responses:
+        "200":
+          description: ok
+          content:
+            application/json:
+              schema:
+                $ref: https://example.invalid/schemas.json#/Item
+`)
+	fragment, err := Extract(Options{
+		Root: root,
+		Files: []pluginapi.FileRef{{
+			ArtifactID: "yaml-api",
+			Path:       "api/openapi.yaml",
+			SHA256:     "sha-yaml",
+		}},
+	})
+	if err != nil {
+		t.Fatalf("Extract() error = %v", err)
+	}
+	if len(fragment.Diagnostics) != 0 {
+		t.Fatalf("unexpected diagnostics: %#v", fragment.Diagnostics)
+	}
+	var serviceFound, endpointFound, externalUnresolved bool
+	for _, node := range fragment.Nodes {
+		serviceFound = serviceFound || node.Name == "YAML API"
+		endpointFound = endpointFound || node.Name == "GET /items"
+		if node.Kind == "unresolved_symbol" &&
+			node.Name == "https://example.invalid/schemas.json#/Item" {
+			externalUnresolved = true
+		}
+	}
+	if !serviceFound || !endpointFound || !externalUnresolved {
+		t.Fatalf(
+			"YAML extraction incomplete: service=%t endpoint=%t external unresolved=%t",
+			serviceFound,
+			endpointFound,
+			externalUnresolved,
+		)
+	}
+}
+
+func TestExtractOpenAPIRejectsUnsafeYAML(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name    string
+		content string
+		reason  string
+	}{
+		{
+			name:    "malformed",
+			content: "openapi: [\n",
+			reason:  "invalid OpenAPI YAML",
+		},
+		{
+			name: "duplicate key",
+			content: `openapi: 3.1.0
+openapi: 3.0.0
+paths: {}
+`,
+			reason: "mapping key",
+		},
+		{
+			name: "explicit tag",
+			content: `openapi: !!str 3.1.0
+paths: {}
+`,
+			reason: "explicit YAML tags are not supported",
+		},
+		{
+			name: "explicit non-specific tag",
+			content: `openapi: ! 3.1.0
+paths: {}
+`,
+			reason: "explicit YAML tags are not supported",
+		},
+		{
+			name: "alias bomb",
+			content: `openapi: 3.1.0
+seed: &seed [x, x, x, x]
+paths: *seed
+`,
+			reason: "YAML aliases are not supported",
+		},
+		{
+			name: "non-string key",
+			content: `openapi: 3.1.0
+1: value
+paths: {}
+`,
+			reason: "mapping keys must be strings",
+		},
+		{
+			name: "multiple documents",
+			content: `openapi: 3.1.0
+paths: {}
+---
+openapi: 3.0.0
+paths: {}
+`,
+			reason: "multiple YAML documents",
+		},
+		{
+			name: "non-finite number",
+			content: `openapi: 3.1.0
+extension: .inf
+paths: {}
+`,
+			reason: "non-finite floating-point scalars are not supported",
+		},
+	}
+
+	for _, test := range tests {
+		test := test
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			root := t.TempDir()
+			writeOpenAPITestFile(t, root, "openapi.yaml", test.content)
+			fragment, err := Extract(Options{
+				Root: root,
+				Files: []pluginapi.FileRef{{
+					ArtifactID: "unsafe-yaml",
+					Path:       "openapi.yaml",
+					SHA256:     "sha",
+				}},
+			})
+			if err != nil {
+				t.Fatalf("Extract() error = %v", err)
+			}
+			if len(fragment.Nodes) != 0 {
+				t.Fatalf("unsafe YAML produced %d nodes", len(fragment.Nodes))
+			}
+			if len(fragment.Diagnostics) != 1 ||
+				fragment.Diagnostics[0].Code != "RKC-API-1002" ||
+				!strings.Contains(fragment.Diagnostics[0].Message, test.reason) {
+				t.Fatalf(
+					"diagnostics = %#v, want RKC-API-1002 containing %q",
+					fragment.Diagnostics,
+					test.reason,
+				)
+			}
+		})
+	}
+}
+
+func TestYAMLConversionSafetyBoundaries(t *testing.T) {
+	t.Parallel()
+	var document map[string]any
+	if err := decodeYAMLObject(make([]byte, maximumYAMLBytes+1), &document); err == nil ||
+		!strings.Contains(err.Error(), "byte safety limit") {
+		t.Fatalf("oversized YAML error = %v", err)
+	}
+	if err := decodeYAMLObject([]byte("---\n"), &document); err == nil {
+		t.Fatal("empty YAML document was accepted")
+	}
+	if err := decodeYAMLObject([]byte("- item\n"), &document); err == nil ||
+		!strings.Contains(err.Error(), "root must be a mapping") {
+		t.Fatalf("sequence-root YAML error = %v", err)
+	}
+	if err := decodeOpenAPIDocument(nil, documentFormat("TOML"), &document); err == nil ||
+		!strings.Contains(err.Error(), "unsupported document format") {
+		t.Fatalf("unsupported document format error = %v", err)
+	}
+
+	converter := yamlConverter{nodes: maximumYAMLNodes}
+	if _, err := converter.convert(&yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str"}, 1); err == nil ||
+		!strings.Contains(err.Error(), "node safety limit") {
+		t.Fatalf("node-limit error = %v", err)
+	}
+	if _, err := (&yamlConverter{}).convert(nil, 1); err == nil {
+		t.Fatal("nil YAML node was accepted")
+	}
+	if _, err := (&yamlConverter{}).convert(
+		&yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str"},
+		maximumYAMLDepth+1,
+	); err == nil || !strings.Contains(err.Error(), "nesting limit") {
+		t.Fatalf("depth-limit error = %v", err)
+	}
+	if _, err := (&yamlConverter{}).convert(&yaml.Node{Kind: yaml.DocumentNode}, 1); err == nil ||
+		!strings.Contains(err.Error(), "unsupported YAML node") {
+		t.Fatalf("unsupported-node error = %v", err)
+	}
+	if _, err := (&yamlConverter{}).convert(
+		&yaml.Node{
+			Kind:    yaml.MappingNode,
+			Content: []*yaml.Node{{Kind: yaml.ScalarNode, Tag: "!!str", Value: "key"}},
+		},
+		1,
+	); err == nil || !strings.Contains(err.Error(), "unmatched key") {
+		t.Fatalf("unmatched-key error = %v", err)
+	}
+	deepFlow := []byte(strings.Repeat("[", maximumYAMLDepth+1) +
+		"0" + strings.Repeat("]", maximumYAMLDepth+1))
+	if err := decodeYAMLObject(deepFlow, &document); err == nil ||
+		!strings.Contains(err.Error(), "flow nesting limit") {
+		t.Fatalf("deep-flow preflight error = %v", err)
+	}
+	deepIndent := strings.Builder{}
+	for depth := 0; depth <= maximumYAMLDepth; depth++ {
+		deepIndent.WriteString(strings.Repeat(" ", depth))
+		deepIndent.WriteString("key:\n")
+	}
+	if err := decodeYAMLObject([]byte(deepIndent.String()), &document); err == nil ||
+		!strings.Contains(err.Error(), "nesting limit") {
+		t.Fatalf("deep-indent preflight error = %v", err)
+	}
+}
+
+func TestYAMLScalarCanonicalization(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name    string
+		node    yaml.Node
+		want    any
+		wantErr string
+	}{
+		{name: "string", node: yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: "value"}, want: "value"},
+		{name: "null", node: yaml.Node{Kind: yaml.ScalarNode, Tag: "!!null", Value: "null"}, want: nil},
+		{name: "boolean", node: yaml.Node{Kind: yaml.ScalarNode, Tag: "!!bool", Value: "TRUE"}, want: true},
+		{name: "integer", node: yaml.Node{Kind: yaml.ScalarNode, Tag: "!!int", Value: "0x10"}, want: json.Number("16")},
+		{name: "leading-zero-decimal", node: yaml.Node{Kind: yaml.ScalarNode, Tag: "!!int", Value: "0123"}, want: json.Number("123")},
+		{name: "timestamp-as-string", node: yaml.Node{Kind: yaml.ScalarNode, Tag: "!!timestamp", Value: "2026-07-27"}, want: "2026-07-27"},
+		{name: "float-leading-dot", node: yaml.Node{Kind: yaml.ScalarNode, Tag: "!!float", Value: "+.5"}, want: json.Number("0.5")},
+		{name: "float-trailing-dot", node: yaml.Node{Kind: yaml.ScalarNode, Tag: "!!float", Value: "1."}, want: json.Number("1.0")},
+		{name: "negative-leading-dot", node: yaml.Node{Kind: yaml.ScalarNode, Tag: "!!float", Value: "-.5"}, want: json.Number("-0.5")},
+		{name: "invalid-boolean", node: yaml.Node{Kind: yaml.ScalarNode, Tag: "!!bool", Value: "sometimes"}, wantErr: "invalid boolean"},
+		{name: "invalid-integer", node: yaml.Node{Kind: yaml.ScalarNode, Tag: "!!int", Value: "0xno"}, wantErr: "invalid integer"},
+		{name: "overflowing-float", node: yaml.Node{Kind: yaml.ScalarNode, Tag: "!!float", Value: "1e999"}, wantErr: "invalid floating-point"},
+		{name: "non-json-float", node: yaml.Node{Kind: yaml.ScalarNode, Tag: "!!float", Value: "01.5"}, wantErr: "not JSON-compatible"},
+		{name: "custom-tag", node: yaml.Node{Kind: yaml.ScalarNode, Tag: "!custom", Value: "value"}, wantErr: "unsupported scalar tag"},
+	}
+	for _, test := range tests {
+		test := test
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			got, err := (&yamlConverter{}).convertScalar(&test.node)
+			if test.wantErr != "" {
+				if err == nil || !strings.Contains(err.Error(), test.wantErr) {
+					t.Fatalf("convertScalar() error = %v, want %q", err, test.wantErr)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("convertScalar() error = %v", err)
+			}
+			if !reflect.DeepEqual(got, test.want) {
+				t.Fatalf("convertScalar() = %#v, want %#v", got, test.want)
+			}
+		})
+	}
+}
+
+func TestOpenAPIEscapedComponentPointersResolve(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	writeOpenAPITestFile(t, root, "openapi.json", `{
+  "openapi": "3.1.0",
+  "info": {"title": "Pointer API", "version": "1"},
+  "paths": {
+    "/item": {
+      "get": {
+        "responses": {
+          "200": {
+            "description": "ok",
+            "content": {
+              "application/json": {
+                "schema": {"$ref": "#/components/schemas/A~1B~0C"}
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "A/B~C": {"type": "object"}
+    }
+  }
+}`)
+	fragment, err := Extract(Options{
+		Root: root,
+		Files: []pluginapi.FileRef{{
+			ArtifactID: "pointer-api", Path: "openapi.json", SHA256: "sha",
+		}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, edge := range fragment.Edges {
+		if edge.Kind == "serializes" {
+			if edge.Resolution != "declared" {
+				t.Fatalf("escaped pointer edge = %+v", edge)
+			}
+			return
+		}
+	}
+	t.Fatal("escaped component pointer produced no serialization edge")
+}
+
 func TestExtractOpenAPIRejectsPathsOutsideRoot(t *testing.T) {
 	t.Parallel()
 	parent := t.TempDir()
@@ -185,8 +600,14 @@ func TestExtractOpenAPIRejectsPathsOutsideRoot(t *testing.T) {
 
 func TestOpenAPIHelpersBoundaries(t *testing.T) {
 	t.Parallel()
-	if !likelyOpenAPIPath("SWAGGER.JSON") || !likelyOpenAPIPath("my-openapi.json") || likelyOpenAPIPath("api.json") {
+	if !likelyOpenAPIPath("SWAGGER.YAML") || !likelyOpenAPIPath("my-openapi.json") || likelyOpenAPIPath("api.json") {
 		t.Error("likelyOpenAPIPath classification mismatch")
+	}
+	if got := documentFormatForPath("api/openapi.YML"); got != documentFormatYAML {
+		t.Errorf("YML document format = %q, want YAML", got)
+	}
+	if got := documentFormatForPath("api/openapi.json"); got != documentFormatJSON {
+		t.Errorf("JSON document format = %q, want JSON", got)
 	}
 	if isOpenAPI(map[string]any{"openapi": "3.1.0", "paths": map[string]any{}}) {
 		t.Error("document with no paths classified as OpenAPI surface")

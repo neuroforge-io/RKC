@@ -75,6 +75,58 @@ func ValidateRunID(runID string) error {
 	return nil
 }
 
+// ValidateJournalRootPrivacy verifies that path is a stable, non-symlink
+// directory protected according to the native platform policy. Unix requires
+// owner-only permission bits. Windows requires a protected DACL whose only
+// access-control entry grants the current user full control.
+func ValidateJournalRootPrivacy(path string) error {
+	return validateJournalPathPrivacy(path, true)
+}
+
+// ValidateJournalFilePrivacy verifies that path is a stable, non-symlink
+// regular file protected according to the native platform policy.
+func ValidateJournalFilePrivacy(path string) error {
+	return validateJournalPathPrivacy(path, false)
+}
+
+func validateJournalPathPrivacy(path string, directory bool) error {
+	if path == "" || path != strings.TrimSpace(path) {
+		return errors.New("scheduler journal path is required without surrounding whitespace")
+	}
+	absolute, err := filepath.Abs(path)
+	if err != nil {
+		return fmt.Errorf("resolve scheduler journal path: %w", err)
+	}
+	if err := rejectFileCacheSymlinks(absolute); err != nil {
+		return fmt.Errorf("validate scheduler journal path: %w", err)
+	}
+	identity, err := os.Lstat(absolute)
+	if err != nil {
+		return fmt.Errorf("stat scheduler journal path: %w", err)
+	}
+	if identity.Mode()&os.ModeSymlink != 0 ||
+		identity.IsDir() != directory ||
+		!directory && !identity.Mode().IsRegular() {
+		if directory {
+			return errors.New("scheduler journal root is not a non-symlink directory")
+		}
+		return errors.New("scheduler journal is not a non-symlink regular file")
+	}
+	if directory {
+		err = validateJournalRootPrivacy(absolute, identity)
+	} else {
+		err = validateJournalFilePrivacy(absolute, identity)
+	}
+	if err != nil {
+		return err
+	}
+	current, err := os.Lstat(absolute)
+	if err != nil || !os.SameFile(identity, current) {
+		return errors.New("scheduler journal identity changed while validating privacy")
+	}
+	return nil
+}
+
 // OpenFileJournal atomically creates a new journal. Existing run IDs are never
 // overwritten or resumed implicitly.
 func OpenFileJournal(root, runID string) (*FileJournal, error) {
@@ -88,7 +140,7 @@ func OpenFileJournal(root, runID string) (*FileJournal, error) {
 	if err != nil {
 		return nil, fmt.Errorf("resolve scheduler journal root: %w", err)
 	}
-	if err := os.MkdirAll(absolute, 0o700); err != nil {
+	if err := createJournalRoot(absolute); err != nil {
 		return nil, fmt.Errorf("create scheduler journal root: %w", err)
 	}
 	if err := rejectFileCacheSymlinks(absolute); err != nil {
@@ -101,8 +153,8 @@ func OpenFileJournal(root, runID string) (*FileJournal, error) {
 	if rootIdentity.Mode()&os.ModeSymlink != 0 || !rootIdentity.IsDir() {
 		return nil, errors.New("scheduler journal root is not a non-symlink directory")
 	}
-	if rootIdentity.Mode().Perm()&0o077 != 0 {
-		return nil, errors.New("scheduler journal root must be accessible only by its owner")
+	if err := secureJournalRoot(absolute, rootIdentity); err != nil {
+		return nil, fmt.Errorf("secure scheduler journal root: %w", err)
 	}
 	path := filepath.Join(absolute, runID+".jsonl")
 	file, err := os.OpenFile(path, os.O_WRONLY|os.O_APPEND|os.O_CREATE|os.O_EXCL, 0o600)
@@ -120,12 +172,15 @@ func OpenFileJournal(root, runID string) (*FileJournal, error) {
 	if err != nil || !fileIdentity.Mode().IsRegular() {
 		return nil, errors.New("scheduler journal is not a regular file")
 	}
+	if err := secureJournalFile(path, fileIdentity); err != nil {
+		return nil, fmt.Errorf("secure scheduler journal file: %w", err)
+	}
 	current, err := os.Lstat(path)
 	if err != nil || current.Mode()&os.ModeSymlink != 0 ||
 		!current.Mode().IsRegular() || !os.SameFile(fileIdentity, current) {
 		return nil, errors.New("scheduler journal identity changed during creation")
 	}
-	if err := syncStableCacheDirectory(absolute, rootIdentity); err != nil {
+	if err := syncStableJournalDirectory(absolute, rootIdentity); err != nil {
 		return nil, fmt.Errorf("sync scheduler journal root: %w", err)
 	}
 	keep = true
@@ -309,6 +364,9 @@ func (journal *FileJournal) validateIdentity() error {
 		!os.SameFile(journal.rootIdentity, root) {
 		return errors.New("scheduler journal root identity changed")
 	}
+	if err := validateJournalRootPrivacy(journal.root, root); err != nil {
+		return err
+	}
 	opened, err := journal.file.Stat()
 	if err != nil || !opened.Mode().IsRegular() ||
 		!os.SameFile(journal.fileIdentity, opened) {
@@ -318,6 +376,9 @@ func (journal *FileJournal) validateIdentity() error {
 	if err != nil || current.Mode()&os.ModeSymlink != 0 ||
 		!current.Mode().IsRegular() || !os.SameFile(journal.fileIdentity, current) {
 		return errors.New("scheduler journal pathname identity changed")
+	}
+	if err := validateJournalFilePrivacy(journal.path, current); err != nil {
+		return err
 	}
 	return nil
 }
@@ -352,16 +413,16 @@ func ReadFileJournal(path string) (JournalReport, error) {
 		return JournalReport{}, fmt.Errorf("open scheduler journal: %w", err)
 	}
 	defer file.Close()
-	if identity.Mode().Perm()&0o077 != 0 {
-		return JournalReport{}, errors.New("scheduler journal file must be accessible only by its owner")
+	if err := validateJournalFilePrivacy(absolute, identity); err != nil {
+		return JournalReport{}, err
 	}
 	parent := filepath.Dir(absolute)
 	parentIdentity, err := os.Lstat(parent)
 	if err != nil || parentIdentity.Mode()&os.ModeSymlink != 0 || !parentIdentity.IsDir() {
 		return JournalReport{}, errors.New("scheduler journal parent is not a non-symlink directory")
 	}
-	if parentIdentity.Mode().Perm()&0o077 != 0 {
-		return JournalReport{}, errors.New("scheduler journal parent must be accessible only by its owner")
+	if err := validateJournalRootPrivacy(parent, parentIdentity); err != nil {
+		return JournalReport{}, err
 	}
 	if identity.Size() > maximumJournalFileBytes {
 		return JournalReport{}, fmt.Errorf("scheduler journal exceeds %d bytes", maximumJournalFileBytes)
@@ -465,6 +526,17 @@ func ReadFileJournal(path string) (JournalReport, error) {
 	}
 	if err := validateStableCacheRead(absolute, file, identity, identity.Size()); err != nil {
 		return JournalReport{}, fmt.Errorf("validate scheduler journal replay: %w", err)
+	}
+	currentParent, err := os.Lstat(parent)
+	if err != nil || currentParent.Mode()&os.ModeSymlink != 0 ||
+		!currentParent.IsDir() || !os.SameFile(parentIdentity, currentParent) {
+		return JournalReport{}, errors.New("scheduler journal parent identity changed while reading")
+	}
+	if err := validateJournalRootPrivacy(parent, currentParent); err != nil {
+		return JournalReport{}, err
+	}
+	if err := validateJournalFilePrivacy(absolute, identity); err != nil {
+		return JournalReport{}, err
 	}
 	return report, nil
 }

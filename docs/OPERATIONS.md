@@ -58,6 +58,36 @@ The team service is not implemented in this reference release.
 Published snapshots are immutable. The `current` pointer is atomically replaced
 after validation.
 
+## Scheduler run journals
+
+Scans that pass configuration, acquisition, and path validation write one
+append-only JSONL journal beneath the platform user-cache directory, normally
+`$XDG_CACHE_HOME/rkc/runs` on Linux. The directory and records are owner-only.
+A run ID is a random canonical 128-bit identifier; opening an existing
+identifier is refused. The terminal run result is delayed until policy checks
+and all configured SQLite, atlas, and snapshot publications finish.
+
+```sh
+rkc runs list
+rkc runs list --limit 20 --json
+rkc runs show '<run-id>'
+```
+
+Inspection is read-only and strict: record schema, run binding, sequence,
+plan binding, lifecycle transitions, and the digest chain are replayed before
+output is returned. Listing is bounded to 1–1000 newest candidates and reports
+invalid or concurrently changing entries individually without hiding healthy
+runs; `show` validates only the requested run. A crash-truncated final fragment is reported as an
+interrupted nonterminal prefix; a complete malformed or checksum-invalid
+record fails closed. `scan --runs-dir` selects an explicit owner-only location,
+which must remain disjoint from the repository, generated atlas, snapshot
+store, SQLite database, and stage cache.
+
+Unix ownership bits are runtime-tested. The native Windows path applies a
+protected current-user-only DACL and cross-compiles in CI-oriented checks; a
+real Windows runtime gate remains required before calling that platform proof
+complete.
+
 ## Backup
 
 For the filesystem reference store:

@@ -7,6 +7,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strings"
 	"sync"
@@ -208,6 +209,51 @@ func TestExecutePersistsExactJournalLifecycle(t *testing.T) {
 			t.Fatalf("cancelled journal state = %q", report.State)
 		}
 	})
+}
+
+func TestExecuteCanDeferJournalCompletionToOwningCommand(t *testing.T) {
+	const outputDigest = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	root := t.TempDir()
+	journal := openTestJournal(t, root, testRunID)
+	_, err := Execute(context.Background(), []Stage{{
+		ID: "stage", Version: "v1",
+		Run: func(context.Context, Inputs) (Result, error) {
+			return Result{ObjectDigest: outputDigest}, nil
+		},
+	}}, Options{
+		RunID:                  testRunID,
+		Journal:                journal,
+		DeferJournalCompletion: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	prefix, err := ReadFileJournal(journal.Path())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if prefix.Terminal || prefix.State != JournalStateRunning ||
+		len(prefix.Records) != 3 {
+		t.Fatalf("deferred journal prefix = %+v", prefix)
+	}
+	appendTestRecord(t, journal, JournalRecord{
+		RunID: testRunID,
+		Kind:  JournalKindRun,
+		State: JournalStateFailed,
+		Error: "atlas publication failed",
+	})
+	path := journal.Path()
+	if err := journal.Close(); err != nil {
+		t.Fatal(err)
+	}
+	report, err := ReadFileJournal(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !report.Terminal || report.State != JournalStateFailed ||
+		report.Records[len(report.Records)-1].Error != "atlas publication failed" {
+		t.Fatalf("command-owned journal result = %+v", report)
+	}
 }
 
 func TestFileJournalRejectsInvalidStateTransitions(t *testing.T) {
@@ -453,11 +499,19 @@ func TestOpenFileJournalSecurityAndPermissions(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if got := rootInfo.Mode().Perm(); got != 0o700 {
-			t.Fatalf("journal root mode = %#o, want 0700", got)
+		if err := ValidateJournalRootPrivacy(root); err != nil {
+			t.Fatalf("ValidateJournalRootPrivacy() = %v", err)
 		}
-		if got := fileInfo.Mode().Perm(); got != 0o600 {
-			t.Fatalf("journal file mode = %#o, want 0600", got)
+		if err := ValidateJournalFilePrivacy(journal.Path()); err != nil {
+			t.Fatalf("ValidateJournalFilePrivacy() = %v", err)
+		}
+		if runtime.GOOS != "windows" {
+			if got := rootInfo.Mode().Perm(); got != 0o700 {
+				t.Fatalf("journal root mode = %#o, want 0700", got)
+			}
+			if got := fileInfo.Mode().Perm(); got != 0o600 {
+				t.Fatalf("journal file mode = %#o, want 0600", got)
+			}
 		}
 		if err := journal.Close(); err != nil {
 			t.Fatal(err)
@@ -529,8 +583,38 @@ func TestOpenFileJournalSecurityAndPermissions(t *testing.T) {
 		if err := os.Chmod(root, 0o755); err != nil {
 			t.Fatal(err)
 		}
-		if _, err := OpenFileJournal(root, testRunID); err == nil {
+		journal, err := OpenFileJournal(root, testRunID)
+		if runtime.GOOS == "windows" {
+			if err != nil {
+				t.Fatalf("OpenFileJournal did not protect an existing Windows root: %v", err)
+			}
+			if privacyErr := ValidateJournalRootPrivacy(root); privacyErr != nil {
+				_ = journal.Close()
+				t.Fatalf("protected Windows root = %v", privacyErr)
+			}
+			if closeErr := journal.Close(); closeErr != nil {
+				t.Fatal(closeErr)
+			}
+		} else if err == nil {
+			_ = journal.Close()
 			t.Fatal("OpenFileJournal accepted a group/world-accessible root")
+		}
+	})
+
+	t.Run("privacy validators reject wrong path types", func(t *testing.T) {
+		root := t.TempDir()
+		file := filepath.Join(root, "file")
+		if err := os.WriteFile(file, nil, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if err := ValidateJournalRootPrivacy(file); err == nil {
+			t.Fatal("ValidateJournalRootPrivacy accepted a file")
+		}
+		if err := ValidateJournalFilePrivacy(root); err == nil {
+			t.Fatal("ValidateJournalFilePrivacy accepted a directory")
+		}
+		if err := ValidateJournalFilePrivacy(" " + file); err == nil {
+			t.Fatal("ValidateJournalFilePrivacy accepted surrounding whitespace")
 		}
 	})
 }

@@ -53,7 +53,7 @@ types, and resolved symbols.
 ## Framework behavior
 
 - Markdown: heading tree, sections, internal/external links, fenced-code metadata;
-- OpenAPI: JSON services, paths, operations, parameters, responses, schemas,
+- OpenAPI: bounded JSON/YAML services, paths, operations, parameters, responses, schemas,
   security schemes, serialization relations, and unresolved `$ref` records;
 - JSON Schema: schemas, properties, definitions, required/type/format metadata,
   and references;
@@ -62,7 +62,7 @@ types, and resolved symbols.
 - environment files: keys, defaults, required state, and secret likelihood;
 - security: deterministic high-signal credential patterns and redacted exports.
 
-YAML OpenAPI, deeper Docker/Compose/Kubernetes interpretation, SQL, protobuf,
+Cross-file OpenAPI reference resolution, deeper Docker/Compose/Kubernetes interpretation, SQL, protobuf,
 GraphQL, Terraform, and CI workflows remain production work.
 
 ## Canonical and derived output

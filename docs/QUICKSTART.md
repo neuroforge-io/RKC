@@ -122,6 +122,22 @@ identity and canonical digest. The scheduler admits concurrent stages within
 the `--stage-workers` and `--stage-memory-mib` bounds; the safe defaults are
 four workers and a 2048 MiB aggregate admission budget.
 
+Each scan that reaches DAG execution durably records its scheduler and final
+publication outcome in the operating system's owner-only user-cache location,
+and prints both `run_id` and `run_journal` in JSON mode. The journal is outside
+the repository and atlas, is never overwritten, and is closed and strictly
+replayed before a successful scan returns. Inspect it with:
+
+```sh
+./bin/rkc runs list
+./bin/rkc runs show '<run-id>'
+./bin/rkc runs show --json '<run-id>'
+```
+
+Use the same `--runs-dir /owner-only/path` override on `scan`, `runs list`, and
+`runs show` when durable operational state must live somewhere other than the
+platform user-cache directory.
+
 This still performs deterministic Go and JavaScript/TypeScript syntax
 analysis, framework and document extraction, secret-pattern detection, graph
 construction, search indexing, and every configured export. If

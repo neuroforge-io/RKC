@@ -37,7 +37,7 @@ func runPlan(args []string) error {
 	noTypeScript := fs.Bool("no-typescript", !cfg.Plugins.TypeScriptSyntax.Enabled, "disable JavaScript and TypeScript syntax")
 	noFrameworks := fs.Bool("no-frameworks", !cfg.Frameworks.Enabled, "disable deterministic framework extractors")
 	noMarkdown := fs.Bool("no-markdown", !cfg.Frameworks.Markdown, "disable Markdown extraction")
-	noOpenAPI := fs.Bool("no-openapi", !cfg.Frameworks.OpenAPIJSON, "disable JSON OpenAPI extraction")
+	noOpenAPI := fs.Bool("no-openapi", !cfg.Frameworks.OpenAPIJSON, "disable OpenAPI JSON/YAML extraction")
 	noJSONSchema := fs.Bool("no-json-schema", !cfg.Frameworks.JSONSchema, "disable JSON Schema extraction")
 	noManifests := fs.Bool("no-manifests", !cfg.Frameworks.PackageManifests, "disable package manifests")
 	noEnvKeys := fs.Bool("no-env-keys", !cfg.Frameworks.EnvironmentFiles, "disable environment key extraction")

@@ -70,6 +70,8 @@ func dispatch(args []string) error {
 		return runPlugins(args[1:])
 	case "cache":
 		return runCache(args[1:])
+	case "runs":
+		return runRuns(args[1:])
 	case "version", "--version", "-version":
 		if len(args) != 1 {
 			return errors.New("version does not accept arguments")
@@ -122,6 +124,7 @@ Storage and extension:
   snapshots    List, show, export, select, or recover snapshots
   plugins      List, validate, lock, or verify plugin manifests
   cache        Inspect, verify, or prune the incremental stage cache
+  runs         List or strictly inspect durable scheduler run journals
 
 Other:
   version      Print the RKC version

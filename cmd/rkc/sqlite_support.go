@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/neuroforge-io/RKC/internal/safeoutput"
 	"github.com/neuroforge-io/RKC/internal/server"
 	sqlitestore "github.com/neuroforge-io/RKC/internal/storage/sqlite"
 	"github.com/neuroforge-io/RKC/pkg/rkcmodel"
@@ -156,7 +157,7 @@ func canonicalSQLitePath(path string) (string, error) {
 	if path == "" || path != strings.TrimSpace(path) {
 		return "", errors.New("SQLite database path is required without surrounding whitespace")
 	}
-	absolute, err := filepath.Abs(path)
+	absolute, err := safeoutput.ResolveTarget(path, "")
 	if err != nil {
 		return "", fmt.Errorf("resolve SQLite database path: %w", err)
 	}

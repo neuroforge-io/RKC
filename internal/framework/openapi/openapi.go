@@ -1,6 +1,5 @@
-// Package openapi extracts deterministic API surfaces from JSON OpenAPI and
-// Swagger documents. YAML support belongs in a parser-backed adapter rather
-// than a collection of indentation guesses wearing a standards badge.
+// Package openapi extracts deterministic API surfaces from JSON and YAML
+// OpenAPI and Swagger documents.
 package openapi
 
 import (
@@ -19,8 +18,8 @@ import (
 )
 
 const (
-	PluginID      = "rkc.openapi-json"
-	PluginVersion = "0.2.0"
+	PluginID      = "rkc.openapi"
+	PluginVersion = "0.3.0"
 )
 
 var operations = []string{"get", "put", "post", "delete", "options", "head", "patch", "trace"}
@@ -30,23 +29,25 @@ type Options struct {
 	Files []pluginapi.FileRef
 }
 
-// Extract parses candidate JSON files and ignores ordinary JSON documents. A
-// malformed file whose name strongly suggests OpenAPI produces a diagnostic;
-// unrelated malformed JSON remains someone else's problem.
+// Extract parses candidate JSON and YAML files and ignores ordinary documents.
+// A malformed file whose name strongly suggests OpenAPI produces a diagnostic;
+// unrelated malformed documents remain someone else's problem.
 func Extract(options Options) (rkcmodel.Fragment, error) {
 	fragment := rkcmodel.Fragment{}
 	files := append([]pluginapi.FileRef(nil), options.Files...)
 	sort.Slice(files, func(i, j int) bool { return files[i].Path < files[j].Path })
 	for _, file := range files {
-		data, err := sourcepath.ReadFile(options.Root, file.Path)
+		format := documentFormatForPath(file.Path)
+		data, err := readOpenAPICandidate(options.Root, file.Path)
 		if err != nil {
 			fragment.Diagnostics = append(fragment.Diagnostics, diagnostic(file, "RKC-API-1001", err.Error(), "error"))
 			continue
 		}
 		var document map[string]any
-		if err := decodeJSONObject(data, &document); err != nil {
+		if err := decodeOpenAPIDocument(data, format, &document); err != nil {
 			if likelyOpenAPIPath(file.Path) {
-				fragment.Diagnostics = append(fragment.Diagnostics, diagnostic(file, "RKC-API-1002", "invalid OpenAPI JSON: "+err.Error(), "error"))
+				message := fmt.Sprintf("invalid OpenAPI %s: %v", format, err)
+				fragment.Diagnostics = append(fragment.Diagnostics, diagnostic(file, "RKC-API-1002", message, "error"))
 			}
 			continue
 		}
@@ -59,7 +60,60 @@ func Extract(options Options) (rkcmodel.Fragment, error) {
 	return fragment, nil
 }
 
+func readOpenAPICandidate(root, path string) ([]byte, error) {
+	input, err := sourcepath.OpenRegular(root, path)
+	if err != nil {
+		return nil, err
+	}
+	defer input.Close()
+	data, err := io.ReadAll(io.LimitReader(input, maximumOpenAPIDocumentBytes+1))
+	if err != nil {
+		return nil, fmt.Errorf("read source path %q: %w", path, err)
+	}
+	if len(data) > maximumOpenAPIDocumentBytes {
+		return nil, fmt.Errorf(
+			"source path %q exceeds %d-byte OpenAPI safety limit",
+			path,
+			maximumOpenAPIDocumentBytes,
+		)
+	}
+	return data, nil
+}
+
+type documentFormat string
+
+const (
+	documentFormatJSON documentFormat = "JSON"
+	documentFormatYAML documentFormat = "YAML"
+)
+
+func documentFormatForPath(path string) documentFormat {
+	switch strings.ToLower(filepath.Ext(path)) {
+	case ".yaml", ".yml":
+		return documentFormatYAML
+	default:
+		return documentFormatJSON
+	}
+}
+
+func decodeOpenAPIDocument(data []byte, format documentFormat, document *map[string]any) error {
+	switch format {
+	case documentFormatJSON:
+		return decodeJSONObject(data, document)
+	case documentFormatYAML:
+		return decodeYAMLObject(data, document)
+	default:
+		return fmt.Errorf("unsupported document format %q", format)
+	}
+}
+
 func decodeJSONObject(data []byte, document *map[string]any) error {
+	if len(data) > maximumOpenAPIDocumentBytes {
+		return fmt.Errorf("document exceeds %d-byte safety limit", maximumOpenAPIDocumentBytes)
+	}
+	if err := rejectDuplicateJSONMembers(data); err != nil {
+		return err
+	}
 	decoder := json.NewDecoder(bytes.NewReader(data))
 	decoder.UseNumber()
 	if err := decoder.Decode(document); err != nil {
@@ -70,6 +124,76 @@ func decodeJSONObject(data []byte, document *map[string]any) error {
 		return errors.New("multiple JSON values")
 	} else if !errors.Is(err, io.EOF) {
 		return fmt.Errorf("invalid trailing data: %w", err)
+	}
+	return nil
+}
+
+func rejectDuplicateJSONMembers(data []byte) error {
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.UseNumber()
+	var consume func() error
+	consume = func() error {
+		token, err := decoder.Token()
+		if err != nil {
+			return err
+		}
+		delimiter, ok := token.(json.Delim)
+		if !ok {
+			return nil
+		}
+		switch delimiter {
+		case '{':
+			seen := map[string]struct{}{}
+			for decoder.More() {
+				keyToken, err := decoder.Token()
+				if err != nil {
+					return err
+				}
+				key, ok := keyToken.(string)
+				if !ok {
+					return errors.New("JSON object key is not a string")
+				}
+				if _, duplicate := seen[key]; duplicate {
+					return fmt.Errorf("duplicate JSON object member %q", key)
+				}
+				seen[key] = struct{}{}
+				if err := consume(); err != nil {
+					return err
+				}
+			}
+			closing, err := decoder.Token()
+			if err != nil {
+				return err
+			}
+			if closing != json.Delim('}') {
+				return errors.New("JSON object is not terminated")
+			}
+		case '[':
+			for decoder.More() {
+				if err := consume(); err != nil {
+					return err
+				}
+			}
+			closing, err := decoder.Token()
+			if err != nil {
+				return err
+			}
+			if closing != json.Delim(']') {
+				return errors.New("JSON array is not terminated")
+			}
+		default:
+			return errors.New("unexpected JSON closing delimiter")
+		}
+		return nil
+	}
+	if err := consume(); err != nil {
+		return err
+	}
+	if _, err := decoder.Token(); !errors.Is(err, io.EOF) {
+		if err == nil {
+			return errors.New("multiple JSON values")
+		}
+		return err
 	}
 	return nil
 }
@@ -136,13 +260,15 @@ func extractSchemas(fragment *rkcmodel.Fragment, file pluginapi.FileRef, service
 			},
 		})
 		fragment.Edges = append(fragment.Edges, edge("declares", serviceID, id, "declared", evidenceID, nil))
-		result["#/components/schemas/"+name] = id
-		result["#/definitions/"+name] = id
+		pointerName := escapeJSONPointer(name)
+		result["#/components/schemas/"+pointerName] = id
+		result["#/definitions/"+pointerName] = id
 	}
 	for _, name := range sortedKeys(items) {
-		from := result["#/components/schemas/"+name]
+		pointerName := escapeJSONPointer(name)
+		from := result["#/components/schemas/"+pointerName]
 		if from == "" {
-			from = result["#/definitions/"+name]
+			from = result["#/definitions/"+pointerName]
 		}
 		refs := collectRefs(items[name])
 		for _, ref := range refs {

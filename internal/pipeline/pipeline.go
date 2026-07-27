@@ -80,6 +80,12 @@ type Options struct {
 	StageWorkers   int
 	ResourceBudget scheduler.ResourceBudget
 
+	// RunID and Journal enable durable scheduler lifecycle recording. They must
+	// either both be zero-valued or identify the same journal-bound run.
+	RunID                  string
+	Journal                scheduler.Journal
+	DeferJournalCompletion bool
+
 	// OnStageEvent receives deterministic scheduler lifecycle events. Callers
 	// must return quickly; callbacks are serialized across concurrent stages.
 	OnStageEvent func(scheduler.Event)
@@ -209,8 +215,9 @@ func scanSequential(ctx context.Context, opts Options) (rkcmodel.Bundle, rkcmode
 			}
 		}
 		jsonFiles := filterFiles(files, func(file pluginapi.FileRef) bool { return file.Language == "json" })
-		if !opts.DisableOpenAPI && len(jsonFiles) > 0 {
-			fragment, extractErr := openapi.Extract(openapi.Options{Root: root, Files: jsonFiles})
+		openAPIFiles := filterFiles(files, isOpenAPICacheInput)
+		if !opts.DisableOpenAPI && len(openAPIFiles) > 0 {
+			fragment, extractErr := openapi.Extract(openapi.Options{Root: root, Files: openAPIFiles})
 			handleFragment(&bundle, fragment, extractErr, "RKC-API-2001", openapi.PluginID)
 		}
 		if !opts.DisableJSONSchema && len(jsonFiles) > 0 {

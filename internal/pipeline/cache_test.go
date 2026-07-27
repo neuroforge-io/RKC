@@ -142,6 +142,87 @@ func TestStageCacheWarmReuseSelectiveInvalidationAndCleanEquivalence(t *testing.
 	}
 }
 
+func TestOpenAPIYAMLScanAndCacheInvalidation(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "api", "openapi.yaml")
+	writeSpec := func(route string) {
+		mustWritePipelineFile(t, path, `openapi: 3.1.0
+info:
+  title: YAML Fixture
+  version: "1"
+paths:
+  `+route+`:
+    get:
+      responses:
+        "200":
+          description: ok
+`)
+	}
+	writeSpec("/one")
+	cache, err := OpenStageCache(filepath.Join(t.TempDir(), "stage-cache"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	options := Options{
+		Root: root, ToolVersion: "yaml-cache-test", Cache: cache,
+		DisablePlugins: true, DisableMarkdown: true, DisableJSONSchema: true,
+		DisableManifests: true, DisableEnvKeys: true, DisableSecretScan: true,
+	}
+	first, firstCoverage, err := Scan(context.Background(), options)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bundleContainsNode(first, "api_endpoint", "GET /one") {
+		t.Fatalf("YAML OpenAPI endpoint missing from first scan: %+v", first.Nodes)
+	}
+	var warmEvents []scheduler.Event
+	options.OnStageEvent = func(event scheduler.Event) {
+		warmEvents = append(warmEvents, event)
+	}
+	warm, warmCoverage, err := Scan(context.Background(), options)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !containsStringValue(cachedStages(warmEvents), "openapi") {
+		t.Fatalf("warm YAML OpenAPI stage was not cached: %+v", warmEvents)
+	}
+	requireCanonicalScanEquality(t, first, firstCoverage, warm, warmCoverage)
+
+	writeSpec("/two")
+	var changedEvents []scheduler.Event
+	options.OnStageEvent = func(event scheduler.Event) {
+		changedEvents = append(changedEvents, event)
+	}
+	changed, changedCoverage, err := Scan(context.Background(), options)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if containsStringValue(cachedStages(changedEvents), "openapi") {
+		t.Fatalf("edited YAML OpenAPI stage reused stale cache: %+v", changedEvents)
+	}
+	if !bundleContainsNode(changed, "api_endpoint", "GET /two") ||
+		bundleContainsNode(changed, "api_endpoint", "GET /one") {
+		t.Fatalf("edited YAML OpenAPI output is stale: %+v", changed.Nodes)
+	}
+	cleanOptions := options
+	cleanOptions.Cache = nil
+	cleanOptions.OnStageEvent = nil
+	clean, cleanCoverage, err := Scan(context.Background(), cleanOptions)
+	if err != nil {
+		t.Fatal(err)
+	}
+	requireCanonicalScanEquality(t, changed, changedCoverage, clean, cleanCoverage)
+}
+
+func bundleContainsNode(bundle rkcmodel.Bundle, kind, name string) bool {
+	for _, node := range bundle.Nodes {
+		if node.Kind == kind && node.Name == name {
+			return true
+		}
+	}
+	return false
+}
+
 func TestStageCacheRejectsCorruptAndMalformedPayloadsThenRecomputes(t *testing.T) {
 	root := t.TempDir()
 	mustWritePipelineFile(t, filepath.Join(root, "main.go"), "package fixture\n\nfunc Run() {}\n")

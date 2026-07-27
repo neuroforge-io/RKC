@@ -227,7 +227,8 @@
           "type": "boolean"
         },
         "openapi_json": {
-          "type": "boolean"
+          "type": "boolean",
+          "description": "Enable bounded OpenAPI JSON and YAML extraction. The property name is retained for configuration compatibility."
         },
         "json_schema": {
           "type": "boolean"

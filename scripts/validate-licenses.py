@@ -54,8 +54,14 @@ GO_SUM = re.compile(r"^h1:[A-Za-z0-9+/]{43}=$")
 EXPECTED_MODULE_PATH = "github.com/neuroforge-io/RKC"
 EXPECTED_GO_DIRECTIVE = "1.25.0"
 EXPECTED_TOOLCHAIN = "go1.26.5"
-EXPECTED_ROOT_REQUIREMENTS = {"modernc.org/sqlite": "v1.54.0"}
+EXPECTED_ROOT_REQUIREMENTS = {
+    "golang.org/x/sys": "v0.46.0",
+    "gopkg.in/yaml.v3": "v3.0.1",
+    "modernc.org/sqlite": "v1.54.0",
+}
 EXPECTED_EXPLICIT_REQUIREMENTS = {
+    "golang.org/x/sys": "v0.46.0",
+    "gopkg.in/yaml.v3": "v3.0.1",
     "modernc.org/libc": "v1.74.1",
     "modernc.org/sqlite": "v1.54.0",
 }
@@ -129,6 +135,25 @@ EXPECTED_MODULES: dict[str, dict[str, object]] = {
         "license_spdx": "BSD-3-Clause",
         "licenses": {
             "LICENSE": "911f8f5782931320f5b8d1160a76365b83aea6447ee6c04fa6d5591467db9dad"
+        },
+    },
+    "gopkg.in/check.v1": {
+        "version": "v0.0.0-20161208181325-20d25e280405",
+        "module_sum": "h1:yhCVgyC4o1eVCa2tZl7eS0r+SDo693bJlVdllGtEeKM=",
+        "go_mod_sum": "h1:Co6ibVJAznAaIkqp8huTwlJQCZ016jof/cbN4VW5Yz0=",
+        "license_spdx": "BSD-2-Clause",
+        "licenses": {
+            "LICENSE": "69ce77f2b1c9c608d27f2d749b0e7d0c13960ed3b0dc07b973ac940e362e5d9c"
+        },
+    },
+    "gopkg.in/yaml.v3": {
+        "version": "v3.0.1",
+        "module_sum": "h1:fxVm/GzAzEWqLHuvctI91KS9hhNmmWOoWu0XTYJS7CA=",
+        "go_mod_sum": "h1:K4uyk7z7BCEPqu6E+C64Yfv1cQ7kz7rIZviUmN+EgEM=",
+        "license_spdx": "MIT AND Apache-2.0",
+        "licenses": {
+            "LICENSE": "d18f6323b71b0b768bb5e9616e36da390fbd39369a81807cca352de4e4e6aa0b",
+            "NOTICE": "f6c2dd3a67b576eafb89b80200b8b1627230bf3821a0c14cb99a22ac19107d00",
         },
     },
     "modernc.org/fileutil": {
@@ -353,6 +378,7 @@ def validate_root_documents() -> None:
             "Qwen3.5-2B",
             "Qwen3-Embedding-0.6B",
             "models/models.lock.json",
+            "gopkg.in/yaml.v3 v3.0.1",
             "modernc.org/sqlite v1.54.0",
             "modernc.org/libc v1.74.1",
             "third_party/go-modules.lock.json",

@@ -9,6 +9,17 @@ The labels below mean:
 - **planned**: architecture and work order exist, code does not yet satisfy the
   production exit gate.
 
+## 2026-07-27 laptop-to-desktop handoff
+
+| Area | Current state | Desktop continuation gate |
+|---|---|---|
+| Scan journals | Implemented on Unix; Windows proof partial | Command outcome now includes post-DAG policy and publication failures; resilient bounded list/show and symlink-safe state paths are tested. Run the native Windows protected-DACL tests, then add explicit retention/pruning and SQLite ownership/restart persistence |
+| OpenAPI JSON/YAML | Implemented | Common bounded reads, duplicate-key rejection, YAML depth/token/node limits, safe scalar normalization, escaped local references, cache invalidation, and cold/warm/edit parity are covered. Cross-file reference resolution remains a separate roadmap item |
+| Workbench lifecycle backend | Implemented on guarded Linux | Submission deadlines, cancellation, bounded cleanup proof, truthful `cleanup_failed`, sanitized user-bus access, close/shutdown, and DELETE API are targeted-test green. The GUI Cancel control, `canceled`/`cleanup_failed` terminal rendering, deadline display, and static-fallback `runs` palette remain partial |
+| Workbench containment | Partial | Process-group cleanup is proven only for direct Unix descendants. Known commands that can create separate user-systemd units fail truthfully as `cleanup_failed`; a per-job aggregate cgroup/slice is still required |
+| Model default | Intentionally unset | Gemma 4 E2B did not pass the pinned sampler/long-context qualification gate. Do not promote a default until a candidate passes quality, 3.5 GiB, context, licensing, and runtime gates |
+| Release verification | Pending rerun | ERAIS retained laptop priority, so only capped focused tests ran. On the desktop run the full guarded Go/Python coverage, race, portability, release verifier, self-catalogue refresh, and latest GitHub CI/CodeQL gates before release promotion |
+
 ## Core
 
 | Capability | Status | Notes |
@@ -23,7 +34,7 @@ The labels below mean:
 | Transactional storage contract | Implemented | Typed reader/writer/recovery API; atomic, immutable in-memory conformance backend with authenticated cursors and lossless export |
 | SQLite driver/bootstrap | Implemented | Pinned pure-Go driver, embedded digest-locked migrations through schema `0.4.0`, fail-closed build/publication compare-and-swap, monotonic current-pointer guards, CGO-free build gates, reader-key initialization, read-only consumers, and strict database-open health checks |
 | SQLite runtime writer/query layer | Implemented | Transactional staging/publication, OS writer leases, recovery, digest-verified canonical reads, exact coverage binding, authenticated pagination, projections, and CLI/HTTP/MCP integration |
-| Pipeline DAG and cache library | Partial | All 15 canonical scan stages now route through the deterministic DAG with bounded resource admission; analyzer fragments use ownership-bound, verified CAS payloads with selective cache keys and `plan`/inspect/verify/prune UX. SQLite stage journal and derived-output stages remain |
+| Pipeline DAG and cache library | Partial | All 15 canonical scan stages route through the deterministic DAG with bounded resource admission; scans reaching execution have owner-only, hash-chained command journals with bounded resilient `runs list/show`; analyzer fragments use ownership-bound verified CAS payloads with selective cache keys and `plan`/inspect/verify/prune UX. Native Windows runtime proof, retention, SQLite ownership persistence, retries/leases, and derived-output stages remain |
 | Clean/incremental equivalence | Partial | Warm and localized-change cache paths are differentially checked against clean canonical output; maintained multi-commit language history corpus and measured large-repository gate remain |
 
 ## Analysis
@@ -34,7 +45,7 @@ The labels below mean:
 | Go | Implemented | Go AST syntax tier |
 | JavaScript/TypeScript | Implemented | Conservative dependency-free syntax tier |
 | Markdown | Implemented | headings, hierarchy, links, fenced blocks |
-| OpenAPI | Partial | JSON documents; YAML pending |
+| OpenAPI | Implemented | Bounded strict JSON and YAML 3.x plus Swagger 2 surfaces; duplicate keys, unsafe YAML constructs, parser limits, and external-reference fetching fail closed |
 | JSON Schema | Partial | JSON documents and references |
 | package/build manifests | Partial | npm, Go, Python requirements, Docker |
 | environment templates | Implemented | keys, defaults, required/secret metadata |
@@ -51,10 +62,10 @@ The labels below mean:
 | Markdown documentation | Implemented | deterministic facts and symbol pages |
 | normalized source envelopes | Implemented | likely secrets redacted by default |
 | NotebookLM pack | Implemented | byte-bounded grouping |
-| responsive browser and local workbench | Implemented | accessible static fallback; bounded served startup/search/detail/graph reads; complete CLI command palette; opt-in token-authenticated loopback execution under the resource guard |
+| responsive browser and local workbench | Partial | accessible static fallback and opt-in token-authenticated guarded loopback execution; backend cancellation/deadline/cleanup is implemented, while GUI cancellation, terminal cleanup states, deadline rendering, and static-fallback `runs` parity remain |
 | ranked lexical search | Implemented | persisted portable index |
 | semantic/hybrid query | Partial | qualified `llama.cpp` embedding path and corpus-bound vector receipts implemented; no qualified/default model active |
-| FTS5 runtime search | Planned | depends on SQLite runtime writer |
+| FTS5 runtime search | Partial | SQLite FTS storage exists; the bounded runtime query path is not yet wired |
 | graph paths, impact, SCCs | Implemented | bounded in-memory graph operations |
 | semantic diff | Implemented | conservative logical/signature comparison |
 | guarded self-catalogue | Implemented | immutable commit-tree blob staging; recursive-output/model-weight exclusion; atomic complete publication and deterministic receipts |
