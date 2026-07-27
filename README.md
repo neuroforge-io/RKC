@@ -401,10 +401,11 @@ file.
 
 The schema is [`schemas/config.schema.json`](schemas/config.schema.json), and a
 maintained example is [`config/rkc.example.json`](config/rkc.example.json).
-Generated configuration uses an immutable commit-pinned GitHub schema URL, so
-its editor association remains valid regardless of the chosen output directory;
-the checked-in example uses a repository-local relative schema path for
-offline checkout navigation.
+Generated configuration uses an immutable commit-pinned URL for the published
+`0.2.0` schema, so its editor association cannot drift when `main` advances.
+The explicit `schema_version` remains the compatibility boundary. The
+checked-in example uses a repository-local relative schema path for offline
+checkout navigation.
 Configuration affecting repository truth enters the snapshot digest. Display,
 server-address, and derived-model settings do not silently change source truth.
 

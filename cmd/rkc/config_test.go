@@ -9,12 +9,22 @@ import (
 )
 
 func TestDefaultConfigurationIsValidAndDeterministic(t *testing.T) {
+	const publishedSchemaURI = "https://raw.githubusercontent.com/neuroforge-io/RKC/80a0e08646d3e430087385286d6dcedbb6b95d69/schemas/config.schema.json"
+	if configurationSchemaURI != publishedSchemaURI {
+		t.Fatalf("configuration schema URI = %q, want published main schema %q", configurationSchemaURI, publishedSchemaURI)
+	}
 	cfg := defaultConfiguration()
 	if err := cfg.Validate(); err != nil {
 		t.Fatalf("default configuration is invalid: %v", err)
 	}
 	if cfg.SchemaURI != configurationSchemaURI {
 		t.Fatalf("default schema URI = %q, want canonical %q", cfg.SchemaURI, configurationSchemaURI)
+	}
+	if modelMaximumRSSMiB != 3584 {
+		t.Fatalf("modelMaximumRSSMiB = %d, want 3584", modelMaximumRSSMiB)
+	}
+	if cfg.Model.MaxRSSMiB != modelMaximumRSSMiB {
+		t.Fatalf("default model RSS ceiling = %d MiB, want 3584 MiB", cfg.Model.MaxRSSMiB)
 	}
 	if cfg.Digest() == "" || cfg.PolicyDigest() == "" || cfg.PluginDigest() == "" {
 		t.Fatal("configuration digests must be populated")
