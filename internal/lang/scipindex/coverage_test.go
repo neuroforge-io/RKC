@@ -22,7 +22,7 @@ func TestVocabularyRangeAndLanguageHelperCoverage(t *testing.T) {
 		17: "function", 9: "constructor", 15: "field", 22: "property",
 		8: "constant", 37: "parameter", 13: "event", 28: "message", 29: "module",
 		30: "namespace", 35: "package", 16: "file", 54: "type", 61: "variable",
-		26: "method", 73: "type", 0: "unresolved_symbol",
+		26: "method", 73: "type", 2: "function", 0: "unresolved_symbol",
 	}
 	for input, want := range kindCases {
 		if got := mapSymbolKind(input); got != want {
@@ -120,6 +120,10 @@ func TestPositionMapperAllEncodingsAndBoundaries(t *testing.T) {
 	if got, err := utf32Mapper.byteOffset(1, 2); err != nil || got != len(source)-1 {
 		t.Fatalf("line-two offset = %d, %v", got, err)
 	}
+	if _, err := utf32Mapper.byteOffset(0, 99); err == nil ||
+		!strings.Contains(err.Error(), "outside the source line") {
+		t.Fatalf("UTF-32 overflow = %v", err)
+	}
 	for _, position := range [][2]int32{{-1, 0}, {99, 0}, {0, -1}, {0, 99}} {
 		if _, err := utf8Mapper.byteOffset(position[0], position[1]); err == nil {
 			t.Errorf("byteOffset(%v) succeeded", position)
@@ -146,6 +150,11 @@ func TestPositionMapperAllEncodingsAndBoundaries(t *testing.T) {
 		startLine: 0, endLine: 99,
 	}); err == nil || !strings.Contains(err.Error(), "end position") {
 		t.Fatalf("invalid end position = %v", err)
+	}
+	if _, err := utf8Mapper.sourceRange("x", "artifact", sourcePosition{
+		startLine: 99,
+	}); err == nil || !strings.Contains(err.Error(), "start position") {
+		t.Fatalf("invalid start position = %v", err)
 	}
 }
 
@@ -271,6 +280,16 @@ func TestWireReaderAndParserCompatibilityCoverage(t *testing.T) {
 	)); err == nil {
 		t.Fatal("five-value packed range succeeded")
 	}
+	for name, parse := range map[string]func([]byte) error{
+		"relationship": func(data []byte) error { _, err := parseRelationship(data); return err },
+		"diagnostic":   func(data []byte) error { _, err := parseCompilerDiagnostic(data); return err },
+		"signature":    func(data []byte) error { _, _, err := parseSignature(data); return err },
+		"symbol":       func(data []byte) error { _, err := parseSymbolInformation(data); return err },
+	} {
+		if err := parse(fieldVarint(20, 1)); err != nil {
+			t.Errorf("%s unknown field = %v", name, err)
+		}
+	}
 }
 
 func TestExtractorMergeAndDiagnosticHelperCoverage(t *testing.T) {
@@ -349,6 +368,16 @@ func TestExtractorMergeAndDiagnosticHelperCoverage(t *testing.T) {
 		value.nodes[full].Attributes["test"] != true {
 		t.Fatalf("full symbol = %q, %+v", full, value.nodes[full])
 	}
+	mergeID := "merge"
+	value.nodes[mergeID] = rkcmodel.Node{ID: mergeID, QualifiedName: "qualified"}
+	value.upsertNode(rkcmodel.Node{
+		ID: mergeID, Name: "name", Language: "go",
+		Attributes: map[string]any{"merged": true},
+	})
+	if merged := value.nodes[mergeID]; merged.Name != "name" || merged.Language != "go" ||
+		merged.Attributes["merged"] != true {
+		t.Fatalf("nil-field merge = %+v", merged)
+	}
 }
 
 func TestInputAndIndexFailureCoverage(t *testing.T) {
@@ -396,6 +425,58 @@ func TestInputAndIndexFailureCoverage(t *testing.T) {
 	cancelPrepare()
 	if _, _, err := PrepareInputs(cancelledPrepare, []string{valid}); !errors.Is(err, context.Canceled) {
 		t.Fatalf("cancelled PrepareInputs = %v", err)
+	}
+	prepared, _, err := PrepareInputs(context.Background(), []string{valid})
+	if err != nil {
+		t.Fatal(err)
+	}
+	changedDigest := append([]Input(nil), prepared...)
+	changedDigest[0].SHA256 = strings.Repeat("0", 64)
+	if err := VerifyInputs(context.Background(), changedDigest); err == nil ||
+		!strings.Contains(err.Error(), "changed during") {
+		t.Fatalf("changed digest verification = %v", err)
+	}
+	changedSize := append([]Input(nil), prepared...)
+	changedSize[0].SizeBytes++
+	if err := VerifyInputs(context.Background(), changedSize); err == nil ||
+		!strings.Contains(err.Error(), "changed during") {
+		t.Fatalf("changed size verification = %v", err)
+	}
+	if err := VerifyInputs(context.Background(), prepared); err != nil {
+		t.Fatalf("stable input verification = %v", err)
+	}
+	cancelledExtract, cancelExtract := context.WithCancel(context.Background())
+	cancelExtract()
+	if _, err := Extract(cancelledExtract, Options{Root: root, Inputs: prepared}); !errors.Is(err, context.Canceled) {
+		t.Fatalf("cancelled Extract = %v", err)
+	}
+	sizeMismatch := append([]Input(nil), prepared...)
+	sizeMismatch[0].SizeBytes++
+	if _, err := Extract(context.Background(), Options{Root: root, Inputs: sizeMismatch}); err == nil ||
+		!strings.Contains(err.Error(), "prepared input") {
+		t.Fatalf("prepared size mismatch = %v", err)
+	}
+	digestMismatch := append([]Input(nil), prepared...)
+	digestMismatch[0].SHA256 = strings.Repeat("f", 64)
+	if _, err := Extract(context.Background(), Options{Root: root, Inputs: digestMismatch}); err == nil ||
+		!strings.Contains(err.Error(), "digest changed") {
+		t.Fatalf("prepared digest mismatch = %v", err)
+	}
+	externalIndex := writeNamedIndex(t, root, "external.scip", message(
+		fieldMessage(1, message(fieldMessage(2, fieldString(1, "compiler")))),
+		fieldMessage(3, symbolMessage(
+			"scip . . . dep/External#", "External", 7, "", "", nil,
+		)),
+		fieldVarint(20, 1),
+	))
+	externalInputs, _, err := PrepareInputs(context.Background(), []string{externalIndex})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fragment, err := Extract(context.Background(), Options{
+		Root: root, Inputs: externalInputs,
+	}); err != nil || len(fragment.Nodes) != 1 {
+		t.Fatalf("external symbol index = %+v, %v", fragment, err)
 	}
 	oversized := filepath.Join(root, "large.scip")
 	file, err := os.OpenFile(oversized, os.O_CREATE|os.O_WRONLY, 0o600)
