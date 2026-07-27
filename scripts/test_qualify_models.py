@@ -623,6 +623,35 @@ class QualificationScoringTests(unittest.TestCase):
             with self.assertRaisesRegex(qualify_models.QualificationError, "private"):
                 qualify_models._atomic_report(unsafe / "report", {})
 
+    def test_main_rejects_unsafe_output_before_model_execution(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            unsafe = Path(temporary) / "unsafe"
+            unsafe.mkdir(mode=0o777)
+            os.chmod(unsafe, 0o777)
+            generation = mock.Mock()
+            with mock.patch.object(
+                model_assets, "assert_priority_available"
+            ), mock.patch.object(
+                model_assets, "assert_resource_guard"
+            ), mock.patch.object(
+                qualify_models, "run_generation", generation
+            ), mock.patch(
+                "sys.stderr", new=io.StringIO()
+            ) as errors:
+                self.assertEqual(
+                    qualify_models.main(
+                        [
+                            "--runtime",
+                            "/runtime",
+                            "--output",
+                            str(unsafe / "report.json"),
+                        ]
+                    ),
+                    1,
+                )
+            generation.assert_not_called()
+            self.assertIn("private real directory", errors.getvalue())
+
     def test_main_success_failure_and_priority_are_fully_mocked(self) -> None:
         lock = model_assets.load_lock()
         spec, digest = qualify_models._read_json(qualify_models.DEFAULT_SPEC)

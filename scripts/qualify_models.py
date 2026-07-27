@@ -1284,7 +1284,7 @@ def run_embedding(
     }
 
 
-def _atomic_report(path: Path, report: object) -> None:
+def _validate_output_target(path: Path) -> Path:
     path = path.absolute()
     path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
     parent = os.lstat(path.parent)
@@ -1292,6 +1292,11 @@ def _atomic_report(path: Path, report: object) -> None:
         raise QualificationError("qualification output parent is not a private real directory")
     if path.exists() or path.is_symlink():
         raise QualificationError(f"qualification output already exists: {path}")
+    return path
+
+
+def _atomic_report(path: Path, report: object) -> None:
+    path = _validate_output_target(path)
     encoded = (json.dumps(report, indent=2, sort_keys=True) + "\n").encode("utf-8")
     temporary = path.with_name(f".{path.name}.{secrets.token_hex(12)}.tmp")
     flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_CLOEXEC", 0)
@@ -1336,6 +1341,7 @@ def main(argv: list[str] | None = None) -> int:
             )
         model_assets.assert_priority_available()
         model_assets.assert_resource_guard()
+        _validate_output_target(arguments.output)
         lock = model_assets.load_lock(arguments.lock)
         spec, spec_digest = _read_json(arguments.spec)
         _validate_spec(spec, lock)
