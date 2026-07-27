@@ -170,6 +170,15 @@ memory. A run preserves raw responses and vectors in its no-replace report,
 never edits the lock, and requires a human to review its receipt before any
 future default promotion.
 
+Production responsiveness is a hard qualification contract rather than a
+post-hoc observation. Every standard generation case must complete within two
+minutes and the exact 32K case within five minutes on the guarded one-CPU
+profile. The per-request deadline is enforced while the server is running; a
+long-context timeout stops the generation role, terminates its process group,
+and produces a bounded failed result instead of consuming the machine for
+hours. The retained Qwen3.5 2B Q4_K_M candidate is not eligible for promotion:
+its measured 32K path was only 16% complete at the five-minute boundary.
+
 Qualification HTTP is restricted to credential-free IP-literal loopback URLs.
 It uses an explicit no-proxy opener, refuses every redirect, revalidates the
 final response URL, and monitors ERAIS while long requests are pending. If a

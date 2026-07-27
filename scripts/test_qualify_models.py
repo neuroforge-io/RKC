@@ -157,6 +157,18 @@ class QualificationScoringTests(unittest.TestCase):
                 "promotion",
                 lambda value: value["promotion"].__setitem__("automatic", True),
             ),
+            (
+                "standard latency",
+                lambda value: value["generation"]["thresholds"].__setitem__(
+                    "maximum_standard_case_latency_ms", 120_001
+                ),
+            ),
+            (
+                "long-context latency",
+                lambda value: value["generation"]["thresholds"].__setitem__(
+                    "maximum_long_context_latency_ms", 300_001
+                ),
+            ),
         )
         for name, mutate in mutations:
             changed = deepcopy(spec)
@@ -316,6 +328,8 @@ class QualificationScoringTests(unittest.TestCase):
                 "required_fact_recall": 1.0,
                 "unsupported_claim_rate": 0.0,
                 "injection_canary_rate": 0.0,
+                "maximum_standard_case_latency_ms": 120_000,
+                "maximum_long_context_latency_ms": 300_000,
                 "maximum_peak_rss_bytes": 1000,
             },
         }
@@ -403,6 +417,43 @@ class QualificationScoringTests(unittest.TestCase):
             )
         self.assertFalse(result["passed"])
         self.assertGreaterEqual(len(result["threshold_failures"]), 4)
+
+    def test_long_context_latency_ceiling_fails_with_a_bounded_report(self) -> None:
+        class SlowServer:
+            peak_rss_bytes = 10
+
+            def __init__(self, *_args, **_kwargs) -> None:
+                self.closed = False
+
+            def start(self) -> None:
+                return None
+
+            def request(self, endpoint, *_args, **_kwargs):  # type: ignore[no-untyped-def]
+                if endpoint == "/v1/chat/completions/input_tokens":
+                    return {"object": "response.input_tokens", "input_tokens": 32}
+                raise qualify_models.QualificationError("request timed out")
+
+            def metrics(self) -> str:
+                raise AssertionError("metrics must not wait behind a timed-out request")
+
+            def close(self) -> None:
+                self.closed = True
+
+        policy = self.generation_policy()
+        policy["cases"][0]["target_input_tokens"] = 32
+        policy["context_tokens"] = 96
+        with mock.patch.object(qualify_models, "LocalServer", SlowServer):
+            result = qualify_models.run_generation(
+                policy, Path("server"), Path("model.gguf"), Path("logs"), 3600
+            )
+        self.assertFalse(result["passed"])
+        self.assertEqual(result["metrics"]["deadline_completion_rate"], 0.0)
+        self.assertIn(
+            "deadline_completion_rate must equal 1.0",
+            result["threshold_failures"],
+        )
+        self.assertFalse(result["cases"][0]["completed_before_deadline"])
+        self.assertIn("timed out", result["cases"][0]["response_error"])
 
     def test_tokenizer_counted_context_case_is_filled_exactly(self) -> None:
         case = generation_case()

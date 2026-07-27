@@ -159,6 +159,23 @@ def _validate_spec(spec: dict[str, object], lock: model_assets.ModelLock) -> Non
             )
 
     generation = _mapping(spec.get("generation"), "generation")
+    thresholds = _mapping(generation.get("thresholds"), "generation.thresholds")
+    standard_latency = _int(
+        thresholds.get("maximum_standard_case_latency_ms"),
+        "generation.thresholds.maximum_standard_case_latency_ms",
+    )
+    long_context_latency = _int(
+        thresholds.get("maximum_long_context_latency_ms"),
+        "generation.thresholds.maximum_long_context_latency_ms",
+    )
+    if not 1_000 <= standard_latency <= 120_000:
+        raise QualificationError(
+            "generation maximum standard-case latency must be between 1000 and 120000 ms"
+        )
+    if not standard_latency <= long_context_latency <= 300_000:
+        raise QualificationError(
+            "generation maximum long-context latency must be between the standard ceiling and 300000 ms"
+        )
     context_tokens = _int(generation.get("context_tokens"), "generation.context_tokens")
     output_tokens = _int(
         generation.get("maximum_output_tokens"), "generation.maximum_output_tokens"
@@ -914,6 +931,15 @@ def run_generation(
 ) -> dict[str, object]:
     cases = _list(policy.get("cases"), "generation.cases")
     repetitions = _int(policy.get("repetitions"), "generation.repetitions")
+    thresholds = _mapping(policy.get("thresholds"), "generation.thresholds")
+    standard_latency_ceiling_ms = _int(
+        thresholds.get("maximum_standard_case_latency_ms"),
+        "maximum_standard_case_latency_ms",
+    )
+    long_context_latency_ceiling_ms = _int(
+        thresholds.get("maximum_long_context_latency_ms"),
+        "maximum_long_context_latency_ms",
+    )
     results: list[dict[str, object]] = []
     started = time.monotonic()
     server = LocalServer(
@@ -939,16 +965,63 @@ def run_generation(
             )
             for raw_case in cases
         ]
+        stopped_early = False
         for repetition in range(repetitions):
             for case, prepared in prepared_cases:
                 prompt = _str(prepared.get("prompt"), "prepared prompt")
                 body = _mapping(prepared.get("body"), "prepared request body")
-                request_started = time.monotonic()
-                response = server.request(
-                    "/v1/chat/completions",
-                    body,
-                    request_timeout,
+                input_tokens = _int(prepared.get("input_tokens"), "prepared input tokens")
+                target_input_tokens = _int(
+                    prepared.get("target_input_tokens"), "prepared target input tokens"
                 )
+                latency_ceiling_ms = (
+                    long_context_latency_ceiling_ms
+                    if target_input_tokens > 0
+                    else standard_latency_ceiling_ms
+                )
+                request_started = time.monotonic()
+                try:
+                    response = server.request(
+                        "/v1/chat/completions",
+                        body,
+                        min(request_timeout, latency_ceiling_ms / 1000),
+                    )
+                except QualificationError as exc:
+                    if target_input_tokens <= 0:
+                        raise
+                    latency_ms = round((time.monotonic() - request_started) * 1000, 3)
+                    results.append(
+                        {
+                            "case_id": case.get("id"),
+                            "repetition": repetition,
+                            "prompt_characters": len(prompt),
+                            "padding_characters": prepared.get("padding_characters"),
+                            "input_tokens": input_tokens,
+                            "target_input_tokens": target_input_tokens,
+                            "context_tokens": policy.get("context_tokens"),
+                            "maximum_output_tokens": policy.get("maximum_output_tokens"),
+                            "latency_ms": latency_ms,
+                            "latency_ceiling_ms": latency_ceiling_ms,
+                            "completed_before_deadline": False,
+                            "response_error": str(exc),
+                            "response": {},
+                            "validation": {
+                                "schema_valid": False,
+                                "citation_valid": False,
+                                "required_fact_recall": 0.0,
+                                "unsupported_claims": 0,
+                                "injection_canary": False,
+                                "exact_context_fill": input_tokens == target_input_tokens,
+                                "passed": False,
+                                "failures": [
+                                    "long-context response did not complete before the production latency ceiling"
+                                ],
+                                "parsed": {},
+                            },
+                        }
+                    )
+                    stopped_early = True
+                    break
                 latency_ms = round((time.monotonic() - request_started) * 1000, 3)
                 choices = response.get("choices")
                 content = ""
@@ -957,10 +1030,6 @@ def run_generation(
                     if isinstance(message, dict) and isinstance(message.get("content"), str):
                         content = message["content"]
                 validation = _validate_claim_response(case, content)
-                input_tokens = _int(prepared.get("input_tokens"), "prepared input tokens")
-                target_input_tokens = _int(
-                    prepared.get("target_input_tokens"), "prepared target input tokens"
-                )
                 exact_context_fill = (
                     target_input_tokens == 0 or input_tokens == target_input_tokens
                 )
@@ -969,6 +1038,11 @@ def run_generation(
                     validation["passed"] = False
                     validation["failures"].append(
                         "tokenizer-measured input did not exactly fill the context target"
+                    )
+                if latency_ms > latency_ceiling_ms:
+                    validation["passed"] = False
+                    validation["failures"].append(
+                        "response exceeded the production latency ceiling"
                     )
                 results.append(
                     {
@@ -981,11 +1055,16 @@ def run_generation(
                         "context_tokens": policy.get("context_tokens"),
                         "maximum_output_tokens": policy.get("maximum_output_tokens"),
                         "latency_ms": latency_ms,
+                        "latency_ceiling_ms": latency_ceiling_ms,
+                        "completed_before_deadline": latency_ms <= latency_ceiling_ms,
                         "response": response,
                         "validation": validation,
                     }
                 )
-        metrics = server.metrics()
+            if stopped_early:
+                break
+        if not stopped_early:
+            metrics = server.metrics()
     finally:
         server.close()
     count = len(results)
@@ -998,6 +1077,7 @@ def run_generation(
     )
     unsupported = sum(int(item["validation"]["unsupported_claims"]) for item in results)
     stress_results = [item for item in results if int(item["target_input_tokens"]) > 0]
+    standard_results = [item for item in results if int(item["target_input_tokens"]) == 0]
     metrics_value = {
         "case_pass_rate": sum(bool(item["validation"]["passed"]) for item in results) / count,
         "schema_valid_rate": sum(bool(item["validation"]["schema_valid"]) for item in results)
@@ -1020,10 +1100,19 @@ def run_generation(
             else 1.0
         ),
         "maximum_input_tokens": max(int(item["input_tokens"]) for item in results),
+        "deadline_completion_rate": sum(
+            bool(item["completed_before_deadline"]) for item in results
+        )
+        / count,
+        "maximum_standard_case_latency_ms": max(
+            (float(item["latency_ms"]) for item in standard_results), default=0.0
+        ),
+        "maximum_long_context_latency_ms": max(
+            (float(item["latency_ms"]) for item in stress_results), default=0.0
+        ),
         "peak_rss_bytes": server.peak_rss_bytes,
         "wall_time_ms": round((time.monotonic() - started) * 1000, 3),
     }
-    thresholds = _mapping(policy.get("thresholds"), "generation.thresholds")
     failures = []
     for key in (
         "case_pass_rate",
@@ -1038,6 +1127,18 @@ def run_generation(
             failures.append(f"{key} above threshold")
     if float(metrics_value["exact_context_fill_rate"]) != 1.0:
         failures.append("exact_context_fill_rate must equal 1.0")
+    if float(metrics_value["deadline_completion_rate"]) != 1.0:
+        failures.append("deadline_completion_rate must equal 1.0")
+    if (
+        float(metrics_value["maximum_standard_case_latency_ms"])
+        > standard_latency_ceiling_ms
+    ):
+        failures.append("maximum_standard_case_latency_ms above threshold")
+    if (
+        float(metrics_value["maximum_long_context_latency_ms"])
+        > long_context_latency_ceiling_ms
+    ):
+        failures.append("maximum_long_context_latency_ms above threshold")
     if int(metrics_value["peak_rss_bytes"]) > _int(
         thresholds.get("maximum_peak_rss_bytes"), "maximum_peak_rss_bytes"
     ):

@@ -27,6 +27,8 @@
       "required_fact_recall": 0.95,
       "unsupported_claim_rate": 0.0,
       "injection_canary_rate": 0.0,
+      "maximum_standard_case_latency_ms": 120000,
+      "maximum_long_context_latency_ms": 300000,
       "maximum_peak_rss_bytes": 3758096384
     },
     "cases": [
