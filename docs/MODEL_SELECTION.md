@@ -8,12 +8,12 @@ the fallback if no candidate passes.
 
 ## Decision
 
-No generation model is selected as RKC's default. The active qualification
-candidate is now Qwen3.5 4B Q4_0 under the 4 GiB operating / 4.5 GiB hard
-envelope. It remains `unqualified` and ineligible for defaults until the exact
-locked asset passes every repeated generation, injection, exact-32K, latency,
-memory, and paired-embedding gate. The embedding candidate remains Qwen3
-Embedding 0.6B Q8_0, qualified separately at 8,192 tokens.
+No generation model is selected as RKC's default. Qwen3.5 4B Q4_0 was
+qualified under the 4 GiB operating / 4.5 GiB hard envelope and rejected. The
+exact locked asset failed the complete generation, hostile-input, exact-32K,
+latency, and process-RSS contract, so it remains `unqualified` and ineligible
+for defaults. The embedding candidate remains Qwen3 Embedding 0.6B Q8_0,
+qualified separately at 8,192 tokens.
 
 Qwen's official Qwen3.5-4B model is Apache-2.0, has 4B language parameters,
 uses a Gated DeltaNet/attention hybrid, and declares 262,144 native context
@@ -21,9 +21,28 @@ tokens. The pinned GGUF is an independently converted Unsloth Q4_0 artifact,
 not an official Qwen conversion: revision
 `e87f176479d0855a907a41277aca2f8ee7a09523`, 2,583,221,408 bytes, SHA-256
 `298fcb5fe7a77ccc79745ae24751560c5ac56874caff4bb39b1f2055bd72b8bb`.
-That leaves materially more runtime and KV-cache headroom than the 3.14 GB
+That left materially more runtime and KV-cache headroom than the 3.14 GB
 Q5_K_M, 3.53 GB Q6_K, or 4.48 GB Q8_0 variants. RKC does not assume the
-lower-bit artifact is good enough; the repository-specific gate decides.
+lower-bit artifact is good enough; the repository-specific gate rejected it.
+
+The guarded Qwen3.5 4B run passed four of six cases. It correctly returned the
+exact signature, cited error condition, insufficient-evidence abstention, and
+graph relationship. It leaked no injection canary and published no unsupported
+claim, but over-abstained on the authoritative SafeOpen evidence after
+encountering a hostile comment. The exact 32,384-token case timed out after
+`300,198.244` ms. Standard cases took `24,408.360`–`47,245.077` ms; prompt
+throughput observed in the llama.cpp log was roughly 8–9 tokens/second.
+
+Generation peak process RSS was `6,054,510,592` bytes, above the strict process
+gate. The protected cgroup peak was `4,156,186,624` bytes—below the 4 GiB
+operating threshold—with no cgroup max or OOM event. Both are retained because
+Linux process RSS and cgroup charge account mmap-backed model pages
+differently. Generation achieved `0.6666666667` case pass,
+`0.8333333333` schema validity, `0.6666666667` citation validity, and
+`0.6666666667` required-fact recall. The paired Qwen embedding model passed all
+gates again. Pair-level promotion remained false, defaults remained null, and
+the private raw report SHA-256 is
+`c14235c5167d1e7154e21583db8f3ee4377c6b3fff4300db28ae3d52efd34811`.
 
 Granite is an Apache-2.0, 1.5-billion-parameter hybrid Mamba2/attention instruct
 model with a 128K native sequence length and an official llama.cpp-compatible
@@ -51,7 +70,7 @@ failed, no defaults changed, and the private report SHA-256 is
 
 | Candidate | License / context | Why it was considered | RKC decision |
 |---|---|---|---|
-| Qwen3.5 4B Q4_0 | Apache-2.0 / 262K | Newer 4B hybrid architecture; 2.58 GB weights leave the best plausible quality/headroom balance | Active exact-pinned qualification candidate; not a default |
+| Qwen3.5 4B Q4_0 | Apache-2.0 / 262K | Newer 4B hybrid architecture; 2.58 GB weights leave the best plausible quality/headroom balance | Fully measured; rejected on hostile-input over-abstention, exact-32K latency, and process RSS |
 | Qwen3 4B Q4_K_M | Apache-2.0 / 32K native, 131K YaRN | Official 2.50 GB GGUF and strong dense Qwen baseline | Retained as fallback research candidate; Qwen3.5 hybrid is tested first |
 | Granite 4 H 1B Q5_K_M | Apache-2.0 / 128K | Strong instruction, code, function-calling, RAG, and hybrid-architecture evidence at 1.5B parameters | Fully measured; rejected on quality, injection, unsupported claims, and exact-32K latency |
 | Qwen3 1.7B Q8_0 | Apache-2.0 / 32K | Strong modern small-model reasoning and instruction following | Official 1.83 GB dense GGUF cannot plausibly close the measured one-core prefill gap |
@@ -64,10 +83,10 @@ failed, no defaults changed, and the private report SHA-256 is
 The production latency gate requires at least about 108 prompt tokens/second to
 consume 32,384 input tokens within 300 seconds. The guarded measurements were
 about 12 tokens/second for Granite 4 H 1B and about 21 tokens/second for Qwen3.5
-0.8B. Qwen3.5 4B is nevertheless admitted for one guarded test because its
+0.8B. Qwen3.5 4B was nevertheless admitted for one guarded test because its
 hybrid recurrent/attention architecture and larger capacity create a materially
-different quality operating point. Failure remains the expected outcome unless
-measurement proves otherwise; the gate is not relaxed.
+different quality operating point. Measurement did not meet the unchanged
+gate.
 
 Qwen3 4B Q4_K_M, Qwen3 1.7B Q8_0, and SmolLM3 3B were considered as
 Apache-2.0 comparisons. The official Qwen3 4B Q4_K_M is 2,497,280,256 bytes,

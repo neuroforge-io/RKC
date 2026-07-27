@@ -131,7 +131,7 @@ cancellation terminates and reaps the whole group. Runtime staging also has a
 conservative disk-headroom gate, and failed `.building-*` trees are quarantined
 and removed only when their original inode identity is still bound.
 
-Four Apache-2.0 candidates are locked but deliberately not configured as
+Five Apache-2.0 generation candidates are locked but deliberately not configured as
 defaults:
 
 - `Qwen3.5-0.8B-Q4_0.gguf`, revision
