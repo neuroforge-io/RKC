@@ -22,6 +22,7 @@ import (
 	"github.com/neuroforge-io/RKC/internal/framework/secretpack"
 	"github.com/neuroforge-io/RKC/internal/inventory"
 	"github.com/neuroforge-io/RKC/internal/lang/goast"
+	"github.com/neuroforge-io/RKC/internal/lang/scipindex"
 	"github.com/neuroforge-io/RKC/internal/lang/tssyntax"
 	"github.com/neuroforge-io/RKC/internal/plugin"
 	"github.com/neuroforge-io/RKC/internal/scheduler"
@@ -37,6 +38,7 @@ type Options struct {
 	MaxRepositoryBytes int64
 	MaxFiles           int
 	Excludes           []string
+	SCIPIndexes        []string
 
 	PythonInterpreter       string
 	PythonPlugin            string
@@ -57,6 +59,7 @@ type Options struct {
 	DisablePythonAST  bool
 	DisableGoAST      bool
 	DisableTypeScript bool
+	DisableSCIP       bool
 	DisableFrameworks bool
 	DisableMarkdown   bool
 	DisableOpenAPI    bool
@@ -111,11 +114,15 @@ func scanSequential(ctx context.Context, opts Options) (rkcmodel.Bundle, rkcmode
 	if err != nil {
 		return rkcmodel.Bundle{}, rkcmodel.Coverage{}, err
 	}
+	scipInputs, scipDigest, err := scipindex.PrepareInputs(ctx, enabledSCIPIndexes(opts))
+	if err != nil {
+		return rkcmodel.Bundle{}, rkcmodel.Coverage{}, fmt.Errorf("prepare SCIP indexes: %w", err)
+	}
 	gitInfo := inspectGit(ctx, root)
 	rootName := filepath.Base(root)
 	repositoryIdentity := firstNonEmpty(opts.SourceReference, gitInfo.Origin, rootName)
 	repositoryID := rkcmodel.StableID("repository", repositoryIdentity)
-	snapshotID := rkcmodel.StableID("snapshot", repositoryIdentity, gitInfo.Commit, inv.Digest, opts.ConfigDigest, opts.PolicyDigest, opts.PluginLockDigest, opts.ToolchainDigest, rkcmodel.SchemaVersion)
+	snapshotID := stableSnapshotID(repositoryIdentity, gitInfo.Commit, inv.Digest, scipDigest, opts)
 	if gitInfo.Dirty {
 		gitInfo.WorkingTreeDigest = inv.Digest
 	}
@@ -124,8 +131,8 @@ func scanSequential(ctx context.Context, opts Options) (rkcmodel.Bundle, rkcmode
 		RootName: rootName, RootPath: root, ContentDigest: inv.Digest, ConfigDigest: opts.ConfigDigest, PolicyDigest: opts.PolicyDigest,
 		PluginLockDigest: opts.PluginLockDigest, ToolchainDigest: opts.ToolchainDigest, Git: gitInfo,
 		Tool:     rkcmodel.ToolInfo{Name: "rkc", Version: firstNonEmpty(opts.ToolVersion, "development")},
-		Policy:   map[string]any{"max_file_bytes": opts.MaxFileBytes, "max_text_bytes": opts.MaxTextBytes, "max_repository_bytes": opts.MaxRepositoryBytes, "max_files": opts.MaxFiles, "excludes": uniqueSorted(opts.Excludes), "plugins": !opts.DisablePlugins, "frameworks": !opts.DisableFrameworks, "secret_scan": !opts.DisableSecretScan},
-		Metadata: map[string]string{"source_reference": opts.SourceReference},
+		Policy:   map[string]any{"max_file_bytes": opts.MaxFileBytes, "max_text_bytes": opts.MaxTextBytes, "max_repository_bytes": opts.MaxRepositoryBytes, "max_files": opts.MaxFiles, "excludes": uniqueSorted(opts.Excludes), "plugins": !opts.DisablePlugins, "frameworks": !opts.DisableFrameworks, "secret_scan": !opts.DisableSecretScan, "scip_semantic": len(scipInputs) > 0},
+		Metadata: map[string]string{"source_reference": opts.SourceReference, "scip_input_digest": scipDigest},
 	}, Artifacts: inv.Artifacts, Diagnostics: inv.Diagnostics}
 	bundle.Nodes = append(bundle.Nodes, rkcmodel.Node{ID: repositoryID, LogicalID: repositoryID, Kind: "repository", Name: rootName, QualifiedName: repositoryIdentity, Visibility: "repository", Attributes: map[string]any{"snapshot_id": snapshotID, "git_commit": gitInfo.Commit, "git_origin": gitInfo.Origin}})
 	for _, artifact := range bundle.Artifacts {
@@ -201,6 +208,15 @@ func scanSequential(ctx context.Context, opts Options) (rkcmodel.Bundle, rkcmode
 				}
 			}
 		}
+		if !opts.DisableSCIP && len(scipInputs) > 0 {
+			fragment, extractErr := scipindex.Extract(ctx, scipindex.Options{
+				Root: root, Inputs: scipInputs, Files: files, Artifacts: bundle.Artifacts,
+			})
+			if extractErr != nil {
+				return rkcmodel.Bundle{}, rkcmodel.Coverage{}, fmt.Errorf("SCIP semantic adapter failed closed: %w", extractErr)
+			}
+			mergeFragment(&bundle, fragment)
+		}
 	}
 
 	if !opts.DisableFrameworks {
@@ -241,6 +257,9 @@ func scanSequential(ctx context.Context, opts Options) (rkcmodel.Bundle, rkcmode
 		fragment, extractErr := secretpack.Extract(secretpack.Options{Root: root, Files: files})
 		handleFragment(&bundle, fragment, extractErr, "RKC-SEC-2001", secretpack.PluginID)
 	}
+	if err := scipindex.VerifyInputs(ctx, scipInputs); err != nil {
+		return rkcmodel.Bundle{}, rkcmodel.Coverage{}, fmt.Errorf("reverify SCIP indexes: %w", err)
+	}
 	if err := reverifyInventoriedSources(root, files, sourceIdentities); err != nil {
 		return rkcmodel.Bundle{}, rkcmodel.Coverage{}, err
 	}
@@ -270,6 +289,29 @@ func scanSequential(ctx context.Context, opts Options) (rkcmodel.Bundle, rkcmode
 	}
 	coverage := rkcmodel.BuildCoverage(bundle)
 	return bundle, coverage, nil
+}
+
+func enabledSCIPIndexes(opts Options) []string {
+	if opts.DisablePlugins || opts.DisableSCIP {
+		return nil
+	}
+	return append([]string(nil), opts.SCIPIndexes...)
+}
+
+func stableSnapshotID(repositoryIdentity, commit, inventoryDigest, scipDigest string, opts Options) string {
+	parts := []string{repositoryIdentity, commit, inventoryDigest}
+	if scipDigest != "" {
+		parts = append(parts, scipDigest)
+	}
+	parts = append(
+		parts,
+		opts.ConfigDigest,
+		opts.PolicyDigest,
+		opts.PluginLockDigest,
+		opts.ToolchainDigest,
+		rkcmodel.SchemaVersion,
+	)
+	return rkcmodel.StableID("snapshot", parts...)
 }
 
 type sourceFileIdentity struct {

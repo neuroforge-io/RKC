@@ -67,6 +67,8 @@ func runScanContext(ctx context.Context, args []string) (resultErr error) {
 	noPython := fs.Bool("no-python", !cfg.Plugins.PythonAST.Enabled, "disable the Python syntax adapter")
 	noGo := fs.Bool("no-go", !cfg.Plugins.GoAST.Enabled, "disable the Go syntax adapter")
 	noTypeScript := fs.Bool("no-typescript", !cfg.Plugins.TypeScriptSyntax.Enabled, "disable the JavaScript and TypeScript syntax adapter")
+	scipIndexes := stringList{}
+	fs.Var(&scipIndexes, "scip-index", "compiler-produced SCIP index to import; repeatable")
 	noFrameworks := fs.Bool("no-frameworks", !cfg.Frameworks.Enabled, "disable all deterministic framework and document extractors")
 	noMarkdown := fs.Bool("no-markdown", !cfg.Frameworks.Markdown, "disable Markdown document structure extraction")
 	noOpenAPI := fs.Bool("no-openapi", !cfg.Frameworks.OpenAPIJSON, "disable OpenAPI JSON/YAML extraction")
@@ -370,7 +372,8 @@ func runScanContext(ctx context.Context, args []string) (resultErr error) {
 	runJournalPath := runJournal.Path()
 	bundle, coverage, scanErr := pipeline.Scan(ctx, pipeline.Options{
 		Root: rootAbs, MaxFileBytes: *maxFile, MaxTextBytes: *maxText, MaxRepositoryBytes: *maxRepository, MaxFiles: *maxFiles,
-		Excludes: excludes, PythonInterpreter: *python, PythonPlugin: pluginPath, PluginTimeout: *pluginTimeout,
+		Excludes: excludes, SCIPIndexes: append([]string(nil), scipIndexes...),
+		PythonInterpreter: *python, PythonPlugin: pluginPath, PluginTimeout: *pluginTimeout,
 		PluginMaxOutput: *pluginOutput, PluginMaxStderr: 2 * 1024 * 1024,
 		PluginMemoryMiB: cfg.Plugins.MemoryLimitMiB, PluginSwapMiB: cfg.Plugins.MemorySwapLimitMiB,
 		PluginProcessLimit: cfg.Plugins.ProcessLimit, PluginSandboxRequired: cfg.Plugins.NativeWorkerSandbox == "required",

@@ -29,6 +29,8 @@ func runQuickstartContext(ctx context.Context, args []string) error {
 	enablePython := fs.Bool("python", false, "enable the sandboxed Python adapter after doctor passes")
 	clean := fs.Bool("clean", false, "disable incremental stage-cache reuse")
 	force := fs.Bool("force", true, "replace an existing RKC-owned atlas")
+	scipIndexes := stringList{}
+	fs.Var(&scipIndexes, "scip-index", "compiler-produced SCIP index to import; repeatable")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -80,6 +82,9 @@ func runQuickstartContext(ctx context.Context, args []string) error {
 	}
 	if *force {
 		scanArguments = append(scanArguments, "--force")
+	}
+	for _, index := range scipIndexes {
+		scanArguments = append(scanArguments, "--scip-index", index)
 	}
 	scanArguments = append(scanArguments, root)
 	if err := runScanContext(ctx, scanArguments); err != nil {

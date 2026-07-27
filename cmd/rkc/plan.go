@@ -35,6 +35,8 @@ func runPlan(args []string) error {
 	noPython := fs.Bool("no-python", !cfg.Plugins.PythonAST.Enabled, "disable the Python syntax adapter")
 	noGo := fs.Bool("no-go", !cfg.Plugins.GoAST.Enabled, "disable the Go syntax adapter")
 	noTypeScript := fs.Bool("no-typescript", !cfg.Plugins.TypeScriptSyntax.Enabled, "disable JavaScript and TypeScript syntax")
+	scipIndexes := stringList{}
+	fs.Var(&scipIndexes, "scip-index", "compiler-produced SCIP index to include in the plan; repeatable")
 	noFrameworks := fs.Bool("no-frameworks", !cfg.Frameworks.Enabled, "disable deterministic framework extractors")
 	noMarkdown := fs.Bool("no-markdown", !cfg.Frameworks.Markdown, "disable Markdown extraction")
 	noOpenAPI := fs.Bool("no-openapi", !cfg.Frameworks.OpenAPIJSON, "disable OpenAPI JSON/YAML extraction")
@@ -107,6 +109,7 @@ func runPlan(args []string) error {
 	plan, err := pipeline.Plan(context.Background(), pipeline.Options{
 		Root: root, MaxFileBytes: *maxFile, MaxTextBytes: *maxText,
 		MaxRepositoryBytes: *maxRepository, MaxFiles: *maxFiles, Excludes: excludes,
+		SCIPIndexes:       append([]string(nil), scipIndexes...),
 		PythonInterpreter: *python, PluginTimeout: *pluginTimeout,
 		PluginMaxOutput: *pluginOutput, PluginMaxStderr: 2 * 1024 * 1024,
 		PluginMemoryMiB: cfg.Plugins.MemoryLimitMiB, PluginSwapMiB: cfg.Plugins.MemorySwapLimitMiB,

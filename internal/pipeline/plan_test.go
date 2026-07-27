@@ -24,7 +24,7 @@ func TestPlanReportsColdWarmAndSelectiveInvalidation(t *testing.T) {
 		t.Fatal(err)
 	}
 	if cold.Root != root || cold.CacheRoot != cache.Root() ||
-		cold.Summary != (PlanSummary{Stages: 15, Execute: 14, Disabled: 1}) {
+		cold.Summary != (PlanSummary{Stages: 16, Execute: 14, Disabled: 2}) {
 		t.Fatalf("cold plan = %+v", cold)
 	}
 	if _, _, err := Scan(context.Background(), options); err != nil {
@@ -34,7 +34,7 @@ func TestPlanReportsColdWarmAndSelectiveInvalidation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if warm.Summary != (PlanSummary{Stages: 15, Execute: 6, CacheHit: 8, Disabled: 1}) {
+	if warm.Summary != (PlanSummary{Stages: 16, Execute: 6, CacheHit: 8, Disabled: 2}) {
 		t.Fatalf("warm plan summary = %+v", warm.Summary)
 	}
 	for _, stage := range warm.Stages {
@@ -49,7 +49,7 @@ func TestPlanReportsColdWarmAndSelectiveInvalidation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if selective.Summary != (PlanSummary{Stages: 15, Execute: 9, CacheHit: 5, Disabled: 1}) {
+	if selective.Summary != (PlanSummary{Stages: 16, Execute: 9, CacheHit: 5, Disabled: 2}) {
 		t.Fatalf("selective plan summary = %+v", selective.Summary)
 	}
 	for _, stageID := range []string{"markdown", "manifests", "secret-scan"} {
@@ -72,7 +72,7 @@ func TestPlanReportsColdWarmAndSelectiveInvalidation(t *testing.T) {
 		t.Fatal(err)
 	}
 	if clean.CacheRoot != "" ||
-		clean.Summary != (PlanSummary{Stages: 15, Execute: 14, Disabled: 1}) {
+		clean.Summary != (PlanSummary{Stages: 16, Execute: 14, Disabled: 2}) {
 		t.Fatalf("clean plan = %+v", clean)
 	}
 }

@@ -66,13 +66,13 @@ func TestScanForwardsDurableSchedulerJournal(t *testing.T) {
 	}
 
 	records := journal.snapshot()
-	if len(records) != 32 {
-		t.Fatalf("journal record count = %d, want 32", len(records))
+	if len(records) != 34 {
+		t.Fatalf("journal record count = %d, want 34", len(records))
 	}
 	first, last := records[0], records[len(records)-1]
 	if first.Kind != scheduler.JournalKindRun ||
 		first.State != scheduler.JournalStateRunning ||
-		first.RunID != runID || len(first.Plan) != 15 ||
+		first.RunID != runID || len(first.Plan) != 16 ||
 		first.PlanDigest == "" {
 		t.Fatalf("journal run start = %+v", first)
 	}
@@ -100,7 +100,7 @@ func TestScanForwardsDurableSchedulerJournal(t *testing.T) {
 			t.Errorf("unexpected journal stage state: %+v", record)
 		}
 	}
-	if len(started) != 15 || len(finished) != 15 {
+	if len(started) != 16 || len(finished) != 16 {
 		t.Fatalf("stage lifecycle coverage: started=%v finished=%v", started, finished)
 	}
 	for stageID, count := range started {

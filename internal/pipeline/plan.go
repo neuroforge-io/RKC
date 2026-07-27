@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/neuroforge-io/RKC/internal/lang/scipindex"
 	"github.com/neuroforge-io/RKC/internal/scheduler"
 	"github.com/neuroforge-io/RKC/pkg/rkcmodel"
 )
@@ -61,6 +62,10 @@ func Plan(ctx context.Context, opts Options) (ScanPlan, error) {
 		artifactByPath: map[string]string{},
 		fragments:      map[string]rkcmodel.Fragment{},
 		parsed:         map[string]struct{}{},
+	}
+	state.scipInputs, state.scipDigest, err = scipindex.PrepareInputs(ctx, enabledSCIPIndexes(opts))
+	if err != nil {
+		return ScanPlan{}, fmt.Errorf("prepare SCIP indexes: %w", err)
 	}
 	if _, err := state.runInventory(ctx); err != nil {
 		return ScanPlan{}, fmt.Errorf("plan inventory: %w", err)
@@ -157,6 +162,8 @@ func stageEnabled(stageID string, opts Options) bool {
 		return !opts.DisablePlugins && !opts.DisableGoAST
 	case "typescript-syntax":
 		return !opts.DisablePlugins && !opts.DisableTypeScript
+	case "scip-semantic":
+		return !opts.DisablePlugins && !opts.DisableSCIP && len(opts.SCIPIndexes) > 0
 	case "markdown":
 		return !opts.DisableFrameworks && !opts.DisableMarkdown
 	case "openapi":

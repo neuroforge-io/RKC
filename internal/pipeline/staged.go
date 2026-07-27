@@ -19,6 +19,7 @@ import (
 	"github.com/neuroforge-io/RKC/internal/framework/secretpack"
 	"github.com/neuroforge-io/RKC/internal/inventory"
 	"github.com/neuroforge-io/RKC/internal/lang/goast"
+	"github.com/neuroforge-io/RKC/internal/lang/scipindex"
 	"github.com/neuroforge-io/RKC/internal/lang/tssyntax"
 	"github.com/neuroforge-io/RKC/internal/plugin"
 	"github.com/neuroforge-io/RKC/internal/scheduler"
@@ -37,6 +38,7 @@ var analysisStageIDs = []string{
 	"markdown",
 	"openapi",
 	"python-syntax",
+	"scip-semantic",
 	"secret-scan",
 	"typescript-syntax",
 }
@@ -45,6 +47,7 @@ var fragmentMergeOrder = []string{
 	"python-syntax",
 	"go-syntax",
 	"typescript-syntax",
+	"scip-semantic",
 	"markdown",
 	"openapi",
 	"json-schema",
@@ -68,6 +71,8 @@ type stagedScanState struct {
 	parsed           map[string]struct{}
 	secretLiterals   []string
 	sourceIdentities map[string]sourceFileIdentity
+	scipInputs       []scipindex.Input
+	scipDigest       string
 }
 
 // Scan executes the active compiler as an explicit deterministic DAG. Stage
@@ -100,6 +105,10 @@ func Scan(ctx context.Context, opts Options) (rkcmodel.Bundle, rkcmodel.Coverage
 		fragments:      map[string]rkcmodel.Fragment{},
 		parsed:         map[string]struct{}{},
 	}
+	state.scipInputs, state.scipDigest, err = scipindex.PrepareInputs(ctx, enabledSCIPIndexes(opts))
+	if err != nil {
+		return rkcmodel.Bundle{}, rkcmodel.Coverage{}, fmt.Errorf("prepare SCIP indexes: %w", err)
+	}
 	var cache scheduler.Cache
 	if opts.Cache != nil {
 		cache = opts.Cache
@@ -129,9 +138,9 @@ func Scan(ctx context.Context, opts Options) (rkcmodel.Bundle, rkcmodel.Coverage
 	if err != nil {
 		return rkcmodel.Bundle{}, rkcmodel.Coverage{}, fmt.Errorf("execute scan DAG: %w", err)
 	}
-	if len(report.Results) != 15 {
+	if len(report.Results) != 16 {
 		return rkcmodel.Bundle{}, rkcmodel.Coverage{}, fmt.Errorf(
-			"execute scan DAG: completed %d stages, want 15", len(report.Results),
+			"execute scan DAG: completed %d stages, want 16", len(report.Results),
 		)
 	}
 	if state.bundle.Snapshot.ID == "" || state.coverage.SnapshotID != state.bundle.Snapshot.ID {
@@ -199,6 +208,13 @@ func (state *stagedScanState) stages() []scheduler.Stage {
 		}, func(file pluginapi.FileRef) bool {
 			return file.Language == "python"
 		}, state.runPythonSyntax),
+		state.analysisStage("scip-semantic", []string{"normalize"}, map[string]any{
+			"enabled":      !state.opts.DisablePlugins && !state.opts.DisableSCIP && len(state.scipInputs) > 0,
+			"input_digest": state.scipDigest,
+			"input_count":  len(state.scipInputs),
+			"plugin_id":    scipindex.PluginID,
+			"version":      scipindex.PluginVersion,
+		}, nil, state.runSCIPSemantic),
 		state.analysisStage("secret-scan", []string{"normalize"}, map[string]any{
 			"enabled":       !state.opts.DisableSecretScan,
 			"policy_digest": state.opts.PolicyDigest,
@@ -254,7 +270,7 @@ func (state *stagedScanState) stageResources(stageID string) scheduler.ResourceR
 			MemoryMiB: memory, CPU: 1, Processes: processes,
 			OpenFiles: 64, IOClass: "normal",
 		}
-	case "go-syntax", "typescript-syntax":
+	case "go-syntax", "typescript-syntax", "scip-semantic":
 		return scheduler.ResourceRequest{
 			MemoryMiB: 512, CPU: 1, OpenFiles: 128, IOClass: "normal",
 		}
@@ -361,10 +377,8 @@ func (state *stagedScanState) runInventory(ctx context.Context) (scheduler.Resul
 	rootName := filepath.Base(state.root)
 	repositoryIdentity := firstNonEmpty(state.opts.SourceReference, gitInfo.Origin, rootName)
 	repositoryID := rkcmodel.StableID("repository", repositoryIdentity)
-	snapshotID := rkcmodel.StableID(
-		"snapshot", repositoryIdentity, gitInfo.Commit, inv.Digest,
-		state.opts.ConfigDigest, state.opts.PolicyDigest, state.opts.PluginLockDigest,
-		state.opts.ToolchainDigest, rkcmodel.SchemaVersion,
+	snapshotID := stableSnapshotID(
+		repositoryIdentity, gitInfo.Commit, inv.Digest, state.scipDigest, state.opts,
 	)
 	if gitInfo.Dirty {
 		gitInfo.WorkingTreeDigest = inv.Digest
@@ -395,8 +409,12 @@ func (state *stagedScanState) runInventory(ctx context.Context) (scheduler.Resul
 			"plugins":              !state.opts.DisablePlugins,
 			"frameworks":           !state.opts.DisableFrameworks,
 			"secret_scan":          !state.opts.DisableSecretScan,
+			"scip_semantic":        len(state.scipInputs) > 0,
 		},
-		Metadata: map[string]string{"source_reference": state.opts.SourceReference},
+		Metadata: map[string]string{
+			"source_reference":  state.opts.SourceReference,
+			"scip_input_digest": state.scipDigest,
+		},
 	}, Artifacts: inv.Artifacts, Diagnostics: inv.Diagnostics}
 	state.bundle.Nodes = append(state.bundle.Nodes, rkcmodel.Node{
 		ID: repositoryID, LogicalID: repositoryID, Kind: "repository",
@@ -514,6 +532,20 @@ func (state *stagedScanState) runTypeScriptSyntax(context.Context) (scheduler.Re
 	return state.recordFragment("typescript-syntax", fragment, files, true)
 }
 
+func (state *stagedScanState) runSCIPSemantic(ctx context.Context) (scheduler.Result, error) {
+	if state.opts.DisablePlugins || state.opts.DisableSCIP || len(state.scipInputs) == 0 {
+		return state.disabledResult("scip-semantic"), nil
+	}
+	fragment, err := scipindex.Extract(ctx, scipindex.Options{
+		Root: state.root, Inputs: state.scipInputs,
+		Files: state.files, Artifacts: state.bundle.Artifacts,
+	})
+	if err != nil {
+		return scheduler.Result{}, fmt.Errorf("SCIP semantic adapter failed closed: %w", err)
+	}
+	return state.recordFragment("scip-semantic", fragment, nil, false)
+}
+
 func (state *stagedScanState) runMarkdown(context.Context) (scheduler.Result, error) {
 	if state.opts.DisableFrameworks || state.opts.DisableMarkdown {
 		return state.disabledResult("markdown"), nil
@@ -591,7 +623,10 @@ func (state *stagedScanState) handleFragmentResult(
 	return state.recordFragment(stage, fragment, files, markSyntax)
 }
 
-func (state *stagedScanState) runMerge(context.Context) (scheduler.Result, error) {
+func (state *stagedScanState) runMerge(ctx context.Context) (scheduler.Result, error) {
+	if err := scipindex.VerifyInputs(ctx, state.scipInputs); err != nil {
+		return scheduler.Result{}, fmt.Errorf("reverify SCIP indexes: %w", err)
+	}
 	if err := reverifyInventoriedSources(state.root, state.files, state.sourceIdentities); err != nil {
 		return scheduler.Result{}, err
 	}
