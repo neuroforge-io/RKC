@@ -61,32 +61,93 @@ type Health struct {
 	SchemaVersion string `json:"schema_version,omitempty"`
 	SnapshotID    string `json:"snapshot_id,omitempty"`
 }
-type SearchResponse struct {
-	Query   string         `json:"query,omitempty"`
-	Count   int            `json:"count,omitempty"`
-	Results []SearchResult `json:"results"`
+
+// NodeDetails is the complete response returned by the node endpoint. Node is
+// retained as a convenience method for callers that need only the canonical
+// node record.
+type NodeDetails struct {
+	Node          rkcmodel.Node       `json:"node"`
+	IncomingEdges []rkcmodel.Edge     `json:"incoming_edges"`
+	OutgoingEdges []rkcmodel.Edge     `json:"outgoing_edges"`
+	Evidence      []rkcmodel.Evidence `json:"evidence"`
 }
+
+// SearchDocument is the indexed projection returned by the search endpoint.
+// ObjectType distinguishes nodes, artifacts, and documents without coercing
+// every result into a node.
+type SearchDocument struct {
+	ID            string            `json:"id"`
+	ObjectType    string            `json:"object_type"`
+	Kind          string            `json:"kind,omitempty"`
+	Language      string            `json:"language,omitempty"`
+	Title         string            `json:"title"`
+	QualifiedName string            `json:"qualified_name,omitempty"`
+	Signature     string            `json:"signature,omitempty"`
+	Path          string            `json:"path,omitempty"`
+	Body          string            `json:"body,omitempty"`
+	Metadata      map[string]string `json:"metadata,omitempty"`
+}
+
+type SearchHit struct {
+	Document SearchDocument `json:"document"`
+	Score    float64        `json:"score"`
+	Reasons  []string       `json:"reasons"`
+	Terms    []string       `json:"terms"`
+}
+
+type SearchResponse struct {
+	Query        string      `json:"query"`
+	Hits         []SearchHit `json:"hits"`
+	Truncated    bool        `json:"truncated"`
+	Mode         string      `json:"mode"`
+	IndexVersion string      `json:"index_version"`
+
+	// Count and Results are deprecated compatibility projections. Results is a
+	// lossy node-shaped view; use Hits for the server's canonical documents.
+	Count   int            `json:"count,omitempty"`
+	Results []SearchResult `json:"results,omitempty"`
+}
+
+// SearchResult is the legacy node-shaped search projection. New callers should
+// use SearchHit, which preserves object type and indexed document fields.
 type SearchResult struct {
 	Node    rkcmodel.Node `json:"node"`
 	Score   float64       `json:"score"`
 	Reasons []string      `json:"reasons,omitempty"`
 }
 type Neighborhood struct {
-	Center    string          `json:"center"`
+	SeedID    string          `json:"seed_id"`
 	Nodes     []rkcmodel.Node `json:"nodes"`
 	Edges     []rkcmodel.Edge `json:"edges"`
-	Truncated bool            `json:"truncated,omitempty"`
+	DepthByID map[string]int  `json:"depth_by_id"`
+	Truncated bool            `json:"truncated"`
+
+	// Center is a deprecated alias for SeedID.
+	Center string `json:"center,omitempty"`
 }
 type PathResponse struct {
 	Found   bool            `json:"found"`
+	FromID  string          `json:"from_id"`
+	ToID    string          `json:"to_id"`
 	NodeIDs []string        `json:"node_ids,omitempty"`
+	EdgeIDs []string        `json:"edge_ids,omitempty"`
+	Nodes   []rkcmodel.Node `json:"nodes,omitempty"`
 	Edges   []rkcmodel.Edge `json:"edges,omitempty"`
+	Depth   int             `json:"depth,omitempty"`
+	Visited int             `json:"visited"`
 }
 type ImpactResponse struct {
-	Root      string          `json:"root"`
-	Nodes     []rkcmodel.Node `json:"nodes"`
-	Edges     []rkcmodel.Edge `json:"edges"`
-	Truncated bool            `json:"truncated,omitempty"`
+	SeedID        string          `json:"seed_id"`
+	ImpactedNodes []rkcmodel.Node `json:"impacted_nodes"`
+	ImpactEdges   []rkcmodel.Edge `json:"impact_edges"`
+	DepthByID     map[string]int  `json:"depth_by_id"`
+	Truncated     bool            `json:"truncated"`
+
+	// Root, Nodes, and Edges are deprecated compatibility aliases for SeedID,
+	// ImpactedNodes, and ImpactEdges respectively.
+	Root  string          `json:"root,omitempty"`
+	Nodes []rkcmodel.Node `json:"nodes,omitempty"`
+	Edges []rkcmodel.Edge `json:"edges,omitempty"`
 }
 
 type SearchOptions struct {
@@ -120,7 +181,14 @@ func (client *Client) Coverage(ctx context.Context) (rkcmodel.Coverage, error) {
 	return output, client.get(ctx, "/api/v1/coverage", nil, &output)
 }
 func (client *Client) Node(ctx context.Context, id string) (rkcmodel.Node, error) {
-	var output rkcmodel.Node
+	output, err := client.NodeDetails(ctx, id)
+	return output.Node, err
+}
+
+// NodeDetails returns a node together with its direct incoming/outgoing edges
+// and supporting evidence.
+func (client *Client) NodeDetails(ctx context.Context, id string) (NodeDetails, error) {
+	var output NodeDetails
 	return output, client.get(ctx, "/api/v1/nodes/"+url.PathEscape(id), nil, &output)
 }
 
@@ -136,7 +204,25 @@ func (client *Client) Search(ctx context.Context, query string, options SearchOp
 		values.Set("language", options.Language)
 	}
 	var output SearchResponse
-	return output, client.get(ctx, "/api/v1/search", values, &output)
+	if err := client.get(ctx, "/api/v1/search", values, &output); err != nil {
+		return output, err
+	}
+	output.Count = len(output.Hits)
+	output.Results = make([]SearchResult, 0, len(output.Hits))
+	for _, hit := range output.Hits {
+		output.Results = append(output.Results, SearchResult{
+			Node: rkcmodel.Node{
+				ID:            hit.Document.ID,
+				Kind:          hit.Document.Kind,
+				Name:          hit.Document.Title,
+				QualifiedName: hit.Document.QualifiedName,
+				Signature:     hit.Document.Signature,
+				Language:      hit.Document.Language,
+			},
+			Score: hit.Score, Reasons: append([]string(nil), hit.Reasons...),
+		})
+	}
+	return output, nil
 }
 func (client *Client) Neighborhood(ctx context.Context, nodeID string, options NeighborhoodOptions) (Neighborhood, error) {
 	values := url.Values{"node_id": []string{nodeID}}
@@ -153,7 +239,11 @@ func (client *Client) Neighborhood(ctx context.Context, nodeID string, options N
 		values.Set("limit", strconv.Itoa(options.Limit))
 	}
 	var output Neighborhood
-	return output, client.get(ctx, "/api/v1/graph/neighborhood", values, &output)
+	if err := client.get(ctx, "/api/v1/graph/neighborhood", values, &output); err != nil {
+		return output, err
+	}
+	output.Center = output.SeedID
+	return output, nil
 }
 func (client *Client) FindPath(ctx context.Context, from, to string, edgeKinds []string, maxDepth int) (PathResponse, error) {
 	values := url.Values{"from": []string{from}, "to": []string{to}}
@@ -181,7 +271,13 @@ func (client *Client) Impact(ctx context.Context, nodeID string, options ImpactO
 		values.Set("limit", strconv.Itoa(options.Limit))
 	}
 	var output ImpactResponse
-	return output, client.get(ctx, "/api/v1/impact", values, &output)
+	if err := client.get(ctx, "/api/v1/impact", values, &output); err != nil {
+		return output, err
+	}
+	output.Root = output.SeedID
+	output.Nodes = append([]rkcmodel.Node(nil), output.ImpactedNodes...)
+	output.Edges = append([]rkcmodel.Edge(nil), output.ImpactEdges...)
+	return output, nil
 }
 
 func (client *Client) get(ctx context.Context, endpoint string, query url.Values, output any) error {
