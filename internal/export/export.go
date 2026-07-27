@@ -949,7 +949,10 @@ const siteHTML = `<!doctype html>
     <h1 id="title">Repository atlas</h1>
     <p class="header-intro">Explore the symbols, relationships, diagnostics, and evidence captured in this snapshot.</p>
   </div>
-  <div class="metrics" id="metrics" aria-label="Repository metrics"></div>
+  <div>
+    <div class="connection" id="runtime-status" role="status" aria-live="polite">Opening snapshot…</div>
+    <div class="metrics" id="metrics" aria-label="Repository metrics"></div>
+  </div>
 </header>
 <nav class="tabs" role="tablist" aria-label="Atlas views" aria-orientation="horizontal">
   <button id="tab-overview" type="button" role="tab" data-view="overview" class="active" aria-selected="true" aria-controls="content" tabindex="0">Overview</button>
@@ -957,6 +960,7 @@ const siteHTML = `<!doctype html>
   <button id="tab-graph" type="button" role="tab" data-view="graph" aria-selected="false" aria-controls="content" tabindex="-1">Graph</button>
   <button id="tab-diagnostics" type="button" role="tab" data-view="diagnostics" aria-selected="false" aria-controls="content" tabindex="-1">Diagnostics</button>
   <button id="tab-coverage" type="button" role="tab" data-view="coverage" aria-selected="false" aria-controls="content" tabindex="-1">Coverage</button>
+  <button id="tab-commands" type="button" role="tab" data-view="commands" aria-selected="false" aria-controls="content" tabindex="-1">Command center</button>
 </nav>
 <main>
   <aside aria-label="Repository entity explorer">
@@ -980,7 +984,7 @@ const siteHTML = `<!doctype html>
     <div class="loading" role="status" aria-live="polite">Loading repository data…</div>
   </section>
 </main>
-<footer><span id="snapshot"></span><span>Static atlas generated from evidence-backed records.</span></footer>
+<footer><span id="snapshot"></span><span>Evidence-backed atlas · bounded local workbench when explicitly enabled.</span></footer>
 <noscript><div class="noscript">This atlas needs JavaScript to load its local snapshot data.</div></noscript>
 <script src="./app.js" defer></script>
 </body>
@@ -1023,6 +1027,7 @@ const siteCSS = `:root {
 * { box-sizing: border-box; }
 [hidden] { display: none !important; }
 html, body { margin: 0; min-height: 100%; background: var(--bg); color: var(--text); font: 14px/1.55 ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+body { background-image: radial-gradient(circle at 78% -10%, color-mix(in srgb, var(--accent) 12%, transparent), transparent 34rem); background-attachment: fixed; }
 button, input, select { font: inherit; }
 button, select { min-height: 42px; }
 button { color: inherit; }
@@ -1035,12 +1040,17 @@ h1 { font-size: 22px; line-height: 1.2; margin: 3px 0 0; }
 .header-intro { max-width: 64ch; margin: 7px 0 0; color: var(--muted); }
 .eyebrow, .kind { font-size: 11px; letter-spacing: .09em; text-transform: uppercase; color: var(--accent); }
 .metrics { display: flex; justify-content: flex-end; gap: 8px; flex-wrap: wrap; }
+.connection { width: fit-content; margin: 0 0 8px auto; padding: 3px 9px; border: 1px solid var(--line); border-radius: 999px; color: var(--muted); background: var(--panel2); font-size: 11px; }
+.connection.live { color: var(--good); border-color: color-mix(in srgb, var(--good) 55%, var(--line)); }
+.connection.enabled { color: var(--accent2); border-color: color-mix(in srgb, var(--accent2) 55%, var(--line)); }
 .metric { padding: 6px 10px; border: 1px solid var(--line); border-radius: 999px; color: var(--muted); background: var(--panel2); }
 .metric b { color: var(--text); }
 .tabs { position: sticky; top: 0; z-index: 3; display: flex; gap: 4px; padding: 8px 20px; overflow-x: auto; border-bottom: 1px solid var(--line); background: var(--panel); background: color-mix(in srgb, var(--panel) 94%, transparent); backdrop-filter: blur(14px); }
 .tabs button { flex: 0 0 auto; border: 1px solid transparent; border-radius: 7px; padding: 8px 12px; color: var(--muted); background: transparent; cursor: pointer; }
 .tabs button:hover, .tabs button.active, .tabs button[aria-selected="true"] { color: var(--text); border-color: var(--line); background: var(--panel2); }
 main { display: grid; grid-template-columns: minmax(310px, 30%) 1fr; min-height: calc(100vh - 171px); }
+body.command-view main { grid-template-columns: 1fr; }
+body.command-view aside { display: none; }
 aside { position: sticky; top: 59px; max-height: calc(100vh - 59px); padding: 16px; overflow: auto; border-right: 1px solid var(--line); }
 .search-label { display: block; margin-bottom: 6px; color: var(--muted); font-size: 12px; }
 input, select { width: 100%; padding: 10px 11px; color: var(--text); background: var(--panel); border: 1px solid var(--line); border-radius: 8px; }
@@ -1064,6 +1074,8 @@ section { min-width: 0; padding: 24px; overflow: auto; }
 .empty-state p { color: var(--muted); }
 .noscript { padding: 16px; color: var(--text); background: var(--bad); }
 .card { margin: 0 0 16px; padding: 17px 18px; background: var(--panel); border: 1px solid var(--line); border-radius: 12px; box-shadow: var(--shadow); }
+.card { transition: border-color .16s ease, transform .16s ease; }
+.card:hover { border-color: color-mix(in srgb, var(--accent) 42%, var(--line)); }
 .card h2, .card h3 { margin-top: 0; }
 .card h4 { margin-bottom: 6px; }
 .onboarding { margin: 12px 0 20px; padding-left: 22px; }
@@ -1077,6 +1089,20 @@ section { min-width: 0; padding: 24px; overflow: auto; }
 .mono { font-size: 12px; word-break: break-word; }
 .pre-wrap { white-space: pre-wrap; }
 pre { padding: 14px; white-space: pre-wrap; overflow: auto; background: var(--panel2); border: 1px solid var(--line); border-radius: 9px; }
+textarea { width: 100%; min-height: 96px; resize: vertical; padding: 11px; color: var(--text); background: var(--panel2); border: 1px solid var(--line); border-radius: 9px; font: 13px/1.5 ui-monospace, SFMono-Regular, Consolas, monospace; }
+.primary { min-height: 42px; padding: 8px 14px; border: 1px solid color-mix(in srgb, var(--accent) 70%, var(--line)); border-radius: 8px; color: var(--bg); background: linear-gradient(135deg, var(--accent), var(--accent2)); font-weight: 700; cursor: pointer; }
+.primary:disabled { cursor: not-allowed; opacity: .48; filter: saturate(.3); }
+.button-row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-top: 12px; }
+.command-layout { display: grid; grid-template-columns: minmax(250px, .75fr) minmax(360px, 1.5fr); gap: 16px; }
+.command-palette { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 8px; max-height: 480px; overflow: auto; padding-right: 4px; }
+.command-choice { min-height: 74px; padding: 10px; text-align: left; border: 1px solid var(--line); border-radius: 9px; color: var(--text); background: var(--panel2); cursor: pointer; }
+.command-choice strong, .command-choice span { display: block; }
+.command-choice span { margin-top: 3px; color: var(--muted); font-size: 11px; }
+.command-choice.active { border-color: var(--accent2); box-shadow: inset 3px 0 0 var(--accent2); }
+.command-mode { float: right; color: var(--muted); font-size: 10px; text-transform: uppercase; letter-spacing: .08em; }
+.job-output { min-height: 190px; max-height: 48vh; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; }
+.status-good { color: var(--good); }
+.status-bad { color: var(--bad); }
 .table-wrap { width: 100%; overflow-x: auto; }
 table { width: 100%; border-collapse: collapse; }
 th, td { text-align: left; vertical-align: top; padding: 8px; border-bottom: 1px solid var(--line); }
@@ -1124,12 +1150,14 @@ footer { display: flex; justify-content: space-between; gap: 16px; padding: 12px
 @media (max-width: 860px) {
   header { display: block; }
   .metrics { justify-content: flex-start; margin-top: 12px; }
+  .connection { margin: 12px 0 0; }
   main { display: block; }
   aside { position: static; max-height: min(48vh, 420px); overscroll-behavior: contain; border-right: 0; border-bottom: 1px solid var(--line); }
   .edge { grid-template-columns: 90px 20px minmax(0, 1fr); }
   .edge .resolution { grid-column: 3; }
   .bar-row { grid-template-columns: 110px 1fr 55px; }
   footer { display: block; }
+  .command-layout { grid-template-columns: 1fr; }
 }
 @media (max-width: 560px) {
   header, section { padding: 16px; }
@@ -1143,7 +1171,7 @@ footer { display: flex; justify-content: space-between; gap: 16px; padding: 12px
 }`
 
 const siteJS = `'use strict';
-const state={bundle:null,coverage:null,nodes:new Map(),artifacts:new Map(),evidence:new Map(),outgoing:new Map(),incoming:new Map(),selected:null,view:'overview',results:[]};
+const state={bundle:null,coverage:null,nodes:new Map(),artifacts:new Map(),evidence:new Map(),outgoing:new Map(),incoming:new Map(),selected:null,view:'overview',results:[],workbench:null,commandName:'quickstart',api:false,facets:null,listTruncated:false,diagnosticsTruncated:false,searchTimer:null};
 const $=id=>document.getElementById(id);
 const esc=value=>String(value??'').replace(/[&<>"']/g,ch=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch]));
 const label=node=>node?.qualified_name||node?.name||node?.id||'unknown';
@@ -1151,9 +1179,7 @@ const number=value=>new Intl.NumberFormat().format(value||0);
 
 async function boot(){
   try{
-    const response=await fetch('./data/atlas.json',{cache:'no-store'});
-    if(!response.ok)throw new Error('HTTP '+response.status);
-    const data=await response.json();
+    const data=await loadInitialData();
     if(!data?.bundle?.snapshot||!Array.isArray(data.bundle.nodes)||!data.coverage)throw new Error('atlas data is incomplete');
     state.bundle=data.bundle;
     state.coverage=data.coverage;
@@ -1164,8 +1190,10 @@ async function boot(){
     initialiseControls();
     renderHeader();
     renderList();
+    await probeWorkbench();
     const hash=safeHash();
-    if(hash&&state.nodes.has(hash))selectNode(hash,'symbol',false);else setView('overview',false);
+    if(hash&&state.api&&!state.nodes.has(hash))await loadAPINode(hash);
+    if(hash&&state.nodes.has(hash))await selectNode(hash,'symbol',false);else setView('overview',false);
     $('content').setAttribute('aria-busy','false');
   }catch(error){
     $('content').setAttribute('aria-busy','false');
@@ -1173,18 +1201,44 @@ async function boot(){
   }
 }
 
+async function loadInitialData(){
+  try{
+    const health=await fetch('/api/v1/health',{cache:'no-store',headers:{Accept:'application/json'}});
+    if(!health.ok)throw new Error('API unavailable');
+    const [manifest,coverage,nodes,diagnostics,facets]=await Promise.all([
+      fetchJSON('/api/v1/manifest'),fetchJSON('/api/v1/coverage'),
+      fetchJSON('/api/v1/nodes?limit=120'),fetchJSON('/api/v1/diagnostics?limit=200'),
+      fetchJSON('/api/v1/facets')
+    ]);
+    state.api=true;state.facets=facets;state.listTruncated=Boolean(nodes.truncated);state.diagnosticsTruncated=Boolean(diagnostics.truncated);
+    return {bundle:{snapshot:manifest,nodes:nodes.items||[],artifacts:[],edges:[],evidence:[],diagnostics:diagnostics.items||[]},coverage};
+  }catch(_error){
+    state.api=false;
+    const response=await fetch('./data/atlas.json',{cache:'no-store'});
+    if(!response.ok)throw new Error('HTTP '+response.status);
+    return response.json();
+  }
+}
+
+async function fetchJSON(path,options){
+  const response=await fetch(path,{cache:'no-store',headers:{Accept:'application/json',...(options?.headers||{})},...options});
+  const data=await response.json();
+  if(!response.ok)throw new Error(data?.detail||data?.title||('HTTP '+response.status));
+  return data;
+}
+
 function push(map,key,value){if(!map.has(key))map.set(key,[]);map.get(key).push(value)}
 function safeHash(){try{return decodeURIComponent(location.hash.slice(1))}catch(_error){return''}}
 
 function initialiseControls(){
-  const kinds=[...new Set(state.bundle.nodes.map(node=>node.kind).filter(Boolean))].sort();
-  const languages=[...new Set(state.bundle.nodes.map(node=>node.language).filter(Boolean))].sort();
+  const kinds=(state.facets?Object.keys(state.facets.node_kinds||{}):[...new Set(state.bundle.nodes.map(node=>node.kind).filter(Boolean))]).sort();
+  const languages=(state.facets?Object.keys(state.facets.languages||{}):[...new Set(state.bundle.nodes.map(node=>node.language).filter(Boolean))]).sort();
   $('kind').insertAdjacentHTML('beforeend',kinds.map(value=>'<option value="'+esc(value)+'">'+esc(value)+'</option>').join(''));
   $('language').insertAdjacentHTML('beforeend',languages.map(value=>'<option value="'+esc(value)+'">'+esc(value)+'</option>').join(''));
-  $('search').addEventListener('input',renderList);
+  $('search').addEventListener('input',scheduleListRefresh);
   $('search').addEventListener('keydown',event=>{if(event.key==='ArrowDown'&&state.results.length){event.preventDefault();focusResult(0)}});
-  $('kind').addEventListener('change',renderList);
-  $('language').addEventListener('change',renderList);
+  $('kind').addEventListener('change',scheduleListRefresh);
+  $('language').addEventListener('change',scheduleListRefresh);
   $('clear-filters').addEventListener('click',clearFilters);
   $('list').addEventListener('keydown',handleListKeys);
   const tabs=[...document.querySelectorAll('[role="tab"]')];
@@ -1207,7 +1261,25 @@ function initialiseControls(){
 
 function isEditable(element){return element instanceof HTMLInputElement||element instanceof HTMLTextAreaElement||element instanceof HTMLSelectElement||element?.isContentEditable}
 function filtersActive(){return Boolean($('search').value||$('kind').value||$('language').value)}
-function clearFilters(){$('search').value='';$('kind').value='';$('language').value='';renderList()}
+function clearFilters(){$('search').value='';$('kind').value='';$('language').value='';scheduleListRefresh()}
+
+function scheduleListRefresh(){
+  if(!state.api){renderList();return}
+  clearTimeout(state.searchTimer);
+  state.searchTimer=setTimeout(refreshAPIList,180);
+}
+
+async function refreshAPIList(){
+  const parameters=new URLSearchParams({limit:'200'}),query=$('search').value.trim(),kind=$('kind').value,language=$('language').value;
+  if(query)parameters.set('q',query);if(kind)parameters.set('kind',kind);if(language)parameters.set('language',language);
+  $('result-summary').textContent='Searching bounded index…';
+  try{
+    const response=await fetchJSON('/api/v1/nodes?'+parameters);
+    state.bundle.nodes=response.items||[];state.listTruncated=Boolean(response.truncated);
+    for(const node of state.bundle.nodes)state.nodes.set(node.id,node);
+    renderList();
+  }catch(error){$('result-summary').textContent='Search failed: '+String(error?.message||error)}
+}
 
 function handleListKeys(event){
   if(!state.results.length)return;
@@ -1238,10 +1310,28 @@ function renderHeader(){
   $('snapshot').textContent='Snapshot '+bundle.snapshot.id;
   const values=[['artifacts',coverage.artifacts_inventoried],['symbols',coverage.symbols_total],['edges',coverage.edges_total],['unresolved',coverage.unresolved_edges],['errors',coverage.diagnostics_by_severity?.error||0]];
   $('metrics').innerHTML=values.map(([name,value])=>'<span class="metric"><b>'+number(value)+'</b> '+esc(name)+'</span>').join('');
+  $('runtime-status').textContent='Verified static snapshot';
+  $('runtime-status').className='connection live';
+  if(state.api){$('runtime-status').textContent='Bounded local API · read only';$('runtime-status').className='connection live'}
+}
+
+async function probeWorkbench(){
+  try{
+    const response=await fetch('/api/v1/workbench/session',{cache:'no-store',headers:{Accept:'application/json'}});
+    if(!response.ok)throw new Error('unavailable');
+    const session=await response.json();
+    if(!session?.enabled||!session.token||!Array.isArray(session.commands))throw new Error('invalid workbench session');
+    state.workbench=session;
+    $('runtime-status').textContent='Protected local workbench';
+    $('runtime-status').className='connection enabled';
+  }catch(_error){
+    state.workbench={enabled:false,commands:defaultCommands()};
+  }
 }
 
 function setView(view,focusContent=true){
   state.view=view;
+  document.body.classList.toggle('command-view',view==='commands');
   for(const button of document.querySelectorAll('[role="tab"]')){
     const active=button.dataset.view===view;
     button.classList.toggle('active',active);
@@ -1252,6 +1342,7 @@ function setView(view,focusContent=true){
   if(view==='overview')renderOverview();
   else if(view==='diagnostics')renderDiagnostics();
   else if(view==='coverage')renderCoverage();
+  else if(view==='commands')renderCommands();
   else if(view==='graph'&&state.selected)renderGraph(state.selected);
   else if(view==='symbol'&&state.selected)renderSymbol(state.selected);
   else renderSelectionPrompt(view);
@@ -1265,12 +1356,22 @@ function renderSelectionPrompt(view){
 }
 
 function selectNode(id,view='symbol',focusContent=true){
+  if(state.api&&!state.nodes.has(id))return loadAPINode(id).then(()=>selectNode(id,view,focusContent));
   if(!state.nodes.has(id))return;
   state.selected=id;
   const encoded=encodeURIComponent(id);
   if(location.hash.slice(1)!==encoded)location.hash=encoded;
   renderList();
+  if(state.api)return loadAPINode(id).then(()=>setView(view,focusContent));
   setView(view,focusContent);
+}
+
+async function loadAPINode(id){
+  const detail=await fetchJSON('/api/v1/nodes/'+encodeURIComponent(id));
+  state.nodes.set(detail.node.id,detail.node);
+  state.evidence=new Map([...state.evidence,...(detail.evidence||[]).map(item=>[item.id,item])]);
+  state.outgoing.set(id,detail.outgoing_edges||[]);
+  state.incoming.set(id,detail.incoming_edges||[]);
 }
 
 function renderList(){
@@ -1293,7 +1394,7 @@ function renderList(){
   }
   candidates.sort((a,b)=>b.score-a.score||label(a.node).localeCompare(label(b.node)));
   state.results=candidates.slice(0,1000).map(item=>item.node.id);
-  $('result-summary').textContent=number(candidates.length)+' matching entities'+(candidates.length>state.results.length?' · first '+number(state.results.length)+' shown':'');
+  $('result-summary').textContent=number(candidates.length)+' loaded matching entities'+(state.listTruncated||candidates.length>state.results.length?' · bounded result window':'');
   $('clear-filters').hidden=!filtersActive();
   $('list').hidden=!state.results.length;
   $('list-empty').hidden=Boolean(state.results.length);
@@ -1307,8 +1408,8 @@ function renderList(){
 
 function renderOverview(){
   const bundle=state.bundle,coverage=state.coverage;
-  const languages=countBy((bundle.artifacts||[]).filter(artifact=>artifact.language),artifact=>artifact.language);
-  const kinds=countBy(bundle.nodes,node=>node.kind),resolutions=countBy(bundle.edges||[],edge=>edge.resolution);
+  const languages=state.facets?.languages||countBy((bundle.artifacts||[]).filter(artifact=>artifact.language),artifact=>artifact.language);
+  const kinds=state.facets?.node_kinds||countBy(bundle.nodes,node=>node.kind),resolutions=state.facets?.edge_resolutions||countBy(bundle.edges||[],edge=>edge.resolution);
   $('content').innerHTML='<div class="card"><span class="eyebrow">Start here</span><h2>Explore '+esc(bundle.snapshot.root_name)+'</h2><ol class="onboarding"><li>Search by symbol, signature, path, language, or kind.</li><li>Select an entity to inspect its source, relationships, and evidence.</li><li>Use Graph for a bounded neighbourhood, Diagnostics for findings, and Coverage for proof ratios.</li></ol><div class="grid">'+stat('Content digest',short(bundle.snapshot.content_digest))+stat('Git commit',short(bundle.snapshot.git?.commit||'unavailable'))+stat('Schema',bundle.snapshot.schema_version)+stat('Tool',(bundle.snapshot.tool?.name||'rkc')+' '+(bundle.snapshot.tool?.version||''))+'</div></div><div class="grid"><div class="card"><h3>Language inventory</h3>'+bars(languages)+'</div><div class="card"><h3>Node vocabulary</h3>'+bars(kinds)+'</div></div><div class="card"><h3>Relationship resolution</h3>'+bars(resolutions)+'</div><div class="card"><h3>Trust posture</h3><p>Facts are stored as nodes, edges, and evidence. Unresolved relationships remain explicit. Generated prose, when present, remains a claim with evidence identifiers rather than becoming repository truth.</p><div class="grid">'+stat('Inventory accounting',percent(coverage.inventory_accounting_ratio))+stat('Symbol evidence',percent(coverage.symbol_evidence_ratio))+stat('Edge resolution',percent(coverage.edge_resolution_ratio))+stat('Claim citation',coverage.claims_total?percent(coverage.claim_citation_ratio):'n/a')+'</div></div>';
 }
 
@@ -1326,7 +1427,19 @@ function edges(values,outgoing){if(!values.length)return'<p class="muted">None r
 function evidenceRow(item){const source=item.source;return '<details><summary>'+esc(item.kind)+' · '+esc(item.method)+' · confidence '+Number(item.confidence||0).toFixed(2)+'</summary><div class="grid">'+stat('Tool',item.tool||'n/a')+stat('Version',item.tool_version||'n/a')+stat('Source',source?(source.path+':'+(source.start_line||'?')):'n/a')+stat('Evidence ID',short(item.id))+'</div>'+(item.detail?'<p class="pre-wrap">'+esc(item.detail)+'</p>':'')+'</details>'}
 function wireNodeButtons(view){for(const button of $('content').querySelectorAll('button[data-node]'))button.addEventListener('click',()=>selectNode(button.dataset.node,view))}
 
-function renderGraph(seedID){
+async function renderGraph(seedID){
+  if(state.api){
+    $('content').innerHTML='<div class="loading" role="status">Loading bounded graph neighbourhood…</div>';
+    try{
+      const neighborhood=await fetchJSON('/api/v1/graph/neighborhood?node_id='+encodeURIComponent(seedID)+'&max_depth=1&max_nodes=33&include_unresolved=true');
+      for(const node of neighborhood.nodes||[])state.nodes.set(node.id,node);
+      for(const edge of neighborhood.edges||[]){pushUnique(state.outgoing,edge.from,edge);pushUnique(state.incoming,edge.to,edge)}
+    }catch(error){$('content').innerHTML='<div class="card empty-state" role="alert"><h2>Graph query failed</h2><p>'+esc(error?.message||error)+'</p></div>';return}
+  }
+  renderGraphFromState(seedID);
+}
+function pushUnique(map,key,value){if(!map.has(key))map.set(key,[]);if(!map.get(key).some(item=>item.id===value.id))map.get(key).push(value)}
+function renderGraphFromState(seedID){
   const seed=state.nodes.get(seedID);if(!seed){renderSelectionPrompt('graph');return}
   const neighborEdges=[...(state.outgoing.get(seedID)||[]),...(state.incoming.get(seedID)||[])],uniqueEdges=[...new Map(neighborEdges.map(edge=>[edge.id,edge])).values()].slice(0,80),neighborIDs=[...new Set(uniqueEdges.flatMap(edge=>[edge.from,edge.to]).filter(id=>id!==seedID&&state.nodes.has(id)))].slice(0,32);
   const width=1000,height=520,cx=500,cy=260,radius=Math.min(210,80+neighborIDs.length*5),positions=new Map([[seedID,{x:cx,y:cy}]]);
@@ -1342,8 +1455,75 @@ function renderGraph(seedID){
   }
 }
 
-function renderDiagnostics(){const diagnostics=state.bundle.diagnostics||[],counts=countBy(diagnostics,item=>item.severity);$('content').innerHTML='<div class="card"><h2>Diagnostics</h2>'+bars(counts)+'</div><div class="card" role="list" aria-label="Repository diagnostics">'+(diagnostics.length?diagnostics.map(item=>'<div role="listitem" class="diagnostic '+esc(item.severity)+'"><div><b>'+esc(item.severity.toUpperCase())+' '+esc(item.code)+'</b> · '+esc(item.stage||'unspecified stage')+'</div><div>'+esc(item.message)+'</div>'+(item.source?'<div class="muted mono">'+esc(item.source.path+':'+(item.source.start_line||'?'))+'</div>':'')+'</div>').join(''):'<p class="muted">No diagnostics were emitted.</p>')+'</div>'}
+function renderDiagnostics(){const diagnostics=state.bundle.diagnostics||[],counts=state.facets?.diagnostics||countBy(diagnostics,item=>item.severity),bounded=state.diagnosticsTruncated?'<p class="muted">Showing the first bounded result window. Use the API or command center for filtered diagnostics.</p>':'';$('content').innerHTML='<div class="card"><h2>Diagnostics</h2>'+bounded+bars(counts)+'</div><div class="card" role="list" aria-label="Repository diagnostics">'+(diagnostics.length?diagnostics.map(item=>'<div role="listitem" class="diagnostic '+esc(item.severity)+'"><div><b>'+esc(item.severity.toUpperCase())+' '+esc(item.code)+'</b> · '+esc(item.stage||'unspecified stage')+'</div><div>'+esc(item.message)+'</div>'+(item.source?'<div class="muted mono">'+esc(item.source.path+':'+(item.source.start_line||'?'))+'</div>':'')+'</div>').join(''):'<p class="muted">No diagnostics were emitted.</p>')+'</div>'}
 function renderCoverage(){const coverage=state.coverage,ratios={'Inventory accounting':coverage.inventory_accounting_ratio,'Syntactic parse':coverage.syntactic_parse_ratio,'Semantic parse':coverage.semantic_parse_ratio,'Symbol evidence':coverage.symbol_evidence_ratio,'Public documentation':coverage.public_documentation_ratio,'Edge resolution':coverage.edge_resolution_ratio,'Claim citation':coverage.claims_total?coverage.claim_citation_ratio:null};$('content').innerHTML='<div class="card"><h2>Coverage and completeness</h2><p>Each ratio is backed by explicit numerators and denominators in <code>coverage.json</code>.</p>'+Object.entries(ratios).map(([name,value])=>progress(name,value)).join('')+'</div><div class="grid coverage-grid"><div class="card"><h3>Artifacts</h3>'+tableObject('Artifact statuses',coverage.artifact_statuses)+'</div><div class="card"><h3>Node kinds</h3>'+tableObject('Node kinds',coverage.node_kinds)+'</div><div class="card"><h3>Edge kinds</h3>'+tableObject('Edge kinds',coverage.edge_kinds)+'</div><div class="card"><h3>Evidence kinds</h3>'+tableObject('Evidence kinds',coverage.evidence_kinds)+'</div></div><div class="card"><h3>Deterministic digest</h3><p class="mono">'+esc(coverage.deterministic_output_digest)+'</p></div>'}
+
+function defaultCommands(){return[
+  ['quickstart','Build and verify a ready-to-search atlas.','writes'],['init','Create a complete local configuration.','writes'],['doctor','Diagnose repository and optional capabilities.','read'],['plan','Preview the stage DAG and cache decisions.','read'],['scan','Compile a local or remote repository.','writes'],['check','Enforce coverage, integrity, and security gates.','read'],['query','Search a compiled repository atlas.','read'],['answer','Produce a citation-checked answer.','model'],['synthesize','Build evidence packets or use a qualified model.','model'],['path','Find a bounded path between graph nodes.','read'],['impact','Traverse bounded impact relationships.','read'],['components','List strongly connected components.','read'],['diff','Compare two compiled snapshots.','read'],['snapshots','Inspect, export, select, or recover snapshots.','writes'],['plugins','Inspect, validate, lock, or verify plugins.','writes'],['cache','Inspect, verify, or prune the stage cache.','writes'],['version','Print the RKC version.','read'],['help','Show command help.','read']
+].map(([name,description,mode])=>({name,description,mode}))}
+
+function renderCommands(){
+  const session=state.workbench||{enabled:false,commands:defaultCommands()},commands=session.commands||defaultCommands();
+  if(!commands.some(item=>item.name===state.commandName))state.commandName=commands[0]?.name||'help';
+  const enabled=Boolean(session.enabled);
+  const workspace=enabled?session.workspace:'Start with rkc serve --workbench inside the protected resource wrapper.';
+  $('content').innerHTML='<div class="card"><span class="eyebrow">Complete CLI surface</span><h2>Command center</h2><p>Build, inspect, search, explain, validate, and maintain RKC from one responsive workspace. Commands are passed as exact argument arrays—never through a shell—and only one job runs at a time.</p><div class="grid">'+stat('Execution',enabled?'Enabled · token authenticated':'Read-only preview')+stat('Workspace',workspace)+stat('Resource policy','1 CPU · 3.5 GiB hard ceiling')+stat('Output bound',enabled?number(session.maximum_output_bytes)+' bytes':'2 MiB')+'</div></div><div class="command-layout"><div class="card"><h3>Choose a workflow</h3><div class="command-palette" id="command-palette">'+commands.map(command=>'<button type="button" class="command-choice '+(command.name===state.commandName?'active':'')+'" data-command="'+esc(command.name)+'"><span class="command-mode">'+esc(command.mode)+'</span><strong>'+esc(command.name)+'</strong><span>'+esc(command.description)+'</span></button>').join('')+'</div></div><div class="card"><span class="kind">rkc '+esc(state.commandName)+'</span><h3>Arguments</h3><label class="search-label" for="command-args">Enter the same options and values you would put after the command</label><textarea id="command-args" spellcheck="false" aria-describedby="command-guidance" placeholder="--help">'+esc(defaultCommandArgs(state.commandName))+'</textarea><p id="command-guidance" class="help-text">Quotes and backslash escapes are supported. The preview shows the exact command before it runs.</p><pre id="command-preview">'+esc(commandPreview())+'</pre><div class="button-row"><button type="button" class="secondary" id="copy-command">Copy command</button><button type="button" class="primary" id="run-command" '+(enabled?'':'disabled')+'>Run protected command</button><span id="command-status" class="muted" role="status" aria-live="polite">'+(enabled?'Ready':'Execution is disabled in a static or read-only server.')+'</span></div><h3>Job output</h3><pre id="job-output" class="job-output" tabindex="0">No command has run in this session.</pre></div></div>';
+  for(const button of $('command-palette').querySelectorAll('[data-command]'))button.addEventListener('click',()=>{state.commandName=button.dataset.command;renderCommands()});
+  $('command-args').addEventListener('input',()=>{$('command-preview').textContent=commandPreview()});
+  $('copy-command').addEventListener('click',copyCommand);
+  $('run-command').addEventListener('click',runWorkbenchCommand);
+}
+
+function defaultCommandArgs(name){
+  return ({quickstart:'.',doctor:'--repository .',plan:'--config rkc.json .',scan:'--config rkc.json --no-python --out .rkc --state-dir .rkc-state .',check:'--dir .rkc',query:'--dir .rkc --query \"resource guard\"',help:''})[name]||'--help';
+}
+
+function parseCommandArguments(value){
+  const result=[];let current='',quote='',escaped=false,started=false;
+  for(const character of value){
+    if(escaped){current+=character;escaped=false;started=true;continue}
+    if(character==='\\'&&quote!=="'"){escaped=true;started=true;continue}
+    if(quote){if(character===quote)quote='';else current+=character;started=true;continue}
+    if(character==='"'||character==="'"){quote=character;started=true;continue}
+    if(/\s/.test(character)){if(started){result.push(current);current='';started=false}continue}
+    current+=character;started=true;
+  }
+  if(escaped)throw new Error('Arguments end with an incomplete escape.');
+  if(quote)throw new Error('Arguments contain an unclosed quote.');
+  if(started)result.push(current);
+  return result;
+}
+
+function shellQuote(value){const text=String(value);return /^[A-Za-z0-9_./:@%+=,-]+$/.test(text)?text:"'"+text.replace(/'/g,"'\\''")+"'"}
+function currentCommand(){return [state.commandName,...parseCommandArguments($('command-args')?.value||'')]}
+function commandPreview(){try{return currentCommand().map(shellQuote).join(' ')}catch(error){return error.message}}
+async function copyCommand(){try{await navigator.clipboard.writeText(commandPreview());$('command-status').textContent='Command copied.'}catch(_error){$('command-status').textContent='Clipboard unavailable; select the preview to copy.'}}
+
+async function runWorkbenchCommand(){
+  const run=$('run-command'),status=$('command-status'),output=$('job-output');
+  let args;try{args=currentCommand()}catch(error){status.textContent=error.message;return}
+  run.disabled=true;status.textContent='Submitting…';output.textContent='Queued '+args.map(shellQuote).join(' ')+'…';
+  try{
+    const response=await fetch('/api/v1/workbench/jobs',{method:'POST',headers:{'Content-Type':'application/json','Accept':'application/json','X-RKC-Workbench-Token':state.workbench.token},body:JSON.stringify({args})});
+    const job=await response.json();
+    if(!response.ok)throw new Error(job.detail||job.title||'Command request failed');
+    await pollWorkbenchJob(job.id,status,output);
+  }catch(error){status.textContent='Command failed to start';status.className='status-bad';output.textContent=String(error?.message||error)}
+  finally{run.disabled=!state.workbench?.enabled}
+}
+
+async function pollWorkbenchJob(id,status,output){
+  for(;;){
+    const response=await fetch('/api/v1/workbench/jobs/'+encodeURIComponent(id),{cache:'no-store',headers:{Accept:'application/json','X-RKC-Workbench-Token':state.workbench.token}});
+    const job=await response.json();
+    if(!response.ok)throw new Error(job.detail||'Cannot read workbench job');
+    status.textContent=job.status+(job.exit_code!==undefined?' · exit '+job.exit_code:'');
+    status.className=job.status==='succeeded'?'status-good':(job.status==='failed'||job.status==='timed_out'?'status-bad':'muted');
+    output.textContent=(job.output||'')+(job.truncated?'\n\n[output truncated at the 2 MiB safety bound]':'')+(job.error?'\n\n'+job.error:'');
+    if(['succeeded','failed','timed_out'].includes(job.status))return;
+    await new Promise(resolve=>setTimeout(resolve,650));
+  }
+}
 function progress(name,value){if(!Number.isFinite(value))return '<div class="bar-row"><span>'+esc(name)+'</span><span class="muted" role="status">Not applicable</span><strong>n/a</strong></div>';const amount=Math.max(0,Math.min(100,value*100));return '<div class="bar-row"><span>'+esc(name)+'</span><div class="bar" role="progressbar" aria-label="'+esc(name)+'" aria-valuemin="0" aria-valuemax="100" aria-valuenow="'+amount.toFixed(1)+'"><span style="width:'+amount+'%"></span></div><strong>'+percent(value)+'</strong></div>'}
 function stat(name,value){return '<div class="stat"><span class="muted">'+esc(name)+'</span><strong class="'+(String(value).length>28?'mono':'')+'">'+esc(value)+'</strong></div>'}
 function countBy(values,keyFn){const result=Object.create(null);for(const value of values){const key=keyFn(value)||'unknown';result[key]=(result[key]||0)+1}return result}

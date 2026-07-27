@@ -51,7 +51,7 @@ The labels below mean:
 | Markdown documentation | Implemented | deterministic facts and symbol pages |
 | normalized source envelopes | Implemented | likely secrets redacted by default |
 | NotebookLM pack | Implemented | byte-bounded grouping |
-| static browser | Implemented | self-contained reference UI |
+| responsive browser and local workbench | Implemented | accessible static fallback; bounded served startup/search/detail/graph reads; complete CLI command palette; opt-in token-authenticated loopback execution under the resource guard |
 | ranked lexical search | Implemented | persisted portable index |
 | semantic/hybrid query | Partial | qualified `llama.cpp` embedding path and corpus-bound vector receipts implemented; no qualified/default model active |
 | FTS5 runtime search | Planned | depends on SQLite runtime writer |

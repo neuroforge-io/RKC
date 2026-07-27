@@ -220,6 +220,25 @@ still agree at the deletion boundary.
 
 Open `http://127.0.0.1:8787`.
 
+The served GUI starts from bounded overview, diagnostic, and entity windows and
+uses the local API for search, node detail, evidence, and graph neighbourhoods;
+it does not transfer the whole repository graph at browser startup. To enable
+the complete command center for a trusted local checkout, keep the server
+loopback-only and start it inside RKC's fail-closed resource envelope:
+
+```sh
+scripts/with-rkc-limits.sh ./bin/rkc serve \
+  --dir /tmp/rkc-output \
+  --addr 127.0.0.1:8787 \
+  --workbench \
+  --workspace .
+```
+
+Workbench jobs use exact argument arrays without a shell, require a random
+same-origin token, run one at a time, cap captured output, and inherit the
+one-core / 3.5 GiB / idle-I/O envelope. Static exports and ordinary `serve`
+remain read-only.
+
 For a durable canonical store, place the database beneath an owner-only
 directory and use `--database` instead of `--state-dir`:
 

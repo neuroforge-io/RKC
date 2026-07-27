@@ -3,13 +3,18 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"net"
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
+
+	"github.com/neuroforge-io/RKC/internal/resourceguard"
+	"github.com/neuroforge-io/RKC/internal/server"
 )
 
 func runServe(args []string) error {
@@ -23,11 +28,33 @@ func runServe(args []string) error {
 	readyFile := fs.String("ready-file", "", "atomically create a JSON readiness receipt after binding; file must not exist")
 	readTimeout := fs.Duration("read-timeout", 15*time.Second, "HTTP read timeout")
 	writeTimeout := fs.Duration("write-timeout", 60*time.Second, "HTTP write timeout")
+	workbenchEnabled := fs.Bool("workbench", false, "enable the token-authenticated loopback command workbench")
+	workspace := fs.String("workspace", ".", "workbench repository directory")
+	workbenchTimeout := fs.Duration("workbench-timeout", 30*time.Minute, "maximum duration of one workbench command")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
 	if fs.NArg() != 0 {
 		return fmt.Errorf("serve does not accept positional arguments")
+	}
+	var workbench *server.Workbench
+	if *workbenchEnabled {
+		if !loopbackListenAddress(*addr) {
+			return errors.New("workbench requires an explicit localhost or loopback listen address")
+		}
+		if err := resourceguard.RequireCurrentProcessLowPriority(); err != nil {
+			return fmt.Errorf("workbench requires scripts/with-rkc-limits.sh: %w", err)
+		}
+		executable, err := os.Executable()
+		if err != nil {
+			return fmt.Errorf("resolve RKC executable: %w", err)
+		}
+		workbench, err = server.NewWorkbench(server.WorkbenchConfig{
+			Workspace: *workspace, Executable: executable, Timeout: *workbenchTimeout,
+		})
+		if err != nil {
+			return err
+		}
 	}
 	dataset, err := loadSelectedDataset(context.Background(), *dir, *database, *snapshotID, *repositoryID, flagWasSet(fs, "dir"))
 	if err != nil {
@@ -43,13 +70,25 @@ func runServe(args []string) error {
 	if err := publishServeReadyFile(*readyFile, ready); err != nil {
 		return err
 	}
-	httpServer := &http.Server{Addr: actualAddress, Handler: dataset.Handler(), ReadHeaderTimeout: 5 * time.Second, ReadTimeout: *readTimeout, WriteTimeout: *writeTimeout, IdleTimeout: 60 * time.Second}
+	httpServer := &http.Server{Addr: actualAddress, Handler: dataset.HandlerWithWorkbench(workbench), ReadHeaderTimeout: 5 * time.Second, ReadTimeout: *readTimeout, WriteTimeout: *writeTimeout, IdleTimeout: 60 * time.Second}
 	fmt.Printf("RKC snapshot %s at %s\n", dataset.Manifest.ID, ready.URL)
+	if workbench != nil {
+		fmt.Printf("Local command workbench enabled for %s\n", *workspace)
+	}
 	err = httpServer.Serve(listener)
 	if err == http.ErrServerClosed {
 		return nil
 	}
 	return err
+}
+
+func loopbackListenAddress(address string) bool {
+	host, _, err := net.SplitHostPort(address)
+	if err != nil {
+		return false
+	}
+	host = strings.Trim(host, "[]")
+	return strings.EqualFold(host, "localhost") || net.ParseIP(host).IsLoopback()
 }
 
 type serveReadyReceipt struct {

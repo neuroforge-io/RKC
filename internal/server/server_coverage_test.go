@@ -35,6 +35,7 @@ func TestHandlerAllAPIRoutesAndSecurityHeaders(t *testing.T) {
 		{"health", "/api/v1/health", 200, []string{"snapshot-rich", "search_index_version"}},
 		{"manifest", "/api/v1/manifest", 200, []string{"snapshot-rich"}},
 		{"coverage", "/api/v1/coverage", 200, []string{"snapshot-rich"}},
+		{"facets", "/api/v1/facets", 200, []string{"languages", "node_kinds", "edge_resolutions"}},
 		{"artifacts filtered", "/api/v1/artifacts?language=go&status=syntax_parsed&path_prefix=src/&limit=9", 200, []string{"src/a.go"}},
 		{"artifact", "/api/v1/artifacts/artifact-a", 200, []string{"src/a.go", "Alpha"}},
 		{"artifact missing", "/api/v1/artifacts/missing", 404, []string{"Artifact not found", "application/problem"}},

@@ -408,7 +408,9 @@ class RuntimeReceiptTests(unittest.TestCase):
             self.assertEqual(path.stat().st_mode & 0o777, 0o600)
             with self.assertRaises(FileExistsError):
                 bootstrap_llama_cpp._atomic_json(path, {"ok": False})
-        self.assertTrue(bootstrap_llama_cpp._runtime_name(lock, "portable").endswith("-portable"))
+        name = bootstrap_llama_cpp._runtime_name(lock, "portable")
+        self.assertTrue(name.endswith("-portable"))
+        self.assertIn(lock.digest[:12], name)
 
     def test_runtime_receipt_rejects_malformed_metadata_and_mutation(self) -> None:
         lock = model_assets.load_lock()

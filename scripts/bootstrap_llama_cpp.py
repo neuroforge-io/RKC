@@ -403,7 +403,14 @@ def _atomic_json(path: Path, value: object) -> None:
 
 def _runtime_name(lock: ModelLock, profile: str) -> str:
     llama = _mapping(lock.document["llama_cpp"], "llama_cpp")
-    return f"{llama['tag']}-{str(llama['commit'])[:12]}-{profile}"
+    # The runtime receipt is intentionally bound to the complete model lock.
+    # Include that identity in the publication path so a legitimate lock
+    # update creates a new immutable runtime instead of colliding with an older
+    # receipt at the same directory name.
+    return (
+        f"{llama['tag']}-{str(llama['commit'])[:12]}-"
+        f"{lock.digest[:12]}-{profile}"
+    )
 
 
 def _runtime_license_record(path: Path, lock: ModelLock) -> dict[str, object]:

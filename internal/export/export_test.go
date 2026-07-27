@@ -229,12 +229,12 @@ func TestBrowserAssetsAccessibilityAndSerializationContract(t *testing.T) {
 	for name, markers := range map[string][]string{
 		"index.html": {
 			`class="skip-link"`, `role="tablist"`, `role="tabpanel"`,
-			`aria-live="polite"`, `<noscript>`,
+			`aria-live="polite"`, `data-view="commands"`, `<noscript>`,
 		},
 		"styles.css": {
 			":focus-visible", "prefers-reduced-motion", "prefers-contrast",
 			"forced-colors", "@media (max-width: 560px)", ".coverage-grid",
-			"max-height: min(48vh, 420px)",
+			"max-height: min(48vh, 420px)", ".command-layout",
 		},
 		"app.js": {
 			"handleListKeys", "clearFilters", "aria-selected", "role=\"progressbar\"",
@@ -242,6 +242,7 @@ func TestBrowserAssetsAccessibilityAndSerializationContract(t *testing.T) {
 			"<caption class=\"sr-only\">", "<th scope=\"col\">Category</th>",
 			"<th scope=\"row\">", "argument.default??''", "Object.create(null)",
 			"event.key==='Enter'||event.key===' '", "Not applicable", "coverage.claims_total?",
+			"/api/v1/nodes?limit=120", "runWorkbenchCommand", "parseCommandArguments",
 		},
 	} {
 		content := string(assets[name])

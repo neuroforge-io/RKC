@@ -585,10 +585,17 @@ func loadLegacyBundleWithLimits(root string, limits legacyLoadLimits) (model.Bun
 }
 
 func (dataset *Dataset) Handler() http.Handler {
+	return dataset.HandlerWithWorkbench(nil)
+}
+
+// HandlerWithWorkbench adds the explicitly enabled local command surface while
+// preserving the read-only Handler contract for every existing caller.
+func (dataset *Dataset) HandlerWithWorkbench(workbench *Workbench) http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /api/v1/health", dataset.handleHealth)
 	mux.HandleFunc("GET /api/v1/manifest", dataset.handleManifest)
 	mux.HandleFunc("GET /api/v1/coverage", dataset.handleCoverage)
+	mux.HandleFunc("GET /api/v1/facets", dataset.handleFacets)
 	mux.HandleFunc("GET /api/v1/artifacts", dataset.handleArtifacts)
 	mux.HandleFunc("GET /api/v1/artifacts/{artifactID}", dataset.handleArtifact)
 	mux.HandleFunc("GET /api/v1/nodes", dataset.handleNodes)
@@ -601,6 +608,11 @@ func (dataset *Dataset) Handler() http.Handler {
 	mux.HandleFunc("GET /api/v1/graph/path", dataset.handlePath)
 	mux.HandleFunc("GET /api/v1/graph/components", dataset.handleComponents)
 	mux.HandleFunc("GET /api/v1/impact", dataset.handleImpact)
+	if workbench != nil {
+		mux.HandleFunc("GET /api/v1/workbench/session", workbench.handleSession)
+		mux.HandleFunc("POST /api/v1/workbench/jobs", workbench.handleJobs)
+		mux.HandleFunc("GET /api/v1/workbench/jobs/{jobID}", workbench.handleJob)
+	}
 	mux.HandleFunc("/", dataset.handleStaticSite)
 	return securityHeaders(mux)
 }
@@ -652,6 +664,31 @@ func (dataset *Dataset) handleManifest(w http.ResponseWriter, _ *http.Request) {
 }
 func (dataset *Dataset) handleCoverage(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, http.StatusOK, dataset.Coverage)
+}
+
+func (dataset *Dataset) handleFacets(w http.ResponseWriter, _ *http.Request) {
+	languages := map[string]int{}
+	nodeKinds := map[string]int{}
+	resolutions := map[string]int{}
+	diagnostics := map[string]int{}
+	for _, artifact := range dataset.Bundle.Artifacts {
+		if artifact.Language != "" {
+			languages[artifact.Language]++
+		}
+	}
+	for _, node := range dataset.Bundle.Nodes {
+		nodeKinds[node.Kind]++
+	}
+	for _, edge := range dataset.Bundle.Edges {
+		resolutions[edge.Resolution]++
+	}
+	for _, diagnostic := range dataset.Bundle.Diagnostics {
+		diagnostics[diagnostic.Severity]++
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"languages": languages, "node_kinds": nodeKinds,
+		"edge_resolutions": resolutions, "diagnostics": diagnostics,
+	})
 }
 
 func (dataset *Dataset) handleArtifacts(w http.ResponseWriter, request *http.Request) {

@@ -210,6 +210,23 @@ unsupported codebases rather than falsifying the denominator.
 
 The static site is also available directly under `/tmp/my-atlas/site`.
 
+The responsive GUI covers repository overview, bounded search, entity and
+evidence inspection, graph navigation, diagnostics, coverage, and every RKC
+CLI workflow. Normal serving remains read-only. For a trusted local repository,
+the opt-in command center is:
+
+```sh
+scripts/with-rkc-limits.sh ./bin/rkc serve \
+  --dir /tmp/my-atlas \
+  --addr 127.0.0.1:8787 \
+  --workbench \
+  --workspace .
+```
+
+The workbench refuses non-loopback binding and refuses to start outside the
+protected cgroup. It authenticates same-origin requests, invokes RKC directly
+without a shell, serializes jobs, and bounds both duration and captured output.
+
 ## 9. Use MCP
 
 ```sh
