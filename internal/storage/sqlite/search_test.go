@@ -168,3 +168,103 @@ func TestSearchFTSBoundsLargeMultibyteBodies(t *testing.T) {
 		t.Fatalf("bounded multibyte FTS response = %+v", response)
 	}
 }
+
+func TestFTSHelperBoundaryContracts(t *testing.T) {
+	t.Parallel()
+
+	if _, err := ftsQueryFilters(search.Query{
+		PathPrefix: string([]byte{0xff}),
+	}); err == nil {
+		t.Fatal("invalid UTF-8 path prefix was accepted")
+	}
+	for _, query := range []search.Query{
+		{Languages: map[string]struct{}{"": {}}},
+		{ObjectTypes: map[string]struct{}{"bad\x00type": {}}},
+	} {
+		if _, err := ftsQueryFilters(query); err == nil {
+			t.Fatalf("invalid typed filter was accepted: %#v", query)
+		}
+	}
+	tooMany := make(map[string]struct{}, ftsMaximumFilterValues+1)
+	for index := 0; index <= ftsMaximumFilterValues; index++ {
+		tooMany[string(rune(index+1))] = struct{}{}
+	}
+	if _, err := ftsFilterValues(tooMany); err == nil {
+		t.Fatal("oversized filter set was accepted")
+	}
+	for _, value := range []string{"", "bad\x00value", string([]byte{0xff})} {
+		if _, err := ftsFilterValues(map[string]struct{}{value: {}}); err == nil {
+			t.Fatalf("invalid filter value %q was accepted", value)
+		}
+	}
+
+	if _, _, err := ftsMatchExpression(strings.Repeat("x", ftsMaximumTermBytes+1)); err == nil {
+		t.Fatal("oversized query term was accepted")
+	}
+	terms, expression, err := ftsMatchExpression("Alpha alpha BETA")
+	if err != nil || !reflect.DeepEqual(terms, []string{"alpha", "beta"}) ||
+		expression != `"alpha" OR "beta"` {
+		t.Fatalf("deduplicated literal expression = %q, %#v, %v", expression, terms, err)
+	}
+	if limit, err := ftsResultLimit(0); err != nil || limit != ftsDefaultResultLimit {
+		t.Fatalf("default result limit = %d, %v", limit, err)
+	}
+	if _, err := ftsResultLimit(ftsMaximumResultLimit + 1); err == nil {
+		t.Fatal("oversized result limit was accepted")
+	}
+	_, arguments := ftsStatement(
+		"snapshot", "alpha", ftsFilters{}, ftsMaximumResultLimit+1,
+	)
+	if got := arguments[len(arguments)-1]; got != ftsMaximumCandidateLimit+1 {
+		t.Fatalf("candidate cap argument = %v", got)
+	}
+
+	valid := search.Document{ID: "id", ObjectType: "node", Body: "valid"}
+	if err := ftsValidateStoredDocument(valid, int64(len(valid.Body))); err != nil {
+		t.Fatalf("valid projected document rejected: %v", err)
+	}
+	for _, test := range []struct {
+		name      string
+		document  search.Document
+		bodyBytes int64
+	}{
+		{name: "empty identity", document: search.Document{ObjectType: "node"}},
+		{name: "negative body size", document: valid, bodyBytes: -1},
+		{
+			name: "invalid UTF-8",
+			document: search.Document{
+				ID: "id", ObjectType: "node", Title: string([]byte{0xff}),
+			},
+		},
+		{
+			name: "embedded NUL",
+			document: search.Document{
+				ID: "id", ObjectType: "node", Path: "bad\x00path",
+			},
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			if err := ftsValidateStoredDocument(test.document, test.bodyBytes); err == nil {
+				t.Fatal("invalid projected document was accepted")
+			}
+		})
+	}
+}
+
+func TestSearchFTSRejectsCorruptProjectedIdentity(t *testing.T) {
+	database := writerTestOpen(t)
+	bundle := writerTestBundle("search-corrupt", "search-repository", "")
+	writerTestCommit(t, database, bundle)
+	if _, err := database.db.Exec(
+		`UPDATE search_fts SET object_id = ''
+		  WHERE snapshot_id = ? AND object_type = 'node' AND object_id = 'node-a'`,
+		bundle.Snapshot.ID,
+	); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := database.SearchFTS(context.Background(), "search-corrupt", search.Query{
+		Text: "Alpha", ObjectTypes: map[string]struct{}{"node": {}},
+	}); !errors.Is(err, rkcstore.ErrValidation) {
+		t.Fatalf("corrupt projected identity error = %v", err)
+	}
+}
