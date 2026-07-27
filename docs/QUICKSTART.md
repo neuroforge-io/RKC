@@ -221,8 +221,19 @@ unsupported codebases rather than falsifying the denominator.
 
 ```sh
 ./bin/rkc query --dir /tmp/my-atlas --limit 20 authentication
+./bin/rkc query \
+  --database /tmp/rkc-store/rkc.sqlite \
+  --snapshot '<snapshot-id>' \
+  --limit 20 \
+  authentication
 ./bin/rkc serve --dir /tmp/my-atlas --addr 127.0.0.1:8787
 ```
+
+Database queries use the snapshot-bound SQLite FTS5/BM25 projection rather
+than rebuilding lexical rankings in memory. Query text is treated as bounded
+literal terms, while `--kinds`, `--languages`, `--objects`, and `--path-prefix`
+provide explicit filters. Hybrid mode fuses the same FTS result with the
+qualified vector index before bounded graph expansion.
 
 The static site is also available directly under `/tmp/my-atlas/site`.
 

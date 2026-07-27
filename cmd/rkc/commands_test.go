@@ -14,6 +14,7 @@ import (
 	"testing"
 
 	"github.com/neuroforge-io/RKC/internal/safeoutput"
+	"github.com/neuroforge-io/RKC/internal/search"
 	"github.com/neuroforge-io/RKC/internal/snapshot"
 	"github.com/neuroforge-io/RKC/pkg/rkcmodel"
 )
@@ -447,6 +448,14 @@ func TestSQLiteScanQueryAndIdempotentReplay(t *testing.T) {
 	})
 	if err != nil || !strings.Contains(queryOutput, "Alpha") {
 		t.Fatalf("SQLite query: output=%q err=%v", queryOutput, err)
+	}
+	var queryResult search.Response
+	if err := json.Unmarshal([]byte(queryOutput), &queryResult); err != nil {
+		t.Fatal(err)
+	}
+	if queryResult.Mode != "sqlite-fts5-bm25" ||
+		queryResult.IndexVersion != "sqlite-fts5-1" {
+		t.Fatalf("SQLite query did not use FTS5: %+v", queryResult)
 	}
 	synthesisOutput := filepath.Join(root, "synthesis")
 	if _, err := captureStdout(t, func() error {

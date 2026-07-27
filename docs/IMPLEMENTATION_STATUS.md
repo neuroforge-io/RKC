@@ -65,7 +65,7 @@ The labels below mean:
 | responsive browser and local workbench | Implemented | accessible static fallback and opt-in token-authenticated guarded loopback execution; complete CLI palette, exact argument preview, bounded output, deadlines, cancellation, all terminal/cleanup states, and responsive desktop/mobile layouts are unit- and live-browser-tested |
 | ranked lexical search | Implemented | persisted portable index |
 | semantic/hybrid query | Partial | qualified `llama.cpp` embedding path and corpus-bound vector receipts implemented; no qualified/default model active |
-| FTS5 runtime search | Partial | SQLite FTS storage exists; the bounded runtime query path is not yet wired |
+| FTS5 runtime search | Implemented | `query --database` ranks the committed snapshot through SQLite FTS5/BM25 with literal-token MATCH construction, deterministic ties and traces, typed failures, cancellation, field filters, UTF-8/result bounds, and shared semantic-fusion/GraphRAG expansion |
 | graph paths, impact, SCCs | Implemented | bounded in-memory graph operations |
 | semantic diff | Implemented | conservative logical/signature comparison |
 | guarded self-catalogue | Implemented | immutable commit-tree blob staging; recursive-output/model-weight exclusion; atomic complete publication and deterministic receipts |

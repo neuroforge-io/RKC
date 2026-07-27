@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/neuroforge-io/RKC/internal/safeoutput"
+	"github.com/neuroforge-io/RKC/internal/search"
 	"github.com/neuroforge-io/RKC/internal/server"
 	sqlitestore "github.com/neuroforge-io/RKC/internal/storage/sqlite"
 	"github.com/neuroforge-io/RKC/pkg/rkcmodel"
@@ -151,6 +152,42 @@ func loadSQLiteDataset(ctx context.Context, path string, snapshotID, repositoryI
 	// immutable identity and must remain outside that file.
 	dataset.Root = absolute
 	return dataset, nil
+}
+
+func searchSQLiteDataset(
+	ctx context.Context,
+	path string,
+	snapshotID string,
+	repositoryID string,
+	query search.Query,
+) (response search.Response, resultErr error) {
+	absolute, err := canonicalSQLitePath(path)
+	if err != nil {
+		return search.Response{}, err
+	}
+	if (snapshotID == "") == (repositoryID == "") {
+		return search.Response{}, errors.New("SQLite search requires exactly one of --snapshot or --repository")
+	}
+	database, err := sqlitestore.Open(ctx, sqlitestore.Options{
+		Path: absolute, ReadOnly: true, RequireExisting: true,
+	})
+	if err != nil {
+		return search.Response{}, err
+	}
+	defer func() {
+		if err := database.Close(); err != nil {
+			resultErr = errors.Join(resultErr, fmt.Errorf("close SQLite search store: %w", err))
+		}
+	}()
+	selected := rkcstore.SnapshotID(snapshotID)
+	if repositoryID != "" {
+		current, err := database.Current(ctx, rkcstore.RepositoryID(repositoryID))
+		if err != nil {
+			return search.Response{}, fmt.Errorf("load SQLite current snapshot for search: %w", err)
+		}
+		selected = rkcstore.SnapshotID(current.ID)
+	}
+	return database.SearchFTS(ctx, selected, query)
 }
 
 func canonicalSQLitePath(path string) (string, error) {

@@ -146,7 +146,7 @@ mixed-language demonstration atlas plus a complete-distribution SPDX SBOM.
 | Reference implementation | Commercial-production target |
 |---|---|
 | filesystem bundle/snapshot | transactional SQLite local runtime |
-| in-memory lexical index | SQLite FTS5 query implementation |
+| portable in-memory lexical index | SQLite FTS5/BM25 query implementation for durable snapshots |
 | integrated sequential scan | journalled DAG stages and invalidation cache |
 | trusted Python worker | WASI or OS-sandboxed native worker |
 | syntax adapters | compiler/indexer semantic adapters |

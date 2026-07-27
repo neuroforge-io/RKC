@@ -92,6 +92,44 @@ func TestLexicalSemanticAndHybridModes(t *testing.T) {
 	}
 }
 
+func TestPreparedLexicalResultsUseSharedFusionAndGraphPath(t *testing.T) {
+	t.Parallel()
+
+	lexical, vectors, graphIndex := retrievalFixture()
+	embedder := &stubEmbedder{vectors: [][]float32{{1, 0}}}
+	engine := &Engine{Lexical: lexical, Vector: vectors, Embedder: embedder, Graph: graphIndex}
+	query := search.Query{Text: "alpha", Limit: 3}
+	prepared := search.Response{
+		Query: "alpha", Mode: "sqlite-fts5-bm25", IndexVersion: "sqlite-fts5-1",
+		Hits: []search.Hit{{
+			Document: lexical.Documents["a"], Score: 10, Reasons: []string{"fts5:bm25"},
+		}},
+	}
+	result, err := engine.SearchWithLexical(
+		context.Background(), query, Options{Mode: ModeHybrid, GraphHops: 1}, prepared,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Mode != "hybrid-rrf+graph" || result.Query != query.Text ||
+		len(result.Hits) != 3 || !reflect.DeepEqual(
+		map[string]bool{
+			result.Hits[0].Document.ID: true,
+			result.Hits[1].Document.ID: true,
+			result.Hits[2].Document.ID: true,
+		},
+		map[string]bool{"a": true, "b": true, "c": true},
+	) || embedder.calls != 1 {
+		t.Fatalf("prepared lexical GraphRAG response = %+v, embed calls=%d", result, embedder.calls)
+	}
+	if _, err := engine.SearchWithLexical(
+		context.Background(), query, Options{Mode: ModeLexical},
+		search.Response{Query: "different"},
+	); err == nil || !strings.Contains(err.Error(), "does not match") {
+		t.Fatalf("mismatched prepared query error = %v", err)
+	}
+}
+
 func TestSemanticProviderAndQueryVectorFailuresPropagate(t *testing.T) {
 	t.Parallel()
 

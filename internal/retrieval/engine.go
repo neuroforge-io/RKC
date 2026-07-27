@@ -53,6 +53,49 @@ func (engine *Engine) Search(ctx context.Context, query search.Query, options Op
 	candidateQuery := query
 	candidateQuery.Limit = min(limit*4, 1000)
 	lexical := engine.Lexical.Search(candidateQuery)
+	return engine.searchWithLexical(ctx, query, options, limit, candidateQuery, lexical)
+}
+
+// SearchWithLexical applies semantic fusion and graph expansion to a
+// caller-supplied, snapshot-bound lexical result. Durable stores use this path
+// so SQLite FTS5 performs ranking without weakening the shared GraphRAG logic.
+func (engine *Engine) SearchWithLexical(
+	ctx context.Context,
+	query search.Query,
+	options Options,
+	lexical search.Response,
+) (search.Response, error) {
+	if engine == nil || engine.Lexical == nil {
+		return search.Response{}, errors.New("lexical index is required")
+	}
+	if err := ctx.Err(); err != nil {
+		return search.Response{}, err
+	}
+	if options.Mode == "" {
+		options.Mode = ModeHybrid
+	}
+	limit := query.Limit
+	if limit <= 0 {
+		limit = 50
+	} else if limit > 1000 {
+		limit = 1000
+	}
+	candidateQuery := query
+	candidateQuery.Limit = min(limit*4, 1000)
+	if lexical.Query != query.Text {
+		return search.Response{}, errors.New("prepared lexical result does not match the query")
+	}
+	return engine.searchWithLexical(ctx, query, options, limit, candidateQuery, lexical)
+}
+
+func (engine *Engine) searchWithLexical(
+	ctx context.Context,
+	query search.Query,
+	options Options,
+	limit int,
+	candidateQuery search.Query,
+	lexical search.Response,
+) (search.Response, error) {
 	var result search.Response
 	switch options.Mode {
 	case ModeLexical:

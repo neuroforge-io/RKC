@@ -94,7 +94,33 @@ func runQuery(args []string) error {
 		}
 		engine.Embedder = embedder
 	}
-	result, err := engine.Search(ctx, query, retrieval.Options{Mode: mode, GraphHops: *graphHops, GraphNodeLimit: 500})
+	retrievalOptions := retrieval.Options{
+		Mode: mode, GraphHops: *graphHops, GraphNodeLimit: 500,
+	}
+	var result search.Response
+	if *database != "" {
+		candidateQuery := query
+		candidateLimit := query.Limit
+		if candidateLimit <= 0 {
+			candidateLimit = 50
+		} else if candidateLimit > 1000 {
+			candidateLimit = 1000
+		}
+		candidateQuery.Limit = min(candidateLimit*4, 1000)
+		lexical, lexicalErr := searchSQLiteDataset(
+			ctx, *database, *snapshotID, *repositoryID, candidateQuery,
+		)
+		if lexicalErr != nil {
+			if embedder != nil {
+				lexicalErr = errors.Join(lexicalErr, embedder.Close())
+				embedder = nil
+			}
+			return lexicalErr
+		}
+		result, err = engine.SearchWithLexical(ctx, query, retrievalOptions, lexical)
+	} else {
+		result, err = engine.Search(ctx, query, retrievalOptions)
+	}
 	if embedder != nil {
 		err = errors.Join(err, embedder.Close())
 	}
