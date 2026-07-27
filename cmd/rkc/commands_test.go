@@ -264,6 +264,16 @@ func TestScanSafePublicationAndInvalidFlags(t *testing.T) {
 	if err := json.Unmarshal([]byte(jsonSummary), &summary); err != nil || summary["snapshot_id"] == "" {
 		t.Fatalf("invalid scan summary: %v %s", err, jsonSummary)
 	}
+	idempotentSummary, err := captureStdout(t, func() error {
+		return runScan([]string{"--out", output, "--state-dir", state, "--no-plugins", "--no-frameworks", "--force", "--json", repository})
+	})
+	if err != nil {
+		t.Fatalf("idempotent scan: %v\n%s", err, idempotentSummary)
+	}
+	var idempotent map[string]any
+	if err := json.Unmarshal([]byte(idempotentSummary), &idempotent); err != nil || idempotent["snapshot_store_noop"] != true {
+		t.Fatalf("idempotent summary did not report snapshot-store reuse: %v %s", err, idempotentSummary)
+	}
 	marker, err := os.ReadFile(filepath.Join(output, ".rkc-generated.json"))
 	if err != nil || !strings.Contains(string(marker), `"kind": "atlas"`) {
 		t.Fatalf("output marker missing: %q err=%v", marker, err)

@@ -1083,7 +1083,7 @@ section { min-width: 0; padding: 24px; overflow: auto; }
 .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 10px; }
 .coverage-grid { grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); }
 .stat { min-width: 0; padding: 12px; background: var(--panel2); border: 1px solid var(--line); border-radius: 9px; }
-.stat strong { display: block; font-size: 22px; overflow-wrap: anywhere; }
+.stat strong { display: block; font-size: 18px; overflow-wrap: anywhere; }
 .muted { color: var(--muted); }
 .mono, code, pre { font-family: ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace; }
 .mono { font-size: 12px; word-break: break-word; }
@@ -1475,7 +1475,7 @@ function renderCommands(){
 }
 
 function defaultCommandArgs(name){
-  return ({quickstart:'.',doctor:'--repository .',plan:'--config rkc.json .',scan:'--config rkc.json --no-python --out .rkc --state-dir .rkc-state .',check:'--dir .rkc',query:'--dir .rkc --query \"resource guard\"',help:''})[name]||'--help';
+  return ({quickstart:'.',doctor:'--repository .',plan:'--config rkc.json .',scan:'--config rkc.json --no-python --out .rkc --state-dir .rkc-state .',check:'--dir .rkc',query:'--dir .rkc --query \"resource guard\"',version:'',help:''})[name]||'--help';
 }
 
 function parseCommandArguments(value){

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/json"
@@ -10,6 +11,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"sync"
 	"syscall"
@@ -305,6 +307,7 @@ func runScanContext(ctx context.Context, args []string) error {
 
 	var sqlitePending *sqlitePublication
 	sqliteNoop := false
+	snapshotStoreNoop := false
 	if resolvedDatabase != "" {
 		stateMetadata := map[string]string{"repository_source": acquired.RedactedSource, "atlas_target": outAbs}
 		if !acquired.Temporary {
@@ -373,25 +376,43 @@ func runScanContext(ctx context.Context, args []string) error {
 			stateMetadata["repository_root"] = rootAbs
 		}
 		transaction, err := store.Begin(bundle.Snapshot.ID, stateMetadata)
+		if errors.Is(err, snapshot.ErrSnapshotExists) {
+			storedBundle, storedCoverage, _, loadErr := store.Load(bundle.Snapshot.ID)
+			if loadErr != nil {
+				return fmt.Errorf("atlas published at %s but existing snapshot could not be verified: %w", outAbs, loadErr)
+			}
+			storedJSON, storedErr := rkcmodel.CanonicalJSON(storedBundle)
+			currentJSON, currentErr := rkcmodel.CanonicalJSON(bundle)
+			if storedErr != nil || currentErr != nil || !bytes.Equal(storedJSON, currentJSON) || !reflect.DeepEqual(storedCoverage, coverage) {
+				return fmt.Errorf("atlas published at %s but snapshot ID %s is already bound to different canonical content", outAbs, bundle.Snapshot.ID)
+			}
+			if err := store.SetCurrent(bundle.Snapshot.ID); err != nil {
+				return fmt.Errorf("atlas published at %s but existing snapshot could not be selected: %w", outAbs, err)
+			}
+			snapshotStoreNoop = true
+			err = nil
+		}
 		if err != nil {
 			return fmt.Errorf("atlas published at %s but snapshot transaction could not start: %w", outAbs, err)
 		}
-		committed := false
-		defer func() {
-			if !committed {
-				_ = transaction.Abort("atlas published but snapshot store did not commit")
+		if transaction != nil {
+			committed := false
+			defer func() {
+				if !committed {
+					_ = transaction.Abort("atlas published but snapshot store did not commit")
+				}
+			}()
+			if err := transaction.WriteBundle(bundle); err != nil {
+				return fmt.Errorf("atlas published at %s but snapshot bundle write failed: %w", outAbs, err)
 			}
-		}()
-		if err := transaction.WriteBundle(bundle); err != nil {
-			return fmt.Errorf("atlas published at %s but snapshot bundle write failed: %w", outAbs, err)
+			if err := transaction.WriteCoverage(coverage); err != nil {
+				return fmt.Errorf("atlas published at %s but snapshot coverage write failed: %w", outAbs, err)
+			}
+			if err := transaction.Commit(); err != nil {
+				return fmt.Errorf("atlas published at %s but snapshot store commit failed: %w", outAbs, err)
+			}
+			committed = true
 		}
-		if err := transaction.WriteCoverage(coverage); err != nil {
-			return fmt.Errorf("atlas published at %s but snapshot coverage write failed: %w", outAbs, err)
-		}
-		if err := transaction.Commit(); err != nil {
-			return fmt.Errorf("atlas published at %s but snapshot store commit failed: %w", outAbs, err)
-		}
-		committed = true
 	}
 
 	stageEventMu.Lock()
@@ -403,7 +424,7 @@ func runScanContext(ctx context.Context, args []string) error {
 	}
 	stageEventMu.Unlock()
 	summary := map[string]any{
-		"snapshot_id": bundle.Snapshot.ID, "source": acquired.RedactedSource, "source_kind": acquired.Kind, "output": outAbs, "snapshot_store": *stateDir,
+		"snapshot_id": bundle.Snapshot.ID, "source": acquired.RedactedSource, "source_kind": acquired.Kind, "output": outAbs, "snapshot_store": *stateDir, "snapshot_store_noop": snapshotStoreNoop,
 		"database": resolvedDatabase, "database_noop": sqliteNoop, "cache": resolvedCache, "cache_hits": cacheHits,
 		"artifacts": coverage.ArtifactsInventoried, "text_artifacts": coverage.TextArtifacts,
 		"syntax_parsed": coverage.ArtifactsSyntacticallyParsed, "semantic_parsed": coverage.ArtifactsSemanticallyParsed,
@@ -425,7 +446,7 @@ func runScanContext(ctx context.Context, args []string) error {
 		coverage.SymbolsTotal, coverage.EdgesTotal, coverage.UnresolvedEdges, coverage.SymbolEvidenceRatio)
 	fmt.Printf("Output: %s\n", outAbs)
 	if *stateDir != "" {
-		fmt.Printf("Snapshot store: %s\n", *stateDir)
+		fmt.Printf("Snapshot store: %s (reused=%t)\n", *stateDir, snapshotStoreNoop)
 	}
 	if resolvedDatabase != "" {
 		fmt.Printf("SQLite store: %s (idempotent=%t)\n", resolvedDatabase, sqliteNoop)

@@ -42,6 +42,7 @@ var (
 	ErrAlreadyCommitted  = errors.New("snapshot transaction already committed")
 	ErrTransactionClosed = errors.New("snapshot transaction is closed")
 	ErrSnapshotNotFound  = errors.New("snapshot not found")
+	ErrSnapshotExists    = errors.New("snapshot already exists")
 	ErrStoreUnowned      = errors.New("snapshot store directory is not owned by RKC")
 	ErrBuildingUnowned   = errors.New("snapshot building directory is not owned by RKC")
 	ErrSnapshotPublished = errors.New("snapshot was published but finalization failed")
@@ -140,7 +141,7 @@ func (store *Store) Begin(snapshotID string, metadata map[string]string) (*Trans
 		return nil, err
 	}
 	if _, err := os.Lstat(filepath.Join(store.root, "snapshots", snapshotID)); err == nil {
-		return nil, fmt.Errorf("snapshot %s already exists", snapshotID)
+		return nil, fmt.Errorf("%w: %s", ErrSnapshotExists, snapshotID)
 	} else if !errors.Is(err, fs.ErrNotExist) {
 		return nil, err
 	}
