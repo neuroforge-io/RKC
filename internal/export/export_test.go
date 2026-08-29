@@ -43,6 +43,7 @@ func TestWriteAllProducesCompleteDeterministicRedactedExport(t *testing.T) {
 			"rkc.manifest.json", "rkc.execution.json", "rkc.export-policy.json", "coverage.json", "bundle.json",
 			"graph/nodes.jsonl", "search/index.json", "docs/README.md", "docs/symbols/function-1.md",
 			"normalized/src/login.go.md", "normalized/redactions.json", "notebooklm/manifest.json",
+			"notebooklm/UPLOAD.md",
 			"site/index.html", "site/styles.css", "site/app.js", "site/data/atlas.json",
 			"integrations/diagnostics.sarif.json", "integrations/graph.graphml", "integrations/architecture.mmd",
 			"integrations/symbols.csv", "integrations/edges.csv", "rkc-export-manifest.json",
@@ -81,6 +82,30 @@ func TestWriteAllProducesCompleteDeterministicRedactedExport(t *testing.T) {
 				t.Fatalf("incorrect manifest classification: %+v", file)
 			}
 		}
+		notebookManifestData, err := os.ReadFile(filepath.Join(output, "notebooklm", "manifest.json"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		var notebookManifest struct {
+			SourceCount    int   `json:"source_count"`
+			SourceBytes    int64 `json:"source_bytes"`
+			MaxSourceBytes int64 `json:"max_source_bytes"`
+			SourceFiles    []struct {
+				Path  string `json:"path"`
+				Bytes int64  `json:"bytes"`
+			} `json:"source_files"`
+			UploadGuide string `json:"upload_guide"`
+		}
+		if err := json.Unmarshal(notebookManifestData, &notebookManifest); err != nil {
+			t.Fatal(err)
+		}
+		if notebookManifest.SourceCount != len(notebookManifest.SourceFiles) || notebookManifest.SourceCount < 4 || notebookManifest.SourceBytes <= 0 || notebookManifest.MaxSourceBytes <= 0 || notebookManifest.UploadGuide != "UPLOAD.md" {
+			t.Fatalf("invalid NotebookLM manifest: %+v", notebookManifest)
+		}
+		guide, err := os.ReadFile(filepath.Join(output, "notebooklm", "UPLOAD.md"))
+		if err != nil || !bytes.Contains(guide, []byte("Recommended upload order")) || !bytes.Contains(guide, []byte(markdownText(bundle.Snapshot.ID))) {
+			t.Fatalf("invalid NotebookLM upload guide: %q (error %v)", guide, err)
+		}
 	}
 	var firstManifest, secondManifest exportManifest
 	readExportJSON(t, filepath.Join(first, "rkc-export-manifest.json"), &firstManifest)
@@ -110,7 +135,7 @@ func TestWriteAllHonorsFeatureDisables(t *testing.T) {
 	}
 	var policy exportPolicy
 	readExportJSON(t, filepath.Join(output, "rkc.export-policy.json"), &policy)
-	if policy.StaticSite || policy.JSONLGraph || policy.SearchIndex || policy.IntegrationExports || policy.NormalizedSources || !policy.SecretRedaction || policy.NotebookMaximumBytes != 1_000_000 {
+	if policy.StaticSite || policy.JSONLGraph || policy.SearchIndex || policy.IntegrationExports || policy.NormalizedSources || !policy.SecretRedaction || policy.NotebookMaximumBytes != 4_000_000 {
 		t.Fatalf("bad policy: %+v", policy)
 	}
 }
@@ -219,6 +244,32 @@ func TestExportFormattingAndIntegrationHelpers(t *testing.T) {
 	}
 	if err := writeCSV(filepath.Join(output, "bad.csv"), []string{"h"}, func(*csv.Writer) error { return errors.New("row failure") }); err == nil {
 		t.Fatal("writeCSV swallowed row error")
+	}
+}
+
+func TestNotebookSourceInventoryIsSortedAndRejectsLinks(t *testing.T) {
+	directory := t.TempDir()
+	if err := os.WriteFile(filepath.Join(directory, "02_symbols_001.md"), []byte("two"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(directory, "00_repository_overview.md"), []byte("one"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(directory, "UPLOAD.md"), []byte("guide"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(directory, "notes.txt"), []byte("ignored"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	sources, total, max, err := notebookSourceInventory(directory)
+	if err != nil || len(sources) != 2 || sources[0].Path != "00_repository_overview.md" || sources[1].Path != "02_symbols_001.md" || total != 6 || max != 3 {
+		t.Fatalf("inventory = %+v total=%d max=%d err=%v", sources, total, max, err)
+	}
+	if err := os.Symlink(filepath.Join(directory, "00_repository_overview.md"), filepath.Join(directory, "linked.md")); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, _, err := notebookSourceInventory(directory); err == nil || !strings.Contains(err.Error(), "not a regular file") {
+		t.Fatalf("symlink inventory error = %v", err)
 	}
 }
 

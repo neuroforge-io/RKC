@@ -102,7 +102,7 @@
     "static_site": true,
     "search_index": true,
     "integrations": true,
-    "notebook_pack_bytes": 1000000,
+    "notebook_pack_bytes": 4000000,
     "snapshot_store": ".rkc-state"
   },
   "quality_gates": {

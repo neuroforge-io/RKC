@@ -14,9 +14,9 @@ evidence packet to an optional local model.
 
 ```sh
 ./install.sh
-rkc quickstart /path/to/repository
+rkc open /path/to/repository
+# In another terminal, query the verified atlas while the browser is running:
 rkc query --dir /path/to/repository/.rkc "where is authentication enforced?"
-rkc serve --dir /path/to/repository/.rkc
 ```
 
 No model, daemon, database server, package-manager hook, or network connection
@@ -147,19 +147,25 @@ boundaries are maintained in
 
 ## One-minute local atlas
 
-From a source checkout, installation and a verified first atlas are two
+From a source checkout, installation and a verified browser atlas are two
 commands:
 
 ```sh
 ./install.sh
-rkc quickstart .
+rkc open .
 ```
 
-`quickstart` performs the scan and locked integrity/quality checks, then prints
-the exact search, browser, and cited-answer entry points. It defaults to the
-dependency-light profile and does not need a model, daemon, database server, or
-Python sandbox. Pass `--python` only after `rkc doctor --strict --repository .`
-passes.
+`open` performs the scan and locked integrity/quality checks, starts the
+loopback read-only browser, and opens the default desktop browser when one is
+available. Press Ctrl-C in the terminal to stop it. Use `open --no-browser` on
+headless hosts; the URL is still printed. The command accepts any local folder,
+not only Git worktrees, and places the atlas in `<folder>/.rkc` while retaining
+immutable snapshots in `<folder>/.rkc-state`.
+
+The dependency-light profile does not need a model, daemon, database server, or
+Python sandbox. `quickstart` remains the equivalent headless compile-and-check
+command and prints the exact search, browser, and cited-answer entry points.
+Pass `--python` only after `rkc doctor --strict --repository .` passes.
 
 If a compiler indexer has produced `index.scip`, add compiler-grade semantics
 without changing the safe scan boundary:
@@ -416,7 +422,7 @@ unbundled and no candidate is a default until it passes the published gate. See
 ├── graph/                      record-family JSONL exports
 ├── normalized/                 redacted Markdown source envelopes
 ├── docs/                       deterministic repository and symbol pages
-├── notebooklm/                 bounded coherent source pack
+├── notebooklm/                 ordered Markdown pack + UPLOAD.md guide
 ├── integrations/               SARIF, GraphML, Mermaid, and CSV
 ├── search/                     persisted lexical index
 ├── site/                       static repository atlas
@@ -424,6 +430,12 @@ unbundled and no candidate is a default until it passes the published gate. See
 
 Optional model packets and citation-linked prose are kept outside that verified
 tree under `/tmp/rkc-output.rkc-derived/synthesis/<profile>/` by default.
+
+The `notebooklm/` directory is ready for notebook-style tools: upload the
+ordered Markdown files according to `notebooklm/UPLOAD.md`, then use the
+manifest's exact source and byte counts to confirm the destination plan's
+limits. RKC's deterministic retrieval and packet-only synthesis remain fully
+usable when no local generation model is qualified.
 
 ## Catalogue RKC with RKC
 

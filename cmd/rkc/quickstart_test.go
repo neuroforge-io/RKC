@@ -41,7 +41,8 @@ func Hello() string { return "hello" }
 		}
 	}
 	if !strings.Contains(output, "RKC atlas is ready:") ||
-		!strings.Contains(output, "Quality gate passed") {
+		!strings.Contains(output, "Quality gate passed") ||
+		!strings.Contains(output, filepath.ToSlash(filepath.Join(atlas, "notebooklm", "UPLOAD.md"))) {
 		t.Fatalf("quickstart output = %q", output)
 	}
 }

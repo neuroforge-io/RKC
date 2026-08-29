@@ -8,7 +8,7 @@ The shortest source-checkout path is:
 git clone https://github.com/neuroforge-io/RKC.git
 cd RKC
 ./install.sh
-rkc quickstart .
+rkc open .
 ```
 
 The installer builds both CGO-free binaries, installs them under
@@ -17,11 +17,18 @@ The installer builds both CGO-free binaries, installs them under
 `./install.sh --prefix /another/prefix` for another user-owned destination.
 Existing symbolic-link or non-file destinations are rejected.
 
-`rkc quickstart /path/to/repository` produces an atlas, retains immutable
+`rkc open /path/to/repository` produces an atlas, retains immutable
 snapshot state, runs the strict local integrity and quality checks, and prints
-the search, browser, and cited-answer commands. It safely replaces only a
-previous RKC-owned atlas. The portable default does not invoke Python; pass
-`--python` only after the strict doctor check succeeds.
+the local URL while opening the read-only browser when a desktop opener is
+available. Press Ctrl-C to stop the server, or pass `--no-browser` on a
+headless host. It safely replaces only a previous RKC-owned atlas. The
+portable default does not invoke Python; pass `--python` only after the strict
+doctor check succeeds.
+
+For a compile-only first run, use `rkc quickstart /path/to/repository`; it
+performs the same scan and quality gates without starting a server. Both
+commands accept any local folder, including folders that are not Git
+worktrees.
 
 ## 2. Development prerequisites
 
@@ -294,7 +301,30 @@ Example initialization request:
 {"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}
 ```
 
-## 10. Construct model evidence packets
+## 10. Upload the wiki-style knowledge pack
+
+Every successful scan writes three complementary views of the same immutable
+snapshot:
+
+- `docs/` — linked Markdown pages suitable for a repository wiki or static
+  documentation site;
+- `site/` — the responsive, read-only browser used by `rkc open`;
+- `notebooklm/` — ordered Markdown sources plus `manifest.json` and
+  `UPLOAD.md` for NotebookLM-style notebooks and agent context windows.
+
+Open `notebooklm/UPLOAD.md` first. It records the exact source count, byte
+sizes, recommended upload order, grounding rules, and how to coalesce packs
+with `--notebook-pack-bytes` when a service imposes a source-count limit. The
+exporter never silently truncates a record. Google maintains NotebookLM's
+supported source types and plan-specific quotas in its
+[NotebookLM help center](https://support.google.com/gemininotebook/answer/16215270).
+
+The default pack target is 4,000,000 bytes: large enough to keep ordinary
+repositories to a small source set while remaining comfortably below common
+per-file limits. Verify `manifest.json` after changing the target or uploading
+to another notebook provider.
+
+## 11. Construct model evidence packets
 
 Packet-only mode is useful even without a model:
 
@@ -353,7 +383,7 @@ low-priority user cgroup. It is CPU-only by default, limited to one CPU core at
 the cgroup boundary, runs at nice level 19 with idle I/O priority, and receives
 a hard memory limit derived from `--max-rss-mib`.
 
-## 11. Compare snapshots
+## 12. Compare snapshots
 
 ```sh
 ./bin/rkc diff /tmp/atlas-before /tmp/atlas-after
@@ -365,7 +395,7 @@ Use graph commands to inspect a changed node’s impact:
 ./bin/rkc impact --dir /tmp/atlas-after --node '<node-id>'
 ```
 
-## 12. Produce the complete distributable
+## 13. Produce the complete distributable
 
 ```sh
 make safe-complete-package

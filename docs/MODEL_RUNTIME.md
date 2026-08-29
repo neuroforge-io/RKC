@@ -4,6 +4,13 @@ The model subsystem is optional and derived. It improves readability; it does no
 determine inventory completeness, symbol existence, signatures, APIs, call
 resolution, or quality denominators.
 
+RKC's portable local provider is built around the upstream
+[`llama.cpp` command-line and server interfaces](https://github.com/ggml-org/llama.cpp),
+which support quantized CPU execution and structured/JSON-oriented serving.
+The pinned build receipt and RKC's stricter resource, license, prompt, and
+qualification contracts remain authoritative; upstream capability alone never
+promotes a model or enables a default.
+
 ## Workflow
 
 ```text

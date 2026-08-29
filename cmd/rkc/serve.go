@@ -20,6 +20,12 @@ import (
 )
 
 func runServe(args []string) (resultErr error) {
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	return runServeWithContext(ctx, args)
+}
+
+func runServeWithContext(ctx context.Context, args []string) (resultErr error) {
 	fs := flag.NewFlagSet("serve", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
 	dir := fs.String("dir", ".rkc", "generated RKC output directory")
@@ -30,6 +36,7 @@ func runServe(args []string) (resultErr error) {
 	readyFile := fs.String("ready-file", "", "atomically create a JSON readiness receipt after binding; file must not exist")
 	readTimeout := fs.Duration("read-timeout", 15*time.Second, "HTTP read timeout")
 	writeTimeout := fs.Duration("write-timeout", 60*time.Second, "HTTP write timeout")
+	openBrowser := fs.Bool("open", false, "open the loopback atlas in the default browser after binding")
 	workbenchEnabled := fs.Bool("workbench", false, "enable the token-authenticated loopback command workbench")
 	workspace := fs.String("workspace", ".", "workbench repository directory")
 	workbenchTimeout := fs.Duration("workbench-timeout", 30*time.Minute, "maximum duration of one workbench command")
@@ -63,7 +70,7 @@ func runServe(args []string) (resultErr error) {
 			resultErr = errors.Join(resultErr, workbench.Close(closeContext))
 		}()
 	}
-	dataset, err := loadSelectedDataset(context.Background(), *dir, *database, *snapshotID, *repositoryID, flagWasSet(fs, "dir"))
+	dataset, err := loadSelectedDataset(ctx, *dir, *database, *snapshotID, *repositoryID, flagWasSet(fs, "dir"))
 	if err != nil {
 		return err
 	}
@@ -82,17 +89,24 @@ func runServe(args []string) (resultErr error) {
 	if workbench != nil {
 		fmt.Printf("Local command workbench enabled for %s\n", *workspace)
 	}
-	signalContext, stopSignals := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer stopSignals()
 	serveDone := make(chan error, 1)
 	go func() { serveDone <- httpServer.Serve(listener) }()
+	if *openBrowser {
+		if !loopbackListenAddress(*addr) {
+			fmt.Fprintln(os.Stderr, "rkc: --open was requested, but the listen address is not loopback; use an explicit localhost address")
+		} else if err := launchBrowser(ready.URL); err != nil {
+			// Browser launch is a convenience only. The server remains usable in
+			// headless environments and the URL is already printed above.
+			fmt.Fprintf(os.Stderr, "rkc: could not open the browser: %v\n", err)
+		}
+	}
 	select {
 	case err = <-serveDone:
 		if errors.Is(err, http.ErrServerClosed) {
 			return nil
 		}
 		return err
-	case <-signalContext.Done():
+	case <-ctx.Done():
 		shutdownContext, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		shutdownErr := httpServer.Shutdown(shutdownContext)
 		cancel()

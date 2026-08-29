@@ -17,7 +17,7 @@ test -f "$PREFIX/share/rkc/models/qualification/rkc-local-model-v1.json"
 test -f "$PREFIX/share/rkc/schemas/model-lock.schema.json"
 "$PREFIX/bin/rkc" version >"$WORK/version.txt"
 cmp "$ROOT/VERSION" "$WORK/version.txt"
-grep -F "First run: rkc quickstart" "$WORK/output.txt" >/dev/null
+grep -F "First run: rkc open" "$WORK/output.txt" >/dev/null
 
 mkdir "$WORK/unsafe"
 ln -s "$WORK/unsafe" "$WORK/linked-prefix"

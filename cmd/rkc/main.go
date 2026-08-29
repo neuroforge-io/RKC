@@ -40,6 +40,8 @@ func dispatch(args []string) error {
 		return runScan(args[1:])
 	case "quickstart":
 		return runQuickstart(args[1:])
+	case "open", "start":
+		return runOpen(args[1:])
 	case "plan":
 		return runPlan(args[1:])
 	case "serve":
@@ -96,6 +98,7 @@ Usage:
   rkc <command> [options]
 
 Get started:
+  rkc open .
   rkc quickstart .
   rkc doctor --repository .
   rkc init --path rkc.json
@@ -103,6 +106,7 @@ Get started:
   rkc serve --dir .rkc
 
 Core commands:
+  open         Compile, verify, and open a local browser atlas (alias: start)
   quickstart   Build and verify a ready-to-search atlas in one command
   init         Generate a complete, safe local configuration
   doctor       Diagnose configuration and optional local capabilities

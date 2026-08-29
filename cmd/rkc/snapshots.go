@@ -188,7 +188,7 @@ func runSnapshotsExport(args []string) error {
 	out := fs.String("out", "", "output directory")
 	force := fs.Bool("force", false, "replace output")
 	includeSources := fs.Bool("include-sources", false, "re-read and normalize source files when repository_root metadata is available")
-	notebookBytes := fs.Int("notebook-pack-bytes", 1_000_000, "NotebookLM target pack bytes")
+	notebookBytes := fs.Int("notebook-pack-bytes", 4_000_000, "NotebookLM target pack bytes")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}

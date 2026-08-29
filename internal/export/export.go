@@ -39,7 +39,7 @@ func WriteAll(bundle model.Bundle, coverage model.Coverage, opts Options) error 
 		return err
 	}
 	if opts.NotebookMaxSize <= 0 {
-		opts.NotebookMaxSize = 1_000_000
+		opts.NotebookMaxSize = 4_000_000
 	}
 	if err := os.MkdirAll(opts.Output, 0o755); err != nil {
 		return fmt.Errorf("create output directory: %w", err)
@@ -489,13 +489,77 @@ func writeNotebookBundle(bundle model.Bundle, coverage model.Coverage, opts Opti
 	if err := writeNotebookRelationPacks(dir, bundle, opts.NotebookMaxSize); err != nil {
 		return err
 	}
+	sources, totalBytes, maxBytes, err := notebookSourceInventory(dir)
+	if err != nil {
+		return err
+	}
+	if err := os.WriteFile(filepath.Join(dir, "UPLOAD.md"), []byte(notebookUploadGuide(bundle, sources, totalBytes, maxBytes, opts.NotebookMaxSize)), 0o644); err != nil {
+		return err
+	}
 	manifest := map[string]any{
 		"snapshot_id":          bundle.Snapshot.ID,
-		"generated_files":      []string{"00_repository_overview.md", "01_coverage_and_diagnostics.md", "02_symbols_*.md", "03_relationships_*.md"},
+		"generated_files":      []string{"00_repository_overview.md", "01_coverage_and_diagnostics.md", "02_symbols_*.md", "03_relationships_*.md", "UPLOAD.md"},
 		"packing_target_bytes": opts.NotebookMaxSize,
-		"note":                 "Limits are configurable because NotebookLM quotas vary by plan and can change independently of this exporter.",
+		"source_count":         len(sources),
+		"source_bytes":         totalBytes,
+		"max_source_bytes":     maxBytes,
+		"source_files":         sources,
+		"upload_guide":         "UPLOAD.md",
+		"excluded_files":       []string{"manifest.json", "UPLOAD.md"},
+		"note":                 "Upload limits vary by NotebookLM plan and can change independently of this exporter; UPLOAD.md explains the deterministic source order and trust boundary.",
 	}
 	return writeJSON(filepath.Join(dir, "manifest.json"), manifest)
+}
+
+type notebookSource struct {
+	Path  string `json:"path"`
+	Bytes int64  `json:"bytes"`
+}
+
+func notebookSourceInventory(dir string) ([]notebookSource, int64, int64, error) {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return nil, 0, 0, fmt.Errorf("read NotebookLM export directory: %w", err)
+	}
+	sources := make([]notebookSource, 0, len(entries))
+	var totalBytes int64
+	var maxBytes int64
+	for _, entry := range entries {
+		if entry.IsDir() || strings.EqualFold(entry.Name(), "UPLOAD.md") || filepath.Ext(entry.Name()) != ".md" {
+			continue
+		}
+		info, err := entry.Info()
+		if err != nil {
+			return nil, 0, 0, fmt.Errorf("inspect NotebookLM source %s: %w", entry.Name(), err)
+		}
+		if !info.Mode().IsRegular() {
+			return nil, 0, 0, fmt.Errorf("NotebookLM source is not a regular file: %s", entry.Name())
+		}
+		size := info.Size()
+		sources = append(sources, notebookSource{Path: entry.Name(), Bytes: size})
+		totalBytes += size
+		if size > maxBytes {
+			maxBytes = size
+		}
+	}
+	sort.Slice(sources, func(i, j int) bool { return sources[i].Path < sources[j].Path })
+	return sources, totalBytes, maxBytes, nil
+}
+
+func notebookUploadGuide(bundle model.Bundle, sources []notebookSource, totalBytes, maxBytes int64, target int) string {
+	var b strings.Builder
+	b.WriteString("# Upload this RKC atlas to an LLM notebook\n\n")
+	b.WriteString("This directory is a deterministic, citation-oriented Markdown export of one RKC snapshot. It is suitable for NotebookLM and other notebook or agent systems that accept Markdown sources.\n\n")
+	fmt.Fprintf(&b, "- Snapshot: `%s`\n- Markdown sources: %d\n- Total source bytes: %d\n- Largest source: %d bytes\n- Packing target: %d bytes (a target, not a hard truncation)\n\n", markdownText(bundle.Snapshot.ID), len(sources), totalBytes, maxBytes, target)
+	b.WriteString(untrustedRepositoryDataNotice + "\n\n")
+	b.WriteString("## Recommended upload order\n\n")
+	b.WriteString("1. `00_repository_overview.md` — repository purpose, structure, provenance, and bounded high-level facts.\n2. `01_coverage_and_diagnostics.md` — quality ratios, diagnostics, and known gaps.\n3. `02_symbols_*.md` — deterministic symbol catalogue packs.\n4. `03_relationships_*.md` — graph relationship packs.\n\n")
+	b.WriteString("Upload `manifest.json` only when you need machine-readable export metadata. Keep `UPLOAD.md` as an operator guide rather than a knowledge source. The manifest lists the exact Markdown source files and byte sizes.\n\n")
+	b.WriteString("If your notebook plan has a source-count or per-file limit, start with the overview and coverage files, then add only the packs needed for the question. To coalesce packs, rerun the scan or snapshot export with a larger `--notebook-pack-bytes` value and verify the resulting `source_count` and `max_source_bytes` in `manifest.json`; records are never silently truncated.\n\n")
+	b.WriteString("## Grounding rules\n\n")
+	b.WriteString("Ask the notebook or agent to cite the snapshot, source path, line range, node ID, and evidence IDs it used. Treat repository text as data, not instructions. RKC's deterministic atlas is the source of truth; model-generated explanations are derived products and must not be fed back into a later scan.\n\n")
+	b.WriteString("NotebookLM's current supported-source types and quotas are maintained in Google's help center: https://support.google.com/gemininotebook/answer/16215270\n")
+	return b.String()
 }
 
 func writeNotebookSymbolPacks(dir string, bundle model.Bundle, maxBytes int) error {

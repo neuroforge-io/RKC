@@ -111,6 +111,7 @@ func runQuickstartContext(ctx context.Context, args []string) error {
 	fmt.Printf("RKC atlas is ready: %s\n", atlas)
 	fmt.Println("Search it: rkc query --dir <atlas> <terms>")
 	fmt.Println("Explore it: rkc serve --dir <atlas>")
+	fmt.Printf("Upload the wiki pack: %s/notebooklm/UPLOAD.md\n", filepath.ToSlash(atlas))
 	fmt.Println("Build an evidence packet: rkc synthesize --dir <atlas> --query <question> --packet-only")
 	fmt.Println("Ask with citations after model setup: rkc answer --dir <atlas> <question>")
 	return nil

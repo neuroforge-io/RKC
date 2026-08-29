@@ -175,7 +175,7 @@ func defaultConfiguration() Configuration {
 		Documentation: DocumentationConfig{DeterministicTemplates: true, RequireEvidenceForEveryClaim: true, RejectUnknownSymbolReferences: true},
 		Model:         ModelConfig{Provider: "disabled", ContextTokens: 4096, MaxOutputTokens: 768, Temperature: 0, MaxRSSMiB: 4608},
 		Search:        SearchConfig{Enabled: true, Lexical: true, Embeddings: false, GraphExpansionHops: 2},
-		Exports:       ExportsConfig{NormalizedSources: true, JSONLGraph: true, StaticSite: true, SearchIndex: true, Integrations: true, NotebookPackBytes: 1000000},
+		Exports:       ExportsConfig{NormalizedSources: true, JSONLGraph: true, StaticSite: true, SearchIndex: true, Integrations: true, NotebookPackBytes: 4_000_000},
 		QualityGates:  QualityGatesConfig{MinInventoryAccounting: 1, MinSymbolEvidence: 1, MinEdgeResolution: 0, MinClaimCitation: 1, MaxErrorDiagnostics: 0, MaxUnresolvedEdges: -1, MaxHighConfidenceSecrets: 0, RequireDeterminism: true},
 	}
 }

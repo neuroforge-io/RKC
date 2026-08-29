@@ -60,7 +60,7 @@ The labels below mean:
 | Canonical bundle and JSONL | Implemented | portable, deterministic |
 | Markdown documentation | Implemented | deterministic facts and symbol pages |
 | normalized source envelopes | Implemented | likely secrets redacted by default |
-| NotebookLM pack | Implemented | byte-bounded grouping |
+| NotebookLM pack | Implemented | Byte-bounded grouping, deterministic source inventory, exact byte counts, and a generated `UPLOAD.md` guide with grounding and quota-handling instructions; the default target is 4,000,000 bytes |
 | responsive browser and local workbench | Implemented | accessible static fallback and opt-in token-authenticated guarded loopback execution; complete CLI palette, exact argument preview, bounded output, deadlines, cancellation, all terminal/cleanup states, and responsive desktop/mobile layouts are unit- and live-browser-tested |
 | ranked lexical search | Implemented | persisted portable index |
 | semantic/hybrid query | Implemented, model-gated | Exact-qualified `llama.cpp` embedding path, corpus-bound vector receipts, deterministic lexical fusion, and GraphRAG expansion are complete. With no pair-qualified default, model-backed mode fails closed while lexical/FTS5/graph search remains fully available |
@@ -87,7 +87,7 @@ The labels below mean:
 
 | Interface | Status |
 |---|---|
-| CLI | Implemented |
+| CLI | Implemented | `open` (alias `start`) composes scan, strict checks, loopback serving, and optional desktop-browser launch for a non-technical first run |
 | local read-only HTTP API | Implemented |
 | OpenAPI parity validation | Implemented |
 | MCP stdio server | Implemented |
