@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -38,6 +39,28 @@ func TestOpenInputContracts(t *testing.T) {
 	}
 }
 
+func TestOpenForwardsOptionalScanFlagsBeforeCancellation(t *testing.T) {
+	repository := t.TempDir()
+	if err := os.WriteFile(filepath.Join(repository, "README.md"), []byte("# fixture\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cancelled, cancel := context.WithCancel(context.Background())
+	cancel()
+	err := runOpenContext(cancelled, []string{
+		"--config", filepath.Join(repository, "rkc.json"),
+		"--out", filepath.Join(repository, "atlas"),
+		"--state-dir", filepath.Join(repository, "state"),
+		"--python",
+		"--clean",
+		"--force=false",
+		"--scip-index", filepath.Join(repository, "index.scip"),
+		repository,
+	})
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("optional flag forwarding error = %v", err)
+	}
+}
+
 func TestBrowserCommandRejectsEmptyURL(t *testing.T) {
 	if _, err := browserCommand(""); err == nil || !strings.Contains(err.Error(), "URL is empty") {
 		t.Fatalf("empty browser URL error = %v", err)
@@ -66,19 +89,30 @@ func TestOpenBuildsServesAndStopsWithContext(t *testing.T) {
 	}
 	root := t.TempDir()
 	readyPath := filepath.Join(root, "ready.json")
+	openArgs := []string{
+		"--clean",
+		"--out", filepath.Join(root, "atlas"),
+		"--state-dir", filepath.Join(root, "state"),
+		"--addr", "127.0.0.1:0",
+		"--ready-file", readyPath,
+	}
+	if runtime.GOOS == "linux" {
+		// Keep the browser branch deterministic and headless in CI while still
+		// proving that the server attempts the portable desktop opener.
+		openerDir := t.TempDir()
+		if err := os.WriteFile(filepath.Join(openerDir, "xdg-open"), []byte("#!/bin/sh\nexit 0\n"), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		t.Setenv("PATH", openerDir)
+	} else {
+		openArgs = append(openArgs, "--no-browser")
+	}
+	openArgs = append(openArgs, repository)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	done := make(chan error, 1)
 	go func() {
-		done <- runOpenContext(ctx, []string{
-			"--clean",
-			"--out", filepath.Join(root, "atlas"),
-			"--state-dir", filepath.Join(root, "state"),
-			"--addr", "127.0.0.1:0",
-			"--ready-file", readyPath,
-			"--no-browser",
-			repository,
-		})
+		done <- runOpenContext(ctx, openArgs)
 	}()
 	var receipt serveReadyReceipt
 	deadline := time.Now().Add(8 * time.Second)
