@@ -74,8 +74,52 @@ func openHelpRequest(args []string) bool {
 	return errors.Is(fs.Parse(args), flag.ErrHelp)
 }
 
+type guardedOpenRunner interface {
+	Run(context.Context, io.Writer, io.Writer) (int64, error)
+}
+
+type guardedOpenLaunchDependencies struct {
+	executable        func() (string, error)
+	makeTempDirectory func(string, string) (string, error)
+	removeAll         func(string) error
+	absolutePath      func(string) (string, error)
+	newCommand        func(context.Context, resourceguard.Config) (guardedOpenRunner, error)
+	waitAndLaunch     func(context.Context, string) error
+	stdout            io.Writer
+	stderr            io.Writer
+}
+
+func defaultGuardedOpenLaunchDependencies() guardedOpenLaunchDependencies {
+	return guardedOpenLaunchDependencies{
+		executable:        os.Executable,
+		makeTempDirectory: os.MkdirTemp,
+		removeAll:         os.RemoveAll,
+		absolutePath:      filepath.Abs,
+		newCommand: func(ctx context.Context, config resourceguard.Config) (guardedOpenRunner, error) {
+			return resourceguard.NewCommand(ctx, config)
+		},
+		waitAndLaunch: waitForOpenReadyAndLaunch,
+		stdout:        os.Stdout,
+		stderr:        os.Stderr,
+	}
+}
+
 func launchGuardedOpen(ctx context.Context, args []string) error {
-	executable, err := os.Executable()
+	return launchGuardedOpenUsing(ctx, args, defaultGuardedOpenLaunchDependencies())
+}
+
+func launchGuardedOpenUsing(
+	ctx context.Context,
+	args []string,
+	dependencies guardedOpenLaunchDependencies,
+) (resultErr error) {
+	if ctx == nil || dependencies.executable == nil || dependencies.makeTempDirectory == nil ||
+		dependencies.removeAll == nil || dependencies.absolutePath == nil || dependencies.newCommand == nil ||
+		dependencies.waitAndLaunch == nil ||
+		dependencies.stdout == nil || dependencies.stderr == nil {
+		return errors.New("protected open launch dependencies are not configured")
+	}
+	executable, err := dependencies.executable()
 	if err != nil {
 		return fmt.Errorf("resolve RKC executable for protected open: %w", err)
 	}
@@ -88,15 +132,19 @@ func launchGuardedOpen(ctx context.Context, args []string) error {
 	readyFile := options.readyFile
 	var temporaryReadyDirectory string
 	if openBrowser && readyFile == "" {
-		temporaryReadyDirectory, err = os.MkdirTemp("", "rkc-open-ready-")
+		temporaryReadyDirectory, err = dependencies.makeTempDirectory("", "rkc-open-ready-")
 		if err != nil {
 			return fmt.Errorf("create protected open readiness directory: %w", err)
 		}
-		defer os.RemoveAll(temporaryReadyDirectory)
+		defer func() {
+			if cleanupErr := dependencies.removeAll(temporaryReadyDirectory); cleanupErr != nil {
+				resultErr = errors.Join(resultErr, fmt.Errorf("remove protected open readiness directory: %w", cleanupErr))
+			}
+		}()
 		readyFile = filepath.Join(temporaryReadyDirectory, "ready.json")
 	}
 	if readyFile != "" {
-		readyFile, err = filepath.Abs(readyFile)
+		readyFile, err = dependencies.absolutePath(readyFile)
 		if err != nil {
 			return fmt.Errorf("resolve protected open readiness file: %w", err)
 		}
@@ -107,7 +155,7 @@ func launchGuardedOpen(ctx context.Context, args []string) error {
 	arguments := make([]string, 0, len(args)+1)
 	arguments = append(arguments, "open")
 	arguments = append(arguments, args...)
-	command, err := resourceguard.NewCommand(ctx, resourceguard.Config{
+	command, err := dependencies.newCommand(ctx, resourceguard.Config{
 		Executable:      executable,
 		Arguments:       arguments,
 		Environment:     guardedOpenEnvironment(readyFile),
@@ -117,19 +165,22 @@ func launchGuardedOpen(ctx context.Context, args []string) error {
 	if err != nil {
 		return fmt.Errorf("configure protected open: %w", err)
 	}
+	if command == nil {
+		return errors.New("configure protected open: guarded command is not configured")
+	}
 	watchContext, stopWatching := context.WithCancel(ctx)
 	watchDone := make(chan struct{})
 	if openBrowser {
 		go func() {
 			defer close(watchDone)
-			if err := waitForOpenReadyAndLaunch(watchContext, readyFile); err != nil && !errors.Is(err, context.Canceled) {
-				fmt.Fprintf(os.Stderr, "rkc: could not open the browser: %v\n", err)
+			if err := dependencies.waitAndLaunch(watchContext, readyFile); err != nil && !errors.Is(err, context.Canceled) {
+				fmt.Fprintf(dependencies.stderr, "rkc: could not open the browser: %v\n", err)
 			}
 		}()
 	} else {
 		close(watchDone)
 	}
-	_, runErr := command.Run(ctx, os.Stdout, os.Stderr)
+	_, runErr := command.Run(ctx, dependencies.stdout, dependencies.stderr)
 	stopWatching()
 	<-watchDone
 	if runErr != nil {

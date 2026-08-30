@@ -1,8 +1,10 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -11,7 +13,16 @@ import (
 	"sort"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/neuroforge-io/RKC/internal/resourceguard"
 )
+
+type guardedOpenRunnerFunc func(context.Context, io.Writer, io.Writer) (int64, error)
+
+func (run guardedOpenRunnerFunc) Run(ctx context.Context, stdout, stderr io.Writer) (int64, error) {
+	return run(ctx, stdout, stderr)
+}
 
 func TestOpenAdmissionSelectsExactlyOneExecutionPath(t *testing.T) {
 	sentinel := errors.New("outside envelope")
@@ -94,6 +105,288 @@ func TestOpenAdmissionRejectsMissingDependencies(t *testing.T) {
 				t.Fatalf("configuration error = %v", err)
 			}
 		})
+	}
+}
+
+func TestLaunchGuardedOpenUsesExactGuardAndCleansWatcherAndTemporaryReadiness(t *testing.T) {
+	root := t.TempDir()
+	temporaryDirectory := filepath.Join(root, "rkc-open-ready-test")
+	watcherStarted := make(chan struct{})
+	watcherStopped := make(chan struct{})
+	watchedPath := make(chan string, 1)
+	var capturedConfig resourceguard.Config
+	var removedPath string
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+
+	dependencies := guardedOpenLaunchDependencies{
+		executable: func() (string, error) { return "/opt/rkc", nil },
+		makeTempDirectory: func(parent, pattern string) (string, error) {
+			if parent != "" || pattern != "rkc-open-ready-" {
+				return "", fmt.Errorf("unexpected temp request %q %q", parent, pattern)
+			}
+			if err := os.Mkdir(temporaryDirectory, 0o700); err != nil {
+				return "", err
+			}
+			return temporaryDirectory, nil
+		},
+		removeAll: func(path string) error {
+			removedPath = path
+			select {
+			case <-watcherStopped:
+			default:
+				return errors.New("temporary readiness removed before watcher stopped")
+			}
+			return os.RemoveAll(path)
+		},
+		absolutePath: filepath.Abs,
+		newCommand: func(_ context.Context, config resourceguard.Config) (guardedOpenRunner, error) {
+			capturedConfig = config
+			return guardedOpenRunnerFunc(func(_ context.Context, observedStdout, observedStderr io.Writer) (int64, error) {
+				if observedStdout != &stdout || observedStderr != &stderr {
+					return 0, errors.New("guarded command received unexpected output writers")
+				}
+				select {
+				case <-watcherStarted:
+					return 123, nil
+				case <-time.After(time.Second):
+					return 0, errors.New("readiness watcher did not start")
+				}
+			}), nil
+		},
+		waitAndLaunch: func(ctx context.Context, path string) error {
+			watchedPath <- path
+			close(watcherStarted)
+			<-ctx.Done()
+			close(watcherStopped)
+			return ctx.Err()
+		},
+		stdout: &stdout,
+		stderr: &stderr,
+	}
+	args := []string{"--workbench", "."}
+	if err := launchGuardedOpenUsing(context.Background(), args, dependencies); err != nil {
+		t.Fatalf("protected open launch = %v", err)
+	}
+
+	expectedReady := filepath.Join(temporaryDirectory, "ready.json")
+	if path := <-watchedPath; path != expectedReady {
+		t.Fatalf("watched readiness path = %q, want %q", path, expectedReady)
+	}
+	if removedPath != temporaryDirectory {
+		t.Fatalf("removed readiness directory = %q, want %q", removedPath, temporaryDirectory)
+	}
+	if _, err := os.Stat(temporaryDirectory); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("temporary readiness directory remains after launch: %v", err)
+	}
+	if capturedConfig.Executable != "/opt/rkc" || capturedConfig.MaximumRSSBytes != resourceguard.LowPriorityMemoryMaxBytes ||
+		capturedConfig.UnitPrefix != "rkc-low" {
+		t.Fatalf("guard configuration = %+v", capturedConfig)
+	}
+	wantArguments := append([]string{"open"}, args...)
+	if !reflect.DeepEqual(capturedConfig.Arguments, wantArguments) {
+		t.Fatalf("guard arguments = %#v, want %#v", capturedConfig.Arguments, wantArguments)
+	}
+	environment := strings.Join(capturedConfig.Environment, "\n")
+	if !strings.Contains(environment, guardedOpenChildEnvironment+"=1") ||
+		!strings.Contains(environment, guardedOpenReadyFileEnvironment+"="+expectedReady) {
+		t.Fatalf("guard environment omits protected launch state: %s", environment)
+	}
+	if stderr.Len() != 0 {
+		t.Fatalf("protected launch stderr = %q", stderr.String())
+	}
+}
+
+func TestLaunchGuardedOpenReportsConfigurationAndAdmissionFailures(t *testing.T) {
+	if err := launchGuardedOpen(nil, nil); err == nil || err.Error() != "protected open launch dependencies are not configured" {
+		t.Fatalf("default launch nil context = %v", err)
+	}
+	if err := launchGuardedOpenUsing(context.Background(), nil, guardedOpenLaunchDependencies{}); err == nil ||
+		err.Error() != "protected open launch dependencies are not configured" {
+		t.Fatalf("missing launch dependencies = %v", err)
+	}
+
+	sentinel := errors.New("priority admission denied")
+	dependencies := guardedOpenTestDependencies(guardedOpenRunnerFunc(func(context.Context, io.Writer, io.Writer) (int64, error) {
+		return 0, sentinel
+	}))
+	err := launchGuardedOpenUsing(context.Background(), []string{"--no-browser", "."}, dependencies)
+	if err == nil || !errors.Is(err, sentinel) || !strings.Contains(err.Error(), "protected open") {
+		t.Fatalf("admission failure = %v", err)
+	}
+
+	dependencies = guardedOpenTestDependencies(nil)
+	dependencies.newCommand = func(context.Context, resourceguard.Config) (guardedOpenRunner, error) {
+		return nil, sentinel
+	}
+	err = launchGuardedOpenUsing(context.Background(), []string{"--no-browser", "."}, dependencies)
+	if err == nil || !errors.Is(err, sentinel) || !strings.Contains(err.Error(), "configure protected open") {
+		t.Fatalf("guard configuration failure = %v", err)
+	}
+
+	dependencies = guardedOpenTestDependencies(nil)
+	err = launchGuardedOpenUsing(context.Background(), []string{"--no-browser", "."}, dependencies)
+	if err == nil || !strings.Contains(err.Error(), "guarded command is not configured") {
+		t.Fatalf("nil guarded command = %v", err)
+	}
+}
+
+func TestDefaultGuardedOpenDependenciesWireResourceGuardWithoutStartingIt(t *testing.T) {
+	dependencies := defaultGuardedOpenLaunchDependencies()
+	if dependencies.executable == nil || dependencies.makeTempDirectory == nil || dependencies.removeAll == nil ||
+		dependencies.absolutePath == nil || dependencies.waitAndLaunch == nil || dependencies.stdout == nil ||
+		dependencies.stderr == nil || dependencies.newCommand == nil {
+		t.Fatal("default protected launch dependencies are incomplete")
+	}
+	if _, err := dependencies.newCommand(context.Background(), resourceguard.Config{}); err == nil ||
+		!strings.Contains(err.Error(), "guarded executable is required") {
+		t.Fatalf("default resource guard constructor = %v", err)
+	}
+}
+
+func TestLaunchGuardedOpenFailsClosedBeforeGuardConstruction(t *testing.T) {
+	type failureCase struct {
+		name      string
+		args      []string
+		configure func(*guardedOpenLaunchDependencies)
+		want      string
+		sentinel  error
+	}
+	executableFailure := errors.New("executable lookup failed")
+	temporaryFailure := errors.New("temporary directory failed")
+	absoluteFailure := errors.New("absolute path failed")
+	existingReady := filepath.Join(t.TempDir(), "ready.json")
+	if err := os.WriteFile(existingReady, []byte("stale"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	tests := []failureCase{
+		{
+			name:     "executable lookup",
+			args:     []string{"--no-browser", "."},
+			want:     "resolve RKC executable",
+			sentinel: executableFailure,
+			configure: func(dependencies *guardedOpenLaunchDependencies) {
+				dependencies.executable = func() (string, error) { return "", executableFailure }
+			},
+		},
+		{
+			name:     "temporary readiness creation",
+			args:     []string{"."},
+			want:     "create protected open readiness directory",
+			sentinel: temporaryFailure,
+			configure: func(dependencies *guardedOpenLaunchDependencies) {
+				dependencies.makeTempDirectory = func(string, string) (string, error) { return "", temporaryFailure }
+			},
+		},
+		{
+			name:     "readiness path resolution",
+			args:     []string{"--no-browser", "--ready-file", "ready.json", "."},
+			want:     "resolve protected open readiness file",
+			sentinel: absoluteFailure,
+			configure: func(dependencies *guardedOpenLaunchDependencies) {
+				dependencies.absolutePath = func(string) (string, error) { return "", absoluteFailure }
+			},
+		},
+		{
+			name:      "existing readiness receipt",
+			args:      []string{"--no-browser", "--ready-file", existingReady, "."},
+			want:      "protected open readiness file already exists",
+			configure: func(*guardedOpenLaunchDependencies) {},
+		},
+	}
+	for index := range tests {
+		test := &tests[index]
+		t.Run(test.name, func(t *testing.T) {
+			dependencies := guardedOpenTestDependencies(nil)
+			commandCalls := 0
+			dependencies.newCommand = func(context.Context, resourceguard.Config) (guardedOpenRunner, error) {
+				commandCalls++
+				return nil, errors.New("guard construction must not run")
+			}
+			test.configure(&dependencies)
+			err := launchGuardedOpenUsing(context.Background(), test.args, dependencies)
+			if err == nil || !strings.Contains(err.Error(), test.want) {
+				t.Fatalf("pre-guard failure = %v, want %q", err, test.want)
+			}
+			if test.sentinel != nil && !errors.Is(err, test.sentinel) {
+				t.Fatalf("pre-guard failure = %v, want sentinel %v", err, test.sentinel)
+			}
+			if commandCalls != 0 {
+				t.Fatalf("guard constructed %d times after preflight failure", commandCalls)
+			}
+		})
+	}
+}
+
+func TestLaunchGuardedOpenMapsCancellationAfterGuardCleanup(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	dependencies := guardedOpenTestDependencies(guardedOpenRunnerFunc(func(context.Context, io.Writer, io.Writer) (int64, error) {
+		cancel()
+		return 0, context.Canceled
+	}))
+	if err := launchGuardedOpenUsing(ctx, []string{"--no-browser", "."}, dependencies); err != nil {
+		t.Fatalf("clean protected launch cancellation = %v", err)
+	}
+}
+
+func TestLaunchGuardedOpenContainsBrowserFailureAndPropagatesCleanupFailure(t *testing.T) {
+	root := t.TempDir()
+	readyDirectory := filepath.Join(root, "private-ready")
+	browserFailure := errors.New("desktop opener failed")
+	cleanupFailure := errors.New("private readiness cleanup failed")
+	watcherCalled := make(chan struct{})
+	var stderr bytes.Buffer
+	dependencies := guardedOpenTestDependencies(guardedOpenRunnerFunc(func(context.Context, io.Writer, io.Writer) (int64, error) {
+		select {
+		case <-watcherCalled:
+			return 0, nil
+		case <-time.After(time.Second):
+			return 0, errors.New("browser watcher did not run")
+		}
+	}))
+	dependencies.makeTempDirectory = func(string, string) (string, error) {
+		if err := os.Mkdir(readyDirectory, 0o700); err != nil {
+			return "", err
+		}
+		return readyDirectory, nil
+	}
+	dependencies.removeAll = func(path string) error {
+		if path != readyDirectory {
+			return fmt.Errorf("unexpected cleanup path %q", path)
+		}
+		return cleanupFailure
+	}
+	dependencies.waitAndLaunch = func(context.Context, string) error {
+		close(watcherCalled)
+		return browserFailure
+	}
+	dependencies.stderr = &stderr
+
+	err := launchGuardedOpenUsing(context.Background(), []string{"."}, dependencies)
+	if err == nil || !errors.Is(err, cleanupFailure) || errors.Is(err, browserFailure) {
+		t.Fatalf("protected launch cleanup result = %v", err)
+	}
+	if !strings.Contains(stderr.String(), browserFailure.Error()) {
+		t.Fatalf("browser failure was not reported on injected stderr: %q", stderr.String())
+	}
+}
+
+func guardedOpenTestDependencies(command guardedOpenRunner) guardedOpenLaunchDependencies {
+	return guardedOpenLaunchDependencies{
+		executable: func() (string, error) { return "/opt/rkc", nil },
+		makeTempDirectory: func(string, string) (string, error) {
+			return "", errors.New("unexpected temporary readiness request")
+		},
+		removeAll:    func(string) error { return nil },
+		absolutePath: filepath.Abs,
+		newCommand: func(context.Context, resourceguard.Config) (guardedOpenRunner, error) {
+			return command, nil
+		},
+		waitAndLaunch: func(context.Context, string) error {
+			return errors.New("unexpected browser readiness watcher")
+		},
+		stdout: io.Discard,
+		stderr: io.Discard,
 	}
 }
 
