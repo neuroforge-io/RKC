@@ -35,10 +35,23 @@ const (
 	journalScanLimit          = 128
 )
 
+// Exported safe-output errors are classification sentinels that may be wrapped
+// with operational context. Callers should use errors.Is rather than matching
+// error text.
 var (
-	ErrTargetExists               = errors.New("output directory already exists")
-	ErrTargetUnowned              = errors.New("existing output is not owned by RKC")
-	ErrUnsafeTarget               = errors.New("unsafe output target")
+	// ErrTargetExists reports an ordinary existing target when force replacement
+	// was not requested. No ownership claim or mutation is attempted.
+	ErrTargetExists = errors.New("output directory already exists")
+	// ErrTargetUnowned reports that an existing or displaced target could not be
+	// proven to be the exact RKC-owned output expected by the transaction. A marker
+	// alone never authorizes replacement, recursive cleanup, or rollback removal.
+	ErrTargetUnowned = errors.New("existing output is not owned by RKC")
+	// ErrUnsafeTarget reports a root, protected, indirect, symlinked, invalid-kind,
+	// or identity-changing destination that publication must not target.
+	ErrUnsafeTarget = errors.New("unsafe output target")
+	// ErrInvalidStaging reports that staging identity, location, marker, manifest,
+	// or one-shot transaction state could not be proven. Callers must not infer
+	// cleanup authority from a staging marker after this error.
 	ErrInvalidStaging             = errors.New("invalid RKC staging directory")
 	errAtomicNoReplaceUnavailable = errors.New("atomic no-replace output publication is unavailable on this platform")
 	exchangeOperation             = exchangePaths
