@@ -137,9 +137,11 @@ The labels below mean:
 17. Go race detector;
 18. self-analysis benchmark.
 
-The normal `make verify` target and CI additionally run
-`make quality-index`, which emits the file-level test, documentation,
-profiling, and Git-delta evidence described in [`QUALITY_INDEX.md`](QUALITY_INDEX.md).
+The normal `make verify` target runs `make quality-index`, which emits the
+file-level test, documentation, profiling, and Git-delta evidence described in
+[`QUALITY_INDEX.md`](QUALITY_INDEX.md). CI additionally generates a fresh
+guarded Go/Python profile first and feeds both reports into the uploaded index;
+local fast runs omit profiles unless they are supplied explicitly.
 
 `make safe-complete-package` runs that logged sequence inside the mandatory
 resource guard. Commit-bound release commands reject tracked or untracked source

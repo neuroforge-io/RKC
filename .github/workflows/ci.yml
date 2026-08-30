@@ -77,10 +77,23 @@ jobs:
         env:
           RKC_RESOURCE_GUARD_MODE: service
         run: make self-catalogue
-      - name: Build deterministic quality gap index
+      - name: Build profiled quality gap index
         env:
           RKC_RESOURCE_GUARD_MODE: service
-        run: sh scripts/with-rkc-limits.sh make quality-index
+        run: |
+          set -eu
+          profile_root=.rkc-quality-coverage
+          sh scripts/with-rkc-limits.sh python3 scripts/coverage_gate.py \
+            --output-dir "$profile_root"
+          go_profile=$(find "$profile_root" -type f -name go.merged.out -print -quit)
+          python_report=$(find "$profile_root" -type f -name python.json -print -quit)
+          test -n "$go_profile" && test -f "$go_profile"
+          test -n "$python_report" && test -f "$python_report"
+          sh scripts/with-rkc-limits.sh python3 scripts/quality_index.py \
+            --root . \
+            --output .rkc-quality \
+            --go-profile "$go_profile" \
+            --python-report "$python_report"
       - name: Upload quality gap index
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
