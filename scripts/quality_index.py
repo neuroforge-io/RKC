@@ -525,6 +525,42 @@ def _python_profile(path: Path, source_paths: set[str], root: Path) -> tuple[dic
     return values, errors
 
 
+def _go_profile_metadata(
+    path: Path, source_paths: set[str], root: Path
+) -> tuple[set[str], set[str], list[str]]:
+    """Read zero-statement and current-platform exclusions from a gate report."""
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        return set(), set(), [f"cannot read Go coverage metadata: {exc}"]
+    if not isinstance(raw, dict):
+        return set(), set(), ["Go coverage metadata is not an object"]
+    payload = raw.get("go", raw)
+    if not isinstance(payload, dict):
+        return set(), set(), ["Go coverage metadata has no report object"]
+    zero: set[str] = set()
+    excluded: set[str] = set()
+    errors: list[str] = []
+    for key, destination in (
+        ("zero_statement_files", zero),
+        ("current_platform_excluded_files", excluded),
+    ):
+        values = payload.get(key, [])
+        if not isinstance(values, list):
+            errors.append(f"Go coverage metadata field is not a list: {key}")
+            continue
+        for value in values:
+            if not isinstance(value, str):
+                errors.append(f"Go coverage metadata has a non-string path: {key}")
+                continue
+            relative = _resolve_profile_path(value, source_paths, root)
+            if relative is None:
+                errors.append(f"unowned Go coverage metadata path: {value}")
+                continue
+            destination.add(relative)
+    return zero, excluded, errors
+
+
 def _profile_result(
     language: str,
     relative: str,
@@ -532,8 +568,14 @@ def _profile_result(
     python_values: Mapping[str, Mapping[str, int]],
     go_supplied: bool,
     python_supplied: bool,
+    go_zero_files: set[str] | None = None,
+    go_excluded_files: set[str] | None = None,
 ) -> dict[str, Any]:
     if language == "go":
+        if relative in (go_excluded_files or set()):
+            return {"status": "platform-excluded", "reason": "excluded by the current Go build constraints"}
+        if relative in (go_zero_files or set()):
+            return {"status": "zero-executable", "units": 0, "covered_units": 0, "percent": 100.0}
         row = go_values.get(relative)
         if row:
             total = int(row["statements"])
@@ -560,6 +602,7 @@ def build_index(
     output: Path | None = None,
     base: str | None = None,
     go_profile: Path | None = None,
+    go_report: Path | None = None,
     python_report: Path | None = None,
 ) -> dict[str, Any]:
     root = _validate_root(root)
@@ -584,9 +627,16 @@ def build_index(
     delta = _git_changes(root, base, identity)
     go_values: dict[str, dict[str, int]] = {}
     python_values: dict[str, dict[str, int]] = {}
+    go_zero_files: set[str] = set()
+    go_excluded_files: set[str] = set()
     profile_errors: list[str] = []
     if go_profile is not None:
         go_values, errors = _go_profile(go_profile, {path for path in source_set if _language(Path(path)) == "go"}, root)
+        profile_errors.extend(errors)
+    if go_report is not None:
+        go_zero_files, go_excluded_files, errors = _go_profile_metadata(
+            go_report, {path for path in source_set if _language(Path(path)) == "go"}, root
+        )
         profile_errors.extend(errors)
     if python_report is not None:
         python_values, errors = _python_profile(python_report, {path for path in source_set if _language(Path(path)) == "python"}, root)
@@ -628,6 +678,8 @@ def build_index(
                     python_values,
                     go_profile is not None,
                     python_report is not None,
+                    go_zero_files,
+                    go_excluded_files,
                 ),
             }
         )
@@ -650,7 +702,12 @@ def build_index(
     applicable = [record for record in records if not record["generated"] and not record["is_test"]]
     tested = sum(record["tests"]["status"] == "associated" for record in applicable)
     documented = sum(record["documentation"]["status"] == "evidence" for record in applicable)
-    profile_applicable = [record for record in applicable if record["language"] in {"go", "python"}]
+    profile_applicable = [
+        record
+        for record in applicable
+        if record["language"] in {"go", "python"}
+        and record["profile"]["status"] not in {"platform-excluded", "zero-executable"}
+    ]
     profiled = sum(record["profile"]["status"] == "profiled" for record in profile_applicable)
     profile_units = sum(int(record["profile"].get("units", 0)) for record in profile_applicable)
     profile_covered = sum(int(record["profile"].get("covered_units", 0)) for record in profile_applicable)
@@ -664,6 +721,12 @@ def build_index(
         "test_evidence_percent": _ratio(tested, len(applicable)),
         "documentation_evidence_percent": _ratio(documented, len(applicable)),
         "profiling_file_percent": _ratio(profiled, len(profile_applicable)),
+        "profiling_scope_excluded_files": sum(
+            record["profile"]["status"] == "platform-excluded" for record in applicable
+        ),
+        "profiling_zero_executable_files": sum(
+            record["profile"]["status"] == "zero-executable" for record in applicable
+        ),
         "profile_units": profile_units,
         "profile_covered_units": profile_covered,
         "profile_statement_or_branch_percent": _ratio(profile_covered, profile_units),
@@ -709,6 +772,8 @@ def render_markdown(index: Mapping[str, Any]) -> str:
         f"| Documentation evidence | {summary['documentation_evidence_percent'] if summary['documentation_evidence_percent'] is not None else 'n/a'}% |",
         f"| Profiled Go/Python files | {summary['profiling_file_percent'] if summary['profiling_file_percent'] is not None else 'n/a'}% |",
         f"| Profile units covered | {summary['profile_statement_or_branch_percent'] if summary['profile_statement_or_branch_percent'] is not None else 'n/a'}% |",
+        f"| Platform-excluded profile files | {summary['profiling_scope_excluded_files']} |",
+        f"| Zero-executable profile files | {summary['profiling_zero_executable_files']} |",
         f"| Open gaps | {summary['open_gaps']} |",
         "",
         "## Open gaps",
@@ -735,7 +800,7 @@ def render_markdown(index: Mapping[str, Any]) -> str:
             "",
             "## Reproducibility",
             "",
-            "The JSON file beside this document contains SHA-256, byte, and line metadata for every admitted source and documentation file. Re-run `make quality-index` after edits; pass `--base <ref>`, `--go-profile <path>`, or `--python-report <path>` for a bounded delta or profile view.",
+            "The JSON file beside this document contains SHA-256, byte, and line metadata for every admitted source and documentation file. Re-run `make quality-index` after edits; pass `--base <ref>`, `--go-profile <path>`, `--go-report <path>`, or `--python-report <path>` for a bounded delta or profile view.",
             "",
             f"RKC-owned code and this report are released under the [MIT License](../LICENSE); retain the license and credit **{PUBLISHER} / RKC contributors** in redistributed products.",
             "",
@@ -806,6 +871,11 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--output", type=Path, default=None, help=f"output directory (default: <root>/{DEFAULT_OUTPUT_NAME})")
     parser.add_argument("--base", help="Git ref used for the committed delta comparison")
     parser.add_argument("--go-profile", type=Path, help="optional merged Go coverprofile")
+    parser.add_argument(
+        "--go-report",
+        type=Path,
+        help="optional coverage-gate JSON report for zero-statement and platform-excluded Go files",
+    )
     parser.add_argument("--python-report", type=Path, help="optional Coverage.py JSON report")
     parser.add_argument(
         "--fail-on-gaps",
@@ -820,7 +890,14 @@ def main(argv: Sequence[str] | None = None) -> int:
     root = arguments.root
     output = arguments.output or root / DEFAULT_OUTPUT_NAME
     try:
-        index = build_index(root, output=output, base=arguments.base, go_profile=arguments.go_profile, python_report=arguments.python_report)
+        index = build_index(
+            root,
+            output=output,
+            base=arguments.base,
+            go_profile=arguments.go_profile,
+            go_report=arguments.go_report,
+            python_report=arguments.python_report,
+        )
         json_path, markdown_path = write_index(index, output)
     except (QualityIndexError, OSError, ValueError) as exc:
         print(f"quality index failed closed: {exc}", file=sys.stderr)

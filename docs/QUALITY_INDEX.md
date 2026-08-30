@@ -30,6 +30,7 @@ python3 scripts/quality_index.py \
   --output /path/to/folder/.rkc-quality \
   --base origin/main \
   --go-profile /path/to/merged-go-cover.out \
+  --go-report /path/to/coverage-summary.json \
   --python-report /path/to/coverage.json
 ```
 
@@ -61,8 +62,17 @@ Each `files` record contains:
 - `profile`: Go statement blocks and Python statements plus branches are
   reported when the corresponding profile is supplied. `missing` means a
   supplied profile omitted the file; `not-provided` means no profile was
-  supplied; other languages are `not-applicable` until a compatible profiler
-  is integrated.
+  supplied; `platform-excluded` and `zero-executable` are explicit statuses
+  imported from the coverage-gate JSON report rather than guessed from a
+  missing row; other languages are `not-applicable` until a compatible
+  profiler is integrated. Pass `--go-report` alongside `--go-profile` when
+  using `scripts/coverage_gate.py` so build-tag exclusions and type-only files
+  do not become false profiling gaps.
+
+When a coverage-gate report is supplied, the summary separately counts
+`profiling_scope_excluded_files` and `profiling_zero_executable_files`; those
+files remain in the source inventory but are removed from the percentage
+denominator for a principled, auditable reason.
 
 The `gaps` array is the actionable queue. Changed files are marked `high`
 priority when they lack a test, documentation evidence, or an applicable
@@ -87,7 +97,8 @@ coverage workflow so their paths and branch semantics remain auditable.
 
 The main CI workflow runs that coverage gate in the same low-priority
 envelope before building its quality artifact, then supplies the fresh merged
-Go profile and branch-aware Python report to this index. Local
+Go profile (including the maintained nested Go example module) and branch-aware
+Python report to this index. Local
 `make quality-index` runs remain intentionally fast and omit profiles unless
 you pass them explicitly.
 

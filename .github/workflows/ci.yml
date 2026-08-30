@@ -86,13 +86,46 @@ jobs:
           sh scripts/with-rkc-limits.sh python3 scripts/coverage_gate.py \
             --output-dir "$profile_root"
           go_profile=$(find "$profile_root" -type f -name go.merged.out -print -quit)
+          go_report=$(find "$profile_root" -type f -name summary.json -print -quit)
           python_report=$(find "$profile_root" -type f -name python.json -print -quit)
           test -n "$go_profile" && test -f "$go_profile"
+          test -n "$go_report" && test -f "$go_report"
           test -n "$python_report" && test -f "$python_report"
+          if test -f examples/sample-go/go.mod; then
+            example_profile="$profile_root/example-go.out"
+            repo_root="$PWD"
+            (
+              cd examples/sample-go
+              sh "$repo_root/scripts/with-rkc-limits.sh" go test \
+                -p=1 -count=1 -covermode=atomic \
+                -coverprofile="$repo_root/$example_profile" ./...
+            )
+            combined_profile="$profile_root/go.merged.with-examples.out"
+            python3 - "$go_profile" "$example_profile" "$combined_profile" <<'PY'
+          import pathlib
+          import sys
+
+          root_profile, example_profile, combined_profile = map(pathlib.Path, sys.argv[1:])
+          rows = [line for line in root_profile.read_text(encoding="utf-8").splitlines() if line]
+          if not rows or not rows[0].startswith("mode: "):
+              raise SystemExit("profile merge: root Go profile has no mode header")
+          for line in example_profile.read_text(encoding="utf-8").splitlines()[1:]:
+              if not line:
+                  continue
+              name, separator, remainder = line.partition(":")
+              if not separator or not name.startswith("example.com/sample-go/"):
+                  raise SystemExit(f"profile merge: unexpected nested-module row: {line}")
+              name = "examples/sample-go/" + name.removeprefix("example.com/sample-go/")
+              rows.append(name + ":" + remainder)
+          combined_profile.write_text("\n".join(rows) + "\n", encoding="utf-8")
+          PY
+            go_profile="$combined_profile"
+          fi
           sh scripts/with-rkc-limits.sh python3 scripts/quality_index.py \
             --root . \
             --output .rkc-quality \
             --go-profile "$go_profile" \
+            --go-report "$go_report" \
             --python-report "$python_report"
       - name: Upload quality gap index
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1

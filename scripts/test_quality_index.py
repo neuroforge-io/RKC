@@ -217,6 +217,34 @@ class QualityIndexTests(unittest.TestCase):
         )
         profiled = index._profile_result("go", "pkg/api.go", {"pkg/api.go": {"statements": 2, "covered_statements": 1}}, {}, True, False)
         self.assertEqual(profiled["percent"], 50.0)
+        zero_report = self.write(
+            "go-summary.json",
+            json.dumps(
+                {
+                    "go": {
+                        "zero_statement_files": ["pkg/api.go"],
+                        "current_platform_excluded_files": [],
+                    }
+                }
+            ),
+        )
+        zero, excluded, metadata_errors = index._go_profile_metadata(
+            zero_report, {"pkg/api.go"}, self.root
+        )
+        self.assertEqual(zero, {"pkg/api.go"})
+        self.assertEqual(excluded, set())
+        self.assertEqual(metadata_errors, [])
+        self.assertEqual(
+            index._profile_result(
+                "go", "pkg/api.go", {}, {}, True, False, zero, excluded
+            )["status"],
+            "zero-executable",
+        )
+        bad_metadata = self.write(
+            "bad-go-summary.json",
+            json.dumps({"go": {"zero_statement_files": "bad"}}),
+        )
+        self.assertTrue(index._go_profile_metadata(bad_metadata, {"pkg/api.go"}, self.root)[2])
         self.assertEqual(index._profile_result("rust", "x.rs", {}, {}, False, False)["status"], "not-applicable")
 
     def test_git_change_parser_and_identity(self) -> None:
@@ -255,20 +283,45 @@ class QualityIndexTests(unittest.TestCase):
     def test_build_render_write_and_main_for_arbitrary_folder(self) -> None:
         self.write("src/main.go", "package src\nfunc Main() {}\n")
         self.write("src/main_test.go", "package src\nfunc TestMain() {}\n")
+        self.write("src/types.go", "package src\ntype Record struct{}\n")
         self.write("tools/worker.py", '"""worker docs"""\nprint(1)\n')
         self.write("docs/guide.md", "`src/main.go` and worker.py are documented.\n")
         output = self.root / "quality"
         go_profile = self.write("profiles/go.out", "mode: set\nsrc/main.go:2.1,2.18 2 1\n")
+        go_report = self.write(
+            "profiles/go-summary.json",
+            json.dumps(
+                {
+                    "go": {
+                        "zero_statement_files": ["src/types.go"],
+                        "current_platform_excluded_files": [],
+                    }
+                }
+            ),
+        )
         python_report = self.write(
             "profiles/python.json",
             json.dumps({"files": {"tools/worker.py": {"summary": {"num_statements": 2, "covered_lines": 2, "num_branches": 0, "covered_branches": 0}}}}),
         )
-        built = index.build_index(self.root, output=output, go_profile=go_profile, python_report=python_report)
+        built = index.build_index(
+            self.root,
+            output=output,
+            go_profile=go_profile,
+            go_report=go_report,
+            python_report=python_report,
+        )
         self.assertFalse(any(record["path"].startswith("quality/") for record in built["files"]))
         self.assertEqual(built["project"], "RKC")
         self.assertEqual(built["publisher"], "NeuroForgeIO")
         self.assertEqual(built["license"]["spdx"], "MIT")
         self.assertEqual(built["summary"]["profiling_file_percent"], 100.0)
+        self.assertEqual(built["summary"]["profiling_zero_executable_files"], 1)
+        self.assertEqual(
+            next(record for record in built["files"] if record["path"] == "src/types.go")[
+                "profile"
+            ]["status"],
+            "zero-executable",
+        )
         self.assertTrue(any(record["is_test"] for record in built["files"]))
         self.assertEqual(
             next(record for record in built["files"] if record["path"] == "src/main.go")[

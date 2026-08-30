@@ -414,7 +414,7 @@ def evaluate_go(
 def discover_python_sources(root: Path = ROOT) -> list[str]:
     """Inventory non-test, non-generated first-party Python sources."""
     sources: list[str] = []
-    for directory_name in ("internal", "plugins", "scripts"):
+    for directory_name in ("internal", "plugins", "scripts", "examples"):
         directory = root / directory_name
         for path in sorted(directory.rglob("*.py")):
             relative_path = path.relative_to(root)
@@ -643,6 +643,18 @@ def python_commands(root: Path = ROOT) -> list[CommandSpec]:
                 "-v",
             )
         ),
+        CommandSpec(
+            (
+                "-m",
+                "unittest",
+                "discover",
+                "-s",
+                "examples/sample-python",
+                "-p",
+                "test_*.py",
+                "-v",
+            )
+        ),
         CommandSpec(("-m", "unittest", "discover", "-s", "scripts", "-p", "test_*.py", "-v")),
         CommandSpec(("plugins/python-ast/extractor.py",), extractor_request, True),
         CommandSpec(
@@ -671,6 +683,7 @@ source =
     internal
     plugins
     scripts
+    examples
 patch =
     subprocess
 

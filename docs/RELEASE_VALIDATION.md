@@ -59,11 +59,12 @@ package with executable statements. Type-only packages remain in the inventory
 and are reported explicitly rather than assigned a misleading denominator.
 
 Python coverage includes every non-test, non-generated `.py` source under
-`internal/`, `plugins/`, and `scripts/`. It combines lines and branches into the
-denominator and enforces 90% overall plus 80% per executable file. Coverage.py's
-subprocess patch writes parallel data for Python children. The gate also tracks
-each test, validator, and child command's exit status independently, so a failed
-subprocess cannot be hidden by a passing percentage.
+`internal/`, `plugins/`, `scripts/`, and the maintained example fixtures under
+`examples/`. It combines lines and branches into the denominator and enforces
+90% overall plus 80% per executable file. Coverage.py's subprocess patch writes
+parallel data for Python children. The gate also tracks each test, validator,
+and child command's exit status independently, so a failed subprocess cannot
+be hidden by a passing percentage.
 
 For maintainers, `make quality-index` complements the numeric gate with a
 deterministic file-level inventory. It records SHA-256/source metadata,
