@@ -211,8 +211,10 @@ func TestConfigurationValidationRejectsEveryInvalidClass(t *testing.T) {
 		{"sandbox-preferred", func(c *Configuration) { c.Plugins.NativeWorkerSandbox = "preferred" }, "must be required"},
 		{"provider", func(c *Configuration) { c.Model.Provider = "cloud-magic" }, "model.provider"},
 		{"context", func(c *Configuration) { c.Model.ContextTokens = 511 }, "context_tokens"},
+		{"context-ceiling", func(c *Configuration) { c.Model.ContextTokens = 262145 }, "context_tokens"},
 		{"output", func(c *Configuration) { c.Model.MaxOutputTokens = 0 }, "max_output_tokens"},
 		{"rss", func(c *Configuration) { c.Model.MaxRSSMiB = 255 }, "max_rss_mib"},
+		{"rss-ceiling", func(c *Configuration) { c.Model.MaxRSSMiB = modelMaximumRSSMiB + 1 }, "max_rss_mib"},
 		{"embeddings", func(c *Configuration) { c.Search.Embeddings = true }, "search.embeddings"},
 		{"ratio-low", func(c *Configuration) { c.QualityGates.MinClaimCitation = -0.1 }, "min_claim_citation"},
 		{"ratio-high", func(c *Configuration) { c.QualityGates.MinEdgeResolution = 1.1 }, "min_edge_resolution"},
@@ -232,6 +234,11 @@ func TestConfigurationValidationRejectsEveryInvalidClass(t *testing.T) {
 
 func TestConfigurationHelpers(t *testing.T) {
 	cfg := defaultConfiguration()
+	cfg.SchemaVersion = ""
+	cfg.normalize()
+	if cfg.SchemaVersion != configurationSchemaVersion {
+		t.Fatalf("normalized schema version = %q", cfg.SchemaVersion)
+	}
 	cfg.Plugins.TimeoutSeconds = 3
 	cfg.Plugins.PythonAST.TimeoutSeconds = 7
 	if got := cfg.PluginTimeout().Seconds(); got != 7 {
@@ -243,5 +250,19 @@ func TestConfigurationHelpers(t *testing.T) {
 	}
 	if got := uniqueSortedStrings([]string{" b ", "a", "b", ""}); strings.Join(got, ",") != "a,b" {
 		t.Fatalf("uniqueSortedStrings = %v", got)
+	}
+
+	unsafe := defaultConfiguration()
+	unsafe.Model.MaxRSSMiB = modelMaximumRSSMiB + 1
+	data, err := json.Marshal(unsafe)
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(t.TempDir(), "unsafe.json")
+	if err := os.WriteFile(path, data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := loadConfiguration(path); err == nil || !strings.Contains(err.Error(), "max_rss_mib") {
+		t.Fatalf("unsafe loaded configuration = %v", err)
 	}
 }

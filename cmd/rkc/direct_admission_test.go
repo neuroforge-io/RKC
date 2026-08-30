@@ -452,6 +452,14 @@ func TestLaunchGuardedDirectReportsFailuresAndMapsCleanCancellation(t *testing.T
 		err.Error() != "protected direct launch dependencies are not configured" {
 		t.Fatalf("nil launch dependencies = %v", err)
 	}
+	if err := launchGuardedDirectUsing(context.Background(), "quickstart", []string{"--help"}, base(nil)); err == nil ||
+		err.Error() != "protected direct launch cannot execute a help request" {
+		t.Fatalf("protected help launch = %v", err)
+	}
+	if err := launchGuardedDirectUsing(context.Background(), "scan", []string{"--unknown"}, base(nil)); err == nil ||
+		err.Error() != "flag provided but not defined: -unknown" {
+		t.Fatalf("invalid protected launch flag = %v", err)
+	}
 
 	dependencies := base(nil)
 	dependencies.executable = func() (string, error) { return "", sentinel }
@@ -571,6 +579,17 @@ func TestDirectAdmissionArgumentSafetyIsGrammarAware(t *testing.T) {
 	}
 	if _, err := validateDirectCommandAdmission("serve", nil); err == nil || !strings.Contains(err.Error(), "does not support") {
 		t.Fatalf("unsupported direct command = %v", err)
+	}
+}
+
+func TestDirectAdmissionFlagRejectsAmbiguousTokenShapes(t *testing.T) {
+	for _, argument := range []string{"", "-", "--", "---force"} {
+		if name, value, hasValue, ok := directAdmissionFlag(argument); ok || name != "" || value != "" || hasValue {
+			t.Errorf("directAdmissionFlag(%q) = %q, %q, %t, %t", argument, name, value, hasValue, ok)
+		}
+	}
+	if name, value, hasValue, ok := directAdmissionFlag("-force=false"); !ok || name != "force" || value != "false" || !hasValue {
+		t.Fatalf("single-dash boolean = %q, %q, %t, %t", name, value, hasValue, ok)
 	}
 }
 

@@ -192,6 +192,65 @@ func TestCacheCommandValidation(t *testing.T) {
 	}
 }
 
+func TestPlanFailsClosedAtConfigurationAndCacheBoundaries(t *testing.T) {
+	root := t.TempDir()
+	repository := filepath.Join(root, "repository")
+	writeTestFile(t, filepath.Join(repository, "main.go"), "package fixture\n")
+	writeTestFile(t, filepath.Join(repository, "README.md"), "# Fixture\n")
+
+	malformed := filepath.Join(root, "malformed.json")
+	writeTestFile(t, malformed, "{")
+	if err := runPlan([]string{"--config", malformed, "--no-cache", repository}); err == nil ||
+		!strings.Contains(err.Error(), "decode configuration") {
+		t.Fatalf("malformed plan configuration = %v", err)
+	}
+
+	configuration, err := json.Marshal(defaultConfiguration())
+	if err != nil {
+		t.Fatal(err)
+	}
+	firstConfig := filepath.Join(root, "first.json")
+	secondConfig := filepath.Join(root, "second.json")
+	writeTestFile(t, firstConfig, string(configuration))
+	writeTestFile(t, secondConfig, string(configuration))
+	if err := runPlan([]string{
+		"--config", firstConfig, "--config", secondConfig, "--no-cache", repository,
+	}); err == nil || !strings.Contains(err.Error(), "--config must be supplied only once") {
+		t.Fatalf("repeated plan configuration = %v", err)
+	}
+
+	insideCache := filepath.Join(repository, ".cache-custom")
+	if err := runPlan([]string{
+		"--cache-dir", insideCache, "--no-plugins", "--no-frameworks", repository,
+	}); !errors.Is(err, safeoutput.ErrUnsafeTarget) {
+		t.Fatalf("repository-contained plan cache = %v", err)
+	}
+
+	cacheFile := filepath.Join(root, "cache-file")
+	writeTestFile(t, cacheFile, "not a directory")
+	if err := runPlan([]string{
+		"--cache-dir", cacheFile, "--no-plugins", "--no-frameworks", repository,
+	}); err == nil {
+		t.Fatal("regular file was accepted as a plan cache root")
+	}
+
+	cacheRoot := filepath.Join(root, "cache")
+	output, err := captureStdout(t, func() error {
+		return runPlan([]string{
+			"--cache-dir", cacheRoot, "--no-frameworks", "--no-secret-scan", repository,
+		})
+	})
+	if err != nil || !strings.Contains(output, "Stage cache: "+cacheRoot) {
+		t.Fatalf("enabled plan cache output = %q, %v", output, err)
+	}
+
+	if err := runPlan([]string{
+		"--no-cache", "--max-files", "1", "--no-plugins", "--no-frameworks", repository,
+	}); err == nil || !strings.Contains(err.Error(), "plan inventory") {
+		t.Fatalf("plan inventory limit = %v", err)
+	}
+}
+
 func plannedCLIStage(t *testing.T, plan pipeline.ScanPlan, stageID string) pipeline.StagePlan {
 	t.Helper()
 	for _, stage := range plan.Stages {
