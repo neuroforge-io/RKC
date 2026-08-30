@@ -351,6 +351,24 @@ func TestBrowserAssetsAccessibilityAndSerializationContract(t *testing.T) {
 	}
 }
 
+func TestExportRejectsSensitiveRepositoryProvenanceBeforeWriting(t *testing.T) {
+	const sentinel = "EXPORT_ORIGIN_SECRET_SENTINEL"
+	bundle := exportFixture(t.TempDir(), "source.go", []byte("package fixture\n"))
+	bundle.Snapshot.Git.Origin = "https://alice:" + sentinel + "@example.test/Owner/Repo.git?token=" + sentinel
+	bundle.Snapshot.Metadata = map[string]string{"source_reference": bundle.Snapshot.Git.Origin}
+	output := filepath.Join(t.TempDir(), "atlas")
+	err := WriteAll(bundle, model.BuildCoverage(bundle), Options{Output: output})
+	if err == nil {
+		t.Fatal("sensitive repository provenance was exported")
+	}
+	if strings.Contains(err.Error(), sentinel) || strings.Contains(err.Error(), "alice") {
+		t.Fatalf("export error disclosed repository provenance: %q", err)
+	}
+	if _, statErr := os.Stat(output); !os.IsNotExist(statErr) {
+		t.Fatalf("invalid provenance created output before rejection: %v", statErr)
+	}
+}
+
 func TestMarkdownGenerationContainsAdversarialRepositoryText(t *testing.T) {
 	t.Parallel()
 	payload := "declared text\n``````\n<script>alert('not inert')</script>\n# injected heading"

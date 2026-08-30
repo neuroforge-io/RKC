@@ -25,7 +25,8 @@ type SourceRange struct {
 }
 
 // GitInfo captures repository state without claiming Git is universally
-// available. WorkingTreeDigest is populated when the scan is not a clean commit.
+// available. Origin, when present, is a canonical credential-free repository
+// origin. WorkingTreeDigest is populated when the scan is not a clean commit.
 type GitInfo struct {
 	Commit            string `json:"commit,omitempty"`
 	Branch            string `json:"branch,omitempty"`
@@ -44,8 +45,9 @@ type ToolInfo struct {
 }
 
 // Snapshot is the immutable identity and provenance envelope for one analysis.
-// CreatedAt and RootPath are operational metadata and are removed from the
-// deterministic canonical digest.
+// For origin-backed snapshots, RepositoryID is derived only from the canonical
+// credential-free origin. CreatedAt and RootPath are operational metadata and
+// are removed from the deterministic canonical digest.
 type Snapshot struct {
 	SchemaVersion    string            `json:"schema_version"`
 	ID               string            `json:"id"`

@@ -27,6 +27,7 @@ import (
 	"github.com/neuroforge-io/RKC/internal/plugin"
 	"github.com/neuroforge-io/RKC/internal/scheduler"
 	"github.com/neuroforge-io/RKC/internal/security/secrets"
+	"github.com/neuroforge-io/RKC/internal/sourceorigin"
 	"github.com/neuroforge-io/RKC/pkg/pluginapi"
 	"github.com/neuroforge-io/RKC/pkg/rkcmodel"
 )
@@ -69,7 +70,7 @@ type Options struct {
 	DisableSecretScan bool
 
 	ToolVersion      string
-	SourceReference  string
+	Origin           string
 	ConfigDigest     string
 	PolicyDigest     string
 	PluginLockDigest string
@@ -109,6 +110,7 @@ func scanSequential(ctx context.Context, opts Options) (rkcmodel.Bundle, rkcmode
 	if !info.IsDir() {
 		return rkcmodel.Bundle{}, rkcmodel.Coverage{}, fmt.Errorf("root is not a directory: %s", root)
 	}
+	opts.Excludes = effectivePipelineExcludes(opts.Excludes)
 
 	inv, err := inventory.Scan(inventory.Options{Root: root, MaxFileBytes: opts.MaxFileBytes, MaxTextBytes: opts.MaxTextBytes, MaxRepositoryBytes: opts.MaxRepositoryBytes, MaxFiles: opts.MaxFiles, Excludes: opts.Excludes})
 	if err != nil {
@@ -118,13 +120,30 @@ func scanSequential(ctx context.Context, opts Options) (rkcmodel.Bundle, rkcmode
 	if err != nil {
 		return rkcmodel.Bundle{}, rkcmodel.Coverage{}, fmt.Errorf("prepare SCIP indexes: %w", err)
 	}
-	gitInfo := inspectGit(ctx, root)
+	suppliedOrigin, err := publicSuppliedOrigin(opts.Origin)
+	if err != nil {
+		return rkcmodel.Bundle{}, rkcmodel.Coverage{}, err
+	}
+	opts.Origin = suppliedOrigin
+	gitInfo, err := inspectGit(ctx, root)
+	if err != nil {
+		return rkcmodel.Bundle{}, rkcmodel.Coverage{}, err
+	}
+	origin, err := reconcileRepositoryOrigin(opts.Origin, gitInfo.Origin)
+	if err != nil {
+		return rkcmodel.Bundle{}, rkcmodel.Coverage{}, err
+	}
+	gitInfo.Origin = origin
 	rootName := filepath.Base(root)
-	repositoryIdentity := firstNonEmpty(opts.SourceReference, gitInfo.Origin, rootName)
+	repositoryIdentity := firstNonEmpty(origin, rootName)
 	repositoryID := rkcmodel.StableID("repository", repositoryIdentity)
 	snapshotID := stableSnapshotID(repositoryIdentity, gitInfo.Commit, inv.Digest, scipDigest, opts)
 	if gitInfo.Dirty {
 		gitInfo.WorkingTreeDigest = inv.Digest
+	}
+	metadata := map[string]string{"scip_input_digest": scipDigest}
+	if origin != "" {
+		metadata["source_reference"] = origin
 	}
 	bundle := rkcmodel.Bundle{Snapshot: rkcmodel.Snapshot{
 		SchemaVersion: rkcmodel.SchemaVersion, ID: snapshotID, RepositoryID: repositoryID, CreatedAt: time.Now().UTC(), Status: "committed",
@@ -132,7 +151,7 @@ func scanSequential(ctx context.Context, opts Options) (rkcmodel.Bundle, rkcmode
 		PluginLockDigest: opts.PluginLockDigest, ToolchainDigest: opts.ToolchainDigest, Git: gitInfo,
 		Tool:     rkcmodel.ToolInfo{Name: "rkc", Version: firstNonEmpty(opts.ToolVersion, "development")},
 		Policy:   map[string]any{"max_file_bytes": opts.MaxFileBytes, "max_text_bytes": opts.MaxTextBytes, "max_repository_bytes": opts.MaxRepositoryBytes, "max_files": opts.MaxFiles, "excludes": uniqueSorted(opts.Excludes), "plugins": !opts.DisablePlugins, "frameworks": !opts.DisableFrameworks, "secret_scan": !opts.DisableSecretScan, "scip_semantic": len(scipInputs) > 0},
-		Metadata: map[string]string{"source_reference": opts.SourceReference, "scip_input_digest": scipDigest},
+		Metadata: metadata,
 	}, Artifacts: inv.Artifacts, Diagnostics: inv.Diagnostics}
 	bundle.Nodes = append(bundle.Nodes, rkcmodel.Node{ID: repositoryID, LogicalID: repositoryID, Kind: "repository", Name: rootName, QualifiedName: repositoryIdentity, Visibility: "repository", Attributes: map[string]any{"snapshot_id": snapshotID, "git_commit": gitInfo.Commit, "git_origin": gitInfo.Origin}})
 	for _, artifact := range bundle.Artifacts {
@@ -770,6 +789,14 @@ func uniqueSorted(values []string) []string {
 	sort.Strings(out)
 	return out
 }
+
+func effectivePipelineExcludes(values []string) []string {
+	// Git administrative data is control-plane state, not repository content.
+	// It can contain credentialed remotes and must never enter inventories,
+	// source packs, indexes, or exports even for programmatic callers that omit
+	// the CLI defaults.
+	return uniqueSorted(append(append([]string(nil), values...), ".git"))
+}
 func firstNonEmpty(values ...string) string {
 	for _, v := range values {
 		if strings.TrimSpace(v) != "" {
@@ -779,24 +806,80 @@ func firstNonEmpty(values ...string) string {
 	return ""
 }
 
-func inspectGit(ctx context.Context, root string) rkcmodel.GitInfo {
+func publicSuppliedOrigin(raw string) (string, error) {
+	if raw == "" {
+		return "", nil
+	}
+	canonical, err := sourceorigin.Normalize(raw)
+	if err != nil {
+		return "", errors.New("repository origin is not canonicalizable")
+	}
+	if strings.HasPrefix(canonical, "file://") {
+		return "", nil
+	}
+	return canonical, nil
+}
+
+func publicDiscoveredOrigin(raw string) (string, error) {
+	if raw == "" {
+		return "", nil
+	}
+	canonical, err := sourceorigin.Normalize(raw)
+	if err != nil {
+		// Git permits local path remotes. They are operational locations, not
+		// portable public repository identities, so deliberately omit them.
+		if !strings.Contains(raw, "://") && !strings.Contains(raw, "@") {
+			return "", nil
+		}
+		return "", errors.New("configured Git origin is not canonicalizable")
+	}
+	if strings.HasPrefix(canonical, "file://") {
+		return "", nil
+	}
+	return canonical, nil
+}
+
+func reconcileRepositoryOrigin(supplied, discovered string) (string, error) {
+	if supplied != "" && !sourceorigin.IsCanonical(supplied) {
+		return "", errors.New("supplied repository origin is not canonical")
+	}
+	if discovered != "" && !sourceorigin.IsCanonical(discovered) {
+		return "", errors.New("configured Git origin is not canonical")
+	}
+	if supplied != "" && discovered != "" && supplied != discovered {
+		return "", errors.New("supplied and configured repository origins disagree")
+	}
+	return firstNonEmpty(supplied, discovered), nil
+}
+
+func inspectGit(ctx context.Context, root string) (rkcmodel.GitInfo, error) {
 	info := rkcmodel.GitInfo{}
 	commit, err := gitOutput(ctx, root, "rev-parse", "HEAD")
 	if err != nil {
 		info.Unavailable = true
-		return info
+		return info, nil
 	}
 	info.Commit = commit
 	info.Branch, _ = gitOutput(ctx, root, "branch", "--show-current")
-	info.Origin, _ = gitOutput(ctx, root, "remote", "get-url", "origin")
+	rawOrigin, _ := gitOutput(ctx, root, "remote", "get-url", "origin")
+	info.Origin, err = publicDiscoveredOrigin(rawOrigin)
+	if err != nil {
+		return rkcmodel.GitInfo{}, err
+	}
 	status, _ := gitOutput(ctx, root, "status", "--porcelain")
 	info.Dirty = status != ""
-	return info
+	return info, nil
 }
 func gitOutput(ctx context.Context, root string, args ...string) (string, error) {
 	cmdArgs := append([]string{"-c", "core.hooksPath=/dev/null", "-C", root}, args...)
 	cmd := exec.CommandContext(ctx, "git", cmdArgs...)
-	cmd.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0")
+	cmd.Env = append(
+		os.Environ(),
+		"GIT_TERMINAL_PROMPT=0",
+		"GIT_OPTIONAL_LOCKS=0",
+		"GIT_CONFIG_NOSYSTEM=1",
+		"GIT_CONFIG_GLOBAL=/dev/null",
+	)
 	output, err := cmd.Output()
 	return strings.TrimSpace(string(output)), err
 }

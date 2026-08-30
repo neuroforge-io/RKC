@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -55,7 +56,7 @@ func TestRemoteValidationAndRedaction(t *testing.T) {
 		{"git@example.test:owner/repo.git", false, true, ""},
 		{"https://example.test/owner/repo.git", false, false, ""},
 		{"ssh://git@example.test/owner/repo.git", false, false, ""},
-		{"git://example.test/owner/repo.git", false, false, ""},
+		{"git://example.test/owner/repo.git", false, false, "plaintext"},
 		{"file:///tmp/repo.git", true, false, ""},
 		{"file:///tmp/repo.git", false, false, "disabled"},
 		{"ftp://example.test/repo.git", false, false, "unsupported"},
@@ -77,13 +78,13 @@ func TestRemoteValidationAndRedaction(t *testing.T) {
 			}
 		})
 	}
-	authenticatedSource := "https://alice:" + "supersecret" + "@example.test/repo.git"
-	parsed, _, err := validateRemoteSource(authenticatedSource, false)
+	authenticatedSource := "https://alice:" + "supersecret" + "@example.test/repo.git?token=hidden#fragment"
+	parsed, err := url.Parse(authenticatedSource)
 	if err != nil {
 		t.Fatal(err)
 	}
 	redacted := redactSource(authenticatedSource, parsed, false)
-	if redacted != "https://alice@example.test/repo.git" || strings.Contains(redacted, "supersecret") {
+	if redacted != "https://example.test/repo.git" || strings.Contains(redacted, "supersecret") || strings.Contains(redacted, "hidden") {
 		t.Fatalf("credential was not redacted: %q", redacted)
 	}
 	if got := redactSecrets("fatal https://bob:" + "password123" + "@example.test/x"); got != "fatal https://<redacted>@example.test/x" {
@@ -122,7 +123,7 @@ func TestRunGitBoundsAndRedactsFailureOutput(t *testing.T) {
 	if err := os.WriteFile(script, []byte(content), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	err := runGit(context.Background(), Options{GitExecutable: script, MaximumLogBytes: 128}, "https://user@example.test/repo", "clone")
+	err := runGit(context.Background(), Options{GitExecutable: script, MaximumLogBytes: 128}, "https://example.test/repo", "", "clone")
 	if err == nil {
 		t.Fatal("expected fake Git failure")
 	}
@@ -133,7 +134,7 @@ func TestRunGitBoundsAndRedactsFailureOutput(t *testing.T) {
 
 	cancelled, cancel := context.WithCancel(context.Background())
 	cancel()
-	err = runGit(cancelled, Options{GitExecutable: script, MaximumLogBytes: 16}, "redacted", "clone")
+	err = runGit(cancelled, Options{GitExecutable: script, MaximumLogBytes: 16}, "redacted", "", "clone")
 	if err == nil || !errors.Is(err, context.Canceled) {
 		t.Fatalf("expected context cancellation, got %v", err)
 	}
@@ -164,7 +165,7 @@ func TestLimitedBufferAndCleanupIdempotentContract(t *testing.T) {
 func TestOpenHonorsCancelledContext(t *testing.T) {
 	t.Parallel()
 	script := filepath.Join(t.TempDir(), "slow-git")
-	if err := os.WriteFile(script, []byte("#!/bin/sh\nsleep 30\n"), 0o700); err != nil {
+	if err := os.WriteFile(script, []byte("#!/bin/sh\nexec sleep 30\n"), 0o700); err != nil {
 		t.Fatal(err)
 	}
 	base := t.TempDir()
@@ -186,7 +187,7 @@ func TestOpenHonorsCancelledContext(t *testing.T) {
 func TestOpenRefSubmodulesAndKeepMaterialized(t *testing.T) {
 	executable, logPath := fakeGitExecutable(t, 0)
 	temporaryRoot := t.TempDir()
-	source := "https://fixture:" + "verysecret" + "@example.test/private.git"
+	source := "https://example.test/private.git"
 	result, err := Open(context.Background(), source, Options{
 		GitExecutable:    executable,
 		Ref:              "release-v1",
@@ -202,8 +203,8 @@ func TestOpenRefSubmodulesAndKeepMaterialized(t *testing.T) {
 	if result.Kind != KindGit || result.RequestedRef != "release-v1" || result.Temporary || result.MaterializedPath != result.Root {
 		t.Fatalf("unexpected result: %+v", result)
 	}
-	if strings.Contains(result.RedactedSource, "verysecret") || result.RedactedSource != "https://fixture@example.test/private.git" {
-		t.Fatalf("unsafe redacted source: %q", result.RedactedSource)
+	if result.Origin != "https://example.test/private.git" {
+		t.Fatalf("unsafe canonical origin: %q", result.Origin)
 	}
 	if err := result.Cleanup(); err != nil {
 		t.Fatalf("kept result cleanup = %v", err)
@@ -224,7 +225,7 @@ func TestOpenRefSubmodulesAndKeepMaterialized(t *testing.T) {
 			t.Fatalf("Git log does not contain %q: %s", expected, logData)
 		}
 	}
-	if strings.Count(string(logData), "core.hooksPath=/dev/null") != 5 || strings.Count(string(logData), "protocol.file.allow=never") != 5 {
+	if strings.Count(string(logData), "core.hooksPath=/dev/null") != 5 || strings.Count(string(logData), "protocol.file.allow=never") != 5 || strings.Count(string(logData), "protocol.allow=never") != 5 {
 		t.Fatalf("safe Git configuration missing from calls: %s", logData)
 	}
 }
@@ -235,8 +236,8 @@ func TestOpenRefFailureStagesAreRedactedAndCleaned(t *testing.T) {
 		t.Run(fmt.Sprintf("call_%d", failCall), func(t *testing.T) {
 			executable, _ := fakeGitExecutable(t, failCall)
 			temporaryRoot := t.TempDir()
-			authenticatedSource := "https://fixture:" + "verysecret" + "@example.test/private.git"
-			_, err := Open(context.Background(), authenticatedSource, Options{
+			source := "https://example.test/private.git"
+			_, err := Open(context.Background(), source, Options{
 				GitExecutable: executable,
 				Ref:           "release-v1",
 				Depth:         2,
@@ -265,7 +266,7 @@ func TestOpenDefaultsAndFilesystemErrors(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if result.Kind != KindLocal || result.Source != "." || !filepath.IsAbs(result.Root) {
+	if result.Kind != KindLocal || result.Origin != "" || !filepath.IsAbs(result.Root) {
 		t.Fatalf("default local result: %+v", result)
 	}
 
@@ -330,14 +331,34 @@ func TestAdditionalURLRedactionCases(t *testing.T) {
 	if parsed, scp, err := validateRemoteSource("https://example.test/%zz", false); err == nil || parsed != nil || scp {
 		t.Fatalf("malformed URL = %v, %v, %v", parsed, scp, err)
 	}
-	if got := redactSource("git@example.test:repo.git", nil, true); got != "git@example.test:repo.git" {
+	if got := redactSource("git@example.test:repo.git", nil, true); got != "ssh://example.test/repo.git" {
 		t.Fatalf("SCP-style source = %q", got)
 	}
-	parsed, _, err := validateRemoteSource("https://:password@example.test/repo.git", false)
+	parsed, err := url.Parse("https://:password@example.test/repo.git")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if got := redactSource("https://:password@example.test/repo.git", parsed, false); got != "https://example.test/repo.git" {
 		t.Fatalf("empty username redaction = %q", got)
+	}
+}
+
+func TestOpenRejectsInlineSecretsWithoutDisclosingThem(t *testing.T) {
+	for _, source := range []string{
+		"https://alice:SUPER_SECRET_PASSWORD@example.test/repo.git",
+		"https://SUPER_SECRET_USERNAME@example.test/repo.git",
+		"https://example.test/repo.git?token=SUPER_SECRET_QUERY",
+		"https://example.test/repo.git#SUPER_SECRET_FRAGMENT",
+		"git@example.test:repo.git?token=SUPER_SECRET_SCP_QUERY",
+		"git@example.test:repo.git#SUPER_SECRET_SCP_FRAGMENT",
+	} {
+		_, err := Open(context.Background(), source, Options{})
+		if err == nil {
+			t.Fatalf("sensitive source was accepted: %q", source)
+		}
+		message := err.Error()
+		if strings.Contains(message, "SUPER_SECRET") || strings.Contains(message, "alice") {
+			t.Fatalf("sensitive source was disclosed: %q", message)
+		}
 	}
 }

@@ -42,6 +42,12 @@ No downstream component treats repository text as instructions.
 
 - repository paths are resolved and constrained to the selected root;
 - Git prompts and hooks are disabled during remote acquisition;
+- plaintext `git://`, URL query/fragment metadata, and inline HTTPS
+  credentials are rejected; Git protocol helpers are denied by default;
+- repository origins are canonicalized without userinfo, query strings, or
+  fragments before identity, validation, persistence, or export;
+- Git administrative data is always excluded from pipeline inventories, even
+  when a programmatic caller omits the CLI exclusion defaults;
 - `file://` transport is denied unless explicitly enabled;
 - repository file count, aggregate bytes, text bytes, plugin output, stderr, and
   time are bounded;
@@ -129,8 +135,8 @@ unless the policy explicitly grants them.
 
 Remote acquisition should:
 
-1. parse and redact URLs before logging;
-2. reject unsupported schemes;
+1. parse and canonicalize URLs before identity or logging;
+2. reject unsupported or plaintext schemes and inline secret-bearing metadata;
 3. disable interactive prompts;
 4. disable hooks and system/global configuration;
 5. avoid LFS smudge unless explicitly authorized;
@@ -139,6 +145,11 @@ Remote acquisition should:
 8. materialize into an ephemeral private directory;
 9. verify the resulting worktree remains within the materialization root;
 10. delete materialization unless retention is requested.
+
+The raw acquisition operand exists only in memory while Git is invoked. Public
+snapshot provenance uses one canonical, credential-free origin. Local path and
+`file://` remotes are operational locations and are omitted from portable
+repository identity.
 
 Archives require bounded entry count, decompression ratio, total bytes, nesting,
 and path containment before production support is enabled.

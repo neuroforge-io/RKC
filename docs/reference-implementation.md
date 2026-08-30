@@ -132,8 +132,10 @@ passed the unchanged pair-level production gate, so no default is promoted.
 ## Security limitations
 
 The normal scan does not execute project code or package-manager hooks. Remote
-Git acquisition disables prompts and hooks. Normalized source is redacted by
-default.
+Git acquisition disables prompts, hooks, global configuration, plaintext
+`git://`, and secret-bearing URL metadata. Repository identity, model fields,
+and exports use one validated credential-free canonical origin; `.git`
+administrative data is never inventoried by the pipeline.
 
 External Python and native-worker execution is disabled. On Linux, the
 digest-pinned built-in Python adapter fails closed unless it can start as a

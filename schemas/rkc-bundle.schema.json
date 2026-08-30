@@ -125,7 +125,8 @@
           "type": "string"
         },
         "origin": {
-          "type": "string"
+          "type": "string",
+          "description": "Canonical credential-free repository origin. URL userinfo, query, and fragment metadata are forbidden."
         },
         "dirty": {
           "type": "boolean"
@@ -187,7 +188,8 @@
           "type": "string"
         },
         "repository_id": {
-          "type": "string"
+          "type": "string",
+          "description": "For origin-backed snapshots, the stable repository identifier derived only from the canonical origin."
         },
         "parent_snapshot_id": {
           "type": "string"
@@ -238,6 +240,7 @@
         },
         "metadata": {
           "type": "object",
+          "description": "Portable snapshot metadata. A non-empty source_reference must equal the canonical Git origin.",
           "additionalProperties": {
             "type": "string"
           }

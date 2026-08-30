@@ -27,7 +27,7 @@ The labels below mean:
 | Stable IDs and canonical ordering | Implemented | Deterministic digest tested |
 | Referential and vocabulary validation | Implemented | Strict validation supported |
 | Artifact inventory and SHA-256 | Implemented | Explicit exclusions and limits |
-| Local/remote Git acquisition | Implemented | Promptless, hooks disabled, bounded timeout |
+| Local/remote Git acquisition | Implemented | Promptless, hooks/global configuration disabled, bounded timeout/output, deny-by-default protocol policy, no plaintext `git://` or inline HTTPS credentials/query/fragment metadata, and one credential-free canonical origin across identity/model/export |
 | Filesystem snapshot publication | Implemented | Building/committed states and recovery |
 | Content-addressed object store | Implemented | Reference filesystem store |
 | Transactional storage contract | Implemented | Typed reader/writer/recovery API; atomic, immutable in-memory conformance backend with authenticated cursors and lossless export |

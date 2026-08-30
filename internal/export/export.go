@@ -714,6 +714,13 @@ func BrowserAssets(bundle model.Bundle, coverage model.Coverage) (map[string][]b
 }
 
 func canonicalExportBundle(bundle model.Bundle) (model.Bundle, error) {
+	report := model.ValidateBundle(bundle, model.ValidationOptions{})
+	for _, diagnostic := range report.Diagnostics {
+		switch diagnostic.Code {
+		case "RKC-MOD-056", "RKC-MOD-057", "RKC-MOD-058":
+			return model.Bundle{}, errors.New("export bundle contains invalid repository provenance")
+		}
+	}
 	data, err := model.CanonicalJSON(bundle)
 	if err != nil {
 		return model.Bundle{}, fmt.Errorf("canonicalize export bundle: %w", err)

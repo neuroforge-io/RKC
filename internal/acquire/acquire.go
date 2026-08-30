@@ -16,6 +16,8 @@ import (
 	"regexp"
 	"strings"
 	"time"
+
+	"github.com/neuroforge-io/RKC/internal/sourceorigin"
 )
 
 type Kind string
@@ -40,8 +42,7 @@ type Options struct {
 type Result struct {
 	Kind             Kind   `json:"kind"`
 	Root             string `json:"root"`
-	Source           string `json:"source"`
-	RedactedSource   string `json:"redacted_source"`
+	Origin           string `json:"origin,omitempty"`
 	RequestedRef     string `json:"requested_ref,omitempty"`
 	Temporary        bool   `json:"temporary"`
 	MaterializedPath string `json:"materialized_path,omitempty"`
@@ -71,16 +72,19 @@ func Open(ctx context.Context, source string, options Options) (Result, error) {
 		if err != nil {
 			return Result{}, fmt.Errorf("resolve repository source: %w", err)
 		}
-		return Result{Kind: KindLocal, Root: root, Source: source, RedactedSource: root}, nil
+		return Result{Kind: KindLocal, Root: root}, nil
 	} else if !os.IsNotExist(err) {
 		return Result{}, fmt.Errorf("inspect repository source: %w", err)
 	}
 
-	parsed, scpStyle, err := validateRemoteSource(source, options.AllowFileURLs)
+	_, _, err := validateRemoteSource(source, options.AllowFileURLs)
 	if err != nil {
 		return Result{}, err
 	}
-	redacted := redactSource(source, parsed, scpStyle)
+	canonical, err := sourceorigin.Normalize(source)
+	if err != nil {
+		return Result{}, errors.New("repository Git origin is not canonicalizable")
+	}
 	if options.GitExecutable == "" {
 		options.GitExecutable = "git"
 	}
@@ -124,17 +128,17 @@ func Open(ctx context.Context, source string, options Options) (Result, error) {
 			arguments = append(arguments, "--depth", fmt.Sprint(options.Depth))
 		}
 		arguments = append(arguments, "--", source, root)
-		if err := runGit(cloneCtx, options, redacted, arguments...); err != nil {
+		if err := runGit(cloneCtx, options, canonical, source, arguments...); err != nil {
 			return Result{}, err
 		}
 	} else {
 		if err := os.MkdirAll(root, 0o700); err != nil {
 			return Result{}, err
 		}
-		if err := runGit(cloneCtx, options, redacted, "-C", root, "init", "--quiet"); err != nil {
+		if err := runGit(cloneCtx, options, canonical, source, "-C", root, "init", "--quiet"); err != nil {
 			return Result{}, err
 		}
-		if err := runGit(cloneCtx, options, redacted, "-C", root, "remote", "add", "origin", source); err != nil {
+		if err := runGit(cloneCtx, options, canonical, source, "-C", root, "remote", "add", "origin", source); err != nil {
 			return Result{}, err
 		}
 		fetch := []string{"-C", root, "fetch", "--no-tags"}
@@ -142,10 +146,10 @@ func Open(ctx context.Context, source string, options Options) (Result, error) {
 			fetch = append(fetch, "--depth", fmt.Sprint(options.Depth))
 		}
 		fetch = append(fetch, "origin", options.Ref)
-		if err := runGit(cloneCtx, options, redacted, fetch...); err != nil {
+		if err := runGit(cloneCtx, options, canonical, source, fetch...); err != nil {
 			return Result{}, err
 		}
-		if err := runGit(cloneCtx, options, redacted, "-C", root, "checkout", "--quiet", "--detach", "FETCH_HEAD"); err != nil {
+		if err := runGit(cloneCtx, options, canonical, source, "-C", root, "checkout", "--quiet", "--detach", "FETCH_HEAD"); err != nil {
 			return Result{}, err
 		}
 	}
@@ -154,16 +158,16 @@ func Open(ctx context.Context, source string, options Options) (Result, error) {
 		if options.Depth > 0 {
 			arguments = append(arguments, "--depth", fmt.Sprint(options.Depth))
 		}
-		if err := runGit(cloneCtx, options, redacted, arguments...); err != nil {
+		if err := runGit(cloneCtx, options, canonical, source, arguments...); err != nil {
 			return Result{}, err
 		}
 	}
 	if cloneCtx.Err() != nil {
-		return Result{}, fmt.Errorf("materialise %s: %w", redacted, cloneCtx.Err())
+		return Result{}, fmt.Errorf("materialise %s: %w", canonical, cloneCtx.Err())
 	}
 	failed = false
 	result := Result{
-		Kind: KindGit, Root: root, Source: source, RedactedSource: redacted, RequestedRef: options.Ref,
+		Kind: KindGit, Root: root, Origin: canonical, RequestedRef: options.Ref,
 		Temporary: !options.KeepMaterialized, MaterializedPath: root,
 	}
 	if !options.KeepMaterialized {
@@ -172,7 +176,7 @@ func Open(ctx context.Context, source string, options Options) (Result, error) {
 	return result, nil
 }
 
-func runGit(ctx context.Context, options Options, redactedSource string, arguments ...string) error {
+func runGit(ctx context.Context, options Options, canonicalSource, rawSource string, arguments ...string) error {
 	protocolFile := "never"
 	if options.AllowFileURLs {
 		protocolFile = "always"
@@ -181,6 +185,11 @@ func runGit(ctx context.Context, options Options, redactedSource string, argumen
 		"-c", "core.hooksPath=/dev/null",
 		"-c", "filter.lfs.smudge=",
 		"-c", "filter.lfs.required=false",
+		"-c", "protocol.allow=never",
+		"-c", "protocol.https.allow=always",
+		"-c", "protocol.ssh.allow=always",
+		"-c", "protocol.git.allow=never",
+		"-c", "protocol.ext.allow=never",
 		"-c", "protocol.file.allow=" + protocolFile,
 	}
 	safeArguments = append(safeArguments, arguments...)
@@ -188,6 +197,7 @@ func runGit(ctx context.Context, options Options, redactedSource string, argumen
 	command.Env = append(os.Environ(),
 		"GIT_TERMINAL_PROMPT=0", "GIT_OPTIONAL_LOCKS=0", "GIT_LFS_SKIP_SMUDGE=1",
 		"GIT_CONFIG_NOSYSTEM=1", "GIT_CONFIG_GLOBAL=/dev/null",
+		"GIT_PROTOCOL_FROM_USER=0",
 	)
 	var stdout, stderr limitedBuffer
 	stdout.limit = options.MaximumLogBytes
@@ -199,14 +209,17 @@ func runGit(ctx context.Context, options Options, redactedSource string, argumen
 		if detail == "" {
 			detail = strings.TrimSpace(stdout.String())
 		}
+		if rawSource != "" {
+			detail = strings.ReplaceAll(detail, rawSource, canonicalSource)
+		}
 		detail = redactSecrets(detail)
 		if stdout.truncated || stderr.truncated {
 			detail += " [output truncated]"
 		}
 		if ctx.Err() != nil {
-			return fmt.Errorf("Git operation for %s: %w", redactedSource, ctx.Err())
+			return fmt.Errorf("Git operation for %s: %w", canonicalSource, ctx.Err())
 		}
-		return fmt.Errorf("Git operation for %s failed: %w: %s", redactedSource, err, detail)
+		return fmt.Errorf("Git operation for %s failed: %w: %s", canonicalSource, err, detail)
 	}
 	return nil
 }
@@ -240,14 +253,19 @@ func (writer *limitedBuffer) String() string { return writer.buffer.String() }
 
 func validateRemoteSource(source string, allowFile bool) (*url.URL, bool, error) {
 	if scpPattern.MatchString(source) && !strings.Contains(source, "://") {
+		if strings.ContainsAny(source, "?#") {
+			return nil, false, errors.New("Git URL query parameters and fragments are disabled; use a credential helper or SSH agent")
+		}
 		return nil, true, nil
 	}
 	parsed, err := url.Parse(source)
 	if err != nil || parsed.Scheme == "" {
-		return nil, false, fmt.Errorf("repository source does not exist locally and is not a supported Git URL: %s", redactSecrets(source))
+		return nil, false, errors.New("repository source does not exist locally and is not a supported Git URL")
 	}
 	switch strings.ToLower(parsed.Scheme) {
-	case "https", "ssh", "git":
+	case "https", "ssh":
+	case "git":
+		return nil, false, errors.New("plaintext git:// transport is disabled; use HTTPS or SSH")
 	case "file":
 		if !allowFile {
 			return nil, false, errors.New("file:// Git URLs are disabled; use a local directory or explicitly allow file URLs")
@@ -258,6 +276,15 @@ func validateRemoteSource(source string, allowFile bool) (*url.URL, bool, error)
 	if parsed.Scheme != "file" && parsed.Host == "" {
 		return nil, false, errors.New("Git URL must include a host")
 	}
+	if parsed.RawQuery != "" || parsed.Fragment != "" {
+		return nil, false, errors.New("Git URL query parameters and fragments are disabled; use a credential helper or SSH agent")
+	}
+	if parsed.User != nil {
+		_, password := parsed.User.Password()
+		if strings.EqualFold(parsed.Scheme, "https") || password {
+			return nil, false, errors.New("inline Git URL credentials are disabled; use a credential helper or SSH agent")
+		}
+	}
 	return parsed, false, nil
 }
 
@@ -265,19 +292,13 @@ var scpPattern = regexp.MustCompile(`^[^/@\s]+@[^/:\s]+:.+$`)
 var credentialPattern = regexp.MustCompile(`(?i)(https?://)([^/@\s]+)@`)
 
 func redactSource(source string, parsed *url.URL, scpStyle bool) string {
-	if scpStyle {
-		return source
+	_ = parsed
+	_ = scpStyle
+	canonical, err := sourceorigin.Normalize(source)
+	if err != nil {
+		return "<invalid-origin>"
 	}
-	copy := *parsed
-	if copy.User != nil {
-		username := copy.User.Username()
-		if username == "" {
-			copy.User = nil
-		} else {
-			copy.User = url.User(username)
-		}
-	}
-	return copy.String()
+	return canonical
 }
 func redactSecrets(value string) string {
 	return credentialPattern.ReplaceAllString(value, `${1}<redacted>@`)

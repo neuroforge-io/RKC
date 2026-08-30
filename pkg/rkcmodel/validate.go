@@ -6,6 +6,8 @@ import (
 	"math"
 	"sort"
 	"strings"
+
+	"github.com/neuroforge-io/RKC/internal/sourceorigin"
 )
 
 type ValidationOptions struct {
@@ -43,6 +45,7 @@ func ValidateBundle(bundle Bundle, options ValidationOptions) ValidationReport {
 	pathIDs := map[string]struct{}{}
 
 	validateSnapshot(&diagnostics, bundle.Snapshot)
+	validateRepositoryProvenance(&diagnostics, bundle)
 
 	for _, artifact := range bundle.Artifacts {
 		if artifact.ID == "" {
@@ -366,6 +369,99 @@ func validateSnapshot(diagnostics *[]Diagnostic, snapshot Snapshot) {
 	if strings.TrimSpace(snapshot.Tool.Name) == "" || strings.TrimSpace(snapshot.Tool.Version) == "" {
 		*diagnostics = append(*diagnostics, validationDiagnostic("error", "RKC-MOD-055", "snapshot tool name and version are required", snapshot.ID))
 	}
+}
+
+func validateRepositoryProvenance(diagnostics *[]Diagnostic, bundle Bundle) {
+	origin := bundle.Snapshot.Git.Origin
+	originIsCanonical := origin == "" || isCanonicalRepositoryOrigin(origin)
+	if !originIsCanonical {
+		*diagnostics = append(*diagnostics, validationDiagnostic(
+			"error",
+			"RKC-MOD-056",
+			"repository origin is not canonical",
+			"snapshot.git.origin",
+		))
+	}
+
+	if sourceReference, present := bundle.Snapshot.Metadata["source_reference"]; present && sourceReference != "" {
+		if !isCanonicalRepositoryOrigin(sourceReference) {
+			*diagnostics = append(*diagnostics, validationDiagnostic(
+				"error",
+				"RKC-MOD-056",
+				"repository source reference is not canonical",
+				"snapshot.metadata.source_reference",
+			))
+		}
+		if sourceReference != origin {
+			*diagnostics = append(*diagnostics, validationDiagnostic(
+				"error",
+				"RKC-MOD-057",
+				"repository provenance fields disagree",
+				"snapshot.metadata.source_reference",
+			))
+		}
+	}
+
+	// Originless bundles remain valid for local folders and legacy imports. An
+	// origin, when present, is the sole portable input to repository identity.
+	if origin == "" {
+		return
+	}
+	if originIsCanonical && bundle.Snapshot.RepositoryID != StableID("repository", origin) {
+		*diagnostics = append(*diagnostics, validationDiagnostic(
+			"error",
+			"RKC-MOD-058",
+			"repository identifier does not match canonical origin",
+			"snapshot.repository_id",
+		))
+	}
+
+	repositoryNodeFound := false
+	for _, node := range bundle.Nodes {
+		if node.Kind != "repository" || node.ID != bundle.Snapshot.RepositoryID {
+			continue
+		}
+		repositoryNodeFound = true
+		if node.LogicalID != bundle.Snapshot.RepositoryID {
+			*diagnostics = append(*diagnostics, validationDiagnostic(
+				"error",
+				"RKC-MOD-057",
+				"repository node identity disagrees with snapshot",
+				"repository_node.logical_id",
+			))
+		}
+		if node.QualifiedName != origin {
+			*diagnostics = append(*diagnostics, validationDiagnostic(
+				"error",
+				"RKC-MOD-057",
+				"repository node provenance disagrees with snapshot",
+				"repository_node.qualified_name",
+			))
+		}
+		rawGitOrigin, present := node.Attributes["git_origin"]
+		gitOrigin, ok := rawGitOrigin.(string)
+		if !present || !ok || gitOrigin != origin {
+			*diagnostics = append(*diagnostics, validationDiagnostic(
+				"error",
+				"RKC-MOD-057",
+				"repository node provenance disagrees with snapshot",
+				"repository_node.attributes.git_origin",
+			))
+		}
+	}
+	if !repositoryNodeFound {
+		*diagnostics = append(*diagnostics, validationDiagnostic(
+			"error",
+			"RKC-MOD-057",
+			"repository provenance node is missing",
+			"snapshot.repository_id",
+		))
+	}
+}
+
+func isCanonicalRepositoryOrigin(origin string) bool {
+	normalized, err := sourceorigin.Normalize(origin)
+	return err == nil && normalized == origin && sourceorigin.IsCanonical(origin)
 }
 
 func validateSourceRange(diagnostics *[]Diagnostic, source *SourceRange, artifacts map[string]Artifact, code, subject string) {

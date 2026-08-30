@@ -332,10 +332,7 @@ func runScanContext(ctx context.Context, args []string) (resultErr error) {
 		return err
 	}
 
-	sourceReference := ""
-	if acquired.Kind == acquire.KindGit {
-		sourceReference = acquired.RedactedSource
-	}
+	repositoryOrigin := acquired.Origin
 	var stageEventMu sync.Mutex
 	var stageEvents []scheduler.Event
 	runID, err := scheduler.NewRunID()
@@ -383,7 +380,7 @@ func runScanContext(ctx context.Context, args []string) (resultErr error) {
 		DisablePlugins:          *noPlugins, DisablePythonAST: *noPython, DisableGoAST: *noGo, DisableTypeScript: *noTypeScript,
 		DisableFrameworks: *noFrameworks, DisableMarkdown: *noMarkdown, DisableOpenAPI: *noOpenAPI,
 		DisableJSONSchema: *noJSONSchema, DisableManifests: *noManifests, DisableEnvKeys: *noEnvKeys, DisableSecretScan: *noSecretScan,
-		ToolVersion: version, SourceReference: sourceReference, ConfigDigest: cfg.Digest(), PolicyDigest: cfg.PolicyDigest(),
+		ToolVersion: version, Origin: repositoryOrigin, ConfigDigest: cfg.Digest(), PolicyDigest: cfg.PolicyDigest(),
 		PluginLockDigest: cfg.PluginDigest(), ToolchainDigest: toolchainDigest(*python),
 		Cache:                  stageCache,
 		StageWorkers:           *stageWorkers,
@@ -416,12 +413,16 @@ func runScanContext(ctx context.Context, args []string) (resultErr error) {
 	if *failOnErrors && coverage.DiagnosticsBySeverity["error"] > 0 {
 		return fmt.Errorf("scan rejected before publication with %d error diagnostic(s)", coverage.DiagnosticsBySeverity["error"])
 	}
+	repositoryOrigin = bundle.Snapshot.Git.Origin
 
 	var sqlitePending *sqlitePublication
 	sqliteNoop := false
 	snapshotStoreNoop := false
 	if resolvedDatabase != "" {
-		stateMetadata := map[string]string{"repository_source": acquired.RedactedSource, "atlas_target": outAbs}
+		stateMetadata := map[string]string{"atlas_target": outAbs}
+		if repositoryOrigin != "" {
+			stateMetadata["repository_origin"] = repositoryOrigin
+		}
 		if !acquired.Temporary {
 			stateMetadata["repository_root"] = rootAbs
 		}
@@ -483,7 +484,10 @@ func runScanContext(ctx context.Context, args []string) (resultErr error) {
 		if err != nil {
 			return fmt.Errorf("atlas published at %s but snapshot store could not be opened: %w", outAbs, err)
 		}
-		stateMetadata := map[string]string{"repository_source": acquired.RedactedSource, "export_root": outAbs}
+		stateMetadata := map[string]string{"export_root": outAbs}
+		if repositoryOrigin != "" {
+			stateMetadata["repository_origin"] = repositoryOrigin
+		}
 		if !acquired.Temporary {
 			stateMetadata["repository_root"] = rootAbs
 		}
@@ -559,8 +563,15 @@ func runScanContext(ctx context.Context, args []string) (resultErr error) {
 		}
 	}
 	stageEventMu.Unlock()
+	displaySource := repositoryOrigin
+	if displaySource == "" {
+		displaySource = acquired.Origin
+	}
+	if displaySource == "" {
+		displaySource = rootAbs
+	}
 	summary := map[string]any{
-		"snapshot_id": bundle.Snapshot.ID, "source": acquired.RedactedSource, "source_kind": acquired.Kind, "output": outAbs, "snapshot_store": *stateDir, "snapshot_store_noop": snapshotStoreNoop,
+		"snapshot_id": bundle.Snapshot.ID, "source": displaySource, "source_kind": acquired.Kind, "output": outAbs, "snapshot_store": *stateDir, "snapshot_store_noop": snapshotStoreNoop,
 		"database": resolvedDatabase, "database_noop": sqliteNoop, "cache": resolvedCache, "cache_hits": cacheHits,
 		"run_id": runID, "run_journal": runJournalPath,
 		"artifacts": coverage.ArtifactsInventoried, "text_artifacts": coverage.TextArtifacts,
@@ -572,7 +583,7 @@ func runScanContext(ctx context.Context, args []string) (resultErr error) {
 		return writeJSONStdout(summary)
 	}
 	fmt.Printf("Snapshot: %s\n", bundle.Snapshot.ID)
-	fmt.Printf("Source: %s (%s)\n", acquired.RedactedSource, acquired.Kind)
+	fmt.Printf("Source: %s (%s)\n", displaySource, acquired.Kind)
 	if *keepMaterialized && acquired.Kind == acquire.KindGit {
 		fmt.Printf("Materialized repository: %s\n", acquired.MaterializedPath)
 	}

@@ -391,7 +391,10 @@ func TestScanIsRaceSafeForConcurrentReaders(t *testing.T) {
 
 func TestInspectGitAvailableAndUnavailable(t *testing.T) {
 	t.Parallel()
-	missing := inspectGit(context.Background(), t.TempDir())
+	missing, err := inspectGit(context.Background(), t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
 	if !missing.Unavailable {
 		t.Fatalf("non-repository Git info = %+v", missing)
 	}
@@ -412,12 +415,19 @@ func TestInspectGitAvailableAndUnavailable(t *testing.T) {
 	if output, err := command.CombinedOutput(); err != nil {
 		t.Fatalf("git commit: %v: %s", err, output)
 	}
-	info := inspectGit(context.Background(), root)
+	info, err := inspectGit(context.Background(), root)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if info.Unavailable || info.Commit == "" || info.Dirty {
 		t.Fatalf("committed Git info = %+v", info)
 	}
 	mustWritePipelineFile(t, filepath.Join(root, "untracked.txt"), "dirty\n")
-	if dirty := inspectGit(context.Background(), root); !dirty.Dirty {
+	dirty, err := inspectGit(context.Background(), root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !dirty.Dirty {
 		t.Fatalf("dirty Git info = %+v", dirty)
 	}
 }

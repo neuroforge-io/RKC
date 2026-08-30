@@ -97,6 +97,12 @@ func Scan(ctx context.Context, opts Options) (rkcmodel.Bundle, rkcmodel.Coverage
 	if !info.IsDir() {
 		return rkcmodel.Bundle{}, rkcmodel.Coverage{}, fmt.Errorf("root is not a directory: %s", root)
 	}
+	opts.Excludes = effectivePipelineExcludes(opts.Excludes)
+	canonicalOrigin, err := publicSuppliedOrigin(opts.Origin)
+	if err != nil {
+		return rkcmodel.Bundle{}, rkcmodel.Coverage{}, err
+	}
+	opts.Origin = canonicalOrigin
 
 	state := &stagedScanState{
 		opts:           opts,
@@ -373,15 +379,27 @@ func (state *stagedScanState) runInventory(ctx context.Context) (scheduler.Resul
 		return scheduler.Result{}, err
 	}
 	state.inventory = inv
-	gitInfo := inspectGit(ctx, state.root)
+	gitInfo, err := inspectGit(ctx, state.root)
+	if err != nil {
+		return scheduler.Result{}, err
+	}
+	origin, err := reconcileRepositoryOrigin(state.opts.Origin, gitInfo.Origin)
+	if err != nil {
+		return scheduler.Result{}, err
+	}
+	gitInfo.Origin = origin
 	rootName := filepath.Base(state.root)
-	repositoryIdentity := firstNonEmpty(state.opts.SourceReference, gitInfo.Origin, rootName)
+	repositoryIdentity := firstNonEmpty(origin, rootName)
 	repositoryID := rkcmodel.StableID("repository", repositoryIdentity)
 	snapshotID := stableSnapshotID(
 		repositoryIdentity, gitInfo.Commit, inv.Digest, state.scipDigest, state.opts,
 	)
 	if gitInfo.Dirty {
 		gitInfo.WorkingTreeDigest = inv.Digest
+	}
+	metadata := map[string]string{"scip_input_digest": state.scipDigest}
+	if origin != "" {
+		metadata["source_reference"] = origin
 	}
 	state.bundle = rkcmodel.Bundle{Snapshot: rkcmodel.Snapshot{
 		SchemaVersion:    rkcmodel.SchemaVersion,
@@ -411,10 +429,7 @@ func (state *stagedScanState) runInventory(ctx context.Context) (scheduler.Resul
 			"secret_scan":          !state.opts.DisableSecretScan,
 			"scip_semantic":        len(state.scipInputs) > 0,
 		},
-		Metadata: map[string]string{
-			"source_reference":  state.opts.SourceReference,
-			"scip_input_digest": state.scipDigest,
-		},
+		Metadata: metadata,
 	}, Artifacts: inv.Artifacts, Diagnostics: inv.Diagnostics}
 	state.bundle.Nodes = append(state.bundle.Nodes, rkcmodel.Node{
 		ID: repositoryID, LogicalID: repositoryID, Kind: "repository",
