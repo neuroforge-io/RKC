@@ -8,13 +8,15 @@ The shortest source-checkout path is:
 git clone https://github.com/neuroforge-io/RKC.git
 cd RKC
 ./install.sh
+export PATH="$HOME/.local/bin:$PATH"
 rkc wizard
 ```
 
 The installer builds both CGO-free binaries, installs them under
 `$HOME/.local/bin` by default, preserves the MIT license and attribution notice
 under `$HOME/.local/share/doc/rkc` (including the complete third-party notice),
-and prints the first-run command. Use
+and prints an immediately executable first-run command plus a copy-ready PATH
+command when the install directory is not already reachable. Use
 `./install.sh --prefix /another/prefix` for another user-owned destination.
 RKC-owned code and generated tooling are from **NeuroForgeIO** and RKC
 contributors; see [`BRANDING_AND_ATTRIBUTION.md`](BRANDING_AND_ATTRIBUTION.md)

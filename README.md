@@ -14,6 +14,7 @@ evidence packet to an optional local model.
 
 ```sh
 ./install.sh
+export PATH="$HOME/.local/bin:$PATH"
 rkc open /path/to/repository
 # In another terminal, query the verified atlas while the browser is running:
 rkc query --dir /path/to/repository/.rkc "where is authentication enforced?"

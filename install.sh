@@ -17,6 +17,12 @@ Defaults:
 EOF
 }
 
+shell_quote() {
+	printf "'"
+	printf '%s' "$1" | sed "s/'/'\\\\''/g"
+	printf "'"
+}
+
 while [ "$#" -gt 0 ]; do
 	case "$1" in
 		--prefix)
@@ -43,6 +49,15 @@ done
 case "$PREFIX" in
 	""|/|.|..)
 		echo "install: refusing unsafe prefix: $PREFIX" >&2
+		exit 2
+		;;
+esac
+NEWLINE='
+'
+CARRIAGE_RETURN=$(printf '\r')
+case "$PREFIX" in
+	*"$NEWLINE"*|*"$CARRIAGE_RETURN"*)
+		echo "install: prefix must not contain a line break" >&2
 		exit 2
 		;;
 esac
@@ -113,9 +128,29 @@ install_file \
 	"$DATA_DIRECTORY/schemas/model-qualification.schema.json" \
 	0644
 
-echo "RKC installed in $BIN_DIRECTORY"
-case ":$PATH:" in
-	*":$BIN_DIRECTORY:"*) ;;
-	*) echo "Add $BIN_DIRECTORY to PATH." ;;
+DISPLAY_BIN_DIRECTORY=$(CDPATH= cd -- "$BIN_DIRECTORY" && pwd -P)
+echo "RKC installed in $DISPLAY_BIN_DIRECTORY"
+ON_PATH=0
+case "$DISPLAY_BIN_DIRECTORY" in
+	*:*) ;;
+	*)
+		case ":$PATH:" in
+			*":$DISPLAY_BIN_DIRECTORY:"*) ON_PATH=1 ;;
+		esac
+		;;
 esac
-echo "First run: rkc wizard"
+if [ "$ON_PATH" -eq 1 ]; then
+	echo "First run: rkc wizard"
+else
+	printf 'First run: '
+	shell_quote "$DISPLAY_BIN_DIRECTORY/rkc"
+	printf ' wizard\n'
+	case "$DISPLAY_BIN_DIRECTORY" in
+		*:*) echo "This install path contains ':' and cannot be added to PATH portably." ;;
+		*)
+			printf 'For this shell: export PATH='
+			shell_quote "$DISPLAY_BIN_DIRECTORY"
+			printf ':"$PATH"\n'
+			;;
+	esac
+fi
