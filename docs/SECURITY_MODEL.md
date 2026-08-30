@@ -46,6 +46,11 @@ No downstream component treats repository text as instructions.
   credentials are rejected; Git protocol helpers are denied by default;
 - repository origins are canonicalized without userinfo, query strings, or
   fragments before identity, validation, persistence, or export;
+- the default `paths-relative` publication boundary removes the absolute
+  repository root and absolute atlas/store metadata while preserving portable
+  repository-relative citations; `redacted` additionally removes the public
+  Git origin, source reference, and repository-node origin fields before any
+  atlas or durable snapshot publication;
 - Git administrative data is always excluded from pipeline inventories, even
   when a programmatic caller omits the CLI exclusion defaults;
 - `file://` transport is denied unless explicitly enabled;
@@ -153,6 +158,30 @@ The raw acquisition operand exists only in memory while Git is invoked. Public
 snapshot provenance uses one canonical, credential-free origin. Local path and
 `file://` remotes are operational locations and are omitted from portable
 repository identity.
+
+## Workspace privacy modes
+
+`workspace.privacy_mode` is enforced at the publication boundary after the
+canonical scan has completed and before SQLite, filesystem snapshot state, or
+atlas export begins:
+
+- `paths-relative` is the default. Persistent snapshots omit
+  `snapshot.root_path`, and publication records omit absolute repository and
+  atlas locations. Repository-relative artifact/evidence paths and a canonical,
+  credential-free remote origin remain available for grounding and portable
+  repository identity.
+- `redacted` applies the same path boundary and also removes
+  `snapshot.git.origin`, `snapshot.metadata.source_reference`, and repository
+  node origin fields. Repository and snapshot IDs remain opaque stable hashes,
+  so graph relationships and repeatability survive without publishing the
+  source location.
+- `full` explicitly permits machine-local operational paths and canonical
+  origin metadata in durable state. It does not disable secret scanning or
+  normalized-source redaction.
+
+Every transformed bundle is revalidated and its coverage/deterministic digest
+is rebuilt before publication. The terminal may still print the path selected
+by the operator; that display is not copied into non-`full` durable metadata.
 
 Archives require bounded entry count, decompression ratio, total bytes, nesting,
 and path containment before production support is enabled.

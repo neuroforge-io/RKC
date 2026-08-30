@@ -413,19 +413,25 @@ func runScanContext(ctx context.Context, args []string) (resultErr error) {
 	if *failOnErrors && coverage.DiagnosticsBySeverity["error"] > 0 {
 		return fmt.Errorf("scan rejected before publication with %d error diagnostic(s)", coverage.DiagnosticsBySeverity["error"])
 	}
+	displayRepositoryOrigin := bundle.Snapshot.Git.Origin
+	coverage, err = enforceWorkspacePrivacy(&bundle, cfg.Workspace.PrivacyMode)
+	if err != nil {
+		return err
+	}
 	repositoryOrigin = bundle.Snapshot.Git.Origin
 
 	var sqlitePending *sqlitePublication
 	sqliteNoop := false
 	snapshotStoreNoop := false
 	if resolvedDatabase != "" {
-		stateMetadata := map[string]string{"atlas_target": outAbs}
-		if repositoryOrigin != "" {
-			stateMetadata["repository_origin"] = repositoryOrigin
-		}
-		if !acquired.Temporary {
-			stateMetadata["repository_root"] = rootAbs
-		}
+		stateMetadata := scanPublicationMetadata(
+			cfg.Workspace.PrivacyMode,
+			"atlas_target",
+			outAbs,
+			repositoryOrigin,
+			rootAbs,
+			acquired.Temporary,
+		)
 		sqlitePending, err = prepareSQLiteBundle(ctx, resolvedDatabase, bundle, stateMetadata)
 		if err != nil {
 			return fmt.Errorf("stage SQLite snapshot before atlas publication: %w", err)
@@ -484,13 +490,14 @@ func runScanContext(ctx context.Context, args []string) (resultErr error) {
 		if err != nil {
 			return fmt.Errorf("atlas published at %s but snapshot store could not be opened: %w", outAbs, err)
 		}
-		stateMetadata := map[string]string{"export_root": outAbs}
-		if repositoryOrigin != "" {
-			stateMetadata["repository_origin"] = repositoryOrigin
-		}
-		if !acquired.Temporary {
-			stateMetadata["repository_root"] = rootAbs
-		}
+		stateMetadata := scanPublicationMetadata(
+			cfg.Workspace.PrivacyMode,
+			"export_root",
+			outAbs,
+			repositoryOrigin,
+			rootAbs,
+			acquired.Temporary,
+		)
 		transaction, err := store.Begin(bundle.Snapshot.ID, stateMetadata)
 		if errors.Is(err, snapshot.ErrSnapshotExists) {
 			storedBundle, storedCoverage, _, loadErr := store.Load(bundle.Snapshot.ID)
@@ -563,7 +570,7 @@ func runScanContext(ctx context.Context, args []string) (resultErr error) {
 		}
 	}
 	stageEventMu.Unlock()
-	displaySource := repositoryOrigin
+	displaySource := displayRepositoryOrigin
 	if displaySource == "" {
 		displaySource = acquired.Origin
 	}
@@ -607,6 +614,88 @@ func runScanContext(ctx context.Context, args []string) (resultErr error) {
 	}
 	fmt.Printf("Browse: rkc serve --dir %s\n", outAbs)
 	return nil
+}
+
+// enforceWorkspacePrivacy applies the configured publication boundary after
+// analysis and before any atlas or durable store observes the bundle. Relative
+// artifact and evidence paths are intentionally retained in every mode: they
+// are the portable citation contract used by humans, agents, and integrations.
+func enforceWorkspacePrivacy(bundle *rkcmodel.Bundle, mode string) (rkcmodel.Coverage, error) {
+	if bundle == nil {
+		return rkcmodel.Coverage{}, errors.New("workspace privacy transformation requires a bundle")
+	}
+	switch mode {
+	case "full":
+		// Full mode deliberately retains machine-local operational provenance.
+	case "paths-relative":
+		bundle.Snapshot.RootPath = ""
+	case "redacted":
+		bundle.Snapshot.RootPath = ""
+		origin := bundle.Snapshot.Git.Origin
+		bundle.Snapshot.Git.Origin = ""
+		if bundle.Snapshot.Metadata != nil {
+			for key, value := range bundle.Snapshot.Metadata {
+				if key == "source_reference" || key == "repository_origin" || origin != "" && value == origin {
+					delete(bundle.Snapshot.Metadata, key)
+				}
+			}
+		}
+		for index := range bundle.Nodes {
+			node := &bundle.Nodes[index]
+			if node.Kind != "repository" || node.ID != bundle.Snapshot.RepositoryID {
+				continue
+			}
+			node.QualifiedName = ""
+			if node.Attributes != nil {
+				for key, value := range node.Attributes {
+					text, isText := value.(string)
+					if key == "git_origin" || key == "repository_origin" || key == "source_reference" ||
+						origin != "" && isText && text == origin {
+						delete(node.Attributes, key)
+					}
+				}
+			}
+		}
+	default:
+		return rkcmodel.Coverage{}, errors.New("workspace privacy mode is invalid")
+	}
+
+	rkcmodel.SortBundle(bundle)
+	report := rkcmodel.ValidateBundle(*bundle, rkcmodel.ValidationOptions{
+		StrictVocabulary: true,
+		RequireEvidence:  true,
+	})
+	if report.HasErrors() {
+		return rkcmodel.Coverage{}, errors.New("workspace privacy transformation produced an invalid canonical bundle")
+	}
+	return rkcmodel.BuildCoverage(*bundle), nil
+}
+
+// scanPublicationMetadata keeps operational absolute paths only when the user
+// explicitly selects full privacy mode. The same constructor feeds both
+// SQLite and filesystem snapshot publication so their privacy behavior cannot
+// silently drift apart.
+func scanPublicationMetadata(
+	mode string,
+	targetKey string,
+	target string,
+	repositoryOrigin string,
+	repositoryRoot string,
+	temporaryRepository bool,
+) map[string]string {
+	metadata := map[string]string{}
+	if mode == "full" {
+		if targetKey != "" && target != "" {
+			metadata[targetKey] = target
+		}
+		if repositoryRoot != "" && !temporaryRepository {
+			metadata["repository_root"] = repositoryRoot
+		}
+	}
+	if mode != "redacted" && repositoryOrigin != "" {
+		metadata["repository_origin"] = repositoryOrigin
+	}
+	return metadata
 }
 
 func scanCancellation(ctx context.Context) error {

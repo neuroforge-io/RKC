@@ -105,6 +105,16 @@ Edit `rkc.json`, then pass it with `--config rkc.json`. Omit the option to use
 safe local defaults. The older `--out` spelling remains a compatibility alias;
 `--path` is the canonical flag.
 
+The generated configuration defaults to
+`workspace.privacy_mode: "paths-relative"`. Atlas and durable snapshot records
+then keep repository-relative citations and a credential-free remote origin,
+but do not retain absolute repository or output locations. Select `redacted`
+when the public knowledge product must also omit the Git origin and source
+reference; opaque stable IDs still support deterministic search and graph
+links. Select `full` only when retaining machine-local operational paths in
+durable state is intentional. These modes do not weaken the independent secret
+scanner or normalized-source redaction.
+
 `inventory.exclude` values are exact repository-relative paths, not globs. Each
 value excludes that path and its descendants. RKC does not claim to interpret
 `.gitignore`; its generated configuration instead lists explicit safe defaults

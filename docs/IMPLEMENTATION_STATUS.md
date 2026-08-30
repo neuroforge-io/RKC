@@ -27,6 +27,7 @@ The labels below mean:
 | Canonical RKR records | Implemented | Public Go package, schema 0.2.0 |
 | Stable IDs and canonical ordering | Implemented | Deterministic digest tested |
 | Referential and vocabulary validation | Implemented | Strict validation supported |
+| Workspace privacy publication | Implemented | Default `paths-relative` removes persistent absolute repository/output paths while retaining relative citations and canonical origin; `redacted` also removes public origin/source-reference/repository-node provenance, then revalidates and rebuilds coverage before atlas, filesystem snapshot, or SQLite publication |
 | Artifact inventory and SHA-256 | Implemented | Explicit exclusions and limits |
 | Local/remote Git acquisition | Implemented | Promptless, hooks/global configuration disabled, bounded timeout/output, deny-by-default protocol policy, no plaintext `git://` or inline HTTPS credentials/query/fragment metadata, and one credential-free canonical origin across identity/model/export |
 | Filesystem snapshot publication | Implemented | Building/committed states and recovery |

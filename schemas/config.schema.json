@@ -37,6 +37,7 @@
           "type": "string"
         },
         "privacy_mode": {
+          "description": "Publication boundary: full may retain machine-local operational paths and the canonical Git origin; paths-relative removes persistent absolute repository/output paths while retaining repository-relative citations and the canonical origin; redacted also removes public origin/source-reference fields while retaining opaque stable identifiers.",
           "enum": [
             "full",
             "paths-relative",
