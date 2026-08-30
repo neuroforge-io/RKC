@@ -154,6 +154,28 @@ class ValidateDocsTests(unittest.TestCase):
             "missing standard NeuroForgeIO/MIT attribution footer", messages
         )
 
+    def test_query_only_link_is_local_noop_and_mixed_fence_stays_open(self) -> None:
+        self.write(
+            "README.md",
+            """# Edge syntax
+
+[query-only local reference](?view=compact)
+
+```text
+~~~ does not close a backtick fence
+"""
+            + FOOTER,
+        )
+
+        status, report = self.run_validator()
+
+        self.assertEqual(status, 1)
+        messages = [issue["message"] for issue in report["issues"]]
+        self.assertEqual(messages, ["unclosed ``` code fence"])
+        self.assertFalse(
+            any("local link target" in message for message in messages), messages
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

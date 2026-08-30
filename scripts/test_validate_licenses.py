@@ -7,6 +7,7 @@ import importlib.util
 import io
 import json
 import os
+import runpy
 import subprocess
 import sys
 import tempfile
@@ -16,8 +17,9 @@ from unittest import mock
 
 
 MODULE_NAME = "rkc_validate_licenses"
+VALIDATOR = Path(__file__).with_name("validate-licenses.py").absolute()
 SPEC = importlib.util.spec_from_file_location(
-    MODULE_NAME, Path(__file__).with_name("validate-licenses.py")
+    MODULE_NAME, VALIDATOR
 )
 assert SPEC and SPEC.loader
 LICENSES = importlib.util.module_from_spec(SPEC)
@@ -302,12 +304,26 @@ class LicenseValidationTests(unittest.TestCase):
 
     def test_root_documents_happy_path_and_notice_closure(self) -> None:
         self.root_fixture()
+        self.write("LICENSES/empty-directory/.keep", "temporary")
+        (LICENSES.ROOT / "LICENSES/empty-directory/.keep").unlink()
         LICENSES.validate_root_documents()
         self.assertFalse(LICENSES.ERRORS, LICENSES.ERRORS)
         self.write("LICENSES/Extra.txt", "terms")
         LICENSES.validate_root_documents()
         self.assertTrue(
             any("LICENSES/Extra.txt" in error for error in LICENSES.ERRORS),
+            LICENSES.ERRORS,
+        )
+
+    def test_root_documents_reject_missing_license_directory(self) -> None:
+        self.root_fixture()
+        (LICENSES.ROOT / "LICENSES/Go.txt").unlink()
+        (LICENSES.ROOT / "LICENSES").rmdir()
+
+        LICENSES.validate_root_documents()
+
+        self.assertTrue(
+            any("license-file notice closure" in error for error in LICENSES.ERRORS),
             LICENSES.ERRORS,
         )
 
@@ -432,6 +448,29 @@ class LicenseValidationTests(unittest.TestCase):
         )
         LICENSES.validate_declared_metadata()
         self.assertGreaterEqual(len(LICENSES.ERRORS), 2)
+
+    def test_declared_metadata_rejects_missing_and_malformed_model_lock(self) -> None:
+        self.write(
+            "api/openapi.yaml",
+            "license:\n  name: MIT\n  identifier: MIT\n",
+        )
+
+        LICENSES.validate_declared_metadata()
+        self.assertIn(
+            "optional model/runtime license metadata",
+            str(LICENSES.CHECKS[-1]["name"]),
+        )
+        self.assertFalse(LICENSES.CHECKS[-1]["ok"])
+
+        LICENSES.ERRORS.clear()
+        LICENSES.CHECKS.clear()
+        self.write(
+            "models/models.lock.json",
+            json.dumps({"llama_cpp": None, "assets": []}),
+        )
+        LICENSES.validate_declared_metadata()
+        self.assertFalse(LICENSES.CHECKS[-1]["ok"])
+        self.assertIn("invalid model lock", str(LICENSES.CHECKS[-1]["detail"]))
 
     def test_dependency_boundary_accepts_exact_reviewed_closure(self) -> None:
         expected, roots = self.dependency_fixture()
@@ -622,6 +661,97 @@ class LicenseValidationTests(unittest.TestCase):
         self.assertIn("keys differ", str(result["detail"]))
         self.assertIn("identity is invalid", str(result["detail"]))
 
+    def test_dependency_boundary_rejects_module_and_license_collection_drift(
+        self,
+    ) -> None:
+        expected, roots = self.dependency_fixture()
+        go_mod_path = LICENSES.ROOT / "go.mod"
+        self.write(
+            "go.mod",
+            go_mod_path.read_text(encoding="utf-8").replace(
+                "module fixture.test/rkc", "module fixture.test/wrong", 1
+            ),
+        )
+        lock_path = LICENSES.ROOT / "third_party/go-modules.lock.json"
+        lock = json.loads(lock_path.read_text(encoding="utf-8"))
+        first = lock["modules"][0]
+        first["version"] = "v9.9.9"
+        first["licenses"] = {"not": "an array"}
+        duplicate = dict(first)
+        unknown = dict(first)
+        unknown["path"] = "unknown.test/module"
+        lock["modules"].insert(1, duplicate)
+        lock["modules"].append(unknown)
+        del lock["modules"][2]["licenses"][0]["sha256"]
+        self.write("third_party/go-modules.lock.json", json.dumps(lock))
+
+        result = self.validate_dependency_fixture(expected, roots)
+
+        detail = str(result["detail"])
+        for marker in (
+            "go.mod metadata drift",
+            "version drift",
+            "licenses must be an array",
+            "duplicates module",
+            "keys differ",
+            "contains unknown module",
+        ):
+            self.assertIn(marker, detail)
+
+    def test_dependency_boundary_rejects_invalid_internal_policy_metadata(
+        self,
+    ) -> None:
+        expected, roots = self.dependency_fixture()
+        expected["example.test/lib"]["licenses"] = []
+        expected["example.test/lib"]["module_sum"] = 7
+
+        result = self.validate_dependency_fixture(expected, roots)
+
+        detail = str(result["detail"])
+        self.assertIn("internal expected-license metadata invalid", detail)
+        self.assertIn("internal expected-module metadata invalid", detail)
+
+    def test_dependency_boundary_rejects_hash_notice_sum_and_license_root_drift(
+        self,
+    ) -> None:
+        expected, roots = self.dependency_fixture()
+        lock_path = LICENSES.ROOT / "third_party/go-modules.lock.json"
+        lock = json.loads(lock_path.read_text(encoding="utf-8"))
+        lock["modules"][0]["licenses"][0]["sha256"] = "invalid"
+        self.write("third_party/go-modules.lock.json", json.dumps(lock))
+
+        notice_path = LICENSES.ROOT / "THIRD_PARTY_NOTICES.md"
+        self.write(
+            "THIRD_PARTY_NOTICES.md",
+            notice_path.read_text(encoding="utf-8").replace(
+                "third_party/go-modules.lock.json", "lock inventory", 1
+            ),
+        )
+        license_root = LICENSES.ROOT / "LICENSES/go-modules"
+        license_root.rename(LICENSES.ROOT / "LICENSES/go-modules-away")
+
+        go_sum_path = LICENSES.ROOT / "go.sum"
+        lines = go_sum_path.read_text(encoding="utf-8").splitlines()
+        lines = [
+            line
+            for line in lines
+            if not line.startswith("example.test/lib v1.2.3 h1:")
+        ]
+        lines[0] = lines[0].rsplit(" ", 1)[0] + " invalid"
+        self.write("go.sum", "\n".join(sorted(lines)) + "\n")
+
+        result = self.validate_dependency_fixture(expected, roots)
+
+        detail = str(result["detail"])
+        for marker in (
+            "license hash metadata drift",
+            "notice omits third_party/go-modules.lock.json",
+            "tracked Go module license set differs from lock",
+            "go.sum is missing entries",
+            "go.sum has invalid checksum",
+        ):
+            self.assertIn(marker, detail)
+
     def test_dependency_boundary_rejects_license_entry_policy_drift(self) -> None:
         expected, roots = self.dependency_fixture()
         lock_path = LICENSES.ROOT / "third_party/go-modules.lock.json"
@@ -744,6 +874,30 @@ class LicenseValidationTests(unittest.TestCase):
             "sys.stdout", new=io.StringIO()
         ):
             self.assertEqual(LICENSES.main(), 1)
+
+    def test_script_entrypoint_returns_machine_readable_failure(self) -> None:
+        self.root_fixture()
+        original_resolve = Path.resolve
+        synthetic_script = LICENSES.ROOT / "scripts/validate-licenses.py"
+
+        def controlled_resolve(
+            path: Path, *args: object, **kwargs: object
+        ) -> Path:
+            if path.absolute() == VALIDATOR:
+                return synthetic_script
+            return original_resolve(path, *args, **kwargs)
+
+        stdout = io.StringIO()
+        with mock.patch.object(Path, "resolve", controlled_resolve), mock.patch(
+            "sys.stdout", new=stdout
+        ):
+            with self.assertRaises(SystemExit) as raised:
+                runpy.run_path(str(VALIDATOR), run_name="__main__")
+
+        self.assertEqual(raised.exception.code, 1)
+        report = json.loads(stdout.getvalue())
+        self.assertFalse(report["ok"])
+        self.assertTrue(report["errors"])
 
 
 if __name__ == "__main__":
