@@ -72,9 +72,15 @@ FIRST_PARTY_ATTRIBUTION_PATTERNS = (
     ),
 )
 SAFE_ATTRIBUTION_QUALIFIER = re.compile(
+    r"\brather\s+than\s+"
+    r"(?:required|mandatory|obligatory|compulsory|necessary)\b|"
     r"\brequest(?:s|ed|ing)?\b|"
     r"\b(?:optional|voluntary|appreciated|discretionary)\b|"
-    r"\b(?:not|never)\b[^.!?\n]{0,80}"
+    # Whitespace permits ordinary Markdown wrapping without allowing an
+    # unrelated later line to be swallowed as part of the negation.
+    r"\b(?:not|never)\b"
+    r"(?:\s+(?:a|an|the|any|additional|separate|extra|legal|license|licence))*"
+    r"\s+"
     r"\b(?:required|mandatory|obligatory|compulsory|condition|restriction|"
     r"requirement|obligation|necessary|have\s+to|need\s+to)\b|"
     r"\bno\b[^.!?\n]{0,80}"

@@ -407,6 +407,10 @@ class LicenseValidationTests(unittest.TestCase):
                 "RKC is MIT-licensed with attribution, which is not required.\n",
                 "Crediting NeuroForgeIO is not necessary.\n",
                 "Acknowledging NeuroForgeIO is entirely discretionary.\n",
+                "NeuroForgeIO credit is explicitly requested rather than "
+                "required.\n",
+                "NeuroForgeIO credit is requested and is not an additional\n"
+                "license condition.\n",
             ):
                 self.write(str(surface), wording)
                 LICENSES.validate_attribution_language()
@@ -443,6 +447,8 @@ class LicenseValidationTests(unittest.TestCase):
                 "NeuroForgeIO.\n",
                 "Attribution to NeuroForgeIO is requested, but users must credit "
                 "NeuroForgeIO.\n",
+                "NeuroForgeIO credit is requested and is not discussed here\n"
+                "and NeuroForgeIO credit is mandatory.\n",
             ):
                 self.write(str(surface), wording)
                 LICENSES.validate_attribution_language()
