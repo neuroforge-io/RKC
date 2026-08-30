@@ -40,6 +40,11 @@ type serveSafetyChecks struct {
 	priorityCheckInterval time.Duration
 }
 
+const (
+	minimumServeHTTPTimeout = time.Millisecond
+	maximumServeHTTPTimeout = time.Hour
+)
+
 func runServeWithSafety(ctx context.Context, args []string, safety serveSafetyChecks) (resultErr error) {
 	fs := flag.NewFlagSet("serve", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
@@ -49,8 +54,8 @@ func runServeWithSafety(ctx context.Context, args []string, safety serveSafetyCh
 	repositoryID := fs.String("repository", "", "SQLite repository ID; selects its current snapshot")
 	addr := fs.String("addr", "127.0.0.1:8787", "HTTP listen address")
 	readyFile := fs.String("ready-file", "", "atomically create a JSON readiness receipt after binding; file must not exist")
-	readTimeout := fs.Duration("read-timeout", 15*time.Second, "HTTP read timeout")
-	writeTimeout := fs.Duration("write-timeout", 60*time.Second, "HTTP write timeout")
+	readTimeout := fs.Duration("read-timeout", 15*time.Second, "HTTP read timeout (1ms to 1h, inclusive)")
+	writeTimeout := fs.Duration("write-timeout", 60*time.Second, "HTTP write timeout (1ms to 1h, inclusive)")
 	openBrowser := fs.Bool("open", false, "open the loopback atlas in the default browser after binding")
 	allowRemote := fs.Bool("allow-remote", false, "explicitly permit an unauthenticated non-loopback read-only listener")
 	workbenchEnabled := fs.Bool("workbench", false, "enable the trusted-user token-authenticated loopback command launcher; not a filesystem sandbox")
@@ -61,6 +66,9 @@ func runServeWithSafety(ctx context.Context, args []string, safety serveSafetyCh
 	}
 	if fs.NArg() != 0 {
 		return fmt.Errorf("serve does not accept positional arguments")
+	}
+	if err := validateServeHTTPTimeouts(*readTimeout, *writeTimeout); err != nil {
+		return err
 	}
 	// Workbench pages carry local command authority. Never deterministically
 	// reuse the static server's browser origin: an OS-selected port avoids the
@@ -282,6 +290,22 @@ func validateServeAddress(address string, allowRemote, workbench bool) error {
 	}
 	if _, _, err := net.SplitHostPort(address); err == nil && !loopback && !allowRemote {
 		return errors.New("non-loopback serving requires explicit --allow-remote acknowledgement")
+	}
+	return nil
+}
+
+func validateServeHTTPTimeouts(readTimeout, writeTimeout time.Duration) error {
+	timeouts := []struct {
+		name  string
+		value time.Duration
+	}{
+		{name: "--read-timeout", value: readTimeout},
+		{name: "--write-timeout", value: writeTimeout},
+	}
+	for _, timeout := range timeouts {
+		if timeout.value < minimumServeHTTPTimeout || timeout.value > maximumServeHTTPTimeout {
+			return fmt.Errorf("%s must be at least 1ms and no greater than 1h", timeout.name)
+		}
 	}
 	return nil
 }

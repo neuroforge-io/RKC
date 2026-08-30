@@ -147,6 +147,87 @@ func TestRunServeWiresRemoteAcknowledgementBeforeDatasetLoading(t *testing.T) {
 	}
 }
 
+func TestValidateServeHTTPTimeoutsAcceptsDefaultsAndInclusiveBoundaries(t *testing.T) {
+	for _, test := range []struct {
+		name         string
+		readTimeout  time.Duration
+		writeTimeout time.Duration
+	}{
+		{name: "defaults", readTimeout: 15 * time.Second, writeTimeout: 60 * time.Second},
+		{name: "lower boundary", readTimeout: minimumServeHTTPTimeout, writeTimeout: minimumServeHTTPTimeout},
+		{name: "upper boundary", readTimeout: maximumServeHTTPTimeout, writeTimeout: maximumServeHTTPTimeout},
+		{name: "mixed boundaries", readTimeout: minimumServeHTTPTimeout, writeTimeout: maximumServeHTTPTimeout},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			if err := validateServeHTTPTimeouts(test.readTimeout, test.writeTimeout); err != nil {
+				t.Fatalf("validateServeHTTPTimeouts(%v, %v) = %v", test.readTimeout, test.writeTimeout, err)
+			}
+		})
+	}
+}
+
+func TestValidateServeHTTPTimeoutsRejectsValuesOutsideBoundaries(t *testing.T) {
+	for _, test := range []struct {
+		name         string
+		readTimeout  time.Duration
+		writeTimeout time.Duration
+		want         string
+	}{
+		{name: "read below lower boundary", readTimeout: minimumServeHTTPTimeout - time.Nanosecond, writeTimeout: time.Second, want: "--read-timeout must be at least 1ms and no greater than 1h"},
+		{name: "read above upper boundary", readTimeout: maximumServeHTTPTimeout + time.Nanosecond, writeTimeout: time.Second, want: "--read-timeout must be at least 1ms and no greater than 1h"},
+		{name: "write below lower boundary", readTimeout: time.Second, writeTimeout: minimumServeHTTPTimeout - time.Nanosecond, want: "--write-timeout must be at least 1ms and no greater than 1h"},
+		{name: "write above upper boundary", readTimeout: time.Second, writeTimeout: maximumServeHTTPTimeout + time.Nanosecond, want: "--write-timeout must be at least 1ms and no greater than 1h"},
+		{name: "read is reported first", readTimeout: 0, writeTimeout: 0, want: "--read-timeout must be at least 1ms and no greater than 1h"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			err := validateServeHTTPTimeouts(test.readTimeout, test.writeTimeout)
+			if err == nil || err.Error() != test.want {
+				t.Fatalf("validateServeHTTPTimeouts(%v, %v) = %v, want %q", test.readTimeout, test.writeTimeout, err, test.want)
+			}
+		})
+	}
+}
+
+func TestRunServeRejectsHTTPTimeoutsBeforeAddressDatasetAndReadiness(t *testing.T) {
+	for _, test := range []struct {
+		name  string
+		flag  string
+		value string
+		want  string
+	}{
+		{name: "zero read", flag: "--read-timeout", value: "0", want: "--read-timeout must be at least 1ms and no greater than 1h"},
+		{name: "negative read", flag: "--read-timeout", value: "-1s", want: "--read-timeout must be at least 1ms and no greater than 1h"},
+		{name: "excessive read", flag: "--read-timeout", value: "1h1s", want: "--read-timeout must be at least 1ms and no greater than 1h"},
+		{name: "zero write", flag: "--write-timeout", value: "0", want: "--write-timeout must be at least 1ms and no greater than 1h"},
+		{name: "negative write", flag: "--write-timeout", value: "-1s", want: "--write-timeout must be at least 1ms and no greater than 1h"},
+		{name: "excessive write", flag: "--write-timeout", value: "1h1s", want: "--write-timeout must be at least 1ms and no greater than 1h"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			root := t.TempDir()
+			ready := filepath.Join(root, "ready.json")
+			err := runServe([]string{
+				test.flag + "=" + test.value,
+				"--addr", "0.0.0.0:0",
+				"--dir", filepath.Join(root, "missing-atlas"),
+				"--ready-file", ready,
+			})
+			if err == nil || err.Error() != test.want {
+				t.Fatalf("runServe(%s=%s) = %v, want %q", test.flag, test.value, err, test.want)
+			}
+			if _, statErr := os.Lstat(ready); !errors.Is(statErr, os.ErrNotExist) {
+				t.Fatalf("timeout rejection created readiness state: %v", statErr)
+			}
+		})
+	}
+}
+
+func TestRunServeChecksPositionalArgumentsBeforeHTTPTimeouts(t *testing.T) {
+	err := runServe([]string{"--read-timeout=0", "unexpected"})
+	if err == nil || err.Error() != "serve does not accept positional arguments" {
+		t.Fatalf("positional argument and invalid timeout = %v", err)
+	}
+}
+
 func TestRunServePublishesReadyServesAndShutsDownCleanly(t *testing.T) {
 	root := t.TempDir()
 	repository := filepath.Join(root, "repository")
