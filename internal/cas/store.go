@@ -17,13 +17,26 @@ import (
 )
 
 var (
-	ErrInvalidDigest  = errors.New("invalid sha256 digest")
+	// ErrInvalidDigest reports a value that cannot normalize to a 64-character
+	// SHA-256 digest.
+	ErrInvalidDigest = errors.New("invalid sha256 digest")
+	// ErrDigestMismatch reports that a stable object's complete contents do not
+	// hash to its addressed digest.
 	ErrDigestMismatch = errors.New("object content does not match digest")
+// ErrObjectTooLarge reports that a bounded read observed a stable size or byte
+// stream beyond the caller's limit; no oversized payload is returned.
 	ErrObjectTooLarge = errors.New("CAS object exceeds read limit")
-	ErrStoreChanged   = errors.New("CAS store layout changed")
-	ErrUnsafeObject   = errors.New("CAS object is not a stable regular file")
+	// ErrStoreChanged reports that a directory bound by Open was replaced,
+	// redirected, or otherwise ceased to be the same regular directory.
+	ErrStoreChanged = errors.New("CAS store layout changed")
+	// ErrUnsafeObject reports that an object is not a stable regular file or
+	// changed identity while it was being inspected.
+	ErrUnsafeObject = errors.New("CAS object is not a stable regular file")
 )
 
+// Store is an immutable filesystem content-addressed store. Open binds the
+// identities of its root, object, and private temporary directories; later
+// operations fail closed if that layout is replaced or redirected.
 type Store struct {
 	root          string
 	shaRoot       string
@@ -33,12 +46,18 @@ type Store struct {
 	tempIdentity  os.FileInfo
 }
 
+// ObjectInfo describes an object's canonical bare digest, absolute pathname,
+// and observed size. The record alone is not a content-integrity proof; use
+// Verify or ReadBytes with verification enabled when that proof is required.
 type ObjectInfo struct {
 	Digest string `json:"digest"`
 	Path   string `json:"path"`
 	Size   int64  `json:"size"`
 }
 
+// Open creates or opens root and binds its non-symlink sha256 and private
+// temporary directories. It returns an error if any existing path component is
+// indirect or the bound layout cannot be validated.
 func Open(root string) (*Store, error) {
 	absolute, err := filepath.Abs(root)
 	if err != nil {
@@ -68,13 +87,18 @@ func Open(root string) (*Store, error) {
 	return store, nil
 }
 
+// Root returns the absolute store root bound by Open.
 func (store *Store) Root() string { return store.root }
 
+// DigestBytes returns the canonical lowercase, prefix-free SHA-256 digest of
+// data.
 func DigestBytes(data []byte) string {
 	sum := sha256.Sum256(data)
 	return hex.EncodeToString(sum[:])
 }
 
+// NormalizeDigest accepts surrounding whitespace, ASCII hex case, and an
+// optional sha256: prefix, and returns exactly 64 lowercase hex characters.
 func NormalizeDigest(value string) (string, error) {
 	value = strings.TrimSpace(strings.ToLower(value))
 	value = strings.TrimPrefix(value, "sha256:")
@@ -88,6 +112,9 @@ func NormalizeDigest(value string) (string, error) {
 	return value, nil
 }
 
+// Path returns the expected absolute object pathname for digest after
+// validating the bound store layout. It neither requires the object to exist
+// nor verifies object contents.
 func (store *Store) Path(digest string) (string, error) {
 	digest, err := NormalizeDigest(digest)
 	if err != nil {
@@ -110,6 +137,9 @@ func (store *Store) Path(digest string) (string, error) {
 	return filepath.Join(shardPath, digest[2:]), nil
 }
 
+// Has reports whether digest names an existing stable regular object whose
+// complete contents hash to that digest. It returns false only for absence;
+// malformed, unsafe, or corrupt objects return an error.
 func (store *Store) Has(digest string) (bool, error) {
 	digest, err := NormalizeDigest(digest)
 	if err != nil {
@@ -125,10 +155,15 @@ func (store *Store) Has(digest string) (bool, error) {
 	return false, err
 }
 
+// PutBytes stores data through Put and returns the installed object's metadata.
 func (store *Store) PutBytes(data []byte) (ObjectInfo, error) {
 	return store.Put(bytes.NewReader(data))
 }
 
+// Put streams reader into a private temporary file, hashes and syncs it, then
+// installs it without replacing an existing digest pathname. The stream is not
+// size-bounded. A concurrent installation succeeds only after the complete
+// existing object has been verified against the digest and observed size.
 func (store *Store) Put(reader io.Reader) (ObjectInfo, error) {
 	if reader == nil {
 		return ObjectInfo{}, errors.New("CAS object reader is nil")
@@ -224,6 +259,9 @@ func (store *Store) Put(reader io.Reader) (ObjectInfo, error) {
 	return ObjectInfo{Digest: digest, Path: finalPath, Size: size}, nil
 }
 
+// OpenObject opens a stable regular file for digest after validating pathname
+// and layout identity. It does not hash the contents; the caller must close the
+// returned file and use Verify when content-integrity proof is required.
 func (store *Store) OpenObject(digest string) (*os.File, error) {
 	digest, err := NormalizeDigest(digest)
 	if err != nil {
@@ -233,6 +271,9 @@ func (store *Store) OpenObject(digest string) (*os.File, error) {
 	return file, err
 }
 
+// ReadBytes reads an object without a size ceiling. It always checks that the
+// file and shard remain stable for the read; when verify is true it also hashes
+// the complete payload and compares it with digest.
 func (store *Store) ReadBytes(digest string, verify bool) ([]byte, error) {
 	return store.readBytes(digest, verify, 0)
 }
@@ -279,6 +320,7 @@ func (store *Store) readBytes(digest string, verify bool, maximum int64) ([]byte
 	return data, nil
 }
 
+// Verify reads and hashes the complete stable object addressed by digest.
 func (store *Store) Verify(digest string) error {
 	digest, err := NormalizeDigest(digest)
 	if err != nil {
@@ -318,6 +360,10 @@ func (store *Store) Delete(digest string) error {
 	return store.validateLayout()
 }
 
+// Walk visits canonical-looking regular object pathnames in the store after
+// validating the bound layout. It reports observed metadata without hashing
+// object contents; callers requiring integrity must call Verify. Invalid object
+// names are ignored, while unsafe canonical-looking entries fail the walk.
 func (store *Store) Walk(fn func(ObjectInfo) error) error {
 	if fn == nil {
 		return errors.New("CAS walk callback is nil")
