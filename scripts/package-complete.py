@@ -65,6 +65,7 @@ RELEASE_STEP_KEYS = frozenset(
 RESERVED_OUTPUT_ROOTS = frozenset(path.parts[0] for path in REQUIRED_INPUTS)
 TOP_LEVEL_LICENSE_FILES = ("LICENSE", "NOTICE", "THIRD_PARTY_NOTICES.md")
 GO_MODULE_LOCK = PurePosixPath("third_party/go-modules.lock.json")
+PACKAGE_INSTALLER = PurePosixPath("scripts/install-package.sh")
 GO_LOCK_KEYS = frozenset({"schema_version", "go", "root_requirements", "modules"})
 GO_LOCK_METADATA_KEYS = frozenset({"directive", "toolchain"})
 GO_ROOT_REQUIREMENT_KEYS = frozenset({"path", "version"})
@@ -1079,6 +1080,16 @@ def copy_license_material(source: Path, stage: Path) -> None:
     validate_go_module_lock(stage)
 
 
+def copy_package_installer(source: Path, stage: Path) -> None:
+    """Publish the tracked checksum-first installer at the package root."""
+    copy_regular_file(
+        source.joinpath(*PACKAGE_INSTALLER.parts),
+        stage / "install.sh",
+        mode=0o755,
+        label="package installer",
+    )
+
+
 def write_source_receipt(stage: Path, identity: SourceIdentity) -> None:
     """Bind the package source payload to one immutable Git commit and tree."""
     write_json_file(
@@ -1111,15 +1122,41 @@ timing metrics are retained outside the ZIP in the same atomic release
 generation; the receipt preserves their exact paths, sizes, SHA-256 values, and
 aggregate evidence-manifest digest.
 
-## Fast path
+## Fast path: checksum-verified Linux binaries
+
+```sh
+./install.sh
+"$HOME/.local/bin/rkc" wizard
+```
+
+The package-root installer supports Linux x86_64/amd64 and aarch64/arm64. It
+selects the matching prebuilt pair, verifies its own file, the source installer,
+and both binaries against `SHA256SUMS.txt`, then installs into the user-owned
+prefix without network access or root privileges. Use `--prefix DIRECTORY` to
+select a different location.
+
+The in-package receipt detects corruption of a separately trusted download; it
+does not by itself authenticate the publisher. Match the package's source
+commit receipt to a trusted NeuroForgeIO RKC source or release record before
+installation.
+
+## Verify and build from source
+
+The immutable source remains independently buildable on the documented Go
+toolchain. On Linux, this route runs verification and compilation inside RKC's
+low-priority resource envelope before installing its locally built binaries:
 
 ```sh
 cd source
-make verify
-make build
-./bin/rkc scan --out /tmp/rkc-output --force examples
-./bin/rkc serve --dir /tmp/rkc-output --addr 127.0.0.1:8787
+make safe-verify
+make safe-build
+./install.sh --skip-build
+"$HOME/.local/bin/rkc" wizard
 ```
+
+On macOS or Windows, where Linux cgroup enforcement is unavailable, use
+`make verify` and `make build` instead; those targets retain deterministic
+portable analysis without claiming kernel resource isolation.
 
 ## Licensing
 
@@ -1571,6 +1608,7 @@ def build_package(output: Path, force: bool) -> None:
             source,
             identity,
         )
+        copy_package_installer(source, stage)
         validate_demo_outputs(DIST / "demo", identity)
         copy_required_files(
             DIST / "demo",

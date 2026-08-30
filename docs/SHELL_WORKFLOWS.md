@@ -15,6 +15,7 @@ release sequence or the static/syntax contracts in
 | [`scripts/build-release-binaries.sh`](../scripts/build-release-binaries.sh) | Rebuilds Linux `amd64` and `arm64` binaries from an immutable, clean commit and records source identity. |
 | [`scripts/check-portable-builds.sh`](../scripts/check-portable-builds.sh) | Compiles CGO-free `rkc` and `rkc-mcp` for Linux, macOS, and Windows `amd64`/`arm64` targets in a private temporary directory without publishing artifacts. |
 | [`scripts/generate-demo.sh`](../scripts/generate-demo.sh) | Generates the small checked-in demo outputs from an immutable source tree. |
+| [`scripts/install-package.sh`](../scripts/install-package.sh) | Installs the complete-package Linux prebuilt for `amd64` or `arm64`, verifies its checksum receipt before delegation to the source installer, and requires neither network nor root access. |
 | [`scripts/reproducibility.sh`](../scripts/reproducibility.sh) | Scans the examples twice and compares canonical bundle, coverage, and digest outputs. |
 | [`scripts/reproducible-complete-package.sh`](../scripts/reproducible-complete-package.sh) | Assembles the complete distributable twice from independent immutable checkouts and requires byte identity. |
 | [`scripts/self-catalogue.sh`](../scripts/self-catalogue.sh) | Builds the RKC-on-RKC atlas from the commit tree without feeding generated output back into the input. Run through `make self-catalogue`. |

@@ -4,16 +4,22 @@ set -eu
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 PREFIX=${RKC_INSTALL_PREFIX:-"$HOME/.local"}
 BUILD=1
+PREBUILT_BINARY_DIRECTORY=
+PREBUILT_BINARY_DIRECTORY_SET=0
 
 usage() {
 	cat <<'EOF'
 Install RKC from this verified source checkout.
 
 Usage: ./install.sh [--prefix DIRECTORY] [--skip-build]
+                    [--prebuilt-binary-dir DIRECTORY]
 
 Defaults:
   prefix      $RKC_INSTALL_PREFIX or $HOME/.local
   build       enabled; uses RKC's low-priority guard when available on Linux
+
+--prebuilt-binary-dir is accepted only with --skip-build. It is intended for
+verified release packages; ordinary source installs continue to use bin/.
 EOF
 }
 
@@ -34,6 +40,14 @@ while [ "$#" -gt 0 ]; do
 			BUILD=0
 			shift
 			;;
+		--prebuilt-binary-dir)
+			[ "$#" -ge 2 ] || { echo "install: --prebuilt-binary-dir requires a directory" >&2; exit 2; }
+			[ "$PREBUILT_BINARY_DIRECTORY_SET" -eq 0 ] || { echo "install: --prebuilt-binary-dir may be supplied only once" >&2; exit 2; }
+			[ -n "$2" ] || { echo "install: --prebuilt-binary-dir must not be empty" >&2; exit 2; }
+			PREBUILT_BINARY_DIRECTORY=$2
+			PREBUILT_BINARY_DIRECTORY_SET=1
+			shift 2
+			;;
 		--help|-h)
 			usage
 			exit 0
@@ -45,6 +59,11 @@ while [ "$#" -gt 0 ]; do
 			;;
 	esac
 done
+
+if [ "$PREBUILT_BINARY_DIRECTORY_SET" -eq 1 ] && [ "$BUILD" -ne 0 ]; then
+	echo "install: --prebuilt-binary-dir requires --skip-build" >&2
+	exit 2
+fi
 
 case "$PREFIX" in
 	""|/|.|..)
@@ -62,6 +81,25 @@ case "$PREFIX" in
 		;;
 esac
 
+if [ "$PREBUILT_BINARY_DIRECTORY_SET" -eq 1 ]; then
+	case "$PREBUILT_BINARY_DIRECTORY" in
+		""|/|.|..|*"$NEWLINE"*|*"$CARRIAGE_RETURN"*)
+			echo "install: refusing unsafe prebuilt binary directory" >&2
+			exit 2
+			;;
+	esac
+	if [ -L "$PREBUILT_BINARY_DIRECTORY" ] || [ ! -d "$PREBUILT_BINARY_DIRECTORY" ]; then
+		echo "install: prebuilt binary directory is missing or is a symlink" >&2
+		exit 1
+	fi
+	PREBUILT_BINARY_DIRECTORY=$(
+		CDPATH= cd -- "$PREBUILT_BINARY_DIRECTORY" && pwd -P
+	) || {
+		echo "install: cannot resolve prebuilt binary directory" >&2
+		exit 1
+	}
+fi
+
 cd "$ROOT"
 if [ "$BUILD" -eq 1 ]; then
 	if [ "$(uname -s)" = Linux ] &&
@@ -72,6 +110,18 @@ if [ "$BUILD" -eq 1 ]; then
 		make build
 	fi
 fi
+
+BINARY_SOURCE_DIRECTORY=$ROOT/bin
+if [ "$PREBUILT_BINARY_DIRECTORY_SET" -eq 1 ]; then
+	BINARY_SOURCE_DIRECTORY=$PREBUILT_BINARY_DIRECTORY
+fi
+for binary in rkc rkc-mcp; do
+	source=$BINARY_SOURCE_DIRECTORY/$binary
+	if [ -L "$source" ] || [ ! -f "$source" ]; then
+		echo "install: prebuilt binary is missing or unsafe: $source" >&2
+		exit 1
+	fi
+done
 
 BIN_DIRECTORY=$PREFIX/bin
 DOC_DIRECTORY=$PREFIX/share/doc/rkc
@@ -109,8 +159,8 @@ install_file() {
 	trap - EXIT HUP INT TERM
 }
 
-install_file "$ROOT/bin/rkc" "$BIN_DIRECTORY/rkc" 0755
-install_file "$ROOT/bin/rkc-mcp" "$BIN_DIRECTORY/rkc-mcp" 0755
+install_file "$BINARY_SOURCE_DIRECTORY/rkc" "$BIN_DIRECTORY/rkc" 0755
+install_file "$BINARY_SOURCE_DIRECTORY/rkc-mcp" "$BIN_DIRECTORY/rkc-mcp" 0755
 install_file "$ROOT/LICENSE" "$DOC_DIRECTORY/LICENSE" 0644
 install_file "$ROOT/NOTICE" "$DOC_DIRECTORY/NOTICE" 0644
 install_file "$ROOT/THIRD_PARTY_NOTICES.md" "$DOC_DIRECTORY/THIRD_PARTY_NOTICES.md" 0644

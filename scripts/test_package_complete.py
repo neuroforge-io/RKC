@@ -958,13 +958,30 @@ class CompletePackageTests(unittest.TestCase):
         sqlite_license.write_text("sqlite", encoding="utf-8")
         module_lock = self.write_module_lock(source)
         (source / "VERSION").write_text("1.2.3\n", encoding="utf-8")
+        package_installer = source.joinpath(*PACKAGE.PACKAGE_INSTALLER.parts)
+        package_installer.parent.mkdir(parents=True, exist_ok=True)
+        package_installer.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+        os.chmod(package_installer, 0o755)
         self.write_staged_distribution_components(stage)
         PACKAGE.copy_license_material(source, stage)
+        PACKAGE.copy_package_installer(source, stage)
+        self.assertEqual(
+            (stage / "install.sh").read_bytes(), package_installer.read_bytes()
+        )
+        self.assertEqual(stat.S_IMODE((stage / "install.sh").stat().st_mode), 0o755)
         PACKAGE.write_source_receipt(stage, self.identity)
         PACKAGE.write_readme(stage, self.identity)
         release_readme = (stage / "README-FIRST.md").read_text(encoding="utf-8")
         self.assertIn("requested, but are not additional", release_readme)
         self.assertNotIn("with attribution", release_readme)
+        self.assertIn("Linux x86_64/amd64 and aarch64/arm64", release_readme)
+        self.assertIn("## Verify and build from source", release_readme)
+        self.assertIn("make safe-verify", release_readme)
+        self.assertIn("does not by itself authenticate the publisher", release_readme)
+        self.assertLess(
+            release_readme.index("./install.sh"),
+            release_readme.index('"$HOME/.local/bin/rkc" wizard'),
+        )
         PACKAGE.write_distribution_sbom(stage, self.identity)
         PACKAGE.stage_manifest(stage, self.identity)
         PACKAGE.write_stage_checksums(stage)
@@ -981,6 +998,7 @@ class CompletePackageTests(unittest.TestCase):
             list(PACKAGE.DISTRIBUTION_SBOM_EXCLUSIONS),
         )
         sbom_names = {item["fileName"] for item in distribution_sbom["files"]}
+        self.assertIn("./install.sh", sbom_names)
         self.assertTrue(
             all(name not in sbom_names for name in PACKAGE.DISTRIBUTION_SBOM_EXCLUSIONS)
         )
@@ -1000,12 +1018,17 @@ class CompletePackageTests(unittest.TestCase):
         self.assertGreater(manifest["payload_files"], 0)
         manifest_files = {item["path"]: item for item in manifest["files"]}
         self.assertEqual(
+            manifest_files["install.sh"]["sha256"],
+            PACKAGE.sha256(stage / "install.sh"),
+        )
+        self.assertEqual(
             manifest_files["SBOM.spdx.json"]["sha256"],
             PACKAGE.sha256(stage / "SBOM.spdx.json"),
         )
         checksums = (stage / "SHA256SUMS.txt").read_text(encoding="utf-8")
         self.assertIn("  SBOM.spdx.json\n", checksums)
         self.assertIn("  MANIFEST.json\n", checksums)
+        self.assertIn("  install.sh\n", checksums)
         self.assertNotIn("  SHA256SUMS.txt\n", checksums)
         self.assertEqual(
             (stage / "third_party/go-modules.lock.json").read_bytes(),
@@ -1026,6 +1049,8 @@ class CompletePackageTests(unittest.TestCase):
                     for item in archive.infolist()
                 )
             )
+            installer = archive.getinfo(f"{PACKAGE.TOP}/install.sh")
+            self.assertEqual((installer.external_attr >> 16) & 0o777, 0o755)
         with self.assertRaisesRegex(PACKAGE.PackageError, "appeared"):
             PACKAGE.write_zip(stage, output, False)
         PACKAGE.write_zip(stage, output, True)
@@ -1134,6 +1159,10 @@ class CompletePackageTests(unittest.TestCase):
         ), mock.patch.object(
             PACKAGE, "copy_release_binaries"
         ), mock.patch.object(
+            PACKAGE,
+            "copy_package_installer",
+            side_effect=lambda _source, _stage: calls.append("installer"),
+        ), mock.patch.object(
             PACKAGE, "validate_demo_outputs"
         ), mock.patch.object(
             PACKAGE, "copy_required_files"
@@ -1146,7 +1175,9 @@ class CompletePackageTests(unittest.TestCase):
         ), mock.patch.object(
             PACKAGE, "write_readme"
         ), mock.patch.object(
-            PACKAGE, "write_distribution_sbom"
+            PACKAGE,
+            "write_distribution_sbom",
+            side_effect=lambda _stage, _identity: calls.append("sbom"),
         ), mock.patch.object(
             PACKAGE, "stage_manifest"
         ), mock.patch.object(
@@ -1155,7 +1186,7 @@ class CompletePackageTests(unittest.TestCase):
             PACKAGE, "write_zip", side_effect=lambda *_args: calls.append("zip")
         ):
             PACKAGE.build_package(output, False)
-        self.assertEqual(calls, ["clean", "source", "zip"])
+        self.assertEqual(calls, ["clean", "source", "installer", "sbom", "zip"])
         (PACKAGE.DIST / "demo").rmdir()
         with mock.patch.object(
             PACKAGE, "source_identity", return_value=self.identity
