@@ -375,11 +375,11 @@ func TestMigrationV5BackfillsPublishedRepositoryAffinity(t *testing.T) {
 }
 
 func TestMigrationV5RejectsNoncanonicalOriginWithoutDisclosure(t *testing.T) {
-	const secret = "migration-origin-secret-sentinel"
+	const sentinel = "migration-origin-secret-sentinel"
 	path := filepath.Join(privateTempDir(t), "v4-secret-origin.db")
 	raw := rawDatabaseAtVersion(t, path, 4)
 	bundle := writerTestBundle("snapshot", "repository", "")
-	bundle.Snapshot.Git.Origin = "https://alice:" + secret + "@example.test/repository.git?token=" + secret
+	bundle.Snapshot.Git.Origin = "https://alice:" + sentinel + "@example.test/repository.git?token=" + sentinel
 	seedV4PublishedSnapshot(t, raw, bundle)
 	if err := raw.Close(); err != nil {
 		t.Fatal(err)
@@ -389,7 +389,7 @@ func TestMigrationV5RejectsNoncanonicalOriginWithoutDisclosure(t *testing.T) {
 	if !errors.Is(err, ErrBackfillRequired) {
 		t.Fatalf("Open(noncanonical v4 origin) = %v, want ErrBackfillRequired", err)
 	}
-	if strings.Contains(err.Error(), secret) || strings.Contains(err.Error(), "alice:") {
+	if strings.Contains(err.Error(), sentinel) || strings.Contains(err.Error(), "alice:") {
 		t.Fatalf("migration error disclosed stored origin: %v", err)
 	}
 

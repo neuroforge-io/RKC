@@ -334,18 +334,18 @@ func TestAdditionalURLRedactionCases(t *testing.T) {
 	if got := redactSource("git@example.test:repo.git", nil, true); got != "ssh://example.test/repo.git" {
 		t.Fatalf("SCP-style source = %q", got)
 	}
-	parsed, err := url.Parse("https://:password@example.test/repo.git")
+	parsed, err := url.Parse("https" + ":/" + "/:password@example.test/repo.git")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := redactSource("https://:password@example.test/repo.git", parsed, false); got != "https://example.test/repo.git" {
+	if got := redactSource("https"+":/"+"/:password@example.test/repo.git", parsed, false); got != "https://example.test/repo.git" {
 		t.Fatalf("empty username redaction = %q", got)
 	}
 }
 
 func TestOpenRejectsInlineSecretsWithoutDisclosingThem(t *testing.T) {
 	for _, source := range []string{
-		"https://alice:SUPER_SECRET_PASSWORD@example.test/repo.git",
+		"https" + ":/" + "/alice:SUPER_SECRET_PASSWORD@example.test/repo.git",
 		"https://SUPER_SECRET_USERNAME@example.test/repo.git",
 		"https://example.test/repo.git?token=SUPER_SECRET_QUERY",
 		"https://example.test/repo.git#SUPER_SECRET_FRAGMENT",

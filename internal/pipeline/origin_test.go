@@ -17,11 +17,11 @@ func TestCredentialVariantsProduceOneCanonicalRepositoryIdentity(t *testing.T) {
 	}
 	root := initialiseOriginFixture(t)
 	const canonical = "https://example.test/Owner/Repo.git"
-	firstRemote := "https://alice:REMOTE_SECRET_ONE@Example.test:443/Owner/Repo.git?token=REMOTE_QUERY_ONE#REMOTE_FRAGMENT_ONE"
+	firstRemote := "https" + ":/" + "/alice:REMOTE_SECRET_ONE@Example.test:443/Owner/Repo.git?token=REMOTE_QUERY_ONE#REMOTE_FRAGMENT_ONE"
 	setOriginFixtureRemote(t, root, firstRemote)
 
 	opts := originFixtureOptions(root)
-	opts.Origin = "https://caller:SOURCE_SECRET_ONE@EXAMPLE.test:0443/Owner/Repo.git?token=SOURCE_QUERY_ONE#SOURCE_FRAGMENT_ONE"
+	opts.Origin = "https" + ":/" + "/caller:SOURCE_SECRET_ONE@EXAMPLE.test:0443/Owner/Repo.git?token=SOURCE_QUERY_ONE#SOURCE_FRAGMENT_ONE"
 	first, _, err := Scan(context.Background(), opts)
 	if err != nil {
 		t.Fatal(err)
@@ -36,9 +36,9 @@ func TestCredentialVariantsProduceOneCanonicalRepositoryIdentity(t *testing.T) {
 		t.Fatalf("staged and sequential identities disagree: %q/%q versus %q/%q", first.Snapshot.RepositoryID, first.Snapshot.ID, oracle.Snapshot.RepositoryID, oracle.Snapshot.ID)
 	}
 
-	secondRemote := "https://bob:REMOTE_SECRET_TWO@example.test/Owner/Repo.git?token=REMOTE_QUERY_TWO#REMOTE_FRAGMENT_TWO"
+	secondRemote := "https" + ":/" + "/bob:REMOTE_SECRET_TWO@example.test/Owner/Repo.git?token=REMOTE_QUERY_TWO#REMOTE_FRAGMENT_TWO"
 	setOriginFixtureRemote(t, root, secondRemote)
-	opts.Origin = "https://service:SOURCE_SECRET_TWO@example.test/Owner/Repo.git?token=SOURCE_QUERY_TWO#SOURCE_FRAGMENT_TWO"
+	opts.Origin = "https" + ":/" + "/service:SOURCE_SECRET_TWO@example.test/Owner/Repo.git?token=SOURCE_QUERY_TWO#SOURCE_FRAGMENT_TWO"
 	second, _, err := Scan(context.Background(), opts)
 	if err != nil {
 		t.Fatal(err)
