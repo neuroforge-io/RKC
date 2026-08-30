@@ -78,6 +78,20 @@ Each run retains raw Go data, the deduplicated Go profile, Coverage.py JSON, and
 validation should use `make safe-coverage`; the fail-closed resource guard gives
 priority to ERAIS and bounds the complete test process tree.
 
+Repository-scale live-load profiling is opt-in because a representative atlas
+is intentionally not committed. Point `RKC_BENCH_ATLAS` at a verified atlas and
+run exactly one lowest-priority observation:
+
+```sh
+RKC_BENCH_ATLAS=/path/to/atlas GOMAXPROCS=1 \
+  nice -n 19 ionice -c 3 go test -run '^$' \
+  -bench '^BenchmarkLoadAtlas$' -benchtime=1x ./internal/server
+```
+
+Add `-cpuprofile` or `-memprofile` when a call graph is required. The benchmark
+executes the normal integrity, canonical, validation, coverage, search, graph,
+and current-browser load path; it does not bypass safety checks.
+
 ## Contract validation
 
 The offline validator:
