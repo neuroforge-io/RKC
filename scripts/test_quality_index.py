@@ -369,6 +369,38 @@ class QualityIndexTests(unittest.TestCase):
             self.assertIn("evidence gap", errors.getvalue())
         self.assertTrue((output / "index.json").is_file())
 
+    def test_partial_profiles_and_profile_errors_are_actionable(self) -> None:
+        self.write("pkg/main.go", "// Package pkg is a profile fixture.\npackage pkg\nfunc Main() {}\n")
+        self.write("pkg/main_test.go", "package pkg\nfunc TestMain() {}\n")
+        self.write("docs/pkg.md", "pkg/main.go is covered by the fixture.\n")
+        partial = self.write(
+            "profiles/partial.out",
+            "mode: set\n"
+            "pkg/main.go:3.1,3.14 2 0\n",
+        )
+        report = index.build_index(self.root, go_profile=partial)
+        profile_gaps = [gap for gap in report["gaps"] if gap["kind"] == "profiling"]
+        self.assertEqual(len(profile_gaps), 1)
+        self.assertIn("2 of 2", profile_gaps[0]["detail"])
+
+        malformed = self.write("profiles/malformed.out", "mode: set\nnot a profile row\n")
+        output = self.root / "strict-quality"
+        with mock.patch("sys.stderr", new=io.StringIO()) as errors:
+            status = index.main(
+                [
+                    "--root",
+                    str(self.root),
+                    "--output",
+                    str(output),
+                    "--go-profile",
+                    str(malformed),
+                ]
+            )
+        self.assertEqual(status, 1)
+        self.assertIn("profile error", errors.getvalue())
+        payload = json.loads((output / "index.json").read_text(encoding="utf-8"))
+        self.assertTrue(payload["profile_errors"])
+
 
 if __name__ == "__main__":
     unittest.main()

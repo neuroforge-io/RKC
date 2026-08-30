@@ -76,9 +76,16 @@ denominator for a principled, auditable reason.
 
 The `gaps` array is the actionable queue. Changed files are marked `high`
 priority when they lack a test, documentation evidence, or an applicable
-profile. The `deltas` object records the Git comparison scope and status. A
-non-Git folder remains fully indexable; its delta status is simply
-`unavailable`.
+profile. A profiled file with uncovered executable units is also listed with
+the exact uncovered/total count, so a passing file association cannot hide
+unfinished behavior coverage. The `deltas` object records the Git comparison
+scope and status. A non-Git folder remains fully indexable; its delta status is
+simply `unavailable`.
+
+Malformed or unowned profile rows are retained in `profile_errors`. The command
+returns a failure when supplied profile evidence cannot be trusted, including
+in non-strict mode; this prevents a broken report from being mistaken for a
+complete one.
 
 The report deliberately does not claim 100% coverage. RKC's release gate
 continues to enforce measured Go and Python line/branch thresholds; this index

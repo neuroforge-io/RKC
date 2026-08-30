@@ -695,8 +695,15 @@ def build_index(
             gaps.append({"kind": "test", "path": record["path"], "priority": "high" if changed else "normal", "detail": "no matching test file was found"})
         if record["documentation"]["status"] != "evidence":
             gaps.append({"kind": "documentation", "path": record["path"], "priority": "high" if changed else "normal", "detail": "no nearby or referenced documentation evidence was found"})
-        if record["language"] in {"go", "python"} and record["profile"]["status"] in {"missing", "not-provided"}:
-            gaps.append({"kind": "profiling", "path": record["path"], "priority": "high" if changed else "normal", "detail": "no matching Go or branch-aware Python profile entry was supplied"})
+        if record["language"] in {"go", "python"}:
+            profile = record["profile"]
+            if profile["status"] in {"missing", "not-provided"}:
+                gaps.append({"kind": "profiling", "path": record["path"], "priority": "high" if changed else "normal", "detail": "no matching Go or branch-aware Python profile entry was supplied"})
+            elif profile["status"] == "profiled":
+                units = int(profile.get("units", 0))
+                covered_units = int(profile.get("covered_units", 0))
+                if covered_units < units:
+                    gaps.append({"kind": "profiling", "path": record["path"], "priority": "high" if changed else "normal", "detail": f"profile leaves {units - covered_units} of {units} executable units uncovered"})
     gaps.sort(key=lambda item: (item["priority"] != "high", item["kind"], item["path"]))
 
     applicable = [record for record in records if not record["generated"] and not record["is_test"]]
@@ -902,8 +909,15 @@ def main(argv: Sequence[str] | None = None) -> int:
     except (QualityIndexError, OSError, ValueError) as exc:
         print(f"quality index failed closed: {exc}", file=sys.stderr)
         return 1
-    result = {"ok": not (arguments.fail_on_gaps and index["gaps"]), "json": str(json_path), "markdown": str(markdown_path), "summary": index["summary"]}
+    profile_errors = index.get("profile_errors", [])
+    result = {"ok": not profile_errors and not (arguments.fail_on_gaps and index["gaps"]), "json": str(json_path), "markdown": str(markdown_path), "summary": index["summary"]}
     print(json.dumps(result, sort_keys=True))
+    if profile_errors:
+        print(
+            f"quality index: {len(profile_errors)} profile error(s) were recorded; supplied evidence is not trustworthy",
+            file=sys.stderr,
+        )
+        return 1
     if arguments.fail_on_gaps and index["gaps"]:
         print(
             f"quality index: {len(index['gaps'])} evidence gap(s) remain; see {markdown_path}",
