@@ -15,6 +15,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/neuroforge-io/RKC/internal/commandcatalog"
 	"github.com/neuroforge-io/RKC/internal/model"
 	"github.com/neuroforge-io/RKC/internal/safeoutput"
 	"github.com/neuroforge-io/RKC/internal/search"
@@ -696,10 +697,18 @@ func BrowserAssets(bundle model.Bundle, coverage model.Coverage) (map[string][]b
 		return nil, fmt.Errorf("encode static atlas data: %w", err)
 	}
 	data = append(data, '\n')
+	catalogue, err := json.Marshal(commandcatalog.Commands(commandcatalog.Context{}))
+	if err != nil {
+		return nil, fmt.Errorf("encode browser command catalogue: %w", err)
+	}
+	if strings.Count(siteJS, "__RKC_COMMAND_CATALOG__") != 1 {
+		return nil, errors.New("browser command catalogue placeholder is invalid")
+	}
+	app := strings.Replace(siteJS, "__RKC_COMMAND_CATALOG__", string(catalogue), 1)
 	return map[string][]byte{
 		"index.html":      []byte(siteHTML),
 		"styles.css":      []byte(siteCSS),
-		"app.js":          []byte(siteJS),
+		"app.js":          []byte(app),
 		"data/atlas.json": data,
 	}, nil
 }
@@ -1244,6 +1253,7 @@ footer { display: flex; justify-content: space-between; gap: 16px; padding: 12px
 }`
 
 const siteJS = `'use strict';
+const commandCatalog=__RKC_COMMAND_CATALOG__;
 const state={bundle:null,coverage:null,nodes:new Map(),artifacts:new Map(),evidence:new Map(),outgoing:new Map(),incoming:new Map(),selected:null,view:'overview',results:[],workbench:null,commandName:'quickstart',api:false,facets:null,listTruncated:false,diagnosticsTruncated:false,searchTimer:null};
 const $=id=>document.getElementById(id);
 const esc=value=>String(value??'').replace(/[&<>"']/g,ch=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch]));
@@ -1531,9 +1541,7 @@ function renderGraphFromState(seedID){
 function renderDiagnostics(){const diagnostics=state.bundle.diagnostics||[],counts=state.facets?.diagnostics||countBy(diagnostics,item=>item.severity),bounded=state.diagnosticsTruncated?'<p class="muted">Showing the first bounded result window. Use the API or command center for filtered diagnostics.</p>':'';$('content').innerHTML='<div class="card"><h2>Diagnostics</h2>'+bounded+bars(counts)+'</div><div class="card" role="list" aria-label="Repository diagnostics">'+(diagnostics.length?diagnostics.map(item=>'<div role="listitem" class="diagnostic '+esc(item.severity)+'"><div><b>'+esc(item.severity.toUpperCase())+' '+esc(item.code)+'</b> · '+esc(item.stage||'unspecified stage')+'</div><div>'+esc(item.message)+'</div>'+(item.source?'<div class="muted mono">'+esc(item.source.path+':'+(item.source.start_line||'?'))+'</div>':'')+'</div>').join(''):'<p class="muted">No diagnostics were emitted.</p>')+'</div>'}
 function renderCoverage(){const coverage=state.coverage,ratios={'Inventory accounting':coverage.inventory_accounting_ratio,'Syntactic parse':coverage.syntactic_parse_ratio,'Semantic parse':coverage.semantic_parse_ratio,'Symbol evidence':coverage.symbol_evidence_ratio,'Public documentation':coverage.public_documentation_ratio,'Edge resolution':coverage.edge_resolution_ratio,'Claim citation':coverage.claims_total?coverage.claim_citation_ratio:null};$('content').innerHTML='<div class="card"><h2>Coverage and completeness</h2><p>Each ratio is backed by explicit numerators and denominators in <code>coverage.json</code>.</p>'+Object.entries(ratios).map(([name,value])=>progress(name,value)).join('')+'</div><div class="grid coverage-grid"><div class="card"><h3>Artifacts</h3>'+tableObject('Artifact statuses',coverage.artifact_statuses)+'</div><div class="card"><h3>Node kinds</h3>'+tableObject('Node kinds',coverage.node_kinds)+'</div><div class="card"><h3>Edge kinds</h3>'+tableObject('Edge kinds',coverage.edge_kinds)+'</div><div class="card"><h3>Evidence kinds</h3>'+tableObject('Evidence kinds',coverage.evidence_kinds)+'</div></div><div class="card"><h3>Deterministic digest</h3><p class="mono">'+esc(coverage.deterministic_output_digest)+'</p></div>'}
 
-function defaultCommands(){return[
-  ['quickstart','Build and verify a ready-to-search atlas.','writes'],['init','Create a complete local configuration.','writes'],['doctor','Diagnose repository and optional capabilities.','read'],['plan','Preview the stage DAG, SCIP input, and cache decisions.','read'],['scan','Compile with optional compiler-grade SCIP semantics.','writes'],['check','Enforce coverage, integrity, and security gates.','read'],['query','Search a compiled repository atlas.','read'],['answer','Produce a citation-checked answer.','model'],['synthesize','Build evidence packets or use a qualified model.','model'],['path','Find a bounded path between graph nodes.','read'],['impact','Traverse bounded impact relationships.','read'],['components','List strongly connected components.','read'],['diff','Compare two compiled snapshots.','read'],['snapshots','Inspect, export, select, or recover snapshots.','writes'],['runs','Inspect validated scheduler run journals.','read'],['plugins','Inspect, validate, lock, or verify plugins.','writes'],['cache','Inspect, verify, or prune the stage cache.','writes'],['version','Print the RKC version.','read'],['help','Show command help.','read']
-].map(([name,description,mode])=>({name,description,mode}))}
+function defaultCommands(){return commandCatalog.map(command=>({...command,default_args:[...(command.default_args||[])]}))}
 
 function renderCommands(){
   const session=state.workbench||{enabled:false,commands:defaultCommands()},commands=session.commands||defaultCommands();
@@ -1549,13 +1557,13 @@ function renderCommands(){
 }
 
 function defaultCommandArgs(name){
-  const defaults={quickstart:'.',doctor:'--repository .',plan:'--config rkc.json .',scan:'--config rkc.json --no-python --out .rkc --state-dir .rkc-state .',check:'--dir .rkc',query:'--dir .rkc --query \"resource guard\"',answer:'--dir .rkc --repair-passes 2 \"How does this repository work?\"',version:'',help:''};
-  return Object.prototype.hasOwnProperty.call(defaults,name)?defaults[name]:'--help';
+  const commands=state.workbench?.commands||defaultCommands(),command=commands.find(item=>item.name===name);
+  return (command?.default_args||['--help']).map(shellQuote).join(' ');
 }
 
 function commandGuidance(name){
-  if(['quickstart','plan','scan'].includes(name))return 'Add --scip-index /path/index.scip for compiler-grade semantics; repeat it for polyglot repositories. The preview is the exact command and never uses a shell.';
-  return 'Quotes and backslash escapes are supported. The preview shows the exact command before it runs.';
+  const commands=state.workbench?.commands||defaultCommands(),command=commands.find(item=>item.name===name);
+  return command?.guidance||'The preview is the exact argument vector and no shell is used.';
 }
 
 function parseCommandArguments(value){

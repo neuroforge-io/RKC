@@ -15,6 +15,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/neuroforge-io/RKC/internal/commandcatalog"
 	"github.com/neuroforge-io/RKC/internal/resourceguard"
 	"github.com/neuroforge-io/RKC/internal/server"
 )
@@ -46,7 +47,7 @@ func runServeWithContext(ctx context.Context, args []string) (resultErr error) {
 	if fs.NArg() != 0 {
 		return fmt.Errorf("serve does not accept positional arguments")
 	}
-	var workbench *server.Workbench
+	var executable string
 	if *workbenchEnabled {
 		if !loopbackListenAddress(*addr) {
 			return errors.New("workbench requires an explicit localhost or loopback listen address")
@@ -54,12 +55,22 @@ func runServeWithContext(ctx context.Context, args []string) (resultErr error) {
 		if err := resourceguard.RequireCurrentProcessLowPriority(); err != nil {
 			return fmt.Errorf("workbench requires scripts/with-rkc-limits.sh: %w", err)
 		}
-		executable, err := os.Executable()
+		var err error
+		executable, err = os.Executable()
 		if err != nil {
 			return fmt.Errorf("resolve RKC executable: %w", err)
 		}
+	}
+	dataset, err := loadSelectedDataset(ctx, *dir, *database, *snapshotID, *repositoryID, flagWasSet(fs, "dir"))
+	if err != nil {
+		return err
+	}
+	var workbench *server.Workbench
+	if *workbenchEnabled {
+		commandContext := servedWorkbenchCommandContext(dataset.Root, dataset.Manifest.ID, *database)
 		workbench, err = server.NewWorkbench(server.WorkbenchConfig{
 			Workspace: *workspace, Executable: executable, Timeout: *workbenchTimeout,
+			CommandContext: commandContext,
 		})
 		if err != nil {
 			return err
@@ -69,10 +80,6 @@ func runServeWithContext(ctx context.Context, args []string) (resultErr error) {
 			defer cancel()
 			resultErr = errors.Join(resultErr, workbench.Close(closeContext))
 		}()
-	}
-	dataset, err := loadSelectedDataset(ctx, *dir, *database, *snapshotID, *repositoryID, flagWasSet(fs, "dir"))
-	if err != nil {
-		return err
 	}
 	listener, err := net.Listen("tcp", *addr)
 	if err != nil {
@@ -124,6 +131,19 @@ func runServeWithContext(ctx context.Context, args []string) (resultErr error) {
 			serveErr = nil
 		}
 		return errors.Join(shutdownErr, forceCloseErr, serveErr)
+	}
+}
+
+func servedWorkbenchCommandContext(root, snapshotID, database string) commandcatalog.Context {
+	if database == "" {
+		return commandcatalog.Context{
+			DatasetArgs: []string{"--dir", root},
+			CheckArgs:   []string{"--coverage", filepath.Join(root, "coverage.json")},
+		}
+	}
+	return commandcatalog.Context{
+		DatasetArgs: []string{"--database", root, "--snapshot", snapshotID},
+		CheckArgs:   []string{"--help"},
 	}
 }
 

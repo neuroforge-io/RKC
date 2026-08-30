@@ -22,6 +22,8 @@ import (
 	"sync"
 	"time"
 	"unicode"
+
+	"github.com/neuroforge-io/RKC/internal/commandcatalog"
 )
 
 const (
@@ -46,9 +48,10 @@ var ErrWorkbenchCleanupUnproven = errors.New("workbench process cleanup could no
 // read-only atlas handler remains the default and is portable across all
 // supported platforms.
 type WorkbenchConfig struct {
-	Workspace  string
-	Executable string
-	Timeout    time.Duration
+	Workspace      string
+	Executable     string
+	Timeout        time.Duration
+	CommandContext commandcatalog.Context
 }
 
 // Workbench runs exact RKC argv vectors without a shell. It is deliberately
@@ -60,6 +63,7 @@ type Workbench struct {
 	token       string
 	slot        chan struct{}
 	environment []string
+	commands    []commandcatalog.Command
 
 	mu     sync.RWMutex
 	jobs   map[string]*workbenchJob
@@ -87,33 +91,9 @@ type workbenchJob struct {
 	mayLaunchManagedUnits bool
 }
 
-type workbenchCommand struct {
-	Name        string `json:"name"`
-	Description string `json:"description"`
-	Mode        string `json:"mode"`
-}
+type workbenchCommand = commandcatalog.Command
 
-var workbenchCommands = []workbenchCommand{
-	{"quickstart", "Build and verify a ready-to-search atlas.", "writes"},
-	{"init", "Create a complete local configuration.", "writes"},
-	{"doctor", "Diagnose repository and optional capabilities.", "read"},
-	{"plan", "Preview the stage DAG, SCIP input, and cache decisions.", "read"},
-	{"scan", "Compile with optional compiler-grade SCIP semantics.", "writes"},
-	{"check", "Enforce coverage, integrity, and security gates.", "read"},
-	{"query", "Search a compiled repository atlas.", "read"},
-	{"answer", "Produce a citation-checked answer.", "model"},
-	{"synthesize", "Build evidence packets or use a qualified model.", "model"},
-	{"path", "Find a bounded path between graph nodes.", "read"},
-	{"impact", "Traverse bounded impact relationships.", "read"},
-	{"components", "List strongly connected components.", "read"},
-	{"diff", "Compare two compiled snapshots.", "read"},
-	{"snapshots", "Inspect, export, select, or recover snapshots.", "writes"},
-	{"runs", "Inspect validated scheduler run journals.", "read"},
-	{"plugins", "Inspect, validate, lock, or verify plugins.", "writes"},
-	{"cache", "Inspect, verify, or prune the stage cache.", "writes"},
-	{"version", "Print the RKC version.", "read"},
-	{"help", "Show command help.", "read"},
-}
+var workbenchCommands = commandcatalog.Commands(commandcatalog.Context{})
 
 func NewWorkbench(config WorkbenchConfig) (*Workbench, error) {
 	workspace, err := filepath.Abs(config.Workspace)
@@ -154,7 +134,8 @@ func NewWorkbench(config WorkbenchConfig) (*Workbench, error) {
 	return &Workbench{
 		workspace: workspace, executable: executable, timeout: config.Timeout,
 		token: token, slot: make(chan struct{}, 1), environment: environment,
-		jobs: make(map[string]*workbenchJob),
+		commands: commandcatalog.Commands(config.CommandContext),
+		jobs:     make(map[string]*workbenchJob),
 	}, nil
 }
 
@@ -167,8 +148,8 @@ func randomWorkbenchValue(size int) (string, error) {
 }
 
 func (workbench *Workbench) handleSession(w http.ResponseWriter, request *http.Request) {
-	if !validWorkbenchRequestHost(request) {
-		writeProblem(w, http.StatusForbidden, "Loopback required", "workbench requests require a loopback Host")
+	if !validWorkbenchRequestHost(request) || !validWorkbenchOrigin(request) {
+		writeProblem(w, http.StatusForbidden, "Workbench authorization failed", "same-origin loopback access is required")
 		return
 	}
 	w.Header().Set("Cache-Control", "no-store")
@@ -176,7 +157,7 @@ func (workbench *Workbench) handleSession(w http.ResponseWriter, request *http.R
 		"enabled": true, "token": workbench.token, "workspace": workbench.workspace,
 		"maximum_output_bytes": workbenchMaximumOutputBytes,
 		"timeout_seconds":      int(workbench.timeout.Seconds()),
-		"commands":             workbenchCommands,
+		"commands":             workbench.commands,
 	})
 }
 

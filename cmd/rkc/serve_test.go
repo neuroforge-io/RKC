@@ -47,6 +47,26 @@ func TestPublishServeReadyFileIsAtomicAndNoClobber(t *testing.T) {
 	}
 }
 
+func TestServedWorkbenchCommandContextUsesExactImmutableSelection(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "atlas with spaces")
+	fileContext := servedWorkbenchCommandContext(root, "snapshot-file", "")
+	if got := strings.Join(fileContext.DatasetArgs, "|"); got != "--dir|"+root {
+		t.Fatalf("file dataset args = %q", got)
+	}
+	if got := strings.Join(fileContext.CheckArgs, "|"); got != "--coverage|"+filepath.Join(root, "coverage.json") {
+		t.Fatalf("file check args = %q", got)
+	}
+
+	database := filepath.Join(t.TempDir(), "catalogue.sqlite")
+	databaseContext := servedWorkbenchCommandContext(database, "snapshot-exact", database)
+	if got := strings.Join(databaseContext.DatasetArgs, "|"); got != "--database|"+database+"|--snapshot|snapshot-exact" {
+		t.Fatalf("database dataset args = %q", got)
+	}
+	if got := strings.Join(databaseContext.CheckArgs, "|"); got != "--help" {
+		t.Fatalf("database check args = %q", got)
+	}
+}
+
 func TestPublishServeReadyFileOptionalAndRejectsExistingSymlink(t *testing.T) {
 	if err := publishServeReadyFile("", serveReadyReceipt{}); err != nil {
 		t.Fatalf("empty readiness path: %v", err)

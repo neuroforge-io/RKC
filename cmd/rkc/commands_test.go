@@ -13,6 +13,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/neuroforge-io/RKC/internal/commandcatalog"
 	"github.com/neuroforge-io/RKC/internal/safeoutput"
 	"github.com/neuroforge-io/RKC/internal/search"
 	"github.com/neuroforge-io/RKC/internal/snapshot"
@@ -49,6 +50,22 @@ func TestRunDispatchAndUsage(t *testing.T) {
 	} {
 		if err := run(args); err == nil {
 			t.Fatalf("run(%v) unexpectedly succeeded", args)
+		}
+	}
+}
+
+func TestBrowserCommandCatalogueMatchesTheRealDispatcher(t *testing.T) {
+	for _, command := range commandcatalog.Commands(commandcatalog.Context{}) {
+		args := []string{command.Name}
+		switch command.Name {
+		case "version", "help":
+		case "snapshots", "runs", "plugins", "cache":
+			args = append(args, command.DefaultArgs...)
+		default:
+			args = append(args, "--help")
+		}
+		if err := run(args); err != nil {
+			t.Errorf("catalogue command %q is not dispatchable: %v", command.Name, err)
 		}
 	}
 }

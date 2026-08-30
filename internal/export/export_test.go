@@ -56,7 +56,8 @@ func TestWriteAllProducesCompleteDeterministicRedactedExport(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if !bytes.Contains(app, []byte("hasOwnProperty.call(defaults,name)")) {
+		if !bytes.Contains(app, []byte(`"default_args":[]`)) ||
+			!bytes.Contains(app, []byte("command?.default_args||['--help']")) {
 			t.Fatal("command defaults must preserve intentionally empty argument lists")
 		}
 		normalized, err := os.ReadFile(filepath.Join(output, "normalized", "src", "login.go.md"))
@@ -306,7 +307,8 @@ func TestBrowserAssetsAccessibilityAndSerializationContract(t *testing.T) {
 			"event.key==='Enter'||event.key===' '", "Not applicable", "coverage.claims_total?",
 			"/api/v1/nodes?limit=120", "runWorkbenchCommand", "parseCommandArguments",
 			"cancelWorkbenchJob", "cleanup_failed", "deadline_at",
-			"['runs','Inspect validated scheduler run journals.','read']",
+			`"name":"runs"`, `"default_args":["--coverage",".rkc/coverage.json"]`,
+			`"default_args":["--dir",".rkc","resource guard"]`,
 			"--scip-index /path/index.scip", "Compiler evidence",
 		},
 	} {
@@ -319,6 +321,10 @@ func TestBrowserAssetsAccessibilityAndSerializationContract(t *testing.T) {
 		if strings.Contains(content, "onclick=") {
 			t.Errorf("%s contains an inline event handler", name)
 		}
+	}
+	app := string(assets["app.js"])
+	if strings.Contains(app, "__RKC_COMMAND_CATALOG__") || strings.Contains(app, "const defaults={") {
+		t.Fatal("browser retained an unresolved or independently hard-coded command catalogue")
 	}
 	var data struct {
 		Bundle   model.Bundle   `json:"bundle"`

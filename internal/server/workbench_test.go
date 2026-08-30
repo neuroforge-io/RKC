@@ -14,6 +14,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/neuroforge-io/RKC/internal/commandcatalog"
 )
 
 func TestWorkbenchCloseCancelsActiveJobsAndRejectsSubmissions(t *testing.T) {
@@ -191,6 +193,10 @@ func TestWorkbenchRunsOneAuthenticatedBoundedCommand(t *testing.T) {
 	}
 	workbench, err := NewWorkbench(WorkbenchConfig{
 		Workspace: workspace, Executable: executable, Timeout: 5 * time.Second,
+		CommandContext: commandcatalog.Context{
+			DatasetArgs: []string{"--dir", "/tmp/exact atlas"},
+			CheckArgs:   []string{"--coverage", "/tmp/exact atlas/coverage.json"},
+		},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -211,6 +217,16 @@ func TestWorkbenchRunsOneAuthenticatedBoundedCommand(t *testing.T) {
 	}
 	if session.Token == "" || len(session.Commands) < 10 {
 		t.Fatalf("incomplete session: token=%q commands=%d", session.Token, len(session.Commands))
+	}
+	byName := make(map[string]workbenchCommand, len(session.Commands))
+	for _, command := range session.Commands {
+		byName[command.Name] = command
+	}
+	if got := strings.Join(byName["query"].DefaultArgs, "|"); got != "--dir|/tmp/exact atlas|resource guard" {
+		t.Fatalf("dataset-aware query defaults = %q", got)
+	}
+	if got := strings.Join(byName["check"].DefaultArgs, "|"); got != "--coverage|/tmp/exact atlas/coverage.json" {
+		t.Fatalf("dataset-aware check defaults = %q", got)
 	}
 
 	submitRequest := httptest.NewRequest(
@@ -286,6 +302,22 @@ func TestWorkbenchRejectsCrossOriginAndUnsupportedCommands(t *testing.T) {
 	workbench.handleJobs(response, request)
 	if response.Code != http.StatusForbidden {
 		t.Fatalf("cross-origin status = %d", response.Code)
+	}
+	sameOriginSession := httptest.NewRequest(http.MethodGet, "http://127.0.0.1/api/v1/workbench/session", nil)
+	sameOriginSession.Header.Set("Origin", "http://127.0.0.1")
+	sameOriginSession.Header.Set("Sec-Fetch-Site", "same-origin")
+	sameOriginResponse := httptest.NewRecorder()
+	workbench.handleSession(sameOriginResponse, sameOriginSession)
+	if sameOriginResponse.Code != http.StatusOK || !strings.Contains(sameOriginResponse.Body.String(), workbench.token) {
+		t.Fatalf("same-origin session status=%d body=%s", sameOriginResponse.Code, sameOriginResponse.Body.String())
+	}
+	sessionRequest := httptest.NewRequest(http.MethodGet, "http://127.0.0.1/api/v1/workbench/session", nil)
+	sessionRequest.Header.Set("Origin", "http://evil.example")
+	sessionRequest.Header.Set("Sec-Fetch-Site", "cross-site")
+	sessionResponse := httptest.NewRecorder()
+	workbench.handleSession(sessionResponse, sessionRequest)
+	if sessionResponse.Code != http.StatusForbidden || strings.Contains(sessionResponse.Body.String(), workbench.token) {
+		t.Fatalf("cross-origin session status=%d body=%s", sessionResponse.Code, sessionResponse.Body.String())
 	}
 }
 
