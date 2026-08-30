@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -68,6 +69,7 @@ func TestHigherPriorityDetectionExcludesAncestorsAndAvoidsSubstrings(t *testing.
 
 	processes := []processSnapshot{
 		{pid: 10, parentPID: 9, commandLine: "rkc test /home/user/ERAIS/self"},
+		{pid: 11, parentPID: 10, commandLine: "rkc open /home/user/ERAIS/repository"},
 		{pid: 9, parentPID: 1, commandLine: "codex /tmp/lm_eval/ancestor"},
 		{pid: 20, parentPID: 1, commandLine: "python /tmp/noteraisworker.py"},
 		{pid: 21, parentPID: 1, commandLine: "python -m LM_EVAL --tasks x"},
@@ -78,7 +80,7 @@ func TestHigherPriorityDetectionExcludesAncestorsAndAvoidsSubstrings(t *testing.
 		!strings.Contains(err.Error(), "pid=22 marker=torchrun") || strings.Contains(err.Error(), "pid=20") {
 		t.Fatalf("priority conflicts = %v", err)
 	}
-	if err := checkHigherPriority(processes[:3], 10); err != nil {
+	if err := checkHigherPriority(processes[:4], 10); err != nil {
 		t.Fatalf("ancestors or substring caused false positive: %v", err)
 	}
 	if commandHasMarker("llama-cli --offline --model model.gguf --prompt explain ERAIS safely", "erais") {
@@ -86,6 +88,67 @@ func TestHigherPriorityDetectionExcludesAncestorsAndAvoidsSubstrings(t *testing.
 	}
 	if !commandHasMarker("python /home/user/erais/train.py --config run.json", "erais") {
 		t.Fatal("an ERAIS script path was not detected")
+	}
+	if commandHasMarker("rkc open /home/user/erais", "erais") {
+		t.Fatal("an RKC repository argument was mistaken for a higher-priority process")
+	}
+	if !processHasMarker(processSnapshot{
+		arguments: []string{".venv/bin/python", "scripts/train.py"}, cwdMarker: "erais",
+	}, "erais") {
+		t.Fatal("relative Python target in an ERAIS working directory was missed")
+	}
+	if processHasMarker(processSnapshot{
+		arguments: []string{"rkc", "open", "."}, cwdMarker: "erais",
+	}, "erais") {
+		t.Fatal("non-interpreter RKC work in an ERAIS directory became a false conflict")
+	}
+	for _, arguments := range [][]string{
+		{"python", "-W", "ignore", "/home/user/erais/train.py"},
+		{"python3.11", "-X", "dev", "/home/user/erais/train.py"},
+		{"python", "-m", "lm_eval", "--tasks", "x"},
+		{"bash", "-eu", "/home/user/erais/run.sh"},
+		{"bash", "+o", "errexit", "/home/user/erais/run.sh"},
+		{"bash", "+O", "extglob", "/home/user/erais/run.sh"},
+		{"bash", "+e", "/home/user/erais/run.sh"},
+	} {
+		marker := "erais"
+		if strings.Contains(strings.Join(arguments, " "), "lm_eval") {
+			marker = "lm_eval"
+		}
+		if !commandArgumentsHaveMarker(arguments, marker) {
+			t.Errorf("interpreter target was not detected: %q", arguments)
+		}
+	}
+	for _, arguments := range [][]string{
+		{"llama-cli", "--prompt", "explain -m ERAIS safely"},
+		{"rkc", "answer", "--question", "-m", "ERAIS"},
+		{"git", "-C", "/home/user/erais", "status"},
+		{"aws", "--profile", "erais", "s3", "ls"},
+		{"python", "-c", "print('erais')"},
+		{"python", "/tmp/tool.py", "--repository", "/home/user/erais"},
+	} {
+		if commandArgumentsHaveMarker(arguments, "erais") {
+			t.Errorf("application argument was mistaken for an interpreter target: %q", arguments)
+		}
+	}
+}
+
+func TestProcCommandLinePreservesEmptyArguments(t *testing.T) {
+	t.Parallel()
+
+	arguments := splitProcCommandLine([]byte("python\x00-W\x00\x00/home/user/erais/train.py\x00\x00"))
+	want := []string{"python", "-W", "", "/home/user/erais/train.py", ""}
+	if !slices.Equal(arguments, want) {
+		t.Fatalf("proc arguments = %#v, want %#v", arguments, want)
+	}
+	if !commandArgumentsHaveMarker(arguments, "erais") {
+		t.Fatal("empty interpreter option value shifted or hid the ERAIS target")
+	}
+	if onlyEmpty := splitProcCommandLine([]byte{'\x00'}); !slices.Equal(onlyEmpty, []string{""}) {
+		t.Fatalf("single empty argv entry = %#v", onlyEmpty)
+	}
+	if splitProcCommandLine(nil) != nil {
+		t.Fatal("empty proc cmdline did not remain absent")
 	}
 }
 
@@ -103,11 +166,15 @@ func TestProcSnapshotParsing(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(process, "stat"), []byte("42 (name with ) paren) S 7 0 0"), 0o600); err != nil {
 		t.Fatal(err)
 	}
+	if err := os.Symlink("/home/user/erais", filepath.Join(process, "cwd")); err != nil {
+		t.Fatal(err)
+	}
 	if err := os.WriteFile(filepath.Join(root, "not-a-pid"), nil, 0o600); err != nil {
 		t.Fatal(err)
 	}
 	processes, err := procProcessSnapshots(root)
-	if err != nil || len(processes) != 1 || processes[0].pid != 42 || processes[0].parentPID != 7 || processes[0].commandLine != "python -m ERais" {
+	if err != nil || len(processes) != 1 || processes[0].pid != 42 || processes[0].parentPID != 7 ||
+		processes[0].commandLine != "python -m ERais" || strings.Join(processes[0].arguments, "|") != "python|-m|ERais" || processes[0].cwdMarker != "erais" {
 		t.Fatalf("proc snapshots = %+v, %v", processes, err)
 	}
 	for _, invalid := range []string{"", "12 no-close S 1", "12 (x)", "12 (x) S", "12 (x) S nope"} {
@@ -194,7 +261,7 @@ func TestUnguardedCommandLifecycleAndLimits(t *testing.T) {
 		t.Fatal(err)
 	}
 	time.AfterFunc(30*time.Millisecond, cancel)
-	if _, err := cancelled.Run(cancelContext, nil, nil); !errors.Is(err, context.Canceled) {
+	if _, err := cancelled.Run(cancelContext, nil, nil); err != context.Canceled {
 		t.Fatalf("cancellation = %v", err)
 	}
 	if cancelled.cmd.ProcessState == nil {
@@ -213,6 +280,228 @@ func TestUnguardedCommandLifecycleAndLimits(t *testing.T) {
 	if ProcessRSS(-1) != 0 || ProcessRSS(999999999) != 0 {
 		t.Fatal("invalid process reported RSS")
 	}
+}
+
+func TestGuardedCancellationEscalatesUnitAndReturnsExactContext(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("Linux transient-service fixture")
+	}
+	_, signals := installFakeResourceGuardCommands(t, "exec /bin/sleep 10\n")
+	ctx, cancel := context.WithCancel(context.Background())
+	command, err := newCommand(ctx, Config{
+		Executable: "/bin/true", MaximumRSSBytes: 64 << 20, UnitPrefix: "rkc-lifecycle-test",
+	}, func() error { return nil })
+	if err != nil {
+		t.Fatal(err)
+	}
+	if command.cmd.Cancel != nil {
+		t.Fatal("guarded launcher is still bound to os/exec context cancellation")
+	}
+	time.AfterFunc(30*time.Millisecond, cancel)
+	if _, err := command.Run(ctx, nil, nil); err != context.Canceled {
+		t.Fatalf("guarded cancellation = %v", err)
+	}
+	data, err := os.ReadFile(signals)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if text := string(data); !strings.Contains(text, "--signal=SIGTERM") || !strings.Contains(text, "--signal=SIGKILL") {
+		t.Fatalf("unit escalation signals = %q", text)
+	}
+	if command.cmd.ProcessState == nil {
+		t.Fatal("guarded launcher was not reaped")
+	}
+}
+
+func TestCancellationCleansUnitRegisteredDuringLauncherReap(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("Linux transient-service fixture")
+	}
+	launcherBody := `trap '/bin/sleep 0.35; printf "active\n" > "$TMPDIR/unit-state"; : > "$TMPDIR/unit-registered"; exit 0' TERM
+while :; do /bin/sleep 0.01; done
+`
+	state, signals := installFakeResourceGuardCommands(t, launcherBody)
+	if err := os.WriteFile(state, []byte("inactive\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	command, err := newCommand(ctx, Config{
+		Executable: "/bin/true", MaximumRSSBytes: 64 << 20, UnitPrefix: "rkc-registration-test",
+	}, func() error { return nil })
+	if err != nil {
+		t.Fatal(err)
+	}
+	time.AfterFunc(30*time.Millisecond, cancel)
+	if _, err := command.Run(ctx, nil, nil); err != context.Canceled {
+		t.Fatalf("delayed-registration cancellation = %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(filepath.Dir(state), "unit-registered")); err != nil {
+		t.Fatalf("launcher did not exercise delayed registration: %v", err)
+	}
+	data, err := os.ReadFile(signals)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), "--signal=SIGKILL") {
+		t.Fatalf("post-reap unit cleanup signals = %q", data)
+	}
+	data, err = os.ReadFile(state)
+	if err != nil || strings.TrimSpace(string(data)) != "inactive" {
+		t.Fatalf("post-reap unit state = %q, %v", data, err)
+	}
+}
+
+func TestCanceledContextNeverSpawnsGuardedCommand(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("POSIX process fixture")
+	}
+	marker := filepath.Join(t.TempDir(), "spawned")
+	newFixture := func(ctx context.Context, priority func() error) *Command {
+		t.Helper()
+		command, err := newCommand(ctx, Config{
+			Executable:      "/bin/sh",
+			Arguments:       []string{"-c", "printf spawned > \"$1\"", "sh", marker},
+			MaximumRSSBytes: 64 << 20, UnsafeDisableCgroup: true,
+		}, priority)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return command
+	}
+
+	preCanceled, cancel := context.WithCancel(context.Background())
+	cancel()
+	priorityCalled := false
+	command := newFixture(preCanceled, func() error {
+		priorityCalled = true
+		return nil
+	})
+	if _, err := command.Run(preCanceled, nil, nil); err != context.Canceled {
+		t.Fatalf("pre-canceled run = %v", err)
+	}
+	if priorityCalled || command.cmd.Process != nil {
+		t.Fatal("pre-canceled run advanced toward process spawn")
+	}
+
+	lateCanceled, cancel := context.WithCancel(context.Background())
+	command = newFixture(lateCanceled, func() error {
+		cancel()
+		return nil
+	})
+	if _, err := command.Run(lateCanceled, nil, nil); err != context.Canceled {
+		t.Fatalf("priority-check cancellation = %v", err)
+	}
+	if command.cmd.Process != nil {
+		t.Fatal("command spawned after cancellation became observable")
+	}
+	if _, err := os.Stat(marker); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("canceled command wrote its marker: %v", err)
+	}
+}
+
+func TestLauncherExitCleansStillActiveUnit(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("Linux transient-service fixture")
+	}
+	state, signals := installFakeResourceGuardCommands(t, "exit 0\n")
+	command, err := newCommand(context.Background(), Config{
+		Executable: "/bin/true", MaximumRSSBytes: 64 << 20, UnitPrefix: "rkc-lifecycle-test",
+	}, func() error { return nil })
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := command.Run(context.Background(), nil, nil); !errors.Is(err, errLauncherExitedWithActiveUnit) {
+		t.Fatalf("early launcher exit = %v", err)
+	}
+	data, err := os.ReadFile(signals)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if text := string(data); !strings.Contains(text, "--signal=SIGTERM") || !strings.Contains(text, "--signal=SIGKILL") {
+		t.Fatalf("unit escalation signals = %q", text)
+	}
+	data, err = os.ReadFile(state)
+	if err != nil || strings.TrimSpace(string(data)) != "inactive" {
+		t.Fatalf("unit state = %q, %v", data, err)
+	}
+}
+
+func TestLauncherExitWaitsForDelayedUnitPublication(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("Linux transient-service fixture")
+	}
+	launcherBody := `(/bin/sleep 0.075; printf 'active\n' > "$TMPDIR/unit-state"; : > "$TMPDIR/unit-published") >/dev/null 2>&1 &
+exit 0
+`
+	state, signals := installFakeResourceGuardCommands(t, launcherBody)
+	if err := os.WriteFile(state, []byte("inactive\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	command, err := newCommand(context.Background(), Config{
+		Executable: "/bin/true", MaximumRSSBytes: 64 << 20, UnitPrefix: "rkc-publication-test",
+	}, func() error { return nil })
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := command.Run(context.Background(), nil, nil); !errors.Is(err, errLauncherExitedWithActiveUnit) {
+		t.Fatalf("delayed unit publication = %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(filepath.Dir(state), "unit-published")); err != nil {
+		t.Fatalf("launcher did not publish the delayed unit: %v", err)
+	}
+	data, err := os.ReadFile(signals)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if text := string(data); !strings.Contains(text, "--signal=SIGTERM") || !strings.Contains(text, "--signal=SIGKILL") {
+		t.Fatalf("delayed unit cleanup signals = %q", text)
+	}
+	data, err = os.ReadFile(state)
+	if err != nil || strings.TrimSpace(string(data)) != "inactive" {
+		t.Fatalf("settled delayed unit state = %q, %v", data, err)
+	}
+}
+
+func installFakeResourceGuardCommands(t *testing.T, launcherBody string) (string, string) {
+	t.Helper()
+	directory := t.TempDir()
+	state := filepath.Join(directory, "unit-state")
+	signals := filepath.Join(directory, "unit-signals")
+	if err := os.WriteFile(state, []byte("active\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	launcher := filepath.Join(directory, "systemd-run")
+	if err := os.WriteFile(launcher, []byte("#!/bin/sh\n"+launcherBody), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	controller := filepath.Join(directory, "systemctl")
+	controllerBody := `#!/bin/sh
+case "$2" in
+show)
+    exit 0
+    ;;
+is-active)
+    /bin/cat "$TMPDIR/unit-state"
+    exit 0
+    ;;
+kill)
+    printf '%s\n' "$*" >> "$TMPDIR/unit-signals"
+    case "$*" in
+    *--signal=SIGKILL*)
+        printf 'inactive\n' > "$TMPDIR/unit-state"
+        ;;
+    esac
+    exit 0
+    ;;
+esac
+exit 1
+`
+	if err := os.WriteFile(controller, []byte(controllerBody), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("TMPDIR", directory)
+	t.Setenv("PATH", directory+string(os.PathListSeparator)+os.Getenv("PATH"))
+	return state, signals
 }
 
 func TestConfigEnvironmentAndGuardArguments(t *testing.T) {
@@ -245,8 +534,11 @@ func TestConfigEnvironmentAndGuardArguments(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
+		if command.cmd.Cancel != nil {
+			t.Fatal("guarded systemd-run launcher inherited an automatic context cancellation hook")
+		}
 		arguments := strings.Join(command.cmd.Args, " ")
-		for _, required := range []string{"--expand-environment=no", "CPUWeight=1", "IOWeight=1", "CPUQuota=100%", "MemoryHigh=", "MemoryMax=134217728", "MemorySwapMax=", "TasksMax=128", "OOMPolicy=stop", "choom -n 750", "ionice -c 3", "nice -n 19", "env -i", "literal-$RKC_MODEL", "literal-${RKC_MODEL}"} {
+		for _, required := range []string{"--same-dir", "--expand-environment=no", "CPUWeight=1", "IOWeight=1", "CPUQuota=100%", "MemoryHigh=", "MemoryMax=134217728", "MemorySwapMax=", "TasksMax=128", "OOMPolicy=stop", "choom -n 750", "ionice -c 3", "nice -n 19", "env -i", "literal-$RKC_MODEL", "literal-${RKC_MODEL}"} {
 			if !strings.Contains(arguments, required) {
 				t.Errorf("guard arguments missing %q: %s", required, arguments)
 			}

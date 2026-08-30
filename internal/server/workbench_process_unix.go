@@ -13,6 +13,7 @@ import (
 const (
 	workbenchTerminationGrace = 2 * time.Second
 	workbenchTerminationBound = 2 * time.Second
+	workbenchReapingBound     = 500 * time.Millisecond
 )
 
 func configureWorkbenchProcess(command *exec.Cmd) {
@@ -23,34 +24,61 @@ func terminateWorkbenchProcess(command *exec.Cmd, completed <-chan error) error 
 	if command == nil || command.Process == nil {
 		return ErrWorkbenchCleanupUnproven
 	}
-	pid := command.Process.Pid
-	_ = signalWorkbenchProcessGroup(pid, syscall.SIGTERM)
-	reaped := false
-	grace := time.NewTimer(workbenchTerminationGrace)
-	defer grace.Stop()
+	cleanupErr := terminateWorkbenchProcessGroup(command.Process.Pid)
+	reaping := time.NewTimer(workbenchReapingBound)
+	defer reaping.Stop()
 	select {
 	case <-completed:
-		reaped = true
-	case <-grace.C:
+		return cleanupErr
+	case <-reaping.C:
+		_ = command.Process.Kill()
+		return errors.Join(cleanupErr, ErrWorkbenchCleanupUnproven)
 	}
-	if workbenchProcessAlive(-pid) {
-		_ = signalWorkbenchProcessGroup(pid, syscall.SIGKILL)
+}
+
+// verifyWorkbenchProcessCompletion proves that the process group created for a
+// completed command is empty. A command is a lifecycle failure when its leader
+// exits while descendants remain, even when those descendants are subsequently
+// cleaned up successfully.
+func verifyWorkbenchProcessCompletion(command *exec.Cmd) (descendantsFound bool, cleanupErr error) {
+	if command == nil || command.Process == nil {
+		return false, ErrWorkbenchCleanupUnproven
 	}
-	deadline := time.NewTimer(workbenchTerminationBound)
-	defer deadline.Stop()
+	pid := command.Process.Pid
+	if !workbenchProcessAlive(-pid) {
+		return false, nil
+	}
+	return true, terminateWorkbenchProcessGroup(pid)
+}
+
+func terminateWorkbenchProcessGroup(pid int) error {
+	_ = signalWorkbenchProcessGroup(pid, syscall.SIGTERM)
+	if waitWorkbenchProcessGroupGone(pid, workbenchTerminationGrace) {
+		return nil
+	}
+	_ = signalWorkbenchProcessGroup(pid, syscall.SIGKILL)
+	if waitWorkbenchProcessGroupGone(pid, workbenchTerminationBound) {
+		return nil
+	}
+	return ErrWorkbenchCleanupUnproven
+}
+
+func waitWorkbenchProcessGroupGone(pid int, bound time.Duration) bool {
+	if !workbenchProcessAlive(-pid) {
+		return true
+	}
+	timer := time.NewTimer(bound)
+	defer timer.Stop()
 	ticker := time.NewTicker(10 * time.Millisecond)
 	defer ticker.Stop()
 	for {
-		groupGone := !workbenchProcessAlive(-pid)
-		if reaped && groupGone {
-			return nil
-		}
 		select {
-		case <-completed:
-			reaped = true
 		case <-ticker.C:
-		case <-deadline.C:
-			return ErrWorkbenchCleanupUnproven
+			if !workbenchProcessAlive(-pid) {
+				return true
+			}
+		case <-timer.C:
+			return !workbenchProcessAlive(-pid)
 		}
 	}
 }

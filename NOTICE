@@ -5,10 +5,11 @@ This product is developed by NeuroForgeIO and the RKC contributor community:
 https://github.com/neuroforge-io/RKC
 
 RKC-owned source code, documentation, schemas, official plugins, and generated
-examples are released under the MIT License. When redistributing or embedding
-RKC, retain LICENSE and this NOTICE, and credit NeuroForgeIO and the RKC
-contributors. This attribution request is compatible with commercial use and
-derivative works.
+examples are released under the MIT License. The license requires copies or
+substantial portions to retain its copyright and permission notice. In
+addition, NeuroForgeIO requests that redistributions retain this NOTICE and
+credit NeuroForgeIO and the RKC contributors. That additional credit is a
+request, not a restriction on commercial use or derivative works.
 
 Third-party dependencies, model weights, and optional llama.cpp builds retain
 their own terms. See THIRD_PARTY_NOTICES.md and the corresponding files under

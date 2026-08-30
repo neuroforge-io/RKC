@@ -30,14 +30,15 @@ func TestCommandsAreUniqueValidAndIndependentlyOwned(t *testing.T) {
 		byName[command.Name] = command
 	}
 	for name, want := range map[string][]string{
-		"plan":      {"."},
-		"scan":      {"--no-python", "--out", ".rkc", "--state-dir", ".rkc-state", "."},
-		"check":     {"--coverage", ".rkc/coverage.json"},
-		"query":     {"--dir", ".rkc", "resource guard"},
-		"snapshots": {"list", "--help"},
-		"runs":      {"list", "--help"},
-		"plugins":   {"list", "--help"},
-		"cache":     {"inspect", "--help"},
+		"plan":       {"."},
+		"scan":       {"--no-python", "--out", ".rkc", "--state-dir", ".rkc-state", "."},
+		"check":      {"--coverage", ".rkc/coverage.json"},
+		"query":      {"--dir", ".rkc", "resource guard"},
+		"synthesize": {"--packet-only=true", "--dir", ".rkc", "--query", "How does this repository work?"},
+		"snapshots":  {"list", "--help"},
+		"runs":       {"list", "--help"},
+		"plugins":    {"list", "--help"},
+		"cache":      {"inspect", "--help"},
 	} {
 		if got := byName[name].DefaultArgs; !reflect.DeepEqual(got, want) {
 			t.Errorf("%s defaults = %#v, want %#v", name, got, want)

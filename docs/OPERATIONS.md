@@ -1,5 +1,9 @@
 # Operations
 
+RKC-owned operations guidance is released by **NeuroForgeIO** under the
+[MIT License](../LICENSE); retain its copyright and permission notice when
+redistributing substantial portions.
+
 ## Deployment profiles
 
 ### Local static
@@ -19,6 +23,46 @@ rkc-mcp --dir .rkc
 ```
 
 Intended for one trusted user and loopback clients.
+
+### Protected first run
+
+```sh
+rkc open /path/to/repository
+```
+
+On Linux the installed binary self-reexecutes through the exact one-core,
+nice-19, idle-I/O, 4 GiB pressure / 4.5 GiB hard-memory envelope before any
+atlas, cache, journal, or snapshot write. The outer guard continuously checks
+for higher-priority ERAIS/evaluation work, proves cleanup, and launches the
+desktop browser outside the disposable RKC service. `--no-browser` retains the
+printed URL for headless use. The default server is read-only and remains the
+portable macOS/Windows first-run path.
+
+For a trusted single-user Linux checkout, `rkc open --workbench <path>` is the
+explicit interactive route. The guarded child writes its one-time URL-fragment
+bootstrap only to an atomically published, owner-private readiness receipt. The
+outer `open` process strictly validates that bounded receipt and launches an
+owner-private redirect outside the cgroup; the browser removes the fragment
+before its one successful exchange for a same-origin session token.
+
+The workbench is deliberately a trusted-user command launcher, not a filesystem
+sandbox. Its token grants commands the invoking account's file authority;
+`--workspace` sets the working directory and guided defaults. Use static mode for
+untrusted users, and launch a separate workbench for each trusted workspace.
+
+Running `scripts/with-rkc-limits.sh ./bin/rkc serve --workbench ...` is a
+low-level route for an existing atlas. Direct workbench
+serving requires `--ready-file` beneath an owner-private directory, rejects
+`--open`, and expects a trusted launcher to consume the receipt without logging
+its `browser_url`. It requires port `0` so the OS selects a fresh ephemeral
+loopback origin; fixed ports and non-loopback listeners fail closed. Generated
+browser policy forbids persistent workers and manifests. The readiness receipt
+is the authority for the resulting address.
+Commands that might create a separately managed Python or model unit fail
+closed until the session can prove one aggregate resource ceiling.
+Direct serving checks ERAIS before and after atlas preparation and continuously
+while serving, but `rkc open --workbench` is preferred when the outer monitor
+must be able to terminate work during the initial atlas load itself.
 
 ### CI
 

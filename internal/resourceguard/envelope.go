@@ -14,13 +14,17 @@ var ErrLowPriorityEnvelope = errors.New("current process is outside the RKC low-
 
 const (
 	rkcMemoryHighBytes = int64(4 * 1024 * 1024 * 1024)
-	rkcMemoryMaxBytes  = int64(4608 * 1024 * 1024)
-	rkcSwapMaxBytes    = int64(256 * 1024 * 1024)
-	rkcTasksMax        = int64(128)
-	rkcNice            = 19
-	rkcIOClassIdle     = 3
-	rkcOOMScoreAdjust  = 750
-	maximumControlRead = 4096
+	// LowPriorityMemoryMaxBytes is the hard memory ceiling shared by the
+	// installed first-run launcher, workbench, development guard, and model
+	// runtime. Keep it aligned with scripts/with-rkc-limits.sh.
+	LowPriorityMemoryMaxBytes = int64(4608 * 1024 * 1024)
+	rkcMemoryMaxBytes         = LowPriorityMemoryMaxBytes
+	rkcSwapMaxBytes           = int64(256 * 1024 * 1024)
+	rkcTasksMax               = int64(128)
+	rkcNice                   = 19
+	rkcIOClassIdle            = 3
+	rkcOOMScoreAdjust         = 750
+	maximumControlRead        = 4096
 )
 
 type schedulingEnvelope struct {
@@ -30,8 +34,9 @@ type schedulingEnvelope struct {
 
 // RequireCurrentProcessLowPriority proves that the calling process—not merely
 // a future model child—is already inside the exact low-priority envelope made
-// by scripts/with-rkc-limits.sh. Constructors call this before hashing large
-// model assets so verification cannot compete with higher-priority work.
+// by the installed first-run launcher or scripts/with-rkc-limits.sh.
+// Constructors call this before expensive work so verification cannot compete
+// with higher-priority work.
 func RequireCurrentProcessLowPriority() error {
 	return requireProcessLowPriority("/proc", "/sys/fs/cgroup", os.Getpid(), currentSchedulingEnvelope)
 }
@@ -147,9 +152,14 @@ func validLowPriorityUnit(unit string) bool {
 	if identifier == "" || (unit != "rkc-low-"+identifier+".scope" && unit != "rkc-low-"+identifier+".service") {
 		return false
 	}
-	for _, character := range identifier {
-		if character < '0' || character > '9' {
+	for _, segment := range strings.Split(identifier, "-") {
+		if segment == "" {
 			return false
+		}
+		for _, character := range segment {
+			if character < '0' || character > '9' {
+				return false
+			}
 		}
 	}
 	return true

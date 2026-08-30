@@ -70,6 +70,21 @@ No downstream component treats repository text as instructions.
 - API responses are non-cacheable and same-origin resource protected;
 - `serve` requires explicit `--allow-remote` acknowledgement before any
   non-loopback bind; the command workbench cannot use that exception;
+- the opt-in workbench bootstrap is a one-time URL-fragment capability delivered
+  only through an owner-private readiness file and private redirect; the browser
+  removes it before exchange, and direct `serve --workbench` requires
+  `--ready-file` while rejecting `--open`;
+- every live server regenerates browser assets from the current binary and the
+  validated canonical bundle instead of executing persisted/imported `site/*`
+  code; every response from a workbench-enabled origin is also non-cacheable;
+- browser policy forbids workers and web manifests, while workbench sessions
+  require an OS-selected ephemeral loopback port rather than reusing the fixed
+  read-only origin, preventing a previously registered service worker from
+  intercepting a privileged bootstrap;
+- browser policy also forbids form submission, limiting navigation-based data
+  disclosure even in read-only mode;
+- workbench model/Python vectors that could create separately managed units fail
+  closed until one aggregate session ceiling can be proved;
 - plugin artifacts and manifests are digest locked;
 - canonical output is validated before publication;
 - Docker reference deployment is read-only, drops capabilities, and applies
@@ -101,9 +116,16 @@ identity and manifest checks remain fail closed.
 The digest-pinned built-in Python AST worker still runs as the invoking OS user.
 On Linux its cgroup, environment, network-syscall, task-count, and cancellation
 limits are enforced fail closed, but it does not yet have a mount/filesystem
-namespace. External Python/native workers are disabled. The local HTTP server
-has no authentication and is intended for loopback use. The secret scanner is
-high-signal pattern detection, not a complete data-loss-prevention product.
+namespace. External Python/native workers are disabled. The ordinary read-only
+local HTTP server has no application authentication and is intended for
+loopback use; the explicit workbench adds the one-time bootstrap and same-origin
+session token described above. That workbench is a trusted-user local command
+launcher, not a filesystem sandbox: its token grants commands the invoking OS
+user's file authority, and `--workspace` selects the working directory and
+defaults rather than establishing a security boundary. Use it only on a trusted
+single-user account; workspace path confinement remains a required gate before
+any default-on or untrusted-user mode. The secret scanner is high-signal pattern
+detection, not a complete data-loss-prevention product.
 
 The static `scratch` reference container has no shell, package manager, Python,
 or user-systemd manager. Its documented portable scan profile therefore

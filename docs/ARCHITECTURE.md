@@ -87,7 +87,7 @@ internal/export
   deterministic docs, normalized text, NotebookLM, static site, integrations
 
 internal/server + internal/mcpserver
-  read-only local interfaces
+  read-only local interfaces plus an explicit Linux-only guarded workbench
 ```
 
 ## Snapshot identity

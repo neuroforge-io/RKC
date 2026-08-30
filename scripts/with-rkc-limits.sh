@@ -49,7 +49,7 @@ esac
 # shared development hosts. Refuse to start new RKC work while one is visible;
 # callers receive EX_TEMPFAIL (75) and can retry later. The bracketed regular
 # expressions do not match this pgrep command's own argv.
-for required in pgrep ps tr systemd-run ionice nice choom; do
+for required in pgrep ps readlink tr systemd-run ionice nice choom; do
     if ! command -v "$required" >/dev/null 2>&1; then
         echo "rkc resource guard: required command not found: $required" >&2
         exit 1
@@ -63,28 +63,59 @@ while [ "$ancestor" -gt 1 ]; do
     [ -n "$ancestor" ] || break
     ancestry="$ancestry$ancestor "
 done
-matches=$(pgrep -af '[e]rais|[t]orchrun|[l]m_eval' || true)
 higher_priority=$(
-    printf '%s\n' "$matches" |
-        while IFS=' ' read -r process_id command_line; do
-            [ -n "$process_id" ] || continue
-            case "$command_line" in
-                *scripts/with-rkc-limits.sh*) continue ;;
+    seen=' '
+    for priority_class in erais torchrun lm_eval; do
+        case "$priority_class" in
+            erais) priority_pattern='[e]rais' ;;
+            torchrun) priority_pattern='[t]orchrun' ;;
+            lm_eval) priority_pattern='[l]m_eval' ;;
+        esac
+        # Ask pgrep for PIDs only. Reading `pgrep -a` output would ingest an
+        # unrelated process's raw argv, whose embedded newlines could be
+        # mistaken for records and violate the guard's fixed PID/class output.
+        for process_id in $(pgrep -f "$priority_pattern" || true); do
+            case "$process_id" in
+                ''|*[!0-9]*) continue ;;
             esac
             case "$ancestry" in
                 *" $process_id "*) ;;
                 *)
-                    normalized_command=$(printf '%s' "$command_line" | tr '[:upper:]' '[:lower:]')
-                    case "$normalized_command" in
-                        *torchrun*) priority_class=torchrun ;;
-                        *lm_eval*) priority_class=lm_eval ;;
-                        *erais*) priority_class=erais ;;
-                        *) priority_class=priority-workload ;;
+                    case "$seen" in
+                        *" $process_id "*) continue ;;
                     esac
+                    seen="$seen$process_id "
                     printf 'pid=%s class=%s\n' "$process_id" "$priority_class"
                     ;;
             esac
         done
+    done
+    # A common training launch uses a relative interpreter and relative script
+    # from inside the ERAIS checkout, leaving no project marker in argv. Inspect
+    # only interpreter PIDs, reduce cwd immediately to a fixed class, and never
+    # retain or print the raw path.
+    interpreter_pattern='(^|/)(python([0-9.]+)?|pypy([0-9.]*)?|sh|bash|dash|ksh|mksh|zsh)([[:space:]]|$)'
+    for process_id in $(pgrep -f "$interpreter_pattern" || true); do
+        case "$process_id" in
+            ''|*[!0-9]*) continue ;;
+        esac
+        case "$ancestry" in
+            *" $process_id "*) continue ;;
+        esac
+        case "$seen" in
+            *" $process_id "*) continue ;;
+        esac
+        process_cwd=$(readlink "/proc/$process_id/cwd" 2>/dev/null || true)
+        normalized_cwd=$(printf '%s' "$process_cwd" | tr '[:upper:]' '[:lower:]')
+        case "$normalized_cwd" in
+            */erais|*/erais/*) priority_class=erais ;;
+            */torchrun|*/torchrun/*) priority_class=torchrun ;;
+            */lm_eval|*/lm_eval/*) priority_class=lm_eval ;;
+            *) continue ;;
+        esac
+        seen="$seen$process_id "
+        printf 'pid=%s class=%s\n' "$process_id" "$priority_class"
+    done
 )
 if [ -n "$higher_priority" ]; then
     echo "rkc resource guard: higher-priority ERAIS work is active; refusing to start" >&2

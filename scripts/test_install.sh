@@ -16,8 +16,15 @@ test -f "$PREFIX/share/doc/rkc/THIRD_PARTY_NOTICES.md"
 test -f "$PREFIX/share/rkc/models/models.lock.json"
 test -f "$PREFIX/share/rkc/models/qualification/rkc-local-model-v1.json"
 test -f "$PREFIX/share/rkc/schemas/model-lock.schema.json"
+cmp "$ROOT/LICENSE" "$PREFIX/share/doc/rkc/LICENSE"
+cmp "$ROOT/NOTICE" "$PREFIX/share/doc/rkc/NOTICE"
+cmp "$ROOT/THIRD_PARTY_NOTICES.md" "$PREFIX/share/doc/rkc/THIRD_PARTY_NOTICES.md"
 "$PREFIX/bin/rkc" version >"$WORK/version.txt"
 cmp "$ROOT/VERSION" "$WORK/version.txt"
+"$PREFIX/bin/rkc" open --help >"$WORK/open-help.txt" 2>&1
+grep -F -- "-no-browser" "$WORK/open-help.txt" >/dev/null
+grep -F -- "-workbench" "$WORK/open-help.txt" >/dev/null
+grep -F "protected local command workbench" "$WORK/open-help.txt" >/dev/null
 grep -F "First run: rkc open" "$WORK/output.txt" >/dev/null
 
 mkdir "$WORK/unsafe"

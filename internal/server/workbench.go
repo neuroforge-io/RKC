@@ -18,6 +18,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -32,6 +33,9 @@ const (
 	workbenchMaximumArguments    = 128
 	workbenchMaximumArgumentSize = 4096
 	workbenchMaximumJobs         = 32
+	workbenchTokenHeader         = "X-RKC-Workbench-Token"
+	workbenchBootstrapHeader     = "X-RKC-Workbench-Bootstrap"
+	workbenchBootstrapFragment   = "rkc-workbench"
 )
 
 // ErrWorkbenchJobNotFound reports an unknown cancellation target.
@@ -61,6 +65,7 @@ type Workbench struct {
 	executable  string
 	timeout     time.Duration
 	token       string
+	bootstrap   string
 	slot        chan struct{}
 	environment []string
 	commands    []commandcatalog.Command
@@ -131,9 +136,13 @@ func NewWorkbench(config WorkbenchConfig) (*Workbench, error) {
 	if err != nil {
 		return nil, fmt.Errorf("create workbench token: %w", err)
 	}
+	bootstrap, err := randomWorkbenchValue(32)
+	if err != nil {
+		return nil, fmt.Errorf("create workbench bootstrap capability: %w", err)
+	}
 	return &Workbench{
 		workspace: workspace, executable: executable, timeout: config.Timeout,
-		token: token, slot: make(chan struct{}, 1), environment: environment,
+		token: token, bootstrap: bootstrap, slot: make(chan struct{}, 1), environment: environment,
 		commands: commandcatalog.Commands(config.CommandContext),
 		jobs:     make(map[string]*workbenchJob),
 	}, nil
@@ -148,8 +157,8 @@ func randomWorkbenchValue(size int) (string, error) {
 }
 
 func (workbench *Workbench) handleSession(w http.ResponseWriter, request *http.Request) {
-	if !validWorkbenchRequestHost(request) || !validWorkbenchOrigin(request) {
-		writeProblem(w, http.StatusForbidden, "Workbench authorization failed", "same-origin loopback access is required")
+	if !validWorkbenchRequestHost(request) || !validWorkbenchOrigin(request) || !workbench.authorizeSession(request) {
+		writeProblem(w, http.StatusForbidden, "Workbench authorization failed", "same-origin loopback access and the out-of-band bootstrap capability are required")
 		return
 	}
 	w.Header().Set("Cache-Control", "no-store")
@@ -157,8 +166,47 @@ func (workbench *Workbench) handleSession(w http.ResponseWriter, request *http.R
 		"enabled": true, "token": workbench.token, "workspace": workbench.workspace,
 		"maximum_output_bytes": workbenchMaximumOutputBytes,
 		"timeout_seconds":      int(workbench.timeout.Seconds()),
+		"authority_notice":     "Trusted-user launcher: commands have the invoking OS user's filesystem authority; the workspace sets command defaults and is not a security sandbox.",
 		"commands":             workbench.commands,
 	})
+}
+
+// BrowserURL binds the one-time bootstrap capability to a URL fragment. URL
+// fragments are never sent in HTTP requests; the generated browser removes it
+// before exchanging it for the session token.
+func (workbench *Workbench) BrowserURL(rawURL string) (string, error) {
+	if workbench == nil {
+		return "", errors.New("workbench is not configured")
+	}
+	parsed, err := url.Parse(rawURL)
+	if err != nil || parsed.Scheme != "http" || parsed.Host == "" || parsed.Fragment != "" {
+		return "", errors.New("workbench browser URL must be an unfragmented HTTP URL")
+	}
+	workbench.mu.RLock()
+	bootstrap := workbench.bootstrap
+	workbench.mu.RUnlock()
+	if bootstrap == "" {
+		return "", errors.New("workbench bootstrap capability has already been consumed")
+	}
+	parsed.Fragment = url.Values{workbenchBootstrapFragment: []string{bootstrap}}.Encode()
+	return parsed.String(), nil
+}
+
+func (workbench *Workbench) authorizeSession(request *http.Request) bool {
+	providedToken := request.Header.Get(workbenchTokenHeader)
+	if len(providedToken) == len(workbench.token) &&
+		subtle.ConstantTimeCompare([]byte(providedToken), []byte(workbench.token)) == 1 {
+		return true
+	}
+	providedBootstrap := request.Header.Get(workbenchBootstrapHeader)
+	workbench.mu.Lock()
+	defer workbench.mu.Unlock()
+	if workbench.bootstrap == "" || len(providedBootstrap) != len(workbench.bootstrap) ||
+		subtle.ConstantTimeCompare([]byte(providedBootstrap), []byte(workbench.bootstrap)) != 1 {
+		return false
+	}
+	workbench.bootstrap = ""
+	return true
 }
 
 func (workbench *Workbench) handleJobs(w http.ResponseWriter, request *http.Request) {
@@ -180,7 +228,7 @@ func (workbench *Workbench) handleJobs(w http.ResponseWriter, request *http.Requ
 		writeProblem(w, http.StatusBadRequest, "Invalid command request", "request must contain one JSON object")
 		return
 	}
-	if err := validateWorkbenchArgs(payload.Args); err != nil {
+	if err := validateWorkbenchExecution(payload.Args); err != nil {
 		writeProblem(w, http.StatusBadRequest, "Command rejected", err.Error())
 		return
 	}
@@ -196,6 +244,16 @@ func (workbench *Workbench) handleJobs(w http.ResponseWriter, request *http.Requ
 	go workbench.runJob(job.ID)
 	w.Header().Set("Location", "/api/v1/workbench/jobs/"+url.PathEscape(job.ID))
 	writeJSON(w, http.StatusAccepted, job)
+}
+
+func validateWorkbenchExecution(args []string) error {
+	if err := validateWorkbenchArgs(args); err != nil {
+		return err
+	}
+	if workbenchMayLaunchManagedUnits(args) {
+		return errors.New("this command can start a separately managed runtime and is disabled until the workbench can prove one aggregate resource ceiling")
+	}
+	return nil
 }
 
 func (workbench *Workbench) handleJob(w http.ResponseWriter, request *http.Request) {
@@ -240,7 +298,7 @@ func (workbench *Workbench) authorize(request *http.Request) bool {
 	if !validWorkbenchRequestHost(request) || !validWorkbenchOrigin(request) {
 		return false
 	}
-	provided := request.Header.Get("X-RKC-Workbench-Token")
+	provided := request.Header.Get(workbenchTokenHeader)
 	return len(provided) == len(workbench.token) &&
 		subtle.ConstantTimeCompare([]byte(provided), []byte(workbench.token)) == 1
 }
@@ -418,6 +476,13 @@ func (workbench *Workbench) runJob(id string) {
 		workbench.finishJobFromContext(id, err, &output)
 		return
 	}
+	descendantsFound, cleanupErr := verifyWorkbenchProcessCompletion(command)
+	if descendantsFound || cleanupErr != nil {
+		releaseSlot()
+		status, message := workbenchCompletionCleanupFailure(err, descendantsFound, cleanupErr)
+		workbench.finishJob(id, status, exitCodeFor(command), output.String(), output.Truncated(), message)
+		return
+	}
 	if err != nil {
 		releaseSlot()
 		workbench.finishJob(id, "failed", exitCodeFor(command), output.String(), output.Truncated(), err.Error())
@@ -425,6 +490,24 @@ func (workbench *Workbench) runJob(id string) {
 	}
 	releaseSlot()
 	workbench.finishJob(id, "succeeded", 0, output.String(), output.Truncated(), "")
+}
+
+func workbenchCompletionCleanupFailure(commandErr error, descendantsFound bool, cleanupErr error) (string, string) {
+	status := "failed"
+	detail := "command completion cleanup could not be proven"
+	if descendantsFound {
+		detail = "command exited while descendant processes remained; the process group was terminated"
+	}
+	if cleanupErr != nil {
+		status = "cleanup_failed"
+		if descendantsFound {
+			detail = "command exited while descendant processes remained, but process-group cleanup could not be proven"
+		}
+	}
+	if commandErr == nil {
+		return status, detail
+	}
+	return status, errors.Join(commandErr, errors.New(detail)).Error()
 }
 
 // CancelJob explicitly cancels an active job. Cancellation waits for queue
@@ -626,42 +709,116 @@ func workbenchMayLaunchManagedUnits(args []string) bool {
 	if len(args) == 0 {
 		return false
 	}
-	hasFlag := func(name string) bool {
-		for _, argument := range args[1:] {
-			if argument == name || strings.HasPrefix(argument, name+"=") {
-				return true
-			}
-		}
-		return false
-	}
-	flagValue := func(name string) string {
-		for index, argument := range args[1:] {
-			if strings.HasPrefix(argument, name+"=") {
-				return strings.TrimPrefix(argument, name+"=")
-			}
-			if argument == name && index+2 < len(args) {
-				return args[index+2]
-			}
-		}
-		return ""
-	}
 	switch args[0] {
 	case "answer":
 		return true
 	case "synthesize":
-		return !hasFlag("--packet-only")
+		// The first option must unambiguously disable generation. Requiring the
+		// safety flag first prevents another string flag from consuming it as a
+		// value. Any later false override fails closed, even when it would occur
+		// after a positional parsing boundary.
+		return !workbenchLeadingTrueFlag(args, "packet-only") ||
+			workbenchFlagCanBeFalse(args[2:], "packet-only")
 	case "query":
-		mode := flagValue("--mode")
-		return mode == "semantic" || mode == "hybrid" ||
-			hasFlag("--build-vector-index") || hasFlag("--embedding-model") ||
-			hasFlag("--embedding-asset") || hasFlag("--embedding-runtime-receipt")
+		return workbenchQueryMayLaunchManagedUnit(args[1:])
 	case "scan":
-		return !hasFlag("--no-python") && !hasFlag("--no-plugins")
+		pythonDisabled := workbenchLeadingTrueFlag(args, "no-python") &&
+			!workbenchFlagCanBeFalse(args[2:], "no-python")
+		pluginsDisabled := workbenchLeadingTrueFlag(args, "no-plugins") &&
+			!workbenchFlagCanBeFalse(args[2:], "no-plugins")
+		return !pythonDisabled && !pluginsDisabled
 	case "quickstart":
-		return hasFlag("--python")
+		return workbenchFlagCanBeTrue(args[1:], "python")
 	default:
 		return false
 	}
+}
+
+// workbenchFlagToken recognizes the one- and two-dash forms accepted by Go's
+// flag package without accepting abbreviations or unrelated argument text.
+func workbenchFlagToken(argument, name string) (value string, hasValue, matched bool) {
+	for _, prefix := range []string{"--", "-"} {
+		candidate := prefix + name
+		if argument == candidate {
+			return "", false, true
+		}
+		if strings.HasPrefix(argument, candidate+"=") {
+			return strings.TrimPrefix(argument, candidate+"="), true, true
+		}
+	}
+	return "", false, false
+}
+
+func workbenchLeadingTrueFlag(args []string, name string) bool {
+	if len(args) < 2 {
+		return false
+	}
+	value, hasValue, matched := workbenchFlagToken(args[1], name)
+	if !matched || !hasValue {
+		return matched
+	}
+	parsed, err := strconv.ParseBool(value)
+	return err == nil && parsed
+}
+
+func workbenchFlagCanBeTrue(args []string, name string) bool {
+	for _, argument := range args {
+		value, hasValue, matched := workbenchFlagToken(argument, name)
+		if !matched {
+			continue
+		}
+		if !hasValue {
+			return true
+		}
+		parsed, err := strconv.ParseBool(value)
+		if err != nil || parsed {
+			return true
+		}
+	}
+	return false
+}
+
+func workbenchFlagCanBeFalse(args []string, name string) bool {
+	for _, argument := range args {
+		value, hasValue, matched := workbenchFlagToken(argument, name)
+		if !matched || !hasValue {
+			continue
+		}
+		parsed, err := strconv.ParseBool(value)
+		if err != nil || !parsed {
+			return true
+		}
+	}
+	return false
+}
+
+func workbenchQueryMayLaunchManagedUnit(args []string) bool {
+	semanticOptions := map[string]struct{}{
+		"vector-index": {}, "build-vector-index": {}, "embedding-model": {},
+		"llama-embedding": {}, "embedding-model-lock": {}, "embedding-asset": {},
+		"embedding-runtime-receipt": {},
+	}
+	for index, argument := range args {
+		for name := range semanticOptions {
+			if _, _, matched := workbenchFlagToken(argument, name); matched {
+				return true
+			}
+		}
+		value, hasValue, matched := workbenchFlagToken(argument, "mode")
+		if !matched {
+			continue
+		}
+		if !hasValue {
+			if index+1 >= len(args) {
+				return true
+			}
+			value = args[index+1]
+		}
+		if value != "lexical" {
+			return true
+		}
+	}
+	return false
 }
 
 func exitCodeFor(command *exec.Cmd) int {

@@ -21,13 +21,29 @@ contributors; see [`BRANDING_AND_ATTRIBUTION.md`](BRANDING_AND_ATTRIBUTION.md)
 for the commercial attribution and third-party license boundary.
 Existing symbolic-link or non-file destinations are rejected.
 
-`rkc open /path/to/repository` produces an atlas, retains immutable
-snapshot state, runs the strict local integrity and quality checks, and prints
-the local URL while opening the read-only browser when a desktop opener is
-available. Press Ctrl-C to stop the server, or pass `--no-browser` on a
-headless host. It safely replaces only a previous RKC-owned atlas. The
-portable default does not invoke Python; pass `--python` only after the strict
-doctor check succeeds.
+`rkc open /path/to/repository` produces an atlas, retains immutable snapshot
+state, runs the strict local integrity and quality checks, and prints the local
+URL while opening the read-only browser when a desktop opener is available.
+On Linux it self-admits to RKC's exact one-core, lowest-priority, 4.5 GiB hard
+ceiling before any atlas, cache, journal, or snapshot write, continuously
+yielding to visible ERAIS/evaluation work. Press Ctrl-C to stop cleanly, or
+pass `--no-browser` on a headless host. It safely replaces only a previous
+RKC-owned atlas. The portable default does not invoke Python. Protected `open`
+rejects `--python` until its separately sandboxed adapter and parent scan can
+prove one aggregate ceiling; deterministic built-in analysis remains available.
+
+For a trusted single-user Linux checkout, `rkc open --workbench
+/path/to/repository` explicitly enables the protected local command center.
+The default static browser remains portable on macOS and Windows; their
+interactive workbench stays disabled until equivalent native resource
+admission is proved. In workbench mode the guarded child publishes a one-time
+URL-fragment capability only through an owner-private readiness file. The outer
+`open` process validates the receipt, launches the desktop browser outside the
+cgroup through an owner-private redirect, and the browser removes the fragment
+before exchanging it once for its same-origin session token. The OS selects a
+fresh ephemeral loopback port for each workbench, and browser policy forbids
+persistent workers and manifests; the static read-only browser retains its
+familiar fixed-port default.
 
 For a compile-only first run, use `rkc quickstart /path/to/repository`; it
 performs the same scan and quality gates without starting a server. Both
@@ -295,20 +311,39 @@ The static site is also available directly under `/tmp/my-atlas/site`.
 
 The responsive GUI covers repository overview, bounded search, entity and
 evidence inspection, graph navigation, diagnostics, coverage, and every RKC
-CLI workflow. Normal serving remains read-only. For a trusted local repository,
-the opt-in command center is:
+CLI workflow. Normal serving and the default `rkc open` mode remain read-only.
+For a trusted single-user Linux repository, the preferred opt-in command center
+is:
 
 ```sh
-scripts/with-rkc-limits.sh ./bin/rkc serve \
-  --dir /tmp/my-atlas \
-  --addr 127.0.0.1:8787 \
-  --workbench \
-  --workspace .
+rkc open --workbench .
 ```
 
-The workbench refuses non-loopback binding and refuses to start outside the
-protected cgroup. It authenticates same-origin requests, invokes RKC directly
-without a shell, serializes jobs, and bounds both duration and captured output.
+For an already-built atlas, use this low-level advanced route.
+Direct `serve --workbench` requires a nonexistent readiness path in an
+owner-private directory and cannot be combined with `--open`; a trusted
+launcher must consume the receipt without logging its `browser_url`:
+
+```sh
+rkc_ready_directory=$(mktemp -d)
+chmod 700 "$rkc_ready_directory"
+scripts/with-rkc-limits.sh ./bin/rkc serve \
+  --dir /tmp/my-atlas \
+  --addr 127.0.0.1:0 \
+  --workbench \
+  --workspace . \
+  --ready-file "$rkc_ready_directory/ready.json"
+```
+
+The workbench refuses fixed-port or non-loopback binding and refuses to start
+outside the protected cgroup. It authenticates same-origin requests through the one-time
+bootstrap, invokes RKC directly without a shell, serializes jobs, and bounds
+both duration and captured output. Commands that could create a separately
+managed Python or model unit fail closed until an aggregate session ceiling is
+proved; use their normal guarded CLI entry points in the meantime.
+This direct route rechecks ERAIS before and after atlas preparation and while
+serving. Prefer `rkc open --workbench` when the outer monitor must pre-empt even
+during the initial atlas load.
 
 ## 9. Use MCP
 
@@ -329,7 +364,8 @@ snapshot:
 
 - `docs/` — linked Markdown pages suitable for a repository wiki or static
   documentation site;
-- `site/` — the responsive, read-only browser used by `rkc open`;
+- `site/` — the responsive static browser served read-only by ordinary
+  `serve`/`open`, or augmented by the explicitly protected Linux workbench;
 - `notebooklm/` — ordered Markdown sources plus `manifest.json` and
   `UPLOAD.md` for NotebookLM-style notebooks and agent context windows.
 

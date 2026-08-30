@@ -58,7 +58,7 @@ func Commands(context Context) []Command {
 		{"check", "Enforce coverage, integrity, and security gates.", ModeRead, check, generalGuidance},
 		{"query", "Search the selected compiled repository atlas.", ModeRead, withDataset("resource guard"), generalGuidance},
 		{"answer", "Produce a citation-checked answer with a qualified model.", ModeModel, withDataset("--repair-passes", "2", "How does this repository work?"), generalGuidance},
-		{"synthesize", "Build bounded evidence packets or use a qualified model.", ModeModel, withDataset("--query", "How does this repository work?", "--packet-only"), generalGuidance},
+		{"synthesize", "Build bounded evidence packets or use a qualified model.", ModeModel, append([]string{"--packet-only=true"}, withDataset("--query", "How does this repository work?")...), generalGuidance},
 		{"path", "Find a bounded path between graph nodes.", ModeRead, []string{"--help"}, generalGuidance},
 		{"impact", "Traverse bounded impact relationships.", ModeRead, []string{"--help"}, generalGuidance},
 		{"components", "List strongly connected components.", ModeRead, withDataset(), generalGuidance},

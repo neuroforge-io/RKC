@@ -22,6 +22,7 @@ import (
 	"strings"
 	"time"
 
+	rkcexport "github.com/neuroforge-io/RKC/internal/export"
 	graphindex "github.com/neuroforge-io/RKC/internal/graph"
 	"github.com/neuroforge-io/RKC/internal/model"
 	"github.com/neuroforge-io/RKC/internal/safeoutput"
@@ -67,6 +68,11 @@ type Dataset struct {
 	Integrity    string
 	LoadedAt     time.Time
 	staticSite   map[string]staticSiteAsset
+	// staticSiteTrusted is true only when the current RKC binary generated the
+	// browser assets in memory. A checksum-consistent imported atlas is valid
+	// read-only data, but it is not trusted code for a privileged workbench
+	// origin.
+	staticSiteTrusted bool
 }
 
 func Load(outputRoot string) (*Dataset, error) {
@@ -137,12 +143,23 @@ func Load(outputRoot string) (*Dataset, error) {
 	// cheap and deterministic to rebuild, and doing so prevents a stale or
 	// adversarial index from returning objects absent from the validated graph.
 	searchIndex := search.BuildFromBundle(bundle)
+	// Persisted site/* files are a portable export projection, not authenticated
+	// publisher code. A live server always regenerates executable browser assets
+	// from the current binary and the validated canonical bundle.
+	browserAssets, err := rkcexport.BrowserAssets(bundle, coverage)
+	if err != nil {
+		return nil, fmt.Errorf("load current browser: %w", err)
+	}
+	staticSite, err := captureGeneratedBrowser(browserAssets)
+	if err != nil {
+		return nil, fmt.Errorf("load current browser: %w", err)
+	}
 	dataset := &Dataset{
 		Root: root, Manifest: manifest, Coverage: coverage, Bundle: bundle,
 		NodeByID: make(map[string]model.Node, len(bundle.Nodes)), ArtifactByID: make(map[string]model.Artifact, len(bundle.Artifacts)),
 		EvidenceByID: make(map[string]model.Evidence, len(bundle.Evidence)), Graph: graphindex.Build(bundle.Nodes, bundle.Edges),
 		Search: searchIndex, Integrity: integrity.status, LoadedAt: time.Now().UTC(),
-		staticSite: captureStaticSite(integrity.files),
+		staticSite: staticSite, staticSiteTrusted: true,
 	}
 	for _, node := range bundle.Nodes {
 		dataset.NodeByID[node.ID] = node
@@ -373,28 +390,6 @@ func verifyDatasetExportManifest(root, manifestPath string) (datasetExportManife
 	return manifest, captured, nil
 }
 
-func captureStaticSite(files map[string][]byte) map[string]staticSiteAsset {
-	if len(files) == 0 {
-		return nil
-	}
-	assets := make(map[string]staticSiteAsset)
-	for name, data := range files {
-		if !strings.HasPrefix(name, "site/") {
-			continue
-		}
-		relative := strings.TrimPrefix(name, "site/")
-		if relative == "" {
-			continue
-		}
-		sum := sha256.Sum256(data)
-		assets[relative] = staticSiteAsset{data: data, digest: hex.EncodeToString(sum[:])}
-	}
-	if len(assets) == 0 {
-		return nil
-	}
-	return assets
-}
-
 func walkDatasetFiles(root string) (map[string]string, error) {
 	files := map[string]string{}
 	err := filepath.WalkDir(root, func(path string, entry os.DirEntry, walkErr error) error {
@@ -593,6 +588,18 @@ func (dataset *Dataset) Handler() http.Handler {
 // HandlerWithWorkbench adds the explicitly enabled local command surface while
 // preserving the read-only Handler contract for every existing caller.
 func (dataset *Dataset) HandlerWithWorkbench(workbench *Workbench) http.Handler {
+	if workbench != nil && !dataset.staticSiteTrusted {
+		// Defense in depth for callers other than cmd/rkc: never mount imported
+		// atlas JavaScript beside privileged APIs. The normal serve path prepares
+		// assets explicitly and reports generation errors; a direct library caller
+		// gets the APIs but no untrusted application shell if regeneration fails.
+		trusted := *dataset
+		if err := trusted.PrepareWorkbenchBrowser(); err != nil {
+			trusted.staticSite = nil
+			trusted.staticSiteTrusted = true
+		}
+		dataset = &trusted
+	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /api/v1/health", dataset.handleHealth)
 	mux.HandleFunc("GET /api/v1/manifest", dataset.handleManifest)
@@ -617,7 +624,7 @@ func (dataset *Dataset) HandlerWithWorkbench(workbench *Workbench) http.Handler 
 		mux.HandleFunc("DELETE /api/v1/workbench/jobs/{jobID}", workbench.handleCancelJob)
 	}
 	mux.HandleFunc("/", dataset.handleStaticSite)
-	return securityHeaders(mux)
+	return securityHeaders(mux, workbench != nil)
 }
 
 func (dataset *Dataset) handleStaticSite(w http.ResponseWriter, request *http.Request) {
@@ -1171,15 +1178,19 @@ func optionalSet(value string) map[string]struct{} {
 	}
 	return map[string]struct{}{value: {}}
 }
-func securityHeaders(next http.Handler) http.Handler {
+func securityHeaders(next http.Handler, noStoreOrigin bool) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
 		w.Header().Set("X-Content-Type-Options", "nosniff")
 		w.Header().Set("Referrer-Policy", "no-referrer")
 		w.Header().Set("X-Frame-Options", "DENY")
 		w.Header().Set("Cross-Origin-Resource-Policy", "same-origin")
 		w.Header().Set("Permissions-Policy", "camera=(), microphone=(), geolocation=()")
-		w.Header().Set("Content-Security-Policy", "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'")
-		if request.URL.Path == "/api" || strings.HasPrefix(request.URL.Path, "/api/") {
+		w.Header().Set("Content-Security-Policy", "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; worker-src 'none'; manifest-src 'none'; form-action 'none'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'")
+		// A workbench origin is privileged. Do not let a browser reuse any page,
+		// script, or other asset that it cached while the same loopback address
+		// was serving an imported read-only atlas. API responses remain
+		// non-cacheable for the portable read-only handler as well.
+		if noStoreOrigin || request.URL.Path == "/api" || strings.HasPrefix(request.URL.Path, "/api/") {
 			w.Header().Set("Cache-Control", "private, no-store")
 		}
 		next.ServeHTTP(w, request)

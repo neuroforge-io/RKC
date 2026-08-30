@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -50,7 +51,6 @@ func TestOpenForwardsOptionalScanFlagsBeforeCancellation(t *testing.T) {
 		"--config", filepath.Join(repository, "rkc.json"),
 		"--out", filepath.Join(repository, "atlas"),
 		"--state-dir", filepath.Join(repository, "state"),
-		"--python",
 		"--clean",
 		"--force=false",
 		"--scip-index", filepath.Join(repository, "index.scip"),
@@ -79,6 +79,52 @@ func TestLaunchBrowserUsesDesktopOpenerWithoutShell(t *testing.T) {
 	t.Setenv("PATH", directory)
 	if err := launchBrowser("http://127.0.0.1:8787"); err != nil {
 		t.Fatalf("launchBrowser = %v", err)
+	}
+}
+
+func TestLaunchBrowserPrivatelyKeepsCapabilityOutOfProcessArguments(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("desktop opener fixture is Linux-specific")
+	}
+	directory := t.TempDir()
+	marker := filepath.Join(directory, "argument")
+	opener := filepath.Join(directory, "xdg-open")
+	if err := os.WriteFile(opener, []byte("#!/bin/sh\nprintf '%s' \"$1\" > \"$RKC_BROWSER_MARKER\"\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", directory)
+	t.Setenv("RKC_BROWSER_MARKER", marker)
+	const capability = "private-bootstrap-capability"
+	if err := launchBrowserPrivately("http://127.0.0.1:8787#rkc-workbench=" + capability); err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.Now().Add(2 * time.Second)
+	var argument string
+	for time.Now().Before(deadline) {
+		data, err := os.ReadFile(marker)
+		if err == nil {
+			argument = string(data)
+			break
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	if !strings.HasPrefix(argument, "file:") || strings.Contains(argument, capability) {
+		t.Fatalf("desktop opener argument disclosed capability: %q", argument)
+	}
+	pageURL, err := url.Parse(argument)
+	if err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Lstat(pageURL.Path)
+	if err != nil || !info.Mode().IsRegular() || info.Mode().Perm()&0o077 != 0 {
+		t.Fatalf("private bootstrap page = %v, %v", info, err)
+	}
+	page, err := os.ReadFile(pageURL.Path)
+	if err != nil || !strings.Contains(string(page), capability) {
+		t.Fatalf("private bootstrap page content = %q, %v", page, err)
+	}
+	if err := launchBrowserPrivately("http://example.test/#rkc-workbench=x"); err == nil {
+		t.Fatal("remote browser target was accepted")
 	}
 }
 

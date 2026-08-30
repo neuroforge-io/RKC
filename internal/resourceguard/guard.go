@@ -1,7 +1,8 @@
-// Package resourceguard runs local model processes as strictly subordinate
-// workloads. On Linux it uses a transient user-systemd service plus kernel
-// scheduling and memory controls; unsupported platforms fail closed unless a
-// caller makes the explicit test-only unsafe opt-in.
+// Package resourceguard runs RKC first-run, workbench, and local-model
+// processes as strictly subordinate workloads. On Linux it uses a transient
+// user-systemd service plus kernel scheduling and memory controls; unsupported
+// platforms fail closed unless a caller makes the explicit test-only unsafe
+// opt-in.
 package resourceguard
 
 import (
@@ -27,7 +28,13 @@ var (
 	ErrRSSLimitExceeded = errors.New("model process exceeded its RSS limit")
 	// ErrHigherPriorityActive is returned before process spawn whenever an ERAIS
 	// training or evaluation workload is visible outside RKC's own ancestry.
-	ErrHigherPriorityActive = errors.New("higher-priority ERAIS work is active")
+	ErrHigherPriorityActive         = errors.New("higher-priority ERAIS work is active")
+	errLauncherExitedWithActiveUnit = errors.New("model launcher exited while its guarded unit was still active")
+)
+
+const (
+	unitQuiescenceWindow = 150 * time.Millisecond
+	unitQuiescencePoll   = 25 * time.Millisecond
 )
 
 // Config describes one guarded subprocess. Executable should already be an
@@ -119,7 +126,11 @@ func newCommand(ctx context.Context, config Config, priorityCheck func() error) 
 	// systemd-run from treating dollar-prefixed substrings as environment
 	// references and silently changing the command after validation.
 	arguments := []string{
-		"--user", "--wait", "--pipe", "--collect", "--quiet", "--expand-environment=no", "--service-type=exec", "--unit", unit,
+		// Preserve the caller's working directory so argument-vector paths retain
+		// their exact meaning when an installed RKC command self-reexecutes. The
+		// sanitized environment and explicit executable still prevent ambient
+		// shell startup or PATH rewriting inside the service.
+		"--user", "--wait", "--pipe", "--collect", "--quiet", "--same-dir", "--expand-environment=no", "--service-type=exec", "--unit", unit,
 		"--property", "CPUWeight=1",
 		"--property", "IOWeight=1",
 		"--property", "CPUQuota=100%",
@@ -136,7 +147,10 @@ func newCommand(ctx context.Context, config Config, priorityCheck func() error) 
 	arguments = append(arguments, config.Environment...)
 	arguments = append(arguments, config.Executable)
 	arguments = append(arguments, config.Arguments...)
-	command := exec.CommandContext(ctx, "systemd-run", arguments...)
+	// Run owns the complete transient-service lifecycle. Binding the launcher to
+	// the construction context would let os/exec kill and reap systemd-run before
+	// Run can terminate a still-active service and prove its cgroup inactive.
+	command := exec.Command("systemd-run", arguments...)
 	command.Env = ResourceGuardEnvironment()
 	return &Command{cmd: command, unit: unit, priorityCheck: priorityCheck, maximumRSSBytes: memoryMax}, nil
 }
@@ -150,6 +164,9 @@ func (command *Command) Run(ctx context.Context, stdout, stderr io.Writer) (int6
 	if ctx == nil {
 		return 0, errors.New("resource guard context is required")
 	}
+	if err := ctx.Err(); err != nil {
+		return 0, err
+	}
 	if command.priorityCheck != nil {
 		if err := command.priorityCheck(); err != nil {
 			return 0, err
@@ -157,6 +174,11 @@ func (command *Command) Run(ctx context.Context, stdout, stderr io.Writer) (int6
 	}
 	command.cmd.Stdout = stdout
 	command.cmd.Stderr = stderr
+	// The priority check can be non-trivial and cancellation can arrive while it
+	// runs. Never spawn after that cancellation has already become observable.
+	if err := ctx.Err(); err != nil {
+		return 0, err
+	}
 	if err := command.cmd.Start(); err != nil {
 		return 0, err
 	}
@@ -172,10 +194,15 @@ func (command *Command) Run(ctx context.Context, stdout, stderr io.Writer) (int6
 			if value := command.observedRSS(); value > peak {
 				peak = value
 			}
-			if command.unit != "" {
-				if inactiveErr := command.waitUnitInactive(2 * time.Second); inactiveErr != nil {
-					err = errors.Join(err, inactiveErr)
-				}
+			cleanedActiveUnit, cleanupErr := command.cleanupUnitAfterLauncherExit()
+			if ctx.Err() != nil && cleanupErr == nil {
+				return peak, ctx.Err()
+			}
+			if cleanupErr != nil {
+				return peak, errors.Join(err, ctx.Err(), cleanupErr)
+			}
+			if cleanedActiveUnit {
+				err = errors.Join(err, errLauncherExitedWithActiveUnit)
 			}
 			return peak, err
 		case <-ticker.C:
@@ -197,7 +224,10 @@ func (command *Command) Run(ctx context.Context, stdout, stderr io.Writer) (int6
 				}
 			}
 		case <-ctx.Done():
-			return peak, errors.Join(ctx.Err(), command.stop(done))
+			if stopErr := command.stop(done); stopErr != nil {
+				return peak, errors.Join(ctx.Err(), stopErr)
+			}
+			return peak, ctx.Err()
 		}
 	}
 }
@@ -235,36 +265,144 @@ func (command *Command) observedRSS() int64 {
 }
 
 func (command *Command) stop(done <-chan error) error {
-	var failures []error
-	if err := command.signalAll(syscall.SIGTERM); err != nil {
-		failures = append(failures, fmt.Errorf("terminate model unit: %w", err))
-	}
+	termUnitErr := command.signalUnit(syscall.SIGTERM)
+	termLauncherErr := command.signalLauncher(syscall.SIGTERM)
+	launcherDone := false
 	timer := time.NewTimer(250 * time.Millisecond)
-	defer timer.Stop()
 	select {
 	case <-done:
-		if command.unit != "" {
-			if err := command.waitUnitInactive(2 * time.Second); err != nil {
-				failures = append(failures, err)
-			}
-		}
-		return errors.Join(failures...)
+		launcherDone = true
 	case <-timer.C:
 	}
-	if err := command.signalAll(syscall.SIGKILL); err != nil {
-		failures = append(failures, fmt.Errorf("kill model unit: %w", err))
-	}
-	select {
-	case <-done:
-	case <-time.After(2 * time.Second):
-		failures = append(failures, errors.New("model launcher did not reap after SIGKILL"))
-	}
-	if command.unit != "" {
-		if err := command.waitUnitInactive(2 * time.Second); err != nil {
-			failures = append(failures, err)
+	if !timer.Stop() {
+		select {
+		case <-timer.C:
+		default:
 		}
 	}
+
+	var preReapUnitErr error
+	if unitErr := command.waitUnitInactive(250 * time.Millisecond); unitErr != nil {
+		killUnitErr := command.signalUnit(syscall.SIGKILL)
+		if inactiveErr := command.waitUnitInactive(2 * time.Second); inactiveErr != nil {
+			preReapUnitErr = errors.Join(
+				wrapSignalError("terminate model unit", termUnitErr),
+				wrapSignalError("kill model unit", killUnitErr),
+				inactiveErr,
+			)
+		}
+	}
+	if !launcherDone {
+		// Killing the unit normally releases systemd-run --wait. Give that path a
+		// brief chance to reap before forcibly killing the launcher itself.
+		select {
+		case <-done:
+			launcherDone = true
+		case <-time.After(250 * time.Millisecond):
+		}
+	}
+	var failures []error
+	if !launcherDone {
+		killLauncherErr := command.signalLauncher(syscall.SIGKILL)
+		select {
+		case <-done:
+			launcherDone = true
+		case <-time.After(2 * time.Second):
+			failures = append(failures,
+				wrapSignalError("terminate model launcher", termLauncherErr),
+				wrapSignalError("kill model launcher", killLauncherErr),
+				errors.New("model launcher did not reap after SIGKILL"),
+			)
+		}
+	}
+	// systemd-run can finish registering a transient unit while its own process
+	// is being terminated. A pre-reap "inactive" result is therefore not a
+	// lifecycle proof. Once the launcher is definitively reaped, recheck and
+	// close any unit that appeared during that window. If reaping failed this is
+	// still a best-effort cleanup, while the launcher failure remains explicit.
+	_, finalUnitErr := command.cleanupUnitAfterLauncherExit()
+	if finalUnitErr != nil {
+		failures = append(failures, preReapUnitErr, finalUnitErr)
+	}
 	return errors.Join(failures...)
+}
+
+// cleanupUnitAfterLauncherExit closes the otherwise-dangerous gap where the
+// systemd-run client exits while its transient service remains alive. The
+// boolean reports that cleanup was required; a nil error proves the unit is
+// inactive after bounded TERM/KILL escalation.
+func (command *Command) cleanupUnitAfterLauncherExit() (bool, error) {
+	if command == nil || command.unit == "" {
+		return false, nil
+	}
+	// A single inactive/unknown response is not sufficient after systemd-run
+	// exits: the manager can publish an already-delivered transient-unit request
+	// just after that observation. Require repeated settled observations across a
+	// short window before declaring the lifecycle closed.
+	if err := command.waitUnitQuiescent(unitQuiescenceWindow); err == nil {
+		return false, nil
+	}
+	termErr := command.signalUnit(syscall.SIGTERM)
+	if err := command.waitUnitInactive(250 * time.Millisecond); err == nil {
+		if quietErr := command.waitUnitQuiescent(unitQuiescenceWindow); quietErr == nil {
+			return true, nil
+		}
+	}
+	var failures []error
+	for attempt := 1; attempt <= 2; attempt++ {
+		killErr := command.signalUnit(syscall.SIGKILL)
+		inactiveErr := command.waitUnitInactive(2 * time.Second)
+		if inactiveErr == nil {
+			if quietErr := command.waitUnitQuiescent(unitQuiescenceWindow); quietErr == nil {
+				return true, nil
+			} else {
+				inactiveErr = quietErr
+			}
+		}
+		failures = append(failures,
+			wrapSignalError(fmt.Sprintf("kill model unit after launcher exit (attempt %d)", attempt), killErr),
+			inactiveErr,
+		)
+	}
+	return true, errors.Join(
+		wrapSignalError("terminate model unit after launcher exit", termErr),
+		errors.Join(failures...),
+	)
+}
+
+func (command *Command) waitUnitQuiescent(window time.Duration) error {
+	if command == nil || command.unit == "" {
+		return nil
+	}
+	if window <= 0 {
+		return errors.New("model unit quiescence window must be positive")
+	}
+	deadline := time.Now().Add(window)
+	observations := 0
+	for {
+		if err := command.waitUnitInactive(unitQuiescencePoll); err != nil {
+			return fmt.Errorf("prove model unit quiescent after %d settled observations: %w", observations, err)
+		}
+		observations++
+		remaining := time.Until(deadline)
+		if remaining <= 0 && observations >= 3 {
+			return nil
+		}
+		delay := unitQuiescencePoll
+		if remaining > 0 && remaining < delay {
+			delay = remaining
+		}
+		if delay > 0 {
+			time.Sleep(delay)
+		}
+	}
+}
+
+func wrapSignalError(operation string, err error) error {
+	if err == nil {
+		return nil
+	}
+	return fmt.Errorf("%s: %w", operation, err)
 }
 
 func (command *Command) waitUnitInactive(timeout time.Duration) error {
@@ -296,27 +434,30 @@ func (command *Command) waitUnitInactive(timeout time.Duration) error {
 	}
 }
 
-func (command *Command) signalAll(signal syscall.Signal) error {
-	var failures []error
-	if command.unit != "" {
-		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-		defer cancel()
-		name := "SIGTERM"
-		if signal == syscall.SIGKILL {
-			name = "SIGKILL"
-		}
-		stop := exec.CommandContext(ctx, "systemctl", "--user", "kill", "--kill-whom=all", "--signal="+name, command.unit)
-		stop.Env = ResourceGuardEnvironment()
-		if err := stop.Run(); err != nil {
-			failures = append(failures, err)
-		}
+func (command *Command) signalUnit(signal syscall.Signal) error {
+	if command == nil || command.unit == "" {
+		return nil
 	}
-	if command.cmd != nil && command.cmd.Process != nil {
-		if err := command.cmd.Process.Signal(signal); err != nil && !errors.Is(err, os.ErrProcessDone) {
-			failures = append(failures, err)
-		}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	name := "SIGTERM"
+	if signal == syscall.SIGKILL {
+		name = "SIGKILL"
 	}
-	return errors.Join(failures...)
+	stop := exec.CommandContext(ctx, "systemctl", "--user", "kill", "--kill-whom=all", "--signal="+name, command.unit)
+	stop.Env = ResourceGuardEnvironment()
+	return stop.Run()
+}
+
+func (command *Command) signalLauncher(signal syscall.Signal) error {
+	if command == nil || command.cmd == nil || command.cmd.Process == nil {
+		return nil
+	}
+	err := command.cmd.Process.Signal(signal)
+	if errors.Is(err, os.ErrProcessDone) {
+		return nil
+	}
+	return err
 }
 
 // ProcessRSS returns the resident bytes reported by Linux procfs.

@@ -162,10 +162,32 @@ rkc open .
 
 `open` performs the scan and locked integrity/quality checks, starts the
 loopback read-only browser, and opens the default desktop browser when one is
-available. Press Ctrl-C in the terminal to stop it. Use `open --no-browser` on
+available. On Linux, the installed command first re-executes itself inside the
+exact one-core, nice-19, idle-I/O, 4 GiB pressure / 4.5 GiB hard-memory envelope;
+admission and continuous monitoring yield to visible ERAIS or evaluation work
+before RKC can create an atlas, cache, journal, or snapshot. The browser opener
+runs outside that disposable service, so stopping RKC does not place the
+desktop browser inside RKC's cgroup.
+
+Press Ctrl-C in the terminal to stop cleanly. Use `open --no-browser` on
 headless hosts; the URL is still printed. The command accepts any local folder,
 not only Git worktrees, and places the atlas in `<folder>/.rkc` while retaining
-immutable snapshots in `<folder>/.rkc-state`.
+immutable snapshots in `<folder>/.rkc-state`. On a trusted single-user Linux
+checkout, `rkc open --workbench <folder>` explicitly adds the guarded local
+command center. The static first-run path remains the portable default on
+macOS and Windows while equivalent native workbench admission remains open.
+
+The opt-in workbench is a trusted-user local command launcher, not a filesystem
+sandbox. Its session token grants RKC commands the invoking account's file
+authority; `--workspace` sets the working directory and defaults. Keep static
+mode for untrusted users or content, and launch the workbench only on a trusted
+single-user account.
+
+The opt-in workbench capability never appears in a process argument or ordinary
+server URL. The guarded child atomically writes it into an owner-private
+readiness receipt; the outer `open` process validates that bounded receipt and
+launches an owner-private redirect outside the cgroup. The browser removes the
+fragment before exchanging it once for the same-origin session token.
 
 Maintainers can pair the atlas with a deterministic quality/change report:
 `make quality-index` writes `.rkc-quality/index.json` and `index.md`, including
@@ -175,7 +197,9 @@ coverage, and Git deltas.
 The dependency-light profile does not need a model, daemon, database server, or
 Python sandbox. `quickstart` remains the equivalent headless compile-and-check
 command and prints the exact search, browser, and cited-answer entry points.
-Pass `--python` only after `rkc doctor --strict --repository .` passes.
+Protected `open` deliberately rejects `--python` until the adapter and parent
+scan can prove one aggregate ceiling; the deterministic Go/TypeScript/document
+path remains complete without it.
 
 If a compiler indexer has produced `index.scip`, add compiler-grade semantics
 without changing the safe scan boundary:
@@ -223,8 +247,9 @@ the portable profile.
 - Python 3.11 or later plus `requirements-dev.txt` for repository validation;
 - Git for repository metadata and remote acquisition;
 - `curl` for the HTTP smoke test;
-- on Linux only, a reachable user-systemd manager for the optional Python AST
-  adapter and the guarded `safe-*` development targets.
+- on Linux only, a reachable user-systemd manager for protected `rkc open`, the
+  optional Python AST adapter, the local workbench, and guarded `safe-*`
+  development targets.
 
 Prebuilt RKC binaries do not require the Go toolchain. A local-directory scan
 with `--no-python` does not require Python, Git, a model runtime, or network
@@ -297,22 +322,51 @@ Open `http://127.0.0.1:8787`.
 
 The served GUI starts from bounded overview, diagnostic, and entity windows and
 uses the local API for search, node detail, evidence, and graph neighbourhoods;
-it does not transfer the whole repository graph at browser startup. To enable
-the complete command center for a trusted local checkout, keep the server
-loopback-only and start it inside RKC's fail-closed resource envelope:
+it does not transfer the whole repository graph at browser startup. For a
+trusted single-user Linux checkout, the preferred protected command-center
+entry point is:
 
 ```sh
+rkc open --workbench .
+```
+
+For an existing atlas, the low-level advanced route is to
+keep the server loopback-only and start it inside RKC's fail-closed resource
+envelope. Direct `serve --workbench` requires a nonexistent `--ready-file`
+inside an owner-private directory and rejects `--open`; a trusted launcher must
+consume the receipt without logging its `browser_url` capability:
+
+```sh
+rkc_ready_directory=$(mktemp -d)
+chmod 700 "$rkc_ready_directory"
 scripts/with-rkc-limits.sh ./bin/rkc serve \
   --dir /tmp/rkc-output \
-  --addr 127.0.0.1:8787 \
+  --addr 127.0.0.1:0 \
   --workbench \
-  --workspace .
+  --workspace . \
+  --ready-file "$rkc_ready_directory/ready.json"
 ```
 
 Workbench jobs use exact argument arrays without a shell, require a random
-same-origin token, run one at a time, cap captured output, and inherit the
-one-core / 4.5 GiB / idle-I/O envelope. Static exports and ordinary `serve`
-remain read-only.
+same-origin token established through the one-time bootstrap, run one at a
+time, cap captured output, and inherit the one-core / 4.5 GiB / idle-I/O
+envelope. Static exports and ordinary `serve` remain read-only. Commands that
+could create a separately managed Python or model unit currently fail closed in
+the workbench until one aggregate session ceiling is proved; their normal
+guarded CLI paths remain available.
+
+The low-level route checks ERAIS before and after atlas preparation and during
+the server lifetime, while remaining cgroup-subordinate throughout. Prefer
+`rkc open --workbench` when continuous outer-process pre-emption during the
+initial atlas load is required.
+
+Workbench serving always uses an OS-selected ephemeral loopback port. Combined
+with browser policy that forbids workers and manifests and with current-binary
+UI regeneration, this prevents browser code left by an older or imported atlas
+on the familiar read-only origin from intercepting a privileged session.
+Every live `serve` path regenerates executable UI bytes from the current RKC
+binary and validated bundle; persisted `site/` files remain a portable static
+export but are never treated as authenticated publisher code by the server.
 
 For a durable canonical store, place the database beneath an owner-only
 directory and use `--database` instead of `--state-dir`:
@@ -622,9 +676,11 @@ multi-tenant internet service; full worker isolation remains a production gate.
 ## License
 
 RKC-owned work is MIT-licensed and may be used in commercial products and
-derivative works. Redistributors should retain [`LICENSE`](LICENSE) and
-[`NOTICE`](NOTICE) and credit NeuroForgeIO and the RKC contributors. Third-party
-and model terms remain separate and are listed in
+derivative works. The MIT License requires copies or substantial portions to
+retain its copyright and permission notice. NeuroForgeIO additionally requests
+that redistributions retain [`NOTICE`](NOTICE) and credit NeuroForgeIO and the
+RKC contributors; this request adds no restriction. Third-party and model terms
+remain separate and are listed in
 [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md).
 Third-party compilers, parsers, language servers, grammars, plugins, and model
 weights retain their own licenses and are not bundled by this project.

@@ -146,6 +146,41 @@ func TestWorkbenchManagedUnitRiskClassification(t *testing.T) {
 	}
 }
 
+func TestWorkbenchExecutionRejectsCommandsThatCanEscapeAggregateCeiling(t *testing.T) {
+	for _, arguments := range [][]string{
+		{"answer"},
+		{"synthesize", "--dir", ".rkc"},
+		{"synthesize", "--query", "--packet-only=true", "--dir", ".rkc"},
+		{"synthesize", "--packet-only=true", "--packet-only=false", "--dir", ".rkc"},
+		{"query", "--mode", "semantic", "question"},
+		{"query", "-mode", "semantic", "question"},
+		{"query", "-embedding-model", "model.gguf", "question"},
+		{"scan", "--python", "."},
+		{"scan", "--no-python=false", "."},
+		{"scan", "-no-plugins=false", "."},
+		{"quickstart", "-python", "."},
+		{"quickstart", "--python=true", "."},
+	} {
+		if err := validateWorkbenchExecution(arguments); err == nil || !strings.Contains(err.Error(), "aggregate resource ceiling") {
+			t.Errorf("managed-unit command %q was not rejected: %v", arguments, err)
+		}
+	}
+	for _, arguments := range [][]string{
+		{"help"},
+		{"query", "--dir", ".rkc", "question"},
+		{"query", "-mode=lexical", "question"},
+		{"synthesize", "--packet-only", "--dir", ".rkc"},
+		{"synthesize", "-packet-only=true", "--dir", ".rkc"},
+		{"scan", "--no-python", "."},
+		{"scan", "-no-plugins=true", "."},
+		{"quickstart", "--python=false", "."},
+	} {
+		if err := validateWorkbenchExecution(arguments); err != nil {
+			t.Errorf("bounded command %q was rejected: %v", arguments, err)
+		}
+	}
+}
+
 func TestWorkbenchEnvironmentRejectsUnsafeSystemdAndCGOState(t *testing.T) {
 	if _, err := sanitizedWorkbenchEnvironment([]string{"CGO_ENABLED=invalid"}); err == nil {
 		t.Fatal("invalid CGO_ENABLED was accepted")
@@ -203,6 +238,7 @@ func TestWorkbenchRunsOneAuthenticatedBoundedCommand(t *testing.T) {
 	}
 
 	sessionRequest := httptest.NewRequest(http.MethodGet, "http://127.0.0.1/api/v1/workbench/session", nil)
+	sessionRequest.Header.Set(workbenchBootstrapHeader, workbench.bootstrap)
 	sessionResponse := httptest.NewRecorder()
 	workbench.handleSession(sessionResponse, sessionRequest)
 	if sessionResponse.Code != http.StatusOK {
@@ -295,6 +331,11 @@ func TestWorkbenchRejectsCrossOriginAndUnsupportedCommands(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	bootstrap := workbench.bootstrap
+	browserURL, err := workbench.BrowserURL("http://127.0.0.1:8787")
+	if err != nil || !strings.Contains(browserURL, "#"+workbenchBootstrapFragment+"=") || strings.Contains(strings.Split(browserURL, "#")[0], workbench.bootstrap) {
+		t.Fatalf("protected browser URL = %q, %v", browserURL, err)
+	}
 	request := httptest.NewRequest(http.MethodPost, "http://127.0.0.1/api/v1/workbench/jobs", strings.NewReader(`{"args":["help"]}`))
 	request.Header.Set("Origin", "http://evil.example")
 	request.Header.Set("X-RKC-Workbench-Token", workbench.token)
@@ -303,21 +344,42 @@ func TestWorkbenchRejectsCrossOriginAndUnsupportedCommands(t *testing.T) {
 	if response.Code != http.StatusForbidden {
 		t.Fatalf("cross-origin status = %d", response.Code)
 	}
+	crossOriginSession := httptest.NewRequest(http.MethodGet, "http://127.0.0.1/api/v1/workbench/session", nil)
+	crossOriginSession.Header.Set("Origin", "http://evil.example")
+	crossOriginSession.Header.Set("Sec-Fetch-Site", "cross-site")
+	crossOriginSession.Header.Set(workbenchBootstrapHeader, bootstrap)
+	crossOriginResponse := httptest.NewRecorder()
+	workbench.handleSession(crossOriginResponse, crossOriginSession)
+	if crossOriginResponse.Code != http.StatusForbidden || strings.Contains(crossOriginResponse.Body.String(), workbench.token) {
+		t.Fatalf("cross-origin session status=%d body=%s", crossOriginResponse.Code, crossOriginResponse.Body.String())
+	}
+	unauthenticated := httptest.NewRecorder()
+	workbench.handleSession(unauthenticated, httptest.NewRequest(http.MethodGet, "http://127.0.0.1/api/v1/workbench/session", nil))
+	if unauthenticated.Code != http.StatusForbidden || strings.Contains(unauthenticated.Body.String(), workbench.token) {
+		t.Fatalf("unauthenticated loopback session status=%d body=%s", unauthenticated.Code, unauthenticated.Body.String())
+	}
 	sameOriginSession := httptest.NewRequest(http.MethodGet, "http://127.0.0.1/api/v1/workbench/session", nil)
 	sameOriginSession.Header.Set("Origin", "http://127.0.0.1")
 	sameOriginSession.Header.Set("Sec-Fetch-Site", "same-origin")
+	sameOriginSession.Header.Set(workbenchBootstrapHeader, bootstrap)
 	sameOriginResponse := httptest.NewRecorder()
 	workbench.handleSession(sameOriginResponse, sameOriginSession)
 	if sameOriginResponse.Code != http.StatusOK || !strings.Contains(sameOriginResponse.Body.String(), workbench.token) {
-		t.Fatalf("same-origin session status=%d body=%s", sameOriginResponse.Code, sameOriginResponse.Body.String())
+		t.Fatalf("same-origin bootstrap status=%d body=%s", sameOriginResponse.Code, sameOriginResponse.Body.String())
 	}
-	sessionRequest := httptest.NewRequest(http.MethodGet, "http://127.0.0.1/api/v1/workbench/session", nil)
-	sessionRequest.Header.Set("Origin", "http://evil.example")
-	sessionRequest.Header.Set("Sec-Fetch-Site", "cross-site")
-	sessionResponse := httptest.NewRecorder()
-	workbench.handleSession(sessionResponse, sessionRequest)
-	if sessionResponse.Code != http.StatusForbidden || strings.Contains(sessionResponse.Body.String(), workbench.token) {
-		t.Fatalf("cross-origin session status=%d body=%s", sessionResponse.Code, sessionResponse.Body.String())
+	replayed := httptest.NewRequest(http.MethodGet, "http://127.0.0.1/api/v1/workbench/session", nil)
+	replayed.Header.Set(workbenchBootstrapHeader, bootstrap)
+	replayedResponse := httptest.NewRecorder()
+	workbench.handleSession(replayedResponse, replayed)
+	if replayedResponse.Code != http.StatusForbidden {
+		t.Fatalf("replayed bootstrap status=%d body=%s", replayedResponse.Code, replayedResponse.Body.String())
+	}
+	reload := httptest.NewRequest(http.MethodGet, "http://127.0.0.1/api/v1/workbench/session", nil)
+	reload.Header.Set(workbenchTokenHeader, workbench.token)
+	reloadResponse := httptest.NewRecorder()
+	workbench.handleSession(reloadResponse, reload)
+	if reloadResponse.Code != http.StatusOK {
+		t.Fatalf("session-token reload status=%d body=%s", reloadResponse.Code, reloadResponse.Body.String())
 	}
 }
 
@@ -598,6 +660,66 @@ wait "$child"
 	}
 	if workbenchProcessAlive(childPID) {
 		t.Fatalf("descendant %d survived process-group cancellation", childPID)
+	}
+}
+
+func TestWorkbenchCompletedLeaderWithSurvivingChildIsFailedAndCleaned(t *testing.T) {
+	if !workbenchProcessGroupsSupported() {
+		t.Skip("process groups are unavailable on this platform")
+	}
+	workspace := t.TempDir()
+	pidFile := filepath.Join(workspace, "child.pid")
+	executable := filepath.Join(t.TempDir(), "orphan-on-success")
+	script := `#!/bin/sh
+sleep 30 </dev/null >/dev/null 2>&1 &
+child=$!
+printf '%s' "$child" > "$2"
+exit 0
+`
+	if err := os.WriteFile(executable, []byte(script), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	workbench, err := NewWorkbench(WorkbenchConfig{
+		Workspace: workspace, Executable: executable, Timeout: 5 * time.Second,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	job, err := workbench.createJob([]string{"help", pidFile})
+	if err != nil {
+		t.Fatal(err)
+	}
+	workbench.runJob(job.ID)
+
+	data, err := os.ReadFile(pidFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	childPID, err := strconv.Atoi(strings.TrimSpace(string(data)))
+	if err != nil || childPID <= 0 {
+		t.Fatalf("child pid = %q, %v", data, err)
+	}
+	completed, ok := workbench.jobSnapshot(job.ID)
+	if !ok {
+		t.Fatal("completed job disappeared")
+	}
+	if completed.Status != "failed" || completed.ExitCode == nil || *completed.ExitCode != 0 ||
+		!strings.Contains(completed.Error, "descendant processes remained") {
+		t.Fatalf("orphaning command = %+v", completed)
+	}
+	if workbenchProcessAlive(childPID) {
+		t.Fatalf("descendant %d survived successful-leader cleanup", childPID)
+	}
+}
+
+func TestWorkbenchCompletionCleanupFailureStatusIsTruthful(t *testing.T) {
+	status, message := workbenchCompletionCleanupFailure(nil, true, nil)
+	if status != "failed" || !strings.Contains(message, "process group was terminated") {
+		t.Fatalf("proven cleanup outcome = %q, %q", status, message)
+	}
+	status, message = workbenchCompletionCleanupFailure(nil, true, ErrWorkbenchCleanupUnproven)
+	if status != "cleanup_failed" || !strings.Contains(message, "could not be proven") {
+		t.Fatalf("unproven cleanup outcome = %q, %q", status, message)
 	}
 }
 

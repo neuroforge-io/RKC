@@ -76,10 +76,18 @@ class ShellWorkflowTests(unittest.TestCase):
             scripts = {
                 "pgrep": (
                     "#!/bin/sh\n"
-                    "printf '%s\\n' '999999 python /private/project/erais/train.py "
-                    f"--token {sentinel}'\n"
+                    "[ \"$1\" = -f ] || exit 98\n"
+                    "case \"$2\" in\n"
+                    "  *python*) printf '%s\\n' 888888 ;;\n"
+                    "  *) printf '%s\\n' 999999 'NOT_A_PID /private/project/erais/train.py "
+                    f"--token {sentinel}' '123x' ;;\n"
+                    "esac\n"
                 ),
                 "ps": "#!/bin/sh\nprintf '1\\n'\n",
+                "readlink": (
+                    "#!/bin/sh\n"
+                    f"[ \"$1\" = /proc/888888/cwd ] && printf '%s\\n' '/private/{sentinel}/erais'\n"
+                ),
             }
             for name in ("systemd-run", "ionice", "nice", "choom"):
                 scripts[name] = "#!/bin/sh\nexit 0\n"
@@ -103,8 +111,10 @@ class ShellWorkflowTests(unittest.TestCase):
             )
         self.assertEqual(result.returncode, 75, result.stderr)
         self.assertIn("pid=999999 class=erais", result.stderr)
+        self.assertIn("pid=888888 class=erais", result.stderr)
         self.assertNotIn(sentinel, result.stderr)
         self.assertNotIn("/private/project", result.stderr)
+        self.assertNotIn("pid=NOT_A_PID", result.stderr)
 
 
 if __name__ == "__main__":

@@ -69,12 +69,12 @@ func TestEnvelopeParsingRejectsAmbiguousPathsAndSchedulingFailure(t *testing.T) 
 			t.Fatalf("invalid cgroup record was accepted: %q", record)
 		}
 	}
-	for _, unit := range []string{"", "rkc-low-.scope", "rkc-low-name.scope", "rkc-low-12.slice", "other-12.scope"} {
+	for _, unit := range []string{"", "rkc-low-.scope", "rkc-low-name.scope", "rkc-low-12-name.service", "rkc-low-12-.service", "rkc-low-12.slice", "other-12.scope"} {
 		if validLowPriorityUnit(unit) {
 			t.Fatalf("invalid low-priority unit was accepted: %q", unit)
 		}
 	}
-	if !validLowPriorityUnit("rkc-low-12.scope") || !validLowPriorityUnit("rkc-low-99.service") {
+	if !validLowPriorityUnit("rkc-low-12.scope") || !validLowPriorityUnit("rkc-low-99.service") || !validLowPriorityUnit("rkc-low-12-345.service") {
 		t.Fatal("valid low-priority unit was rejected")
 	}
 	fixture := newEnvelopeFixture(t)

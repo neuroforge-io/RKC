@@ -1067,7 +1067,7 @@ const siteHTML = `<!doctype html>
     <div class="loading" role="status" aria-live="polite">Loading repository data…</div>
   </section>
 </main>
-<footer><span id="snapshot"></span><span>Evidence-backed atlas · NeuroForgeIO / RKC · MIT · bounded local workbench when explicitly enabled.</span></footer>
+<footer><span id="snapshot"></span><span>Evidence-backed atlas · NeuroForgeIO / RKC · MIT · static read-only by default · protected workbench by explicit opt-in.</span></footer>
 <noscript><div class="noscript">This atlas needs JavaScript to load its local snapshot data.</div></noscript>
 <script src="./app.js" defer></script>
 </body>
@@ -1405,16 +1405,36 @@ function renderHeader(){
   if(state.api){$('runtime-status').textContent='Bounded local API · read only';$('runtime-status').className='connection live'}
 }
 
+function takeWorkbenchBootstrap(){
+  const fragment=location.hash.startsWith('#')?location.hash.slice(1):'';
+  if(!fragment)return '';
+  const values=new URLSearchParams(fragment),bootstrap=values.get('rkc-workbench')||'';
+  if(!bootstrap)return '';
+  values.delete('rkc-workbench');
+  const remainder=values.toString();
+  history.replaceState(null,'',location.pathname+location.search+(remainder?'#'+remainder:''));
+  return bootstrap;
+}
+
+function storedWorkbenchToken(){try{return sessionStorage.getItem('rkc-workbench-token')||''}catch(_error){return ''}}
+function storeWorkbenchToken(token){try{sessionStorage.setItem('rkc-workbench-token',token)}catch(_error){}}
+function clearWorkbenchToken(){try{sessionStorage.removeItem('rkc-workbench-token')}catch(_error){}}
+
 async function probeWorkbench(){
   try{
-    const response=await fetch('/api/v1/workbench/session',{cache:'no-store',headers:{Accept:'application/json'}});
+    const bootstrap=takeWorkbenchBootstrap(),stored=storedWorkbenchToken(),headers={Accept:'application/json'};
+    if(bootstrap)headers['X-RKC-Workbench-Bootstrap']=bootstrap;
+    else if(stored)headers['X-RKC-Workbench-Token']=stored;
+    const response=await fetch('/api/v1/workbench/session',{cache:'no-store',headers});
     if(!response.ok)throw new Error('unavailable');
     const session=await response.json();
     if(!session?.enabled||!session.token||!Array.isArray(session.commands))throw new Error('invalid workbench session');
+    storeWorkbenchToken(session.token);
     state.workbench=session;
     $('runtime-status').textContent='Protected local workbench';
     $('runtime-status').className='connection enabled';
   }catch(_error){
+    clearWorkbenchToken();
     state.workbench={enabled:false,commands:defaultCommands()};
   }
 }
@@ -1554,8 +1574,12 @@ function renderCommands(){
   const session=state.workbench||{enabled:false,commands:defaultCommands()},commands=session.commands||defaultCommands();
   if(!commands.some(item=>item.name===state.commandName))state.commandName=commands[0]?.name||'help';
   const enabled=Boolean(session.enabled);
-  const workspace=enabled?session.workspace:'Start with rkc serve --workbench inside the protected resource wrapper.';
+  const workspace=enabled?session.workspace:'Start with rkc open --workbench on a supported Linux host.';
   $('content').innerHTML='<div class="card"><span class="eyebrow">Complete CLI surface</span><h2>Command center</h2><p>Build, inspect, search, explain, validate, and maintain RKC from one responsive workspace. Commands are passed as exact argument arrays—never through a shell—and only one job runs at a time.</p><div class="grid">'+stat('Execution',enabled?'Enabled · token authenticated':'Read-only preview')+stat('Workspace',workspace)+stat('Resource policy','1 CPU · 4.5 GiB hard ceiling')+stat('Output bound',enabled?number(session.maximum_output_bytes)+' bytes':'2 MiB')+'</div></div><div class="command-layout"><div class="card"><h3>Choose a workflow</h3><div class="command-palette" id="command-palette">'+commands.map(command=>'<button type="button" class="command-choice '+(command.name===state.commandName?'active':'')+'" data-command="'+esc(command.name)+'"><span class="command-mode">'+esc(command.mode)+'</span><strong>'+esc(command.name)+'</strong><span>'+esc(command.description)+'</span></button>').join('')+'</div></div><div class="card"><span class="kind">rkc '+esc(state.commandName)+'</span><h3>Arguments</h3><label class="search-label" for="command-args">Enter the same options and values you would put after the command</label><textarea id="command-args" spellcheck="false" aria-describedby="command-guidance" placeholder="--help">'+esc(defaultCommandArgs(state.commandName))+'</textarea><p id="command-guidance" class="help-text">'+esc(commandGuidance(state.commandName))+'</p><pre id="command-preview">'+esc(commandPreview())+'</pre><div class="button-row"><button type="button" class="secondary" id="copy-command">Copy command</button><button type="button" class="primary" id="run-command" '+(enabled?'':'disabled')+'>Run protected command</button><button type="button" class="danger" id="cancel-command" hidden>Cancel command</button><span id="command-status" class="muted" role="status" aria-live="polite">'+(enabled?'Ready':'Execution is disabled in a static or read-only server.')+'</span></div><div id="job-meta" class="job-meta" hidden aria-label="Current job details"></div><h3>Job output</h3><pre id="job-output" class="job-output" tabindex="0" aria-live="polite">No command has run in this session.</pre></div></div>';
+  const authority=enabled?(session.authority_notice||'Trusted-user launcher: commands have the invoking account’s filesystem authority; this workspace is not a security sandbox.'):'Execution is disabled. Static preview cannot modify the host.';
+  const authorityNotice=document.createElement('p');authorityNotice.className='diagnostic warning';
+  const authorityLabel=document.createElement('b');authorityLabel.textContent='Authority: ';authorityNotice.append(authorityLabel,document.createTextNode(authority));
+  $('content').querySelector('.card .grid').before(authorityNotice);
   $('command-preview').textContent=commandPreview();
   for(const button of $('command-palette').querySelectorAll('[data-command]'))button.addEventListener('click',()=>{state.commandName=button.dataset.command;renderCommands()});
   $('command-args').addEventListener('input',()=>{$('command-preview').textContent=commandPreview()});

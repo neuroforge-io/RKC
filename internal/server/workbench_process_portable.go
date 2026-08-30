@@ -40,6 +40,16 @@ func terminateWorkbenchProcess(command *exec.Cmd, completed <-chan error) error 
 	return ErrWorkbenchCleanupUnproven
 }
 
+// Platforms without supported process groups can only prove completion of the
+// direct process. Cancellation therefore remains fail-closed for descendants,
+// while an already reaped direct command has satisfied the available scope.
+func verifyWorkbenchProcessCompletion(command *exec.Cmd) (bool, error) {
+	if command == nil || command.Process == nil || command.ProcessState == nil {
+		return false, ErrWorkbenchCleanupUnproven
+	}
+	return false, nil
+}
+
 func workbenchProcessGroupsSupported() bool {
 	return false
 }

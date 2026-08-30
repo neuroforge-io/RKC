@@ -99,6 +99,10 @@ func TestHandlerAllAPIRoutesAndSecurityHeaders(t *testing.T) {
 			if response.Header().Get("Content-Security-Policy") == "" || response.Header().Get("Permissions-Policy") == "" {
 				t.Error("missing security policy headers")
 			}
+			csp := response.Header().Get("Content-Security-Policy")
+			if !strings.Contains(csp, "worker-src 'none'") || !strings.Contains(csp, "manifest-src 'none'") {
+				t.Errorf("CSP permits persistent browser workers or manifests: %q", csp)
+			}
 		})
 	}
 }
@@ -207,7 +211,7 @@ func TestLoadCanonicalSiteFallbackAndErrors(t *testing.T) {
 	}
 }
 
-func TestVerifiedStaticSiteIsCapturedAndCannotBeReplacedAfterLoad(t *testing.T) {
+func TestLiveStaticSiteIsRegeneratedAndCannotBeReplacedAfterLoad(t *testing.T) {
 	t.Parallel()
 	root := writeVerifiedServerAtlas(t, richDataset().Bundle)
 	indexPath := filepath.Join(root, "site", "index.html")
@@ -220,7 +224,7 @@ func TestVerifiedStaticSiteIsCapturedAndCannotBeReplacedAfterLoad(t *testing.T) 
 		t.Fatal(err)
 	}
 	if len(dataset.staticSite) == 0 {
-		t.Fatal("verified static site was not captured")
+		t.Fatal("current-binary static site was not generated")
 	}
 	assertIndex := func(t *testing.T, url string) {
 		t.Helper()
@@ -230,7 +234,7 @@ func TestVerifiedStaticSiteIsCapturedAndCannotBeReplacedAfterLoad(t *testing.T) 
 			t.Fatalf("%s status=%d body=%s", url, response.Code, response.Body.String())
 		}
 		if !bytes.Equal(response.Body.Bytes(), original) {
-			t.Fatalf("%s served bytes outside the verified capture", url)
+			t.Fatalf("%s current-binary browser differs from its same-version export", url)
 		}
 		if response.Header().Get("ETag") == "" || response.Header().Get("X-Content-Type-Options") != "nosniff" || response.Header().Get("Cross-Origin-Resource-Policy") != "same-origin" {
 			t.Fatalf("%s missing immutable identity or security headers: %v", url, response.Header())
@@ -262,6 +266,57 @@ func TestVerifiedStaticSiteIsCapturedAndCannotBeReplacedAfterLoad(t *testing.T) 
 	dataset.Handler().ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/api/v1/not-a-route", nil))
 	if response.Code != http.StatusNotFound {
 		t.Fatalf("unknown API route fell through to SPA: status=%d body=%s", response.Code, response.Body.String())
+	}
+}
+
+func TestLiveServerNeverExecutesImportedAtlasJavaScript(t *testing.T) {
+	t.Parallel()
+	root := writeVerifiedServerAtlas(t, richDataset().Bundle)
+	const importedScript = "window.rkcImportedAtlasScriptExecuted = true;"
+	if err := os.WriteFile(filepath.Join(root, "site", "app.js"), []byte(importedScript), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	// Make the crafted atlas internally hash-consistent. This proves that export
+	// integrity is not being confused with trusted publisher identity.
+	rewriteServerExportManifest(t, root, richDataset().Bundle.Snapshot.ID)
+	dataset, err := Load(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !dataset.staticSiteTrusted {
+		t.Fatal("live atlas browser was not regenerated as current-binary code")
+	}
+	requestAsset := func(handler http.Handler, target string) *httptest.ResponseRecorder {
+		t.Helper()
+		response := httptest.NewRecorder()
+		handler.ServeHTTP(response, httptest.NewRequest(http.MethodGet, target, nil))
+		if response.Code != http.StatusOK {
+			t.Fatalf("%s status=%d body=%s", target, response.Code, response.Body.String())
+		}
+		return response
+	}
+	if observed := requestAsset(dataset.Handler(), "/app.js").Body.String(); strings.Contains(observed, importedScript) || !strings.Contains(observed, workbenchBootstrapHeader) {
+		t.Fatal("read-only server executed imported JavaScript instead of current-binary assets")
+	}
+	workbenchHandler := dataset.HandlerWithWorkbench(&Workbench{})
+	if observed := requestAsset(workbenchHandler, "/app.js").Body.String(); strings.Contains(observed, importedScript) || !strings.Contains(observed, workbenchBootstrapHeader) {
+		t.Fatal("workbench origin served imported JavaScript instead of current-binary assets")
+	}
+	for _, target := range []string{"/", "/app.js"} {
+		response := requestAsset(workbenchHandler, target)
+		if got := response.Header().Get("Cache-Control"); got != "private, no-store" {
+			t.Errorf("workbench %s Cache-Control=%q want private, no-store", target, got)
+		}
+		csp := response.Header().Get("Content-Security-Policy")
+		if !strings.Contains(csp, "worker-src 'none'") || !strings.Contains(csp, "manifest-src 'none'") || !strings.Contains(csp, "form-action 'none'") {
+			t.Errorf("workbench %s CSP permits persistent browser state: %q", target, csp)
+		}
+	}
+	if err := dataset.PrepareWorkbenchBrowser(); err != nil {
+		t.Fatal(err)
+	}
+	if !dataset.staticSiteTrusted || strings.Contains(requestAsset(dataset.Handler(), "/app.js").Body.String(), importedScript) {
+		t.Fatal("explicit workbench browser preparation retained imported JavaScript")
 	}
 }
 

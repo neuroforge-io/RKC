@@ -1,15 +1,20 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
 	"syscall"
 	"testing"
 	"time"
+
+	"github.com/neuroforge-io/RKC/internal/resourceguard"
 )
 
 func TestPublishServeReadyFileIsAtomicAndNoClobber(t *testing.T) {
@@ -119,6 +124,12 @@ func TestValidateServeAddressRequiresExplicitRemoteAcknowledgement(t *testing.T)
 	if err := validateServeAddress("0.0.0.0:8787", true, true); err == nil || !strings.Contains(err.Error(), "loopback") {
 		t.Fatalf("remote workbench listener = %v", err)
 	}
+	if err := validateServeAddress("127.0.0.1:8787", false, true); err == nil || !strings.Contains(err.Error(), "ephemeral port 0") {
+		t.Fatalf("stable-origin workbench listener = %v", err)
+	}
+	if err := validateServeAddress("127.0.0.1:0", false, true); err != nil {
+		t.Fatalf("ephemeral workbench listener = %v", err)
+	}
 	if err := validateServeAddress("not-an-address", false, false); err != nil {
 		t.Fatalf("malformed address should be left to the listener for a precise error: %v", err)
 	}
@@ -198,10 +209,28 @@ func TestRunServePublishesReadyServesAndShutsDownCleanly(t *testing.T) {
 
 	workbenchReady := filepath.Join(root, "workbench-ready.json")
 	workbenchDone := make(chan error, 1)
+	priorityArrived := make(chan struct{})
+	priorityError := fmt.Errorf("%w: deterministic workbench fixture", resourceguard.ErrHigherPriorityActive)
+	admitted := false
 	go func() {
-		workbenchDone <- runServe([]string{
-			"--dir", atlas, "--addr", "127.0.0.1:0", "--ready-file", workbenchReady,
+		workbenchDone <- runServeWithSafety(context.Background(), []string{
+			"--dir", atlas, "--ready-file", workbenchReady,
 			"--workbench", "--workspace", repository, "--workbench-timeout", "2s",
+		}, serveSafetyChecks{
+			requireLowPriority: func() error { return nil },
+			checkHigherPriority: func() error {
+				if !admitted {
+					admitted = true
+					return nil
+				}
+				select {
+				case <-priorityArrived:
+					return priorityError
+				default:
+					return nil
+				}
+			},
+			priorityCheckInterval: 5 * time.Millisecond,
 		})
 	}()
 	var workbenchReceipt serveReadyReceipt
@@ -227,7 +256,25 @@ func TestRunServePublishesReadyServesAndShutsDownCleanly(t *testing.T) {
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
-	response, err := http.Get(workbenchReceipt.URL + "/api/v1/workbench/session")
+	browserURL, err := url.Parse(workbenchReceipt.BrowserURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	bootstrap := browserURL.Query().Get("rkc-workbench")
+	if bootstrap != "" {
+		t.Fatal("workbench bootstrap capability was placed in the HTTP query")
+	}
+	bootstrap = browserURL.Fragment
+	values, err := url.ParseQuery(bootstrap)
+	if err != nil || values.Get("rkc-workbench") == "" {
+		t.Fatalf("workbench browser capability = %q, %v", workbenchReceipt.BrowserURL, err)
+	}
+	request, err := http.NewRequest(http.MethodGet, workbenchReceipt.URL+"/api/v1/workbench/session", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request.Header.Set("X-RKC-Workbench-Bootstrap", values.Get("rkc-workbench"))
+	response, err := http.DefaultClient.Do(request)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -245,16 +292,14 @@ func TestRunServePublishesReadyServesAndShutsDownCleanly(t *testing.T) {
 	if response.StatusCode != http.StatusOK || !session.Enabled || session.Token == "" {
 		t.Fatalf("workbench session = status %d, %+v", response.StatusCode, session)
 	}
-	if err := syscall.Kill(os.Getpid(), syscall.SIGINT); err != nil {
-		t.Fatal(err)
-	}
+	close(priorityArrived)
 	select {
 	case err := <-workbenchDone:
-		if err != nil {
-			t.Fatalf("workbench runServe() = %v", err)
+		if !errors.Is(err, resourceguard.ErrHigherPriorityActive) {
+			t.Fatalf("workbench priority preemption = %v", err)
 		}
 	case <-time.After(5 * time.Second):
-		t.Fatal("workbench runServe did not stop after SIGINT")
+		t.Fatal("workbench did not stop after higher-priority work arrived")
 	}
 
 	if err := runServe([]string{"unexpected"}); err == nil {
@@ -277,5 +322,116 @@ func TestRunServePublishesReadyServesAndShutsDownCleanly(t *testing.T) {
 		"--dir", atlas, "--addr", "127.0.0.1:0", "--ready-file", existingReady,
 	}); err == nil || !strings.Contains(err.Error(), "already exists") {
 		t.Fatalf("existing readiness target = %v", err)
+	}
+}
+
+func TestMonitorHigherPriorityIsTickDrivenAndCancellationSafe(t *testing.T) {
+	t.Run("arrival", func(t *testing.T) {
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+		ticks := make(chan time.Time)
+		priorityError := fmt.Errorf("%w: fixture", resourceguard.ErrHigherPriorityActive)
+		checks := 0
+		done := make(chan error, 1)
+		go func() {
+			done <- monitorHigherPriority(ctx, ticks, func() error {
+				checks++
+				if checks == 2 {
+					return priorityError
+				}
+				return nil
+			})
+		}()
+		ticks <- time.Now()
+		ticks <- time.Now()
+		select {
+		case err := <-done:
+			if !errors.Is(err, resourceguard.ErrHigherPriorityActive) {
+				t.Fatalf("monitor arrival error = %v", err)
+			}
+		case <-time.After(time.Second):
+			t.Fatal("monitor did not report the injected higher-priority arrival")
+		}
+	})
+
+	t.Run("cancellation", func(t *testing.T) {
+		ctx, cancel := context.WithCancel(context.Background())
+		ticks := make(chan time.Time)
+		called := make(chan struct{}, 1)
+		done := make(chan error, 1)
+		go func() {
+			done <- monitorHigherPriority(ctx, ticks, func() error {
+				called <- struct{}{}
+				return nil
+			})
+		}()
+		cancel()
+		select {
+		case err := <-done:
+			if err != nil {
+				t.Fatalf("monitor cancellation = %v", err)
+			}
+		case <-time.After(time.Second):
+			t.Fatal("monitor did not stop after cancellation")
+		}
+		select {
+		case <-called:
+			t.Fatal("priority check ran without a tick")
+		default:
+		}
+	})
+}
+
+func TestServePrioritySafetyIsWorkbenchOnlyAndPrecedesDatasetLoading(t *testing.T) {
+	root := t.TempDir()
+	missingAtlas := filepath.Join(root, "missing-atlas")
+	ready := filepath.Join(root, "ready.json")
+	priorityError := fmt.Errorf("%w: admission fixture", resourceguard.ErrHigherPriorityActive)
+	checks := 0
+	err := runServeWithSafety(context.Background(), []string{
+		"--workbench", "--dir", missingAtlas, "--ready-file", ready,
+	}, serveSafetyChecks{
+		requireLowPriority: func() error { return nil },
+		checkHigherPriority: func() error {
+			checks++
+			return priorityError
+		},
+		priorityCheckInterval: time.Second,
+	})
+	if !errors.Is(err, resourceguard.ErrHigherPriorityActive) {
+		t.Fatalf("workbench priority admission = %v", err)
+	}
+	if checks != 1 {
+		t.Fatalf("workbench admission checks = %d, want 1", checks)
+	}
+	if _, statErr := os.Stat(ready); !errors.Is(statErr, os.ErrNotExist) {
+		t.Fatalf("priority rejection created readiness state: %v", statErr)
+	}
+
+	envelopeChecks := 0
+	err = runServeWithSafety(context.Background(), []string{
+		"--workbench", "--dir", missingAtlas, "--addr", "127.0.0.1:8787", "--ready-file", ready,
+	}, serveSafetyChecks{
+		requireLowPriority: func() error {
+			envelopeChecks++
+			return nil
+		},
+		checkHigherPriority:   func() error { return nil },
+		priorityCheckInterval: time.Second,
+	})
+	if err == nil || !strings.Contains(err.Error(), "ephemeral port 0") {
+		t.Fatalf("stable-origin workbench admission = %v", err)
+	}
+	if envelopeChecks != 0 {
+		t.Fatalf("stable-origin rejection ran %d safety checks before address admission", envelopeChecks)
+	}
+
+	// Static serving has no command execution surface, so its portable path
+	// must not acquire Linux-only workbench policy dependencies.
+	err = runServeWithSafety(context.Background(), []string{
+		"--dir", missingAtlas, "--addr", "127.0.0.1:0",
+	}, serveSafetyChecks{})
+	if err == nil || strings.Contains(err.Error(), "safety checks") {
+		t.Fatalf("static serve safety isolation = %v", err)
 	}
 }
