@@ -19,6 +19,27 @@ latency, and process-RSS contract, so it remains `unqualified` and ineligible
 for defaults. The embedding candidate remains Qwen3 Embedding 0.6B Q8_0,
 qualified separately at 8,192 tokens.
 
+## 2026-08-30 official-source refresh
+
+No newly released model qualifies for promotion. This refresh checked current
+publisher cards, pinned artifacts, architecture configuration, licensing, and
+runtime support before authorizing any download. None justified spending the
+shared laptop's RAM, swap, or CPU on a qualification run.
+
+| Candidate | Publisher evidence | RKC decision |
+|---|---|---|
+| [Nanbeige4.2-3B](https://huggingface.co/Nanbeige/Nanbeige4.2-3B) at [`3384e426066d1a49c3aea90a7190b81260a6533f`](https://huggingface.co/Nanbeige/Nanbeige4.2-3B/tree/3384e426066d1a49c3aea90a7190b81260a6533f) | Apache-2.0, 262,144-token context, 4,169,800,704 BF16 parameters, and strong agentic/code/research results against Qwen3.5-4B. Every published headline result used thinking mode with `preserve_thinking=true`. The publisher requires its [`nanbeige42` llama.cpp fork](https://github.com/Nanbeige/llama.cpp/tree/c6640a1c0cf7b38df342b67021a3900b04d092e7) and does not publish a first-party pinned GGUF at this revision. | Rejected before download. RKC qualifies generation with thinking disabled. More decisively, the official 22-layer, two-loop, eight-KV-head, 128-head-dimension configuration requires at least 2,918,187,008 bytes for raw q8 K/V values at the exact 32,384-token gate. The theoretical four-bit parameter floor is another 2,084,900,352 bytes: **5,003,087,360 bytes (4.659 GiB) before quantization metadata, allocator state, executable code, or scratch**, already above `memory.max`. |
+| [IBM Granite 4.2 3B](https://huggingface.co/ibm-granite/granite-4.2-3b) | Apache-2.0, native 131,072-token context, and an official pinned [2,244,012,160-byte Q4_K_M GGUF](https://huggingface.co/ibm-granite/granite-4.2-3b-GGUF/blob/47a3d9699d7539606c83943d717fcea7bd9f6a19/granite-4.2-3b-Q4_K_M.gguf) with SHA-256 `20e436143017578687f7f848225cc6c6038126c84149192229c7dff6e4e0f427`. | Retained only as a future research candidate. Its 40-layer dense, 3,659,737,600-parameter design has no publisher evidence for RKC's one-core throughput gate and no direct grounded-repository/RAG comparison proving a quality gain over the already rejected Qwen3.5-4B operating point. |
+| [Gemma 4 E4B QAT Q4](https://huggingface.co/google/gemma-4-E4B-it-qat-q4_0-gguf/blob/4b4a2c1d584be7264f87aac328a1bc739ce81b6c/gemma-4-E4B_q4_0-it.gguf) | Apache-2.0, 131,072-token context; the official pinned GGUF is 5,154,941,280 bytes with SHA-256 `676c35070db6dbe52f93e9c864ee0fba4eddea94b9c875d9cb10daff453fbaee`. | Rejected before download: the model file alone is about 4.80 GiB and exceeds the 4.5 GiB hard ceiling before KV cache and runtime memory. |
+| [Phi-4-mini-flash-reasoning](https://huggingface.co/microsoft/Phi-4-mini-flash-reasoning) | MIT, 64K context, hybrid linear-prefill architecture. Microsoft says it was optimized and trained for mathematical reasoning, warns about limited factual capacity and code scope, and publishes CUDA/FlashAttention/Mamba instructions and A100/H100 evidence rather than a portable llama.cpp CPU path. | Rejected as RKC's repository-knowledge default. Its attractive architecture does not supply relevant grounded-code/RAG quality or portable one-core runtime evidence. |
+
+These are evidence-backed exclusions, not qualification receipts. RKC did not
+add them to the downloadable model lock, download their weights, fork a runtime,
+or weaken the existing gate. Nanbeige4.2 is worth revisiting on a larger-memory
+hardware profile; Granite 4.2 3B is worth measuring only if a future profile
+relaxes the one-core 300-second requirement. The production defaults therefore
+remain null and model-backed commands continue to fail closed.
+
 Qwen's official Qwen3.5-4B model is Apache-2.0, has 4B language parameters,
 uses a Gated DeltaNet/attention hybrid, and declares 262,144 native context
 tokens. The pinned GGUF is an independently converted Unsloth Q4_0 artifact,
