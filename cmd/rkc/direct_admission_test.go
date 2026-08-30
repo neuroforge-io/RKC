@@ -523,6 +523,14 @@ func TestDirectAdmissionArgumentSafetyIsGrammarAware(t *testing.T) {
 		!strings.Contains(err.Error(), "invalid --no-python") || !strings.Contains(err.Error(), "rkc scan --no-python") {
 		t.Fatalf("invalid scan safety boolean = %v", err)
 	}
+	if _, err := validateDirectCommandAdmission("scan", []string{"--definitely-invalid"}); err == nil ||
+		err.Error() != "flag provided but not defined: -definitely-invalid" {
+		t.Fatalf("unknown scan flag = %v", err)
+	}
+	if _, err := validateDirectCommandAdmission("scan", []string{"--out"}); err == nil ||
+		err.Error() != "flag needs an argument: -out" {
+		t.Fatalf("missing scan flag value = %v", err)
+	}
 
 	for _, args := range [][]string{nil, {"."}, {"--python=false", "."}, {"--python=true", "--python=false", "."}} {
 		help, err := validateDirectCommandAdmission("quickstart", args)
@@ -539,6 +547,10 @@ func TestDirectAdmissionArgumentSafetyIsGrammarAware(t *testing.T) {
 	if _, err := validateDirectCommandAdmission("quickstart", []string{"--python=invalid", "."}); err == nil ||
 		!strings.Contains(err.Error(), "invalid --python") || !strings.Contains(err.Error(), "rkc quickstart") {
 		t.Fatalf("invalid quickstart safety boolean = %v", err)
+	}
+	if _, err := validateDirectCommandAdmission("quickstart", []string{"--unknown"}); err == nil ||
+		err.Error() != "flag provided but not defined: -unknown" {
+		t.Fatalf("unknown quickstart flag = %v", err)
 	}
 
 	for _, test := range []struct {

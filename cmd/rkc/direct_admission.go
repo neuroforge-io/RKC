@@ -280,17 +280,38 @@ var scanAdmissionBooleanFlags = map[string]struct{}{
 	"unsafe-include-secret-values": {},
 }
 
+// scanAdmissionValueFlags mirrors the value-taking flags registered by
+// runScanContext. Keeping their grammar explicit lets the safety preflight
+// preserve standard unknown-flag and missing-value errors without parsing a
+// repository or loading configuration before resource admission.
+var scanAdmissionValueFlags = map[string]struct{}{
+	"acquire-temp": {}, "cache-dir": {}, "clone-depth": {}, "config": {},
+	"database": {}, "exclude": {}, "git": {}, "git-timeout": {},
+	"max-file-bytes": {}, "max-files": {}, "max-repository-bytes": {},
+	"max-text-bytes": {}, "notebook-pack-bytes": {}, "out": {},
+	"plugin-output-bytes": {}, "plugin-timeout": {}, "python": {},
+	"python-plugin": {}, "ref": {}, "runs-dir": {}, "scip-index": {},
+	"stage-memory-mib": {}, "stage-workers": {}, "state-dir": {},
+}
+
 var quickstartAdmissionBooleanFlags = map[string]struct{}{
 	"clean": {}, "force": {}, "python": {},
 }
 
+var quickstartAdmissionValueFlags = map[string]struct{}{
+	"config": {}, "out": {}, "scip-index": {}, "state-dir": {},
+}
+
 func validateDirectCommandAdmission(command string, args []string) (bool, error) {
 	var booleanFlags map[string]struct{}
+	var valueFlags map[string]struct{}
 	switch command {
 	case "scan":
 		booleanFlags = scanAdmissionBooleanFlags
+		valueFlags = scanAdmissionValueFlags
 	case "quickstart":
 		booleanFlags = quickstartAdmissionBooleanFlags
+		valueFlags = quickstartAdmissionValueFlags
 	default:
 		return false, fmt.Errorf("direct resource admission does not support command %q", command)
 	}
@@ -310,11 +331,16 @@ func validateDirectCommandAdmission(command string, args []string) (bool, error)
 			return true, nil
 		}
 		if _, isBoolean := booleanFlags[name]; !isBoolean {
-			// The standard flag parser consumes the following token for every
-			// non-boolean option, even when it starts with a dash. Unknown options
-			// fail before work; treating them conservatively as value-taking ensures
-			// they can never smuggle a safety flag into admission.
+			if _, isValue := valueFlags[name]; !isValue {
+				return false, fmt.Errorf("flag provided but not defined: -%s", name)
+			}
+			// The standard flag parser consumes the following token for a known
+			// non-boolean option even when it starts with a dash. Match that grammar
+			// so a value can never smuggle a safety flag into admission.
 			if !hasValue {
+				if index+1 >= len(args) {
+					return false, fmt.Errorf("flag needs an argument: -%s", name)
+				}
 				index++
 			}
 			continue
