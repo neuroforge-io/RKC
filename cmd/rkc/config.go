@@ -18,7 +18,7 @@ import (
 
 const (
 	configurationSchemaVersion = "0.2.0"
-	configurationSchemaURI     = "https://raw.githubusercontent.com/neuroforge-io/RKC/80a0e08646d3e430087385286d6dcedbb6b95d69/schemas/config.schema.json"
+	configurationSchemaURI     = "https://raw.githubusercontent.com/neuroforge-io/RKC/d5daad7bb8c39438d28fe40f761e7c6938cc2e79/schemas/config.schema.json"
 	modelMaximumRSSMiB         = int64(4608)
 )
 

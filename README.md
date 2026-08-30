@@ -553,8 +553,10 @@ file.
 
 The schema is [`schemas/config.schema.json`](schemas/config.schema.json), and a
 maintained example is [`config/rkc.example.json`](config/rkc.example.json).
-Generated configuration uses an immutable commit-pinned URL for the published
-`0.2.0` schema, so its editor association cannot drift when `main` advances.
+Generated configuration uses an immutable commit-pinned URL for the exact
+published `0.2.0` bytes, so its editor association cannot drift when `main`
+advances. A regression test binds that URI to the checked-in schema digest and
+the runtime's 4.5 GiB maximum.
 The explicit `schema_version` remains the compatibility boundary. The
 checked-in example uses a repository-local relative schema path for offline
 checkout navigation.

@@ -1,7 +1,9 @@
 package main
 
 import (
+	"crypto/sha256"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -9,9 +11,36 @@ import (
 )
 
 func TestDefaultConfigurationIsValidAndDeterministic(t *testing.T) {
-	const publishedSchemaURI = "https://raw.githubusercontent.com/neuroforge-io/RKC/80a0e08646d3e430087385286d6dcedbb6b95d69/schemas/config.schema.json"
+	const (
+		publishedSchemaURI    = "https://raw.githubusercontent.com/neuroforge-io/RKC/d5daad7bb8c39438d28fe40f761e7c6938cc2e79/schemas/config.schema.json"
+		publishedSchemaSHA256 = "4dbd0f6f7748e9d32b258cc167f9e3cc154d79713f274cbcb4291b536247df6b"
+	)
 	if configurationSchemaURI != publishedSchemaURI {
 		t.Fatalf("configuration schema URI = %q, want published main schema %q", configurationSchemaURI, publishedSchemaURI)
+	}
+	schemaBytes, err := os.ReadFile(filepath.Join("..", "..", "schemas", "config.schema.json"))
+	if err != nil {
+		t.Fatalf("read maintained configuration schema: %v", err)
+	}
+	if got := fmt.Sprintf("%x", sha256.Sum256(schemaBytes)); got != publishedSchemaSHA256 {
+		t.Fatalf("maintained configuration schema SHA-256 = %s, want published bytes %s", got, publishedSchemaSHA256)
+	}
+	var schemaContract struct {
+		Properties struct {
+			Model struct {
+				Properties struct {
+					MaximumRSS struct {
+						Maximum int64 `json:"maximum"`
+					} `json:"max_rss_mib"`
+				} `json:"properties"`
+			} `json:"model"`
+		} `json:"properties"`
+	}
+	if err := json.Unmarshal(schemaBytes, &schemaContract); err != nil {
+		t.Fatalf("decode maintained configuration schema: %v", err)
+	}
+	if maximum := schemaContract.Properties.Model.Properties.MaximumRSS.Maximum; maximum != modelMaximumRSSMiB {
+		t.Fatalf("published schema model.max_rss_mib maximum = %d, want runtime ceiling %d", maximum, modelMaximumRSSMiB)
 	}
 	cfg := defaultConfiguration()
 	if err := cfg.Validate(); err != nil {
