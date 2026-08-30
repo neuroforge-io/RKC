@@ -219,20 +219,24 @@ func (s *Server) toolSearch(arguments map[string]any) (any, error) {
 	languages := setArg(arguments, "languages")
 	response := s.dataset.Search.Search(search.Query{Text: query, Kinds: kinds, Languages: languages, Limit: limit})
 	type result struct {
-		Node    rkcmodel.Node `json:"node"`
-		Score   float64       `json:"score"`
-		Reasons []string      `json:"reasons"`
-		Terms   []string      `json:"terms"`
+		search.Hit
+		Node *rkcmodel.Node `json:"node,omitempty"`
 	}
 	items := make([]result, 0, len(response.Hits))
 	for _, hit := range response.Hits {
-		node, ok := s.dataset.NodeByID[hit.Document.ID]
-		if !ok {
-			continue
+		item := result{Hit: hit}
+		if hit.Document.ObjectType == "node" {
+			if node, ok := s.dataset.NodeByID[hit.Document.ID]; ok {
+				nodeCopy := node
+				item.Node = &nodeCopy
+			}
 		}
-		items = append(items, result{Node: node, Score: hit.Score, Reasons: hit.Reasons, Terms: hit.Terms})
+		items = append(items, item)
 	}
-	return map[string]any{"query": query, "results": items, "truncated": response.Truncated, "mode": response.Mode}, nil
+	return map[string]any{
+		"query": response.Query, "results": items, "truncated": response.Truncated,
+		"mode": response.Mode, "index_version": response.IndexVersion,
+	}, nil
 }
 func (s *Server) toolGetSymbol(arguments map[string]any) (any, error) {
 	node, err := s.resolveNode(stringArg(arguments, "node"))
@@ -403,7 +407,7 @@ func traversal(arguments map[string]any, defaultDepth, defaultNodes int) (graphi
 }
 func tools() []toolDefinition {
 	return []toolDefinition{
-		{Name: "rkc.search", Description: "Ranked lexical search over repository nodes.", InputSchema: objectSchema(map[string]any{"query": stringSchema("Search query; supports kind:, language:, type:, and path: filters."), "limit": integerSchema(1, 1000), "kinds": stringArraySchema(), "languages": stringArraySchema()}, []string{"query"})},
+		{Name: "rkc.search", Description: "Ranked lexical search over repository nodes, artifacts, and generated documents.", InputSchema: objectSchema(map[string]any{"query": stringSchema("Search query; supports kind:, language:, type:, and path: filters."), "limit": integerSchema(1, 1000), "kinds": stringArraySchema(), "languages": stringArraySchema()}, []string{"query"})},
 		{Name: "rkc.get_symbol", Description: "Return a symbol with evidence and direct relationships.", InputSchema: objectSchema(map[string]any{"node": stringSchema("Stable ID, logical ID, qualified name, or unique name.")}, []string{"node"})},
 		{Name: "rkc.get_evidence", Description: "Return one evidence record by stable ID.", InputSchema: objectSchema(map[string]any{"evidence_id": stringSchema("Evidence stable ID.")}, []string{"evidence_id"})},
 		{Name: "rkc.neighborhood", Description: "Return a bounded graph neighborhood around a node.", InputSchema: traversalSchema("node")},

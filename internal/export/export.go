@@ -1490,21 +1490,28 @@ function renderList(){
   if(!state.bundle)return;
   const query=$('search').value.trim().toLowerCase(),kind=$('kind').value,language=$('language').value;
   const terms=query.split(/\s+/).filter(Boolean),candidates=[];
-  for(const node of state.bundle.nodes){
-    if(kind&&node.kind!==kind)continue;
-    if(language&&node.language!==language)continue;
-    const haystack=[node.id,node.name,node.qualified_name,node.signature,node.language,node.kind,state.artifacts.get(node.artifact_id)?.path].join(' ').toLowerCase();
-    if(terms.some(term=>!haystack.includes(term)))continue;
-    let score=0;
-    if(query){
-      if((node.qualified_name||'').toLowerCase()===query)score+=100;
-      if((node.name||'').toLowerCase()===query)score+=80;
-      if((node.name||'').toLowerCase().startsWith(query))score+=30;
-      score+=terms.filter(term=>(node.signature||'').toLowerCase().includes(term)).length*5;
+  if(state.api){
+    // The API already applied every requested filter and returned ranked
+    // results. Re-filtering here can discard path/documentation matches, while
+    // re-sorting can corrupt the server's ranking.
+    for(const node of state.bundle.nodes)candidates.push({node,score:0});
+  }else{
+    for(const node of state.bundle.nodes){
+      if(kind&&node.kind!==kind)continue;
+      if(language&&node.language!==language)continue;
+      const haystack=[node.id,node.name,node.qualified_name,node.signature,node.language,node.kind,node.source?.path,state.artifacts.get(node.artifact_id)?.path,...Object.values(node.attributes||{})].join(' ').toLowerCase();
+      if(terms.some(term=>!haystack.includes(term)))continue;
+      let score=0;
+      if(query){
+        if((node.qualified_name||'').toLowerCase()===query)score+=100;
+        if((node.name||'').toLowerCase()===query)score+=80;
+        if((node.name||'').toLowerCase().startsWith(query))score+=30;
+        score+=terms.filter(term=>(node.signature||'').toLowerCase().includes(term)).length*5;
+      }
+      candidates.push({node,score});
     }
-    candidates.push({node,score});
+    candidates.sort((a,b)=>b.score-a.score||label(a.node).localeCompare(label(b.node)));
   }
-  candidates.sort((a,b)=>b.score-a.score||label(a.node).localeCompare(label(b.node)));
   state.results=candidates.slice(0,1000).map(item=>item.node.id);
   $('result-summary').textContent=number(candidates.length)+' loaded matching entities'+(state.listTruncated||candidates.length>state.results.length?' · bounded result window':'');
   $('clear-filters').hidden=!filtersActive();
@@ -1513,7 +1520,7 @@ function renderList(){
   $('list-empty').textContent=filtersActive()?'No entities match these filters. Clear the filters to restore the full list.':'This snapshot contains no repository entities.';
   $('list').innerHTML=state.results.map(id=>{
     const node=state.nodes.get(id),selected=id===state.selected;
-    return '<button type="button" class="entity '+(selected?'active':'')+'" role="option" aria-selected="'+String(selected)+'" tabindex="-1" data-id="'+esc(id)+'"><div class="line"><span class="kind">'+esc(node.kind)+'</span><span class="badge">'+esc(node.language||'n/a')+'</span></div><div class="name">'+esc(label(node))+'</div><div class="muted mono">'+esc(state.artifacts.get(node.artifact_id)?.path||'')+'</div></button>';
+    return '<button type="button" class="entity '+(selected?'active':'')+'" role="option" aria-selected="'+String(selected)+'" tabindex="-1" data-id="'+esc(id)+'"><div class="line"><span class="kind">'+esc(node.kind)+'</span><span class="badge">'+esc(node.language||'n/a')+'</span></div><div class="name">'+esc(label(node))+'</div><div class="muted mono">'+esc(node.source?.path||state.artifacts.get(node.artifact_id)?.path||'')+'</div></button>';
   }).join('');
   for(const element of $('list').querySelectorAll('[data-id]'))element.addEventListener('click',()=>selectNode(element.dataset.id));
 }
@@ -1578,7 +1585,7 @@ function renderCommands(){
   if(!commands.some(item=>item.name===state.commandName))state.commandName=commands[0]?.name||'help';
   const enabled=Boolean(session.enabled);
   const workspace=enabled?session.workspace:'Start with rkc open --workbench on a supported Linux host.';
-  $('content').innerHTML='<div class="card"><span class="eyebrow">Complete CLI surface</span><h2>Command center</h2><p>Build, inspect, search, explain, validate, and maintain RKC from one responsive workspace. Commands are passed as exact argument arrays—never through a shell—and only one job runs at a time.</p><div class="grid">'+stat('Execution',enabled?'Enabled · token authenticated':'Read-only preview')+stat('Workspace',workspace)+stat('Resource policy','1 CPU · 4.5 GiB hard ceiling')+stat('Output bound',enabled?number(session.maximum_output_bytes)+' bytes':'2 MiB')+'</div></div><div class="command-layout"><div class="card"><h3>Choose a workflow</h3><div class="command-palette" id="command-palette">'+commands.map(command=>'<button type="button" class="command-choice '+(command.name===state.commandName?'active':'')+'" data-command="'+esc(command.name)+'"><span class="command-mode">'+esc(command.mode)+'</span><strong>'+esc(command.name)+'</strong><span>'+esc(command.description)+'</span></button>').join('')+'</div></div><div class="card"><span class="kind">rkc '+esc(state.commandName)+'</span><h3>Arguments</h3><label class="search-label" for="command-args">Enter the same options and values you would put after the command</label><textarea id="command-args" spellcheck="false" aria-describedby="command-guidance" placeholder="--help">'+esc(defaultCommandArgs(state.commandName))+'</textarea><p id="command-guidance" class="help-text">'+esc(commandGuidance(state.commandName))+'</p><pre id="command-preview">'+esc(commandPreview())+'</pre><div class="button-row"><button type="button" class="secondary" id="copy-command">Copy command</button><button type="button" class="primary" id="run-command" '+(enabled?'':'disabled')+'>Run protected command</button><button type="button" class="danger" id="cancel-command" hidden>Cancel command</button><span id="command-status" class="muted" role="status" aria-live="polite">'+(enabled?'Ready':'Execution is disabled in a static or read-only server.')+'</span></div><div id="job-meta" class="job-meta" hidden aria-label="Current job details"></div><h3>Job output</h3><pre id="job-output" class="job-output" tabindex="0" aria-live="polite">No command has run in this session.</pre></div></div>';
+  $('content').innerHTML='<div class="card"><span class="eyebrow">Safe CLI workflows</span><h2>Command center</h2><p>Build, inspect, search, explain, validate, and maintain RKC from one responsive workspace. This catalogue exposes bounded workflows that are safe to preview here; the protected server executes only its explicit allowlist. Server lifecycle and separately managed model or Python operations stay in their guarded CLI paths. Commands are passed as exact argument arrays—never through a shell—and only one job runs at a time.</p><div class="grid">'+stat('Execution',enabled?'Enabled · token authenticated':'Read-only preview')+stat('Workspace',workspace)+stat('Resource policy','1 CPU · 4.5 GiB hard ceiling')+stat('Output bound',enabled?number(session.maximum_output_bytes)+' bytes':'2 MiB')+'</div></div><div class="command-layout"><div class="card"><h3>Choose a workflow</h3><div class="command-palette" id="command-palette">'+commands.map(command=>'<button type="button" class="command-choice '+(command.name===state.commandName?'active':'')+'" data-command="'+esc(command.name)+'"><span class="command-mode">'+esc(command.mode)+'</span><strong>'+esc(command.name)+'</strong><span>'+esc(command.description)+'</span></button>').join('')+'</div></div><div class="card"><span class="kind">rkc '+esc(state.commandName)+'</span><h3>Arguments</h3><label class="search-label" for="command-args">Enter the same options and values you would put after the command</label><textarea id="command-args" spellcheck="false" aria-describedby="command-guidance" placeholder="--help">'+esc(defaultCommandArgs(state.commandName))+'</textarea><p id="command-guidance" class="help-text">'+esc(commandGuidance(state.commandName))+'</p><pre id="command-preview">'+esc(commandPreview())+'</pre><div class="button-row"><button type="button" class="secondary" id="copy-command">Copy command</button><button type="button" class="primary" id="run-command" '+(enabled?'':'disabled')+'>Run protected command</button><button type="button" class="danger" id="cancel-command" hidden>Cancel command</button><span id="command-status" class="muted" role="status" aria-live="polite">'+(enabled?'Ready':'Execution is disabled in a static or read-only server.')+'</span></div><div id="job-meta" class="job-meta" hidden aria-label="Current job details"></div><h3>Job output</h3><pre id="job-output" class="job-output" tabindex="0" aria-live="polite">No command has run in this session.</pre></div></div>';
   const authority=enabled?(session.authority_notice||'Trusted-user launcher: commands have the invoking account’s filesystem authority; this workspace is not a security sandbox.'):'Execution is disabled. Static preview cannot modify the host.';
   const authorityNotice=document.createElement('p');authorityNotice.className='diagnostic warning';
   const authorityLabel=document.createElement('b');authorityLabel.textContent='Authority: ';authorityNotice.append(authorityLabel,document.createTextNode(authority));

@@ -15,6 +15,8 @@ from contextlib import contextmanager, redirect_stdout
 from pathlib import Path
 from typing import Callable, Iterator
 
+import yaml
+
 
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = ROOT / "scripts" / "validate-contracts.py"
@@ -59,6 +61,75 @@ class ValidateContractsTests(unittest.TestCase):
         self.assertTrue(expected)
         observed = {name: importlib.metadata.version(name) for name in expected}
         self.assertEqual(observed, expected)
+
+    def test_implemented_openapi_documents_supported_query_parameters(self) -> None:
+        document = yaml.safe_load(
+            (ROOT / "api" / "openapi.yaml").read_text(encoding="utf-8")
+        )
+        components = document["components"]["parameters"]
+
+        def query_parameters(route: str) -> dict[str, dict[str, object]]:
+            observed: dict[str, dict[str, object]] = {}
+            for raw in document["paths"][route]["get"].get("parameters", []):
+                parameter = raw
+                reference = raw.get("$ref")
+                if reference is not None:
+                    prefix = "#/components/parameters/"
+                    self.assertTrue(reference.startswith(prefix), reference)
+                    parameter = components[reference.removeprefix(prefix)]
+                if parameter.get("in") == "query":
+                    observed[parameter["name"]] = parameter
+            return observed
+
+        expected = {
+            "/api/v1/artifacts": {"limit", "language", "status", "path_prefix"},
+            "/api/v1/nodes": {"limit", "q", "kind", "language"},
+            "/api/v1/search": {
+                "q",
+                "limit",
+                "kinds",
+                "kind",
+                "languages",
+                "language",
+                "object_types",
+                "type",
+                "path_prefix",
+            },
+            "/api/v1/graph/components": {
+                "limit",
+                "edge_kinds",
+                "cyclic",
+                "cycles_only",
+            },
+        }
+        traversal = {
+            "direction",
+            "edge_kinds",
+            "resolutions",
+            "max_depth",
+            "hops",
+            "max_nodes",
+            "limit",
+            "include_unresolved",
+        }
+        expected["/api/v1/graph/neighborhood"] = traversal | {"node_id"}
+        expected["/api/v1/graph/path"] = traversal | {"from", "to"}
+        expected["/api/v1/impact"] = traversal | {"node_id"}
+
+        observed_by_route = {route: query_parameters(route) for route in expected}
+        for route, names in expected.items():
+            self.assertEqual(set(observed_by_route[route]), names, route)
+        self.assertNotIn("artifact_id", observed_by_route["/api/v1/nodes"])
+        self.assertEqual(
+            observed_by_route["/api/v1/graph/neighborhood"]["direction"]["schema"][
+                "default"
+            ],
+            "both",
+        )
+        self.assertEqual(
+            observed_by_route["/api/v1/impact"]["direction"]["schema"]["default"],
+            "incoming",
+        )
 
     def test_checked_in_contracts_pass_and_diagnostics_are_structured(self) -> None:
         output = io.StringIO()

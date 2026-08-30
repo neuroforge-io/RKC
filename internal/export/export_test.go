@@ -310,6 +310,7 @@ func TestBrowserAssetsAccessibilityAndSerializationContract(t *testing.T) {
 			`"name":"runs"`, `"default_args":["--coverage",".rkc/coverage.json"]`,
 			`"default_args":["--dir",".rkc","resource guard"]`,
 			"--scip-index /path/index.scip", "Compiler evidence",
+			"Safe CLI workflows", "executes only its explicit allowlist",
 		},
 	} {
 		content := string(assets[name])
@@ -325,6 +326,21 @@ func TestBrowserAssetsAccessibilityAndSerializationContract(t *testing.T) {
 	app := string(assets["app.js"])
 	if strings.Contains(app, "__RKC_COMMAND_CATALOG__") || strings.Contains(app, "const defaults={") {
 		t.Fatal("browser retained an unresolved or independently hard-coded command catalogue")
+	}
+	renderListStart := strings.Index(app, "function renderList(){")
+	renderListEnd := strings.Index(app, "function renderOverview(){")
+	if renderListStart < 0 || renderListEnd <= renderListStart {
+		t.Fatal("browser renderList implementation is missing")
+	}
+	renderList := app[renderListStart:renderListEnd]
+	apiRanking := strings.Index(renderList, "if(state.api){")
+	apiAppend := strings.Index(renderList, "for(const node of state.bundle.nodes)candidates.push({node,score:0})")
+	localHaystack := strings.Index(renderList, "const haystack=[node.id,node.name")
+	if apiRanking < 0 || apiAppend < apiRanking || localHaystack < apiAppend {
+		t.Fatal("browser does not preserve authoritative API search results before local static filtering")
+	}
+	if !strings.Contains(renderList, "node.source?.path") || !strings.Contains(renderList, "Object.values(node.attributes||{})") {
+		t.Fatal("static browser search omits source paths or documentation attributes")
 	}
 	var data struct {
 		Bundle   model.Bundle   `json:"bundle"`

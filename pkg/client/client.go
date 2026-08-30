@@ -316,11 +316,20 @@ func (client *Client) get(ctx context.Context, endpoint string, query url.Values
 	}
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
 		var problem struct {
+			Title   string `json:"title"`
+			Detail  string `json:"detail"`
 			Error   string `json:"error"`
 			Message string `json:"message"`
 		}
 		_ = json.Unmarshal(body, &problem)
-		message := first(problem.Error, problem.Message, strings.TrimSpace(string(body)), response.Status)
+		modern := strings.TrimSpace(problem.Title)
+		if detail := strings.TrimSpace(problem.Detail); detail != "" {
+			if modern != "" {
+				modern += ": "
+			}
+			modern += detail
+		}
+		message := first(modern, strings.TrimSpace(problem.Error), strings.TrimSpace(problem.Message), strings.TrimSpace(string(body)), response.Status)
 		return fmt.Errorf("RKC GET %s: HTTP %d: %s", endpoint, response.StatusCode, message)
 	}
 	if err := json.Unmarshal(body, output); err != nil {

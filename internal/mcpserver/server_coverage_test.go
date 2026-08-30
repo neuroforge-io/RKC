@@ -489,8 +489,8 @@ func TestMCPTransportToolAndDecoderResidualBoundaries(t *testing.T) {
 		t.Fatal(err)
 	}
 	searchJSON, err := json.Marshal(searchResult)
-	if err != nil || strings.Contains(string(searchJSON), "pkg.Alpha") {
-		t.Fatalf("search retained a missing node: %s, %v", searchJSON, err)
+	if err != nil || !strings.Contains(string(searchJSON), "pkg.Alpha") || strings.Contains(string(searchJSON), `"node":`) {
+		t.Fatalf("search did not retain the canonical hit without stale node enrichment: %s, %v", searchJSON, err)
 	}
 }
 

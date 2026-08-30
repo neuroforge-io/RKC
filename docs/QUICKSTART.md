@@ -41,9 +41,10 @@ URL-fragment capability only through an owner-private readiness file. The outer
 `open` process validates the receipt, launches the desktop browser outside the
 cgroup through an owner-private redirect, and the browser removes the fragment
 before exchanging it once for its same-origin session token. The OS selects a
-fresh ephemeral loopback port for each workbench, and browser policy forbids
-persistent workers and manifests; the static read-only browser retains its
-familiar fixed-port default.
+fresh ephemeral loopback port for every `open` session, so a second local atlas
+cannot collide with a familiar fixed port. Browser policy forbids persistent
+workers and manifests. The advanced direct `serve` command retains its explicit
+address option.
 
 For a compile-only first run, use `rkc quickstart /path/to/repository`; it
 performs the same scan and quality gates without starting a server. Both
@@ -310,8 +311,11 @@ qualified vector index before bounded graph expansion.
 The static site is also available directly under `/tmp/my-atlas/site`.
 
 The responsive GUI covers repository overview, bounded search, entity and
-evidence inspection, graph navigation, diagnostics, coverage, and every RKC
-CLI workflow. Normal serving and the default `rkc open` mode remain read-only.
+evidence inspection, graph navigation, diagnostics, coverage, and 19 bounded
+CLI workflows. Normal serving and the default `rkc open` mode remain read-only.
+The protected workbench executes only its explicit allowlist; server lifecycle
+and separately managed model or Python operations stay in their guarded CLI
+paths.
 For a trusted single-user Linux repository, the preferred opt-in command center
 is:
 

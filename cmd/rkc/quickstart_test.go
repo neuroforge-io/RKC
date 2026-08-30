@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -44,6 +45,19 @@ func Hello() string { return "hello" }
 		!strings.Contains(output, "Quality gate passed") ||
 		!strings.Contains(output, filepath.ToSlash(filepath.Join(atlas, "notebooklm", "UPLOAD.md"))) {
 		t.Fatalf("quickstart output = %q", output)
+	}
+	if strings.Contains(output, "<atlas>") || strings.Contains(output, "<question>") ||
+		!strings.Contains(output, quoteCommandPath(atlas, runtime.GOOS)) {
+		t.Fatalf("quickstart did not print copy-ready atlas commands: %q", output)
+	}
+}
+
+func TestQuoteCommandPath(t *testing.T) {
+	if got, want := quoteCommandPath("/tmp/user's atlas", "linux"), `'/tmp/user'"'"'s atlas'`; got != want {
+		t.Fatalf("POSIX path = %q, want %q", got, want)
+	}
+	if got, want := quoteCommandPath(`C:\Users\O'Brien\atlas`, "windows"), `'C:\Users\O''Brien\atlas'`; got != want {
+		t.Fatalf("PowerShell path = %q, want %q", got, want)
 	}
 }
 

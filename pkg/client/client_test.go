@@ -275,6 +275,10 @@ func TestHTTPErrorMessages(t *testing.T) {
 		body   string
 		want   string
 	}{
+		{name: "problem title and detail", status: http.StatusBadRequest, body: `{"title":"Missing query","detail":"q is required"}`, want: "HTTP 400: Missing query: q is required"},
+		{name: "problem title", status: http.StatusNotFound, body: `{"title":"Node not found"}`, want: "HTTP 404: Node not found"},
+		{name: "problem detail", status: http.StatusForbidden, body: `{"detail":"workbench token is invalid"}`, want: "HTTP 403: workbench token is invalid"},
+		{name: "problem preferred over legacy", status: http.StatusConflict, body: `{"title":"Current problem","detail":"current detail","error":"legacy error","message":"legacy message"}`, want: "HTTP 409: Current problem: current detail"},
 		{name: "error field", status: http.StatusBadRequest, body: `{"error":"bad request"}`, want: "HTTP 400: bad request"},
 		{name: "message field", status: http.StatusUnprocessableEntity, body: `{"message":"invalid query"}`, want: "HTTP 422: invalid query"},
 		{name: "plain body", status: http.StatusInternalServerError, body: " backend unavailable \n", want: "HTTP 500: backend unavailable"},

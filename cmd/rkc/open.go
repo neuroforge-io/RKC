@@ -44,7 +44,7 @@ type openOptions struct {
 }
 
 func newOpenFlagSet(output io.Writer) (*flag.FlagSet, *openOptions) {
-	options := &openOptions{force: true, address: "127.0.0.1:8787"}
+	options := &openOptions{force: true, address: "127.0.0.1:0"}
 	fs := flag.NewFlagSet("open", flag.ContinueOnError)
 	fs.SetOutput(output)
 	fs.StringVar(&options.config, "config", "", "optional RKC JSON configuration")

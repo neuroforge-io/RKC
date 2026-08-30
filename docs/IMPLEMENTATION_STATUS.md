@@ -56,7 +56,7 @@ The labels below mean:
 | package/build manifests | Implemented | Deterministic npm, Go module, Python requirements, and Docker extraction with all dependency scopes, string/object CLI bins, multi-entry replacements, bounded readers, and secret-default redaction |
 | environment templates | Implemented | keys, defaults, required/secret metadata |
 | secret detection/redaction | Implemented | pattern scanner; not a complete DLP system |
-| compiler-grade semantic adapters | Implemented through SCIP import | Streaming dependency-free SCIP ingestion preserves compiler-resolved symbols, definitions, references, implementations, signatures, documentation, diagnostics, roles, and exact UTF-8/16/32 source ranges. Repeatable `--scip-index` integration is available in `quickstart`, `plan`, `scan`, and the complete GUI command center for Python, JavaScript/TypeScript, Go, C/C++/CUDA, Rust, Java/Kotlin/Scala, C#/Visual Basic, and any conforming producer. RKC deliberately does not execute indexers during normal scans |
+| compiler-grade semantic adapters | Implemented through SCIP import | Streaming dependency-free SCIP ingestion preserves compiler-resolved symbols, definitions, references, implementations, signatures, documentation, diagnostics, roles, and exact UTF-8/16/32 source ranges. Repeatable `--scip-index` integration is available in the CLI and workbench `quickstart`, `plan`, and `scan` workflows for Python, JavaScript/TypeScript, Go, C/C++/CUDA, Rust, Java/Kotlin/Scala, C#/Visual Basic, and any conforming producer. RKC deliberately does not execute indexers during normal scans |
 | Tree-sitter universal host | Planned | grammar registry and queries specified |
 | runtime evidence | Planned | disabled by default and sandbox-dependent |
 

@@ -57,6 +57,7 @@ paths:
         - $ref: '#/components/parameters/Limit'
         - { name: language, in: query, schema: { type: string } }
         - { name: status, in: query, schema: { type: string } }
+        - { name: path_prefix, in: query, schema: { type: string }, description: Include artifacts whose repository-relative path starts with this value. }
       responses:
         '200': { $ref: '#/components/responses/ItemPage' }
   /api/v1/artifacts/{artifactID}:
@@ -75,10 +76,10 @@ paths:
     get:
       operationId: listNodes
       parameters:
-        - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/NodeLimit'
+        - { name: q, in: query, schema: { type: string, minLength: 1 }, description: Optional lexical query. When present, returns matching node records with retrieval metadata. }
         - { name: kind, in: query, schema: { type: string } }
         - { name: language, in: query, schema: { type: string } }
-        - { name: artifact_id, in: query, schema: { type: string } }
       responses:
         '200': { $ref: '#/components/responses/ItemPage' }
   /api/v1/nodes/{nodeID}:
@@ -130,10 +131,13 @@ paths:
       operationId: search
       parameters:
         - { name: q, in: query, required: true, schema: { type: string, minLength: 1 } }
-        - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/SearchLimit'
         - { name: kinds, in: query, schema: { type: string }, description: Comma-separated node kinds. }
+        - { name: kind, in: query, deprecated: true, schema: { type: string }, description: Compatibility alias for kinds; ignored when kinds is present. }
         - { name: languages, in: query, schema: { type: string }, description: Comma-separated languages. }
+        - { name: language, in: query, deprecated: true, schema: { type: string }, description: Compatibility alias for languages; ignored when languages is present. }
         - { name: object_types, in: query, schema: { type: string }, description: Comma-separated object types. }
+        - { name: type, in: query, deprecated: true, schema: { type: string }, description: Compatibility alias for object_types; ignored when object_types is present. }
         - { name: path_prefix, in: query, schema: { type: string } }
       responses:
         '200':
@@ -147,7 +151,14 @@ paths:
       operationId: neighborhood
       parameters:
         - { name: node_id, in: query, required: true, schema: { type: string } }
-        - $ref: '#/components/parameters/Traversal'
+        - $ref: '#/components/parameters/TraversalDirection'
+        - $ref: '#/components/parameters/TraversalEdgeKinds'
+        - $ref: '#/components/parameters/TraversalResolutions'
+        - $ref: '#/components/parameters/TraversalMaxDepth'
+        - $ref: '#/components/parameters/TraversalHops'
+        - $ref: '#/components/parameters/TraversalMaxNodes'
+        - $ref: '#/components/parameters/TraversalLimit'
+        - $ref: '#/components/parameters/TraversalIncludeUnresolved'
       responses:
         '200':
           description: Bounded graph neighbourhood.
@@ -162,7 +173,14 @@ paths:
       parameters:
         - { name: from, in: query, required: true, schema: { type: string } }
         - { name: to, in: query, required: true, schema: { type: string } }
-        - $ref: '#/components/parameters/Traversal'
+        - $ref: '#/components/parameters/TraversalDirection'
+        - $ref: '#/components/parameters/TraversalEdgeKinds'
+        - $ref: '#/components/parameters/TraversalResolutions'
+        - $ref: '#/components/parameters/TraversalMaxDepth'
+        - $ref: '#/components/parameters/TraversalHops'
+        - $ref: '#/components/parameters/TraversalMaxNodes'
+        - $ref: '#/components/parameters/TraversalLimit'
+        - $ref: '#/components/parameters/TraversalIncludeUnresolved'
       responses:
         '200':
           description: Shortest bounded path.
@@ -175,9 +193,10 @@ paths:
     get:
       operationId: components
       parameters:
-        - $ref: '#/components/parameters/Limit'
-        - { name: edge_kinds, in: query, schema: { type: string } }
+        - $ref: '#/components/parameters/ComponentLimit'
+        - { name: edge_kinds, in: query, schema: { type: string }, description: Comma-separated edge kinds. }
         - { name: cyclic, in: query, schema: { type: boolean } }
+        - { name: cycles_only, in: query, deprecated: true, schema: { type: boolean }, description: Compatibility alias for cyclic; ignored when cyclic is present. }
       responses:
         '200': { $ref: '#/components/responses/ItemPage' }
   /api/v1/impact:
@@ -185,7 +204,14 @@ paths:
       operationId: impact
       parameters:
         - { name: node_id, in: query, required: true, schema: { type: string } }
-        - $ref: '#/components/parameters/Traversal'
+        - $ref: '#/components/parameters/ImpactDirection'
+        - $ref: '#/components/parameters/TraversalEdgeKinds'
+        - $ref: '#/components/parameters/TraversalResolutions'
+        - $ref: '#/components/parameters/TraversalMaxDepth'
+        - $ref: '#/components/parameters/TraversalHops'
+        - $ref: '#/components/parameters/TraversalMaxNodes'
+        - $ref: '#/components/parameters/TraversalLimit'
+        - $ref: '#/components/parameters/TraversalIncludeUnresolved'
       responses:
         '200':
           description: Bounded reverse-impact traversal by default.
@@ -278,11 +304,60 @@ components:
       name: limit
       in: query
       schema: { type: integer, minimum: 1, maximum: 5000, default: 100 }
-    Traversal:
+    NodeLimit:
+      name: limit
+      in: query
+      schema: { type: integer, minimum: 1, maximum: 1000, default: 100 }
+    SearchLimit:
+      name: limit
+      in: query
+      schema: { type: integer, minimum: 1, maximum: 1000, default: 50 }
+    ComponentLimit:
+      name: limit
+      in: query
+      schema: { type: integer, minimum: 1, maximum: 10000, default: 100 }
+    TraversalDirection:
       name: direction
       in: query
       schema: { type: string, enum: [incoming, outgoing, both], default: both }
-      description: Other supported traversal parameters are max_depth, hops, max_nodes, edge_kinds, resolutions, include_unresolved, and limit.
+    ImpactDirection:
+      name: direction
+      in: query
+      schema: { type: string, enum: [incoming, outgoing, both], default: incoming }
+    TraversalEdgeKinds:
+      name: edge_kinds
+      in: query
+      schema: { type: string }
+      description: Comma-separated edge kinds to traverse.
+    TraversalResolutions:
+      name: resolutions
+      in: query
+      schema: { type: string }
+      description: Comma-separated edge resolutions to traverse.
+    TraversalMaxDepth:
+      name: max_depth
+      in: query
+      schema: { type: integer, minimum: 0, maximum: 64 }
+      description: Maximum traversal depth. Takes precedence over hops; endpoint defaults are 1 for neighborhood, 8 for path, and 4 for impact.
+    TraversalHops:
+      name: hops
+      in: query
+      schema: { type: integer, minimum: 0, maximum: 64 }
+      description: Compatibility depth parameter used when max_depth is absent.
+    TraversalMaxNodes:
+      name: max_nodes
+      in: query
+      schema: { type: integer, minimum: 1, maximum: 100000 }
+      description: Maximum visited nodes. Takes precedence over limit; endpoint defaults are 500 for neighborhood, 10000 for path, and 5000 for impact.
+    TraversalLimit:
+      name: limit
+      in: query
+      schema: { type: integer, minimum: 1, maximum: 100000 }
+      description: Compatibility node bound used when max_nodes is absent.
+    TraversalIncludeUnresolved:
+      name: include_unresolved
+      in: query
+      schema: { type: boolean, default: false }
     WorkbenchToken:
       name: X-RKC-Workbench-Token
       in: header

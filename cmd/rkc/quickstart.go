@@ -8,6 +8,8 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"runtime"
+	"strings"
 	"syscall"
 )
 
@@ -108,11 +110,22 @@ func runQuickstartContext(ctx context.Context, args []string) error {
 		return fmt.Errorf("quickstart verification: %w", err)
 	}
 
+	atlasArgument := quoteCommandPath(atlas, runtime.GOOS)
 	fmt.Printf("RKC atlas is ready: %s\n", atlas)
-	fmt.Println("Search it: rkc query --dir <atlas> <terms>")
-	fmt.Println("Explore it: rkc serve --dir <atlas>")
+	fmt.Printf("Search it: rkc query --dir %s \"your terms\"\n", atlasArgument)
+	fmt.Printf("Explore it: rkc serve --dir %s\n", atlasArgument)
 	fmt.Printf("Upload the wiki pack: %s/notebooklm/UPLOAD.md\n", filepath.ToSlash(atlas))
-	fmt.Println("Build an evidence packet: rkc synthesize --dir <atlas> --query <question> --packet-only")
-	fmt.Println("Ask with citations after model setup: rkc answer --dir <atlas> <question>")
+	fmt.Printf("Build an evidence packet: rkc synthesize --dir %s --query \"your question\" --packet-only\n", atlasArgument)
+	fmt.Printf("Ask with citations after model setup: rkc answer --dir %s \"your question\"\n", atlasArgument)
 	return nil
+}
+
+// quoteCommandPath returns one copy-ready path argument for the host's normal
+// interactive shell. Windows documentation and first-run output target
+// PowerShell; other supported hosts use POSIX shell quoting.
+func quoteCommandPath(value, platform string) string {
+	if platform == "windows" {
+		return "'" + strings.ReplaceAll(value, "'", "''") + "'"
+	}
+	return "'" + strings.ReplaceAll(value, "'", "'\"'\"'") + "'"
 }

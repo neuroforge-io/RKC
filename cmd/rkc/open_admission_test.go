@@ -521,7 +521,7 @@ func TestOpenWorkbenchDefaultsToFreshEphemeralOrigin(t *testing.T) {
 		t.Fatal(err)
 	}
 	finalizeOpenOptions(fs, options)
-	if options.address != "127.0.0.1:8787" {
+	if options.address != "127.0.0.1:0" {
 		t.Fatalf("static open address = %q", options.address)
 	}
 }
