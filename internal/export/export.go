@@ -397,7 +397,11 @@ func coverageMarkdown(c model.Coverage) string {
 	fmt.Fprintf(&b, "| Semantically parsed text | %d / %d (%.2f%%) |\n", c.ArtifactsSemanticallyParsed, c.TextArtifacts, c.SemanticParseRatio*100)
 	fmt.Fprintf(&b, "| Symbols with evidence | %d / %d (%.2f%%) |\n", c.SymbolsWithEvidence, c.SymbolsTotal, c.SymbolEvidenceRatio*100)
 	fmt.Fprintf(&b, "| Resolved edges | %d / %d (%.2f%%) |\n", c.ResolvedEdges, c.EdgesTotal, c.EdgeResolutionRatio*100)
-	fmt.Fprintf(&b, "| Claims with evidence | %d / %d (%.2f%%) |\n", c.ClaimsWithEvidence, c.ClaimsTotal, c.ClaimCitationRatio*100)
+	if c.ClaimsTotal == 0 {
+		b.WriteString("| Claims with evidence | 0 / 0 (n/a) |\n")
+	} else {
+		fmt.Fprintf(&b, "| Claims with evidence | %d / %d (%.2f%%) |\n", c.ClaimsWithEvidence, c.ClaimsTotal, c.ClaimCitationRatio*100)
+	}
 	fmt.Fprintf(&b, "| Unresolved edges | %d |\n", c.UnresolvedEdges)
 	fmt.Fprintf(&b, "| Potential secret findings | %d |\n", c.SecretFindings)
 	fmt.Fprintf(&b, "| High-confidence secret findings | %d |\n", c.HighConfidenceSecretFindings)
@@ -406,7 +410,7 @@ func coverageMarkdown(c model.Coverage) string {
 	for _, key := range sortedKeys(c.DiagnosticsBySeverity) {
 		fmt.Fprintf(&b, "| %s | %d |\n", markdownCell(key), c.DiagnosticsBySeverity[key])
 	}
-	b.WriteString("\nThis report measures what the extractors can prove. It does not pretend that static analysis has achieved omniscience, a hobby traditionally reserved for product marketing.\n")
+	b.WriteString("\nThis report measures evidence established by the configured extractors. It does not assert semantic completeness beyond those measured contracts.\n")
 	return b.String()
 }
 
@@ -694,12 +698,34 @@ func writeSite(bundle model.Bundle, coverage model.Coverage, opts Options) error
 	return nil
 }
 
-const staticBootstrapNodeLimit = 120
+const (
+	staticBootstrapNodeLimit  = 120
+	staticSearchSchemaVersion = "1"
+)
+
+type browserSearchRecord struct {
+	ID            string `json:"id"`
+	Kind          string `json:"kind"`
+	Language      string `json:"language,omitempty"`
+	Name          string `json:"name"`
+	QualifiedName string `json:"qualified_name,omitempty"`
+	Signature     string `json:"signature,omitempty"`
+	Path          string `json:"path,omitempty"`
+	SearchText    string `json:"search_text"`
+}
+
+type browserSearchPayload struct {
+	SchemaVersion string                `json:"schema_version"`
+	SnapshotID    string                `json:"snapshot_id"`
+	NodeCount     int                   `json:"node_count"`
+	Records       []browserSearchRecord `json:"records"`
+}
 
 // BrowserAssets returns a complete, deterministic static atlas. The compact
-// bootstrap supports immediate overview and bounded browsing; data/atlas.json
-// remains available for lazy detail loading without an RKC API. Keys are
-// canonical forward-slash paths for filesystem and HTTP consumers.
+// bootstrap supports immediate overview, data/search.json supports ordinary
+// offline search and filtering, and data/atlas.json remains available for lazy
+// canonical detail loading without an RKC API. Keys are canonical forward-slash
+// paths for filesystem and HTTP consumers.
 func BrowserAssets(bundle model.Bundle, coverage model.Coverage) (map[string][]byte, error) {
 	siteBundle, err := canonicalExportBundle(bundle)
 	if err != nil {
@@ -718,7 +744,56 @@ func BrowserAssets(bundle model.Bundle, coverage model.Coverage) (map[string][]b
 	if err != nil {
 		return nil, err
 	}
-	return buildSiteAssets(data, bootstrap)
+	searchData, err := browserSearchData(siteBundle)
+	if err != nil {
+		return nil, err
+	}
+	return buildSiteAssets(data, bootstrap, searchData)
+}
+
+func browserSearchData(bundle model.Bundle) ([]byte, error) {
+	artifactPaths := make(map[string]string, len(bundle.Artifacts))
+	for _, artifact := range bundle.Artifacts {
+		artifactPaths[artifact.ID] = artifact.Path
+	}
+	records := make([]browserSearchRecord, 0, len(bundle.Nodes))
+	seen := make(map[string]struct{}, len(bundle.Nodes))
+	for _, node := range bundle.Nodes {
+		if node.ID == "" {
+			return nil, errors.New("encode static search data: node id is empty")
+		}
+		if _, exists := seen[node.ID]; exists {
+			return nil, fmt.Errorf("encode static search data: duplicate node id %q", node.ID)
+		}
+		seen[node.ID] = struct{}{}
+		path := artifactPaths[node.ArtifactID]
+		if node.Source != nil && node.Source.Path != "" {
+			path = node.Source.Path
+		}
+		parts := []string{
+			node.ID, node.Name, node.QualifiedName, node.Signature, node.Language,
+			node.Kind, path,
+		}
+		for _, key := range []string{"docstring", "summary", "description", "purpose"} {
+			if value, ok := node.Attributes[key].(string); ok {
+				parts = append(parts, value)
+			}
+		}
+		records = append(records, browserSearchRecord{
+			ID: node.ID, Kind: node.Kind, Language: node.Language, Name: node.Name,
+			QualifiedName: node.QualifiedName, Signature: node.Signature, Path: path,
+			SearchText: strings.ToLower(strings.Join(parts, "\n")),
+		})
+	}
+	payload := browserSearchPayload{
+		SchemaVersion: staticSearchSchemaVersion, SnapshotID: bundle.Snapshot.ID,
+		NodeCount: len(records), Records: records,
+	}
+	data, err := json.Marshal(payload)
+	if err != nil {
+		return nil, fmt.Errorf("encode static search data: %w", err)
+	}
+	return append(data, '\n'), nil
 }
 
 func browserBootstrapData(bundle model.Bundle, coverage model.Coverage) ([]byte, error) {
@@ -781,10 +856,10 @@ func browserBootstrapData(bundle model.Bundle, coverage model.Coverage) ([]byte,
 // bounded API, and retaining a second serialized copy of the full bundle would
 // make server memory scale with the export projection as well as the indexes.
 func SiteAssets() (map[string][]byte, error) {
-	return buildSiteAssets(nil, nil)
+	return buildSiteAssets(nil, nil, nil)
 }
 
-func buildSiteAssets(atlasData, bootstrapData []byte) (map[string][]byte, error) {
+func buildSiteAssets(atlasData, bootstrapData, searchData []byte) (map[string][]byte, error) {
 	catalogue, err := json.Marshal(commandcatalog.Commands(commandcatalog.Context{}))
 	if err != nil {
 		return nil, fmt.Errorf("encode browser command catalogue: %w", err)
@@ -803,6 +878,9 @@ func buildSiteAssets(atlasData, bootstrapData []byte) (map[string][]byte, error)
 	}
 	if bootstrapData != nil {
 		assets["data/bootstrap.json"] = bootstrapData
+	}
+	if searchData != nil {
+		assets["data/search.json"] = searchData
 	}
 	return assets, nil
 }
@@ -1355,7 +1433,7 @@ footer { display: flex; justify-content: space-between; gap: 16px; padding: 12px
 
 const siteJS = `'use strict';
 const commandCatalog=__RKC_COMMAND_CATALOG__;
-const state={bundle:null,coverage:null,nodes:new Map(),artifacts:new Map(),evidence:new Map(),outgoing:new Map(),incoming:new Map(),selected:null,view:'overview',results:[],workbench:null,commandName:'quickstart',api:false,facets:null,listTruncated:false,diagnosticsTruncated:false,searchTimer:null,staticBootstrap:false,staticLoad:null};
+const state={bundle:null,coverage:null,nodes:new Map(),artifacts:new Map(),evidence:new Map(),outgoing:new Map(),incoming:new Map(),selected:null,view:'overview',results:[],workbench:null,commandName:'quickstart',api:false,facets:null,listTruncated:false,diagnosticsTruncated:false,searchTimer:null,searchRevision:0,staticBootstrap:false,staticLoad:null,staticSearchRecords:null,staticSearchByID:new Map(),staticSearchLoad:null};
 const maximumGraphNeighbors=32,maximumGraphNodesShown=16;
 const $=id=>document.getElementById(id);
 const esc=value=>String(value??'').replace(/[&<>"']/g,ch=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch]));
@@ -1425,6 +1503,26 @@ async function ensureFullStaticData(){
   try{await state.staticLoad}finally{state.staticLoad=null}
 }
 
+async function ensureStaticSearchData(){
+  if(state.api||!state.staticBootstrap||state.staticSearchRecords)return;
+  if(!state.staticSearchLoad)state.staticSearchLoad=(async()=>{
+    const expectedSnapshot=state.bundle.snapshot.id,response=await fetch('./data/search.json',{cache:'no-store'});
+    if(!response.ok)throw new Error('HTTP '+response.status);
+    const data=await response.json();
+    if(data?.schema_version!=='1'||data.snapshot_id!==expectedSnapshot)throw new Error('offline search index does not match this snapshot');
+    if(!Array.isArray(data.records)||!Number.isSafeInteger(data.node_count)||data.node_count<0||data.records.length!==data.node_count||data.node_count!==state.coverage.nodes_total)throw new Error('offline search index has an invalid record count');
+    const byID=new Map();
+    for(const record of data.records){
+      if(!record||typeof record.id!=='string'||!record.id||typeof record.kind!=='string'||typeof record.name!=='string'||typeof record.search_text!=='string'||byID.has(record.id))throw new Error('offline search index has an invalid or duplicate record');
+      for(const key of ['language','qualified_name','signature','path'])if(record[key]!==undefined&&typeof record[key]!=='string')throw new Error('offline search index has an invalid record field');
+      byID.set(record.id,record);
+    }
+    if(state.bundle.snapshot.id!==expectedSnapshot)throw new Error('snapshot changed while offline search was loading');
+    state.staticSearchRecords=data.records;state.staticSearchByID=byID;
+  })();
+  try{await state.staticSearchLoad}finally{state.staticSearchLoad=null}
+}
+
 async function fetchJSON(path,options){
   const response=await fetch(path,{cache:'no-store',headers:{Accept:'application/json',...(options?.headers||{})},...options});
   const data=await response.json();
@@ -1469,28 +1567,41 @@ function filtersActive(){return Boolean($('search').value||$('kind').value||$('l
 function clearFilters(){$('search').value='';$('kind').value='';$('language').value='';scheduleListRefresh()}
 
 function scheduleListRefresh(){
+  const revision=++state.searchRevision;
+  clearTimeout(state.searchTimer);
   if(!state.api){
     if(state.staticBootstrap&&filtersActive()){
-      $('result-summary').textContent='Loading the complete offline index…';
-      ensureFullStaticData().then(renderList).catch(error=>{$('result-summary').textContent='Search failed: '+String(error?.message||error)});
+      $('result-summary').textContent='Loading the compact offline search index…';
+      $('list').setAttribute('aria-busy','true');
+      state.searchTimer=setTimeout(()=>ensureStaticSearchData().then(()=>{
+        if(revision!==state.searchRevision)return;
+        $('list').setAttribute('aria-busy','false');
+        if(!state.staticBootstrap||!filtersActive())return;
+        renderList();
+      }).catch(error=>{
+        if(revision!==state.searchRevision)return;
+        $('list').setAttribute('aria-busy','false');
+        $('result-summary').textContent='Search failed: '+String(error?.message||error);
+      }),180);
       return;
     }
+    $('list').setAttribute('aria-busy','false');
     renderList();return
   }
-  clearTimeout(state.searchTimer);
-  state.searchTimer=setTimeout(refreshAPIList,180);
+  state.searchTimer=setTimeout(()=>refreshAPIList(revision),180);
 }
 
-async function refreshAPIList(){
+async function refreshAPIList(revision){
   const parameters=new URLSearchParams({limit:'200'}),query=$('search').value.trim(),kind=$('kind').value,language=$('language').value;
   if(query)parameters.set('q',query);if(kind)parameters.set('kind',kind);if(language)parameters.set('language',language);
   $('result-summary').textContent='Searching bounded index…';
   try{
     const response=await fetchJSON('/api/v1/nodes?'+parameters);
+    if(revision!==state.searchRevision)return;
     state.bundle.nodes=response.items||[];state.listTruncated=Boolean(response.truncated);
     for(const node of state.bundle.nodes)state.nodes.set(node.id,node);
     renderList();
-  }catch(error){$('result-summary').textContent='Search failed: '+String(error?.message||error)}
+  }catch(error){if(revision===state.searchRevision)$('result-summary').textContent='Search failed: '+String(error?.message||error)}
 }
 
 function handleListKeys(event){
@@ -1616,17 +1727,17 @@ async function loadAPINode(id){
 function renderList(){
   if(!state.bundle)return;
   const query=$('search').value.trim().toLowerCase(),kind=$('kind').value,language=$('language').value;
-  const terms=query.split(/\s+/).filter(Boolean),candidates=[];
+  const terms=query.split(/\s+/).filter(Boolean),candidates=[],usingStaticSearch=!state.api&&state.staticBootstrap&&filtersActive()&&Array.isArray(state.staticSearchRecords),sourceNodes=usingStaticSearch?state.staticSearchRecords:state.bundle.nodes;
   if(state.api){
     // The API already applied every requested filter and returned ranked
     // results. Re-filtering here can discard path/documentation matches, while
     // re-sorting can corrupt the server's ranking.
-    for(const node of state.bundle.nodes)candidates.push({node,score:0});
+    for(const node of sourceNodes)candidates.push({node,score:0});
   }else{
-    for(const node of state.bundle.nodes){
+    for(const node of sourceNodes){
       if(kind&&node.kind!==kind)continue;
       if(language&&node.language!==language)continue;
-      const haystack=[node.id,node.name,node.qualified_name,node.signature,node.language,node.kind,node.source?.path,state.artifacts.get(node.artifact_id)?.path,...Object.values(node.attributes||{})].join(' ').toLowerCase();
+      const haystack=node.search_text||[node.id,node.name,node.qualified_name,node.signature,node.language,node.kind,node.source?.path,state.artifacts.get(node.artifact_id)?.path,...Object.values(node.attributes||{})].join(' ').toLowerCase();
       if(terms.some(term=>!haystack.includes(term)))continue;
       let score=0;
       if(query){
@@ -1640,14 +1751,14 @@ function renderList(){
     candidates.sort((a,b)=>b.score-a.score||label(a.node).localeCompare(label(b.node)));
   }
   state.results=candidates.slice(0,1000).map(item=>item.node.id);
-  $('result-summary').textContent=number(candidates.length)+' loaded matching entities'+(state.listTruncated||candidates.length>state.results.length?' · bounded result window':'');
+  $('result-summary').textContent=number(candidates.length)+' loaded matching entities'+((state.listTruncated&&!usingStaticSearch)||candidates.length>state.results.length?' · bounded result window':'');
   $('clear-filters').hidden=!filtersActive();
   $('list').hidden=!state.results.length;
   $('list-empty').hidden=Boolean(state.results.length);
   $('list-empty').textContent=filtersActive()?'No entities match these filters. Clear the filters to restore the full list.':'This snapshot contains no repository entities.';
   $('list').innerHTML=state.results.map(id=>{
-    const node=state.nodes.get(id),selected=id===state.selected;
-    return '<button type="button" class="entity '+(selected?'active':'')+'" role="option" aria-selected="'+String(selected)+'" tabindex="-1" data-id="'+esc(id)+'"><div class="line"><span class="kind">'+esc(node.kind)+'</span><span class="badge">'+esc(node.language||'n/a')+'</span></div><div class="name">'+esc(label(node))+'</div><div class="muted mono">'+esc(node.source?.path||state.artifacts.get(node.artifact_id)?.path||'')+'</div></button>';
+    const node=(state.staticBootstrap?state.staticSearchByID.get(id):null)||state.nodes.get(id),selected=id===state.selected;
+    return '<button type="button" class="entity '+(selected?'active':'')+'" role="option" aria-selected="'+String(selected)+'" tabindex="-1" data-id="'+esc(id)+'"><div class="line"><span class="kind">'+esc(node.kind)+'</span><span class="badge">'+esc(node.language||'n/a')+'</span></div><div class="name">'+esc(label(node))+'</div><div class="muted mono">'+esc(node.path||node.source?.path||state.artifacts.get(node.artifact_id)?.path||'')+'</div></button>';
   }).join('');
   for(const element of $('list').querySelectorAll('[data-id]'))element.addEventListener('click',()=>selectNode(element.dataset.id));
 }

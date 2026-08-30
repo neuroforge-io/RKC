@@ -52,8 +52,12 @@ profiles, quality index, and every artifact upload.
   10,965/37,085 relationships (29.57%), and finds source documentation on
   892/4,720 public symbols (18.90%). The human repository overview is useful
   but too terse for first-class onboarding. The standalone atlas also lost the
-  outer Git identity, and the static browser eagerly loaded a 68.8 MB copy of
-  the graph while ignoring the separate 30.3 MB lexical index. Commit retention,
+  outer Git identity, and the static browser in that evidence eagerly loaded a
+  68.8 MB copy of the graph while ignoring the separate 30.3 MB lexical index.
+  Successor code now keeps ordinary offline search and filtering on a compact,
+  snapshot-bound exact-set node projection while reserving the full atlas for
+  detail, graph, diagnostics, and deep links; successor artifact measurements
+  and true large-export term/detail sharding remain required. Commit retention,
   complete-pack hashing, compiler-index integration, narrative overview
   quality, residual executable coverage, exported Go comments, payload
   efficiency, and reproducible browser/assistive-technology acceptance
@@ -117,7 +121,7 @@ profiles, quality index, and every artifact upload.
 | Markdown documentation | Implemented | deterministic facts and symbol pages |
 | normalized source envelopes | Implemented | likely secrets redacted by default |
 | NotebookLM pack | Implemented | Byte-bounded grouping, deterministic source inventory, exact byte counts, and a generated `UPLOAD.md` guide with grounding and quota-handling instructions; the default target is 4,000,000 bytes |
-| responsive browser and local workbench | Implemented core; browser acceptance partial | Accessible static default and explicit token-authenticated guarded loopback execution; a one-time fragment capability travels only through an owner-private readiness file and private redirect, is stripped before exchange, and cannot be reused. The typed CLI palette, dataset-aware exact argument arrays, bounded output, deadlines, cancellation, all terminal/cleanup states, and responsive desktop/mobile layout contracts are unit-tested. Vectors that could create separately managed model/Python units visibly fail closed. Workspace confinement, aggregate model ceilings, browser automation, assistive-technology acceptance, paging/virtualization, guided forms, and live incremental job output remain open |
+| responsive browser and local workbench | Implemented core; browser acceptance partial | Accessible static default and explicit token-authenticated guarded loopback execution; a one-time fragment capability travels only through an owner-private readiness file and private redirect, is stripped before exchange, and cannot be reused. Ordinary static search/filtering loads a compact snapshot-bound exact-set node projection, while canonical detail, evidence, diagnostics, and graph data remain lazy. The typed CLI palette, dataset-aware exact argument arrays, bounded output, deadlines, cancellation, all terminal/cleanup states, and responsive desktop/mobile layout contracts are unit-tested. Vectors that could create separately managed model/Python units visibly fail closed. Workspace confinement, aggregate model ceilings, browser automation, assistive-technology acceptance, true large-export sharding/virtualization, guided forms, and live incremental job output remain open |
 | ranked lexical search | Implemented | persisted portable index |
 | semantic/hybrid query | Implemented, model-gated | Exact-qualified `llama.cpp` embedding path, corpus-bound vector receipts, deterministic lexical fusion, and GraphRAG expansion are complete. With no pair-qualified default, model-backed mode fails closed while lexical/FTS5/graph search remains fully available |
 | FTS5 runtime search | Implemented | `query --database` ranks the committed snapshot through SQLite FTS5/BM25 with literal-token MATCH construction, deterministic ties and traces, typed failures, cancellation, field filters, UTF-8/result bounds, and shared semantic-fusion/GraphRAG expansion |

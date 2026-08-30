@@ -45,7 +45,7 @@ func TestWriteAllProducesCompleteDeterministicRedactedExport(t *testing.T) {
 			"normalized/src/login.go.md", "normalized/redactions.json", "notebooklm/manifest.json",
 			"notebooklm/UPLOAD.md",
 			"site/index.html", "site/styles.css", "site/app.js", "site/data/atlas.json",
-			"site/data/bootstrap.json",
+			"site/data/bootstrap.json", "site/data/search.json",
 			"integrations/diagnostics.sarif.json", "integrations/graph.graphml", "integrations/architecture.mmd",
 			"integrations/symbols.csv", "integrations/edges.csv", "rkc-export-manifest.json",
 		} {
@@ -329,13 +329,16 @@ func TestNotebookPacksAreSortedForHumanAndAgentNavigation(t *testing.T) {
 func TestBrowserAssetsAccessibilityAndSerializationContract(t *testing.T) {
 	t.Parallel()
 	bundle := exportFixture(t.TempDir(), "x.go", []byte("package x\n"))
+	const excludedAttribute = "NEUROFORGE_PRIVATE_BROWSER_SEARCH_SENTINEL"
+	bundle.Nodes[1].Attributes["summary"] = "Grounded authentication summary."
+	bundle.Nodes[1].Attributes["internal_configuration"] = excludedAttribute
 	coverage := model.BuildCoverage(bundle)
 	assets, err := BrowserAssets(bundle, coverage)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(assets) != 5 {
-		t.Fatalf("browser asset count = %d, want 5", len(assets))
+	if len(assets) != 6 {
+		t.Fatalf("browser asset count = %d, want 6", len(assets))
 	}
 	for name, markers := range map[string][]string{
 		"index.html": {
@@ -360,7 +363,8 @@ func TestBrowserAssetsAccessibilityAndSerializationContract(t *testing.T) {
 			`"default_args":["--dir",".rkc","resource guard"]`,
 			"--scip-index /path/index.scip", "Compiler evidence",
 			"Safe CLI workflows", "executes only its explicit allowlist",
-			"./data/bootstrap.json", "ensureFullStaticData",
+			"./data/bootstrap.json", "./data/search.json", "ensureFullStaticData",
+			"ensureStaticSearchData", "staticSearchRecords", "searchRevision",
 			"Loading complete offline details",
 		},
 	} {
@@ -385,8 +389,8 @@ func TestBrowserAssetsAccessibilityAndSerializationContract(t *testing.T) {
 	}
 	renderList := app[renderListStart:renderListEnd]
 	apiRanking := strings.Index(renderList, "if(state.api){")
-	apiAppend := strings.Index(renderList, "for(const node of state.bundle.nodes)candidates.push({node,score:0})")
-	localHaystack := strings.Index(renderList, "const haystack=[node.id,node.name")
+	apiAppend := strings.Index(renderList, "for(const node of sourceNodes)candidates.push({node,score:0})")
+	localHaystack := strings.Index(renderList, "const haystack=node.search_text||[node.id,node.name")
 	if apiRanking < 0 || apiAppend < apiRanking || localHaystack < apiAppend {
 		t.Fatal("browser does not preserve authoritative API search results before local static filtering")
 	}
@@ -419,6 +423,44 @@ func TestBrowserAssetsAccessibilityAndSerializationContract(t *testing.T) {
 	if len(assets["data/bootstrap.json"]) >= len(assets["data/atlas.json"]) {
 		t.Fatalf("browser bootstrap is not smaller than full atlas: %d >= %d", len(assets["data/bootstrap.json"]), len(assets["data/atlas.json"]))
 	}
+	var searchData browserSearchPayload
+	if err := json.Unmarshal(assets["data/search.json"], &searchData); err != nil {
+		t.Fatalf("decode browser search projection: %v", err)
+	}
+	if searchData.SchemaVersion != staticSearchSchemaVersion || searchData.SnapshotID != bundle.Snapshot.ID || searchData.NodeCount != len(bundle.Nodes) || len(searchData.Records) != coverage.NodesTotal {
+		t.Fatalf("invalid browser search binding: %+v", searchData)
+	}
+	searchByID := make(map[string]browserSearchRecord, len(searchData.Records))
+	for _, record := range searchData.Records {
+		if record.ID == "" {
+			t.Fatal("browser search projection contains an empty node id")
+		}
+		if _, duplicate := searchByID[record.ID]; duplicate {
+			t.Fatalf("browser search projection contains duplicate node id %q", record.ID)
+		}
+		searchByID[record.ID] = record
+	}
+	if len(searchByID) != len(bundle.Nodes) {
+		t.Fatalf("browser search projection set size = %d, want %d", len(searchByID), len(bundle.Nodes))
+	}
+	for _, node := range bundle.Nodes {
+		record, ok := searchByID[node.ID]
+		if !ok || record.Kind != node.Kind || record.Language != node.Language || record.Name != node.Name || record.QualifiedName != node.QualifiedName || record.Signature != node.Signature {
+			t.Fatalf("browser search projection lost node %q: %+v", node.ID, record)
+		}
+	}
+	login := searchByID["function-1"]
+	if login.Path != "x.go" || !strings.Contains(login.SearchText, "logs a user in") || !strings.Contains(login.SearchText, "grounded authentication summary") {
+		t.Fatalf("browser search projection lost searchable fields: %+v", login)
+	}
+	for _, forbidden := range [][]byte{[]byte(excludedAttribute), []byte(`"attributes"`), []byte(`"evidence_ids"`), []byte(`"start_line"`), []byte(`"artifact_id"`)} {
+		if bytes.Contains(assets["data/search.json"], forbidden) {
+			t.Fatalf("browser search projection contains excluded payload %q", forbidden)
+		}
+	}
+	if len(assets["data/search.json"]) >= len(assets["data/atlas.json"]) {
+		t.Fatalf("browser search projection is not smaller than full atlas: %d >= %d", len(assets["data/search.json"]), len(assets["data/atlas.json"]))
+	}
 
 	invalid := bundle
 	invalid.Nodes[0].Attributes = map[string]any{"channel": make(chan int)}
@@ -431,6 +473,64 @@ func TestBrowserAssetsAccessibilityAndSerializationContract(t *testing.T) {
 	}
 	if _, err := os.Stat(output); !os.IsNotExist(err) {
 		t.Fatalf("invalid export created output before canonical validation: %v", err)
+	}
+}
+
+func TestBrowserStaticSearchLoadIsRetryableAndStaleSafe(t *testing.T) {
+	t.Parallel()
+	bundle := exportFixture(t.TempDir(), "search.go", []byte("package search\n"))
+	assets, err := BrowserAssets(bundle, model.BuildCoverage(bundle))
+	if err != nil {
+		t.Fatal(err)
+	}
+	application := string(assets["app.js"])
+	loadStart := strings.Index(application, "async function ensureStaticSearchData(){")
+	loadEnd := strings.Index(application, "async function fetchJSON(")
+	if loadStart < 0 || loadEnd <= loadStart {
+		t.Fatal("browser static search loader is missing")
+	}
+	loader := application[loadStart:loadEnd]
+	for _, marker := range []string{
+		"data.snapshot_id!==expectedSnapshot",
+		"data.records.length!==data.node_count",
+		"data.node_count!==state.coverage.nodes_total",
+		"byID.has(record.id)",
+		"state.bundle.snapshot.id!==expectedSnapshot",
+		"finally{state.staticSearchLoad=null}",
+	} {
+		if !strings.Contains(loader, marker) {
+			t.Errorf("browser static search loader is missing %q", marker)
+		}
+	}
+	scheduleStart := strings.Index(application, "function scheduleListRefresh(){")
+	scheduleEnd := strings.Index(application, "async function refreshAPIList(")
+	if scheduleStart < 0 || scheduleEnd <= scheduleStart {
+		t.Fatal("browser search scheduling flow is missing")
+	}
+	schedule := application[scheduleStart:scheduleEnd]
+	for _, marker := range []string{
+		"const revision=++state.searchRevision",
+		"ensureStaticSearchData()",
+		"revision!==state.searchRevision",
+		"!state.staticBootstrap||!filtersActive()",
+	} {
+		if !strings.Contains(schedule, marker) {
+			t.Errorf("browser search scheduling flow is missing %q", marker)
+		}
+	}
+	if strings.Contains(schedule, "ensureFullStaticData") {
+		t.Fatal("ordinary static search still loads the full atlas")
+	}
+}
+
+func TestCoverageMarkdownMarksEmptyClaimScopeNotApplicable(t *testing.T) {
+	t.Parallel()
+	markdown := coverageMarkdown(model.Coverage{})
+	if !strings.Contains(markdown, "| Claims with evidence | 0 / 0 (n/a) |") {
+		t.Fatalf("empty claim scope is not explicit: %q", markdown)
+	}
+	if strings.Contains(markdown, "0 / 0 (100.00%)") {
+		t.Fatalf("empty claim scope is presented as measured coverage: %q", markdown)
 	}
 }
 

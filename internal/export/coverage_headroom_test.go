@@ -50,6 +50,7 @@ func TestCoverageHeadroomWriteAllStageFailures(t *testing.T) {
 		{"site stylesheet", "site/styles.css", false},
 		{"site script", "site/app.js", false},
 		{"site bootstrap", "site/data/bootstrap.json", false},
+		{"site search", "site/data/search.json", false},
 		{"site atlas", "site/data/atlas.json", false},
 		{"integration directory", "integrations", true},
 		{"SARIF integration", "integrations/diagnostics.sarif.json", false},

@@ -319,8 +319,10 @@ provide explicit filters. Hybrid mode fuses the same FTS result with the
 qualified vector index before bounded graph expansion.
 
 The static site is also available directly under `/tmp/my-atlas/site`. It loads
-a compact snapshot-bound overview first; the complete offline graph is fetched
-only when search, diagnostics, symbol detail, or graph navigation needs it.
+a compact snapshot-bound overview first. The first search or filter loads only
+the compact, exact-set node search projection; the complete offline graph stays
+lazy until a deep link, diagnostic, symbol detail, or graph navigation needs
+canonical details and evidence.
 
 The responsive GUI covers repository overview, bounded search, entity and
 evidence inspection, graph navigation, diagnostics, coverage, and 19 bounded
