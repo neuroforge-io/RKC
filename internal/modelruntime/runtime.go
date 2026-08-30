@@ -17,19 +17,33 @@ import (
 )
 
 var (
-	ErrBudgetExceeded  = errors.New("model memory budget exceeded")
+	// ErrBudgetExceeded is wrapped when model admission estimates or enforced
+	// runtime memory limits refuse an inference request.
+	ErrBudgetExceeded = errors.New("model memory budget exceeded")
+	// ErrUnsupportedTask reports that a provider does not implement the requested
+	// model protocol task.
 	ErrUnsupportedTask = errors.New("model provider does not support task")
 )
 
+// Task identifies the bounded synthesis operation requested from a Provider.
 type Task string
 
 const (
-	TaskSymbolSummary        Task = "symbol_summary"
-	TaskModuleSummary        Task = "module_summary"
+	// TaskSymbolSummary requests evidence-bound claims about one symbol.
+	TaskSymbolSummary Task = "symbol_summary"
+	// TaskModuleSummary requests evidence-bound claims about a module's purpose,
+	// responsibilities, dependencies, surface, risks, and limitations.
+	TaskModuleSummary Task = "module_summary"
+	// TaskExecutionExplanation requests evidence-bound execution-flow claims.
 	TaskExecutionExplanation Task = "execution_explanation"
-	TaskGapAnalysis          Task = "documentation_gap_analysis"
+	// TaskGapAnalysis requests evidence-bound documentation, test, relationship,
+	// conflict, and limitation findings.
+	TaskGapAnalysis Task = "documentation_gap_analysis"
 )
 
+// ModelDescriptor is provider-reported model and runtime provenance used for
+// admission estimates and audit output. The record is not self-authenticating;
+// callers requiring integrity must bind and verify its digests and revisions.
 type ModelDescriptor struct {
 	ID               string `json:"id"`
 	Architecture     string `json:"architecture,omitempty"`
@@ -46,6 +60,9 @@ type ModelDescriptor struct {
 	RuntimeRevision  string `json:"runtime_revision,omitempty"`
 }
 
+// InferenceOptions requests context, output, concurrency, and memory-estimation
+// parameters. Providers apply defaults and validate or further restrict these
+// values before execution.
 type InferenceOptions struct {
 	ContextTokens        int   `json:"context_tokens"`
 	MaxOutputTokens      int   `json:"max_output_tokens"`
@@ -56,11 +73,17 @@ type InferenceOptions struct {
 	RuntimeOverheadBytes int64 `json:"runtime_overhead_bytes,omitempty"`
 }
 
+// Budget configures memory admission arithmetic. MaximumRSSBytes less than or
+// equal to zero disables EstimateMemory's RSS ceiling, while SafetyMarginBytes is
+// added to the predicted peak; runtime enforcement is provider-specific.
 type Budget struct {
 	MaximumRSSBytes   int64 `json:"maximum_rss_bytes"`
 	SafetyMarginBytes int64 `json:"safety_margin_bytes,omitempty"`
 }
 
+// Estimate is the saturating component breakdown produced by EstimateMemory.
+// Allowed records an admission calculation, not measured consumption or proof
+// that a process will remain within the budget.
 type Estimate struct {
 	WeightsBytes       int64    `json:"weights_bytes"`
 	KVCacheBytes       int64    `json:"kv_cache_bytes"`
@@ -72,6 +95,10 @@ type Estimate struct {
 	Reasons            []string `json:"reasons,omitempty"`
 }
 
+// EstimateMemory performs conservative, saturating admission arithmetic using
+// documented defaults for missing context, output, parallelism, KV cost, and
+// runtime overhead. It also checks the declared model context limit. It does not
+// inspect the host, allocate memory, measure a model, or enforce a cgroup.
 func EstimateMemory(model ModelDescriptor, options InferenceOptions, promptBytes int64, budget Budget) Estimate {
 	if options.ContextTokens <= 0 {
 		options.ContextTokens = 4096
@@ -139,6 +166,9 @@ func saturatingSum(values ...int64) int64 {
 	return total
 }
 
+// EvidencePacket is the bounded repository context presented to a Provider.
+// Nodes, excerpts, identifiers, and source text remain untrusted data rather
+// than instructions; packet construction and validation must precede inference.
 type EvidencePacket struct {
 	SchemaVersion          string              `json:"schema_version"`
 	PacketID               string              `json:"packet_id"`
@@ -153,6 +183,8 @@ type EvidencePacket struct {
 	Policy                 PacketPolicy        `json:"policy"`
 }
 
+// SourceExcerpt carries untrusted source text and its claimed EvidenceID and
+// range. This type alone does not prove that the excerpt matches either record.
 type SourceExcerpt struct {
 	EvidenceID string               `json:"evidence_id"`
 	Source     rkcmodel.SourceRange `json:"source"`
@@ -160,6 +192,10 @@ type SourceExcerpt struct {
 	Truncated  bool                 `json:"truncated,omitempty"`
 }
 
+// PacketPolicy defines deterministic response admission constraints. A
+// nonpositive MaximumClaims defaults to 12. MaximumSummaryCharacters can add a
+// rejection reason, but protocol-v1 summaries are never publishable because they
+// have no claim-level evidence binding.
 type PacketPolicy struct {
 	RequireCitations         bool `json:"require_citations"`
 	AllowInference           bool `json:"allow_inference"`
@@ -167,6 +203,9 @@ type PacketPolicy struct {
 	MaximumSummaryCharacters int  `json:"maximum_summary_characters"`
 }
 
+// Request combines an evidence packet, task, inference options, validation-pass
+// number, and optional deadline for a Provider. Repository content inside Packet
+// must remain inert untrusted data throughout generation.
 type Request struct {
 	RequestID      string           `json:"request_id"`
 	Task           Task             `json:"task"`
@@ -176,6 +215,9 @@ type Request struct {
 	Deadline       *time.Time       `json:"deadline,omitempty"`
 }
 
+// ClaimDraft is an untrusted model-generated claim candidate. EvidenceIDs are
+// citation claims that ValidateResponse checks for packet membership; they are
+// not by themselves proof that the cited evidence entails Text.
 type ClaimDraft struct {
 	Text        string   `json:"text"`
 	Category    string   `json:"category,omitempty"`
@@ -183,6 +225,9 @@ type ClaimDraft struct {
 	EvidenceIDs []string `json:"evidence_ids"`
 }
 
+// Response is untrusted structured provider output awaiting ValidateResponse.
+// ModelID and Usage are provider-reported metadata, and Summary cannot be
+// promoted by protocol v1 because it lacks claim-level evidence bindings.
 type Response struct {
 	RequestID           string       `json:"request_id"`
 	Summary             string       `json:"summary,omitempty"`
@@ -192,6 +237,8 @@ type Response struct {
 	Usage               Usage        `json:"usage,omitempty"`
 }
 
+// Usage is provider-reported inference telemetry. It is neither an attestation
+// nor a substitute for independently enforced or measured resource limits.
 type Usage struct {
 	PromptTokens   int   `json:"prompt_tokens,omitempty"`
 	OutputTokens   int   `json:"output_tokens,omitempty"`
@@ -199,6 +246,9 @@ type Usage struct {
 	PeakRSSBytes   int64 `json:"peak_rss_bytes,omitempty"`
 }
 
+// Provider is the lifecycle contract for a bounded model backend. Implementations
+// describe supported tasks, generate structured untrusted responses, and release
+// resources with Close. The interface makes no concurrency-safety guarantee.
 type Provider interface {
 	Descriptor() ModelDescriptor
 	Supports(Task) bool
@@ -206,6 +256,9 @@ type Provider interface {
 	Close() error
 }
 
+// ClaimValidation separates structurally admitted claim candidates from rejected
+// drafts and records deterministic diagnostics. AcceptedSummary remains empty in
+// protocol v1.
 type ClaimValidation struct {
 	Accepted               []rkcmodel.Claim      `json:"accepted,omitempty"`
 	Rejected               []RejectedClaim       `json:"rejected,omitempty"`
@@ -214,11 +267,18 @@ type ClaimValidation struct {
 	Diagnostics            []rkcmodel.Diagnostic `json:"diagnostics,omitempty"`
 }
 
+// RejectedClaim retains an untrusted draft and the deterministic policy reasons
+// that prevented publication.
 type RejectedClaim struct {
 	Claim   ClaimDraft `json:"claim"`
 	Reasons []string   `json:"reasons"`
 }
 
+// ValidateResponse applies deterministic structural, length, markup, category,
+// citation-ID, certainty, and identifier heuristics to model output. It does not
+// establish semantic truth or entailment between a claim and cited evidence.
+// Accepted claims therefore remain grounded candidates, while every nonempty
+// protocol-v1 Summary is rejected because it has no claim-level evidence map.
 func ValidateResponse(packet EvidencePacket, response Response, generatorVersion string) ClaimValidation {
 	allowedEvidence := map[string]struct{}{}
 	for _, evidence := range packet.Evidence {
