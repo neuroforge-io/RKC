@@ -148,12 +148,20 @@ defaults:
 - `Qwen3.5-0.8B-Q4_0.gguf`, revision
   `8fea620810c4afa23dd6443f999a48574c1611a3`, 563,036,064 bytes, SHA-256
   `57d1997790d1744fba5b40a7317df71ea5e2acee28c47e78f0cce39c0703f8cf`;
+- `Qwen3.5-4B-Q4_0.gguf`, revision
+  `e87f176479d0855a907a41277aca2f8ee7a09523`, 2,583,221,408 bytes, SHA-256
+  `298fcb5fe7a77ccc79745ae24751560c5ac56874caff4bb39b1f2055bd72b8bb`;
+- `granite-4.0-h-1b-Q5_K_M.gguf`, revision
+  `c2cb1972f511add21f3bae244990b8ff3a3ffb23`, 1,048,556,768 bytes, SHA-256
+  `016a6e46b88fee09f55860253f2c1a263372624bd57060dad6c3f344c89941ba`;
 - `gemma-4-E2B_q4_0-it.gguf`, revision
   `675cff42a74c774d6cb76f76d8eacb49b48c9b93`, 3,349,516,256 bytes, SHA-256
   `fa401b55b07ee70a54c6dae3903c783a6e65064312529ea57175cb5f8dec6634`;
 - `Qwen3.5-2B-Q4_K_M.gguf`, revision
   `7d26695454df6de5fbcce2e58681e62dae06ce43`, 1,396,198,496 bytes, SHA-256
   `57a1085840f497d764a7fc5d346922dbde961efb54cc792ea81d694fd846a1d8`;
+The paired Apache-2.0 embedding candidate is:
+
 - `Qwen3-Embedding-0.6B-Q8_0.gguf`, revision
   `370f27d7550e0def9b39c1f16d3fbaa13aa67728`, 639,150,592 bytes, SHA-256
   `06507c7b42688469c4e7298b0a1e16deff06caf291cf0a5b278c308249c3e439`.

@@ -9,11 +9,12 @@ redistributing substantial portions.
 ### Local static
 
 ```sh
-rkc scan --out .rkc --force .
+rkc quickstart .
 ```
 
-Produces a portable dataset and static site. No daemon, authentication, or model
-is required.
+Produces and verifies a portable dataset and static site with the deterministic
+no-Python profile. No daemon, authentication, model, or Linux-only worker
+sandbox is required.
 
 ### Local daemon
 

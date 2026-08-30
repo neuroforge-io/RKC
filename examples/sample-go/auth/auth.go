@@ -13,19 +13,21 @@ type User struct {
 }
 
 type Store interface {
-	FindUser(username string) (User, bool)
+	// Authenticate must verify the supplied password using the store's
+	// password-hashing and constant-time comparison policy.
+	Authenticate(username, password string) (User, bool)
 }
 
 type Service struct {
 	Store Store
 }
 
-// Login validates a user name and returns the matching account.
+// Login validates both credentials and returns the authenticated account.
 func (s Service) Login(username, password string) (User, error) {
-	if strings.TrimSpace(username) == "" || password == "" {
+	if s.Store == nil || strings.TrimSpace(username) == "" || password == "" {
 		return User{}, ErrInvalidCredentials
 	}
-	user, ok := s.Store.FindUser(username)
+	user, ok := s.Store.Authenticate(username, password)
 	if !ok {
 		return User{}, ErrInvalidCredentials
 	}

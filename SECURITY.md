@@ -1,8 +1,15 @@
 # Security policy
 
-The reference implementation is an architectural scaffold and has not received
-a production security audit. Its Python plugin is an unsandboxed child process.
-Use it only on repositories and plugin code you trust.
+RKC has not received an independent production security audit. Normal scans do
+not execute repository code. The built-in Python adapter is digest-pinned and
+is enabled only when the Linux user-systemd isolation and resource controls can
+be proved; unsupported hosts fail closed. It still runs with the invoking
+user's filesystem authority and does not provide a mount namespace, so use it
+only for repositories you trust. Third-party native workers remain disabled.
+
+The complete implemented controls and residual boundaries are maintained in
+[`docs/SECURITY_MODEL.md`](docs/SECURITY_MODEL.md) and
+[`docs/IMPLEMENTATION_STATUS.md`](docs/IMPLEMENTATION_STATUS.md).
 
 ## Reporting
 

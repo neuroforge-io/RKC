@@ -4,7 +4,8 @@ The Repository Knowledge Representation, or RKR, is the canonical language-
 neutral model emitted by RKC. The current Go definitions are in
 [`pkg/rkcmodel`](../pkg/rkcmodel), the portable JSON contract is
 [`schemas/rkc-bundle.schema.json`](../schemas/rkc-bundle.schema.json), and the
-planned transactional projection is [`storage/sqlite/schema.sql`](../storage/sqlite/schema.sql).
+implemented transactional projection is
+[`storage/sqlite/schema.sql`](../storage/sqlite/schema.sql).
 
 ## Design rules
 
@@ -340,8 +341,10 @@ nodes, evidence, node/edge evidence, edges, documents, sections, chunks, FTS5,
 embeddings, diagnostics, tool runs, jobs, cache entries, conflicts, claims,
 execution paths, coverage records, and audit events.
 
-The current release validates this schema but does not yet use it as the
-canonical runtime writer. That migration is Workstream 1 of the remainder plan.
+The durable pure-Go SQLite runtime stages, validates, publishes, recovers, and
+queries immutable snapshots through this schema. Portable JSON and JSONL remain
+exports of the same canonical RKR records rather than a competing source of
+truth.
 
 ---
 _RKC is stewarded by **NeuroForgeIO** and released under the **MIT License**.

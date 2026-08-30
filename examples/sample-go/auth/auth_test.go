@@ -1,17 +1,28 @@
 package auth
 
-import "testing"
+import (
+	"crypto/subtle"
+	"testing"
+)
 
-type fakeStore struct{ found bool }
+type fakeStore struct {
+	username string
+	password string
+}
 
-func (store fakeStore) FindUser(username string) (User, bool) {
-	return User{Username: username}, store.found
+func (store fakeStore) Authenticate(username, password string) (User, bool) {
+	usernameMatch := subtle.ConstantTimeCompare([]byte(username), []byte(store.username))
+	passwordMatch := subtle.ConstantTimeCompare([]byte(password), []byte(store.password))
+	if usernameMatch != 1 || passwordMatch != 1 {
+		return User{}, false
+	}
+	return User{Username: username}, true
 }
 
 func TestLogin(t *testing.T) {
-	service := Service{Store: fakeStore{found: true}}
-	user, err := service.Login("lloyd", "secret")
-	if err != nil || user.Username != "lloyd" {
+	service := Service{Store: fakeStore{username: "sample-user", password: "correct horse"}}
+	user, err := service.Login("sample-user", "correct horse")
+	if err != nil || user.Username != "sample-user" {
 		t.Fatalf("unexpected login: %#v %v", user, err)
 	}
 }
@@ -21,9 +32,11 @@ func TestLoginRejectsInvalidCredentials(t *testing.T) {
 		service            Service
 		username, password string
 	}{
-		"blank username": {Service{Store: fakeStore{found: true}}, "  ", "secret"},
-		"blank password": {Service{Store: fakeStore{found: true}}, "lloyd", ""},
-		"unknown user":   {Service{Store: fakeStore{found: false}}, "lloyd", "secret"},
+		"blank username": {Service{Store: fakeStore{username: "sample-user", password: "correct horse"}}, "  ", "correct horse"},
+		"blank password": {Service{Store: fakeStore{username: "sample-user", password: "correct horse"}}, "sample-user", ""},
+		"missing store":  {Service{}, "sample-user", "correct horse"},
+		"unknown user":   {Service{Store: fakeStore{username: "sample-user", password: "correct horse"}}, "unknown", "correct horse"},
+		"wrong password": {Service{Store: fakeStore{username: "sample-user", password: "correct horse"}}, "sample-user", "wrong"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			if _, err := testCase.service.Login(testCase.username, testCase.password); err != ErrInvalidCredentials {

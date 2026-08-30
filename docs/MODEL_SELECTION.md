@@ -81,7 +81,7 @@ failed, no defaults changed, and the private report SHA-256 is
 | SmolLM3 3B | Apache-2.0 / 64K | Competitive reasoning and long-context positioning | 3B dense compute and context footprint are outside the viable guarded operating point |
 | LFM2.5 1.2B Instruct | LFM license / 32K | Excellent published edge-CPU throughput and sub-2B results | Excluded: not Apache-2.0, and upstream does not position it as a programming/knowledge default |
 | Falcon-H1 1.5B Instruct | Falcon/custom / long context | Strong published small-model benchmark results | Excluded by the required Apache-2.0 model-license policy |
-| Gemma 4 E2B QAT Q4 | Gemma terms / 32K test point | New efficient architecture and official quantization | Measured; rejected on grammar compatibility and roughly 27-minute projected 32K prefill |
+| Gemma 4 E2B QAT Q4 | Apache-2.0 / 32K test point | New efficient architecture and official quantization | Measured; rejected on grammar compatibility and roughly 27-minute projected 32K prefill |
 | Laguna XS.2 | Apache-2.0 / 262K | Very strong current agentic-code and SWE benchmark positioning with 3B active parameters | 33B total weights cannot fit the 4.5 GiB hard ceiling |
 
 The production latency gate requires at least about 108 prompt tokens/second to

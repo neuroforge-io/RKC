@@ -8,22 +8,25 @@ TEST_SALT = b"rkc-auth-example"
 
 class AuthTests(unittest.TestCase):
     def test_login(self) -> None:
-        users = {"lloyd": encode_password("correct horse", salt=TEST_SALT)}
-        session = AuthService(users).login("lloyd", "correct horse", remember=True)
-        self.assertEqual(session.user_id, "lloyd")
+        users = {"sample-user": encode_password("correct horse", salt=TEST_SALT)}
+        session = AuthService(users).login(
+            "sample-user", "correct horse", remember=True
+        )
+        self.assertEqual(session.user_id, "sample-user")
         self.assertTrue(session.persistent)
-        self.assertNotIn("lloyd", session.token)
+        self.assertNotIn("sample-user", session.token)
         self.assertGreaterEqual(len(session.token), 40)
-
 
     def test_login_rejects_invalid_credentials(self) -> None:
         service = AuthService(
-            {"lloyd": encode_password("correct horse", salt=TEST_SALT)}
+            {"sample-user": encode_password("correct horse", salt=TEST_SALT)}
         )
         with self.assertRaises(AuthenticationError):
-            service.login("lloyd", "wrong")
+            service.login("sample-user", "wrong")
         with self.assertRaises(AuthenticationError):
-            AuthService({"lloyd": "malformed"}).login("lloyd", "correct horse")
+            AuthService({"sample-user": "malformed"}).login(
+                "sample-user", "correct horse"
+            )
 
     def test_password_verifier_rejects_malformed_parameters(self) -> None:
         with self.assertRaises(ValueError):
