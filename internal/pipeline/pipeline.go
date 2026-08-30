@@ -728,6 +728,7 @@ func resolveHeuristicEdges(bundle *rkcmodel.Bundle) {
 			}
 		}
 	}
+	scopes := newHeuristicScopeIndex(bundle, byID)
 	for i := range bundle.Edges {
 		edge := &bundle.Edges[i]
 		if rkcmodel.NormalizeResolution(edge.Resolution) != rkcmodel.ResolutionUnresolved {
@@ -750,22 +751,37 @@ func resolveHeuristicEdges(bundle *rkcmodel.Bundle) {
 		if value, ok := edge.Attributes["spelling"].(string); ok && strings.TrimSpace(value) != "" {
 			spelling = value
 		}
-		candidates := byQualified[symbolKey{domain: targetDomain, spelling: spelling}]
-		if len(candidates) != 1 {
-			name := spelling
-			if index := strings.LastIndexAny(spelling, "./:#"); index >= 0 {
-				name = spelling[index+1:]
-			}
-			candidates = byName[symbolKey{domain: targetDomain, spelling: name}]
+		if strings.TrimSpace(spelling) == "" {
+			continue
 		}
-		if len(candidates) == 1 && candidates[0].ID != edge.From {
-			edge.To = candidates[0].ID
+		type candidateMatch struct {
+			node  rkcmodel.Node
+			proof string
+		}
+		matches := []candidateMatch{}
+		if strings.IndexAny(spelling, "./:#") >= 0 {
+			// A qualified spelling carries information that must not be thrown
+			// away. Without a compiler/import binding, only the exact qualified
+			// identity is strong enough for a syntax-inferred relationship.
+			for _, candidate := range byQualified[symbolKey{domain: targetDomain, spelling: spelling}] {
+				matches = append(matches, candidateMatch{node: candidate, proof: "exact_qualified"})
+			}
+		} else {
+			for _, candidate := range byName[symbolKey{domain: targetDomain, spelling: spelling}] {
+				if proof, ok := heuristicSharedScopeProof(scopes, *edge, caller, candidate); ok {
+					matches = append(matches, candidateMatch{node: candidate, proof: proof})
+				}
+			}
+		}
+		if len(matches) == 1 && matches[0].node.ID != edge.From {
+			edge.To = matches[0].node.ID
 			edge.Resolution = rkcmodel.ResolutionSyntaxInferred
 			edge.Confidence = maxFloat(edge.Confidence, 0.65)
 			if edge.Attributes == nil {
 				edge.Attributes = map[string]any{}
 			}
 			edge.Attributes["resolver"] = "unique_name_match"
+			edge.Attributes["resolver_proof"] = matches[0].proof
 			edge.ID = rkcmodel.StableID("edge", edge.Kind, edge.From, edge.To)
 		}
 	}
@@ -784,6 +800,104 @@ func resolveHeuristicEdges(bundle *rkcmodel.Bundle) {
 		filtered = append(filtered, node)
 	}
 	bundle.Nodes = filtered
+}
+
+type heuristicScopeResult struct {
+	ids   []string
+	valid bool
+}
+
+type heuristicScopeIndex struct {
+	nodes   map[string]rkcmodel.Node
+	parents map[string][]string
+	cache   map[string]heuristicScopeResult
+}
+
+func newHeuristicScopeIndex(bundle *rkcmodel.Bundle, nodes map[string]rkcmodel.Node) *heuristicScopeIndex {
+	index := &heuristicScopeIndex{
+		nodes: nodes, parents: map[string][]string{}, cache: map[string]heuristicScopeResult{},
+	}
+	for _, edge := range bundle.Edges {
+		if edge.Kind != "declares" && edge.Kind != "contains" {
+			continue
+		}
+		resolution := rkcmodel.NormalizeResolution(edge.Resolution)
+		if resolution != rkcmodel.ResolutionDeclared && resolution != rkcmodel.ResolutionCompilerResolved {
+			continue
+		}
+		if _, ok := nodes[edge.From]; !ok {
+			continue
+		}
+		if _, ok := nodes[edge.To]; !ok {
+			continue
+		}
+		index.parents[edge.To] = append(index.parents[edge.To], edge.From)
+	}
+	for id, parents := range index.parents {
+		index.parents[id] = uniqueSorted(parents)
+	}
+	return index
+}
+
+func (index *heuristicScopeIndex) scopes(id string) heuristicScopeResult {
+	return index.resolve(id, map[string]struct{}{})
+}
+
+func (index *heuristicScopeIndex) resolve(id string, visiting map[string]struct{}) heuristicScopeResult {
+	if cached, ok := index.cache[id]; ok {
+		return cached
+	}
+	node, ok := index.nodes[id]
+	if !ok {
+		return heuristicScopeResult{valid: false}
+	}
+	if node.Kind == "package" || node.Kind == "module" {
+		result := heuristicScopeResult{ids: []string{id}, valid: true}
+		index.cache[id] = result
+		return result
+	}
+	if _, cycle := visiting[id]; cycle {
+		return heuristicScopeResult{valid: false}
+	}
+	visiting[id] = struct{}{}
+	defer delete(visiting, id)
+	result := heuristicScopeResult{valid: true}
+	for _, parent := range index.parents[id] {
+		parentResult := index.resolve(parent, visiting)
+		if !parentResult.valid {
+			result.valid = false
+			result.ids = nil
+			break
+		}
+		result.ids = append(result.ids, parentResult.ids...)
+	}
+	result.ids = uniqueSorted(result.ids)
+	index.cache[id] = result
+	return result
+}
+
+func heuristicSharedScopeProof(index *heuristicScopeIndex, edge rkcmodel.Edge, caller, candidate rkcmodel.Node) (string, bool) {
+	callerScopes := index.scopes(caller.ID)
+	candidateScopes := index.scopes(candidate.ID)
+	if !callerScopes.valid || !candidateScopes.valid {
+		return "", false
+	}
+	if len(callerScopes.ids) == 1 && len(candidateScopes.ids) == 1 {
+		if callerScopes.ids[0] == candidateScopes.ids[0] {
+			return "shared_language_scope", true
+		}
+		return "", false
+	}
+	if len(callerScopes.ids) != 0 || len(candidateScopes.ids) != 0 {
+		return "", false
+	}
+	if edge.Producer != openapi.PluginID && edge.Producer != jsonschema.PluginID {
+		return "", false
+	}
+	if caller.ArtifactID == "" || candidate.ArtifactID == "" || caller.ArtifactID != candidate.ArtifactID {
+		return "", false
+	}
+	return "framework_artifact", true
 }
 
 func heuristicResolutionDomain(language string) string {

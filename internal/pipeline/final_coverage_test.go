@@ -226,6 +226,9 @@ func TestDedupeBundleCompletesMetadataAndKeepsStrongestEdge(t *testing.T) {
 func TestResolveHeuristicEdgesCoversFallbackAndBoundaryCases(t *testing.T) {
 	bundle := rkcmodel.Bundle{
 		Nodes: []rkcmodel.Node{
+			{ID: "go-scope", Kind: "package", Name: "pkg", QualifiedName: "pkg", Language: "go"},
+			{ID: "python-scope", Kind: "module", Name: "scripts", QualifiedName: "scripts", Language: "python"},
+			{ID: "javascript-scope", Kind: "module", Name: "src", QualifiedName: "src", Language: "typescript"},
 			{ID: "caller", Kind: "function", Name: "Caller", Language: "go"},
 			{ID: "unique", Kind: "function", Name: "Unique", QualifiedName: "pkg.Unique", Language: "go"},
 			{ID: "other", Kind: "function", Name: "Other", QualifiedName: "pkg.Other", Language: "go"},
@@ -256,6 +259,17 @@ func TestResolveHeuristicEdgesCoversFallbackAndBoundaryCases(t *testing.T) {
 			{ID: "orphan", Kind: "unresolved_symbol", Name: "Orphan", Language: "go"},
 		},
 		Edges: []rkcmodel.Edge{
+			{ID: "own-caller", Kind: "declares", From: "go-scope", To: "caller", Resolution: rkcmodel.ResolutionDeclared},
+			{ID: "own-unique", Kind: "declares", From: "go-scope", To: "unique", Resolution: rkcmodel.ResolutionDeclared},
+			{ID: "own-other", Kind: "declares", From: "go-scope", To: "other", Resolution: rkcmodel.ResolutionDeclared},
+			{ID: "own-thing", Kind: "declares", From: "go-scope", To: "thing", Resolution: rkcmodel.ResolutionDeclared},
+			{ID: "own-dup-a", Kind: "declares", From: "go-scope", To: "dup-a", Resolution: rkcmodel.ResolutionDeclared},
+			{ID: "own-dup-b", Kind: "declares", From: "go-scope", To: "dup-b", Resolution: rkcmodel.ResolutionDeclared},
+			{ID: "own-self", Kind: "declares", From: "go-scope", To: "self", Resolution: rkcmodel.ResolutionDeclared},
+			{ID: "own-python-caller", Kind: "contains", From: "python-scope", To: "python-caller", Resolution: rkcmodel.ResolutionDeclared},
+			{ID: "own-python-shared", Kind: "contains", From: "python-scope", To: "python-shared", Resolution: rkcmodel.ResolutionDeclared},
+			{ID: "own-javascript-caller", Kind: "declares", From: "javascript-scope", To: "javascript-caller", Resolution: rkcmodel.ResolutionDeclared},
+			{ID: "own-typescript-family", Kind: "declares", From: "javascript-scope", To: "typescript-family", Resolution: rkcmodel.ResolutionDeclared},
 			{ID: "already-resolved", Kind: "calls", From: "caller", To: "unique", Resolution: rkcmodel.ResolutionDeclared},
 			{ID: "missing-target", Kind: "calls", From: "caller", To: "missing", Resolution: rkcmodel.ResolutionUnresolved},
 			{ID: "concrete-target", Kind: "calls", From: "caller", To: "unique", Resolution: rkcmodel.ResolutionUnresolved},
@@ -275,32 +289,135 @@ func TestResolveHeuristicEdgesCoversFallbackAndBoundaryCases(t *testing.T) {
 	}
 
 	resolveHeuristicEdges(&bundle)
-	for id, target := range map[string]string{
-		"fallback-separator":           "unique",
-		"blank-spelling":               "other",
-		"non-string-spelling":          "thing",
-		"same-domain":                  "python-shared",
-		"javascript-typescript-family": "typescript-family",
+	for id, want := range map[string]struct {
+		target string
+		proof  string
+	}{
+		"blank-spelling":               {target: "other", proof: "exact_qualified"},
+		"non-string-spelling":          {target: "thing", proof: "shared_language_scope"},
+		"same-domain":                  {target: "python-shared", proof: "shared_language_scope"},
+		"javascript-typescript-family": {target: "typescript-family", proof: "shared_language_scope"},
 	} {
 		edge := pipelineEdgeByOriginalID(t, bundle.Edges, id)
 		if edge.Resolution != rkcmodel.ResolutionSyntaxInferred || edge.Attributes["resolver"] != "unique_name_match" {
 			t.Errorf("edge %q was not resolved: %+v", id, edge)
 		}
-		if edge.To != target {
-			t.Errorf("edge %q target = %q, want %q", id, edge.To, target)
+		if edge.To != want.target || edge.Attributes["resolver_proof"] != want.proof {
+			t.Errorf("edge %q target/proof = %q/%v, want %q/%q", id, edge.To, edge.Attributes["resolver_proof"], want.target, want.proof)
 		}
 	}
-	if edge := pipelineEdgeByOriginalID(t, bundle.Edges, "fallback-separator"); edge.Confidence != 0.9 {
-		t.Fatalf("existing higher confidence was lowered: %+v", edge)
-	}
-	for _, id := range []string{"ambiguous", "self-reference", "missing-target", "concrete-target", "cross-domain-candidate", "python-openapi-candidate", "mismatched-domains", "missing-domain", "missing-caller-domain"} {
+	for _, id := range []string{"fallback-separator", "ambiguous", "self-reference", "missing-target", "concrete-target", "cross-domain-candidate", "python-openapi-candidate", "mismatched-domains", "missing-domain", "missing-caller-domain"} {
 		if edge := pipelineEdgeByOriginalID(t, bundle.Edges, id); edge.Resolution != rkcmodel.ResolutionUnresolved {
 			t.Errorf("edge %q unexpectedly resolved: %+v", id, edge)
 		}
 	}
+	if edge := pipelineEdgeByOriginalID(t, bundle.Edges, "fallback-separator"); edge.Confidence != 0.9 {
+		t.Fatalf("unresolved edge confidence changed: %+v", edge)
+	}
 	for _, node := range bundle.Nodes {
 		if node.ID == "orphan" {
 			t.Fatal("unreferenced placeholder was retained")
+		}
+	}
+}
+
+func TestResolveHeuristicEdgesRequiresScopeAndExactQualifiedIdentity(t *testing.T) {
+	bundle := rkcmodel.Bundle{
+		Nodes: []rkcmodel.Node{
+			{ID: "package-a", Kind: "package", Name: "a", QualifiedName: "example/a", Language: "go"},
+			{ID: "package-b", Kind: "package", Name: "b", QualifiedName: "example/b", Language: "go"},
+			{ID: "package-target", Kind: "package", Name: "target", QualifiedName: "example/target", Language: "go"},
+			{ID: "caller-a", Kind: "function", Name: "Caller", Language: "go"},
+			{ID: "compiler-caller", Kind: "function", Name: "CompilerCaller", Language: "go"},
+			{ID: "compiler-target", Kind: "function", Name: "CompilerTarget", QualifiedName: "example/a.CompilerTarget", Language: "go"},
+			{ID: "local", Kind: "function", Name: "Local", QualifiedName: "example/a.Local", Language: "go"},
+			{ID: "exact", Kind: "function", Name: "Exact", QualifiedName: "example/a.Exact", Language: "go"},
+			{ID: "cross-only", Kind: "function", Name: "CrossOnly", QualifiedName: "example/b.CrossOnly", Language: "go"},
+			{ID: "collision-is", Kind: "method", Name: "Is", QualifiedName: "example/b.OperationError.Is", Language: "go"},
+			{ID: "default-import-target", Kind: "function", Name: "DefaultFn", QualifiedName: "example/target.DefaultFn", Language: "go"},
+			{ID: "alias-import-target", Kind: "function", Name: "AliasFn", QualifiedName: "example/target.AliasFn", Language: "go"},
+			{ID: "ambiguous-owner", Kind: "function", Name: "MultiOwned", QualifiedName: "example.MultiOwned", Language: "go"},
+			{ID: "target-dependency", Kind: "external_dependency", Name: "target", QualifiedName: "example/target", Language: "go"},
+			{ID: "unowned-caller", Kind: "function", Name: "UnownedCaller", Language: "go", ArtifactID: "shared-artifact"},
+			{ID: "unowned-target", Kind: "function", Name: "Unowned", QualifiedName: "Unowned", Language: "go", ArtifactID: "shared-artifact"},
+			{ID: "framework-caller", Kind: "schema", Name: "FrameworkCaller", Language: "openapi", ArtifactID: "api-artifact"},
+			{ID: "framework-local", Kind: "schema", Name: "FrameworkOnly", Language: "openapi", ArtifactID: "api-artifact"},
+			{ID: "framework-foreign", Kind: "schema", Name: "FrameworkOnly", Language: "openapi", ArtifactID: "other-artifact"},
+			{ID: "cycle-a", Kind: "namespace", Name: "CycleA", Language: "go"},
+			{ID: "cycle-b", Kind: "namespace", Name: "CycleB", Language: "go"},
+			{ID: "cycle-caller", Kind: "function", Name: "CycleCaller", Language: "go"},
+			{ID: "cycle-target", Kind: "function", Name: "CycleTarget", QualifiedName: "CycleTarget", Language: "go"},
+			{ID: "u-local", Kind: "unresolved_symbol", Name: "Local", Language: "go"},
+			{ID: "u-compiler-target", Kind: "unresolved_symbol", Name: "CompilerTarget", Language: "go"},
+			{ID: "u-exact", Kind: "unresolved_symbol", Name: "example/a.Exact", Language: "go"},
+			{ID: "u-cross", Kind: "unresolved_symbol", Name: "CrossOnly", Language: "go"},
+			{ID: "u-collision", Kind: "unresolved_symbol", Name: "errors.Is", Language: "go"},
+			{ID: "u-default-import", Kind: "unresolved_symbol", Name: "target.DefaultFn", Language: "go"},
+			{ID: "u-alias-import", Kind: "unresolved_symbol", Name: "alias.AliasFn", Language: "go"},
+			{ID: "u-ambiguous-owner", Kind: "unresolved_symbol", Name: "MultiOwned", Language: "go"},
+			{ID: "u-unowned", Kind: "unresolved_symbol", Name: "Unowned", Language: "go"},
+			{ID: "u-framework", Kind: "unresolved_symbol", Name: "FrameworkOnly", Language: "openapi"},
+			{ID: "u-cycle-target", Kind: "unresolved_symbol", Name: "CycleTarget", Language: "go"},
+		},
+		Edges: []rkcmodel.Edge{
+			{ID: "own-caller-a", Kind: "declares", From: "package-a", To: "caller-a", Resolution: rkcmodel.ResolutionDeclared},
+			{ID: "own-compiler-caller", Kind: "declares", From: "package-a", To: "compiler-caller", Resolution: rkcmodel.ResolutionCompilerResolved},
+			{ID: "own-compiler-target", Kind: "declares", From: "package-a", To: "compiler-target", Resolution: rkcmodel.ResolutionCompilerResolved},
+			{ID: "own-local", Kind: "declares", From: "package-a", To: "local", Resolution: rkcmodel.ResolutionDeclared},
+			{ID: "own-exact", Kind: "declares", From: "package-a", To: "exact", Resolution: rkcmodel.ResolutionDeclared},
+			{ID: "own-cross", Kind: "declares", From: "package-b", To: "cross-only", Resolution: rkcmodel.ResolutionDeclared},
+			{ID: "own-collision", Kind: "declares", From: "package-b", To: "collision-is", Resolution: rkcmodel.ResolutionDeclared},
+			{ID: "own-default-import", Kind: "declares", From: "package-target", To: "default-import-target", Resolution: rkcmodel.ResolutionDeclared},
+			{ID: "own-alias-import", Kind: "declares", From: "package-target", To: "alias-import-target", Resolution: rkcmodel.ResolutionDeclared},
+			{ID: "own-ambiguous-a", Kind: "declares", From: "package-a", To: "ambiguous-owner", Resolution: rkcmodel.ResolutionDeclared},
+			{ID: "own-ambiguous-b", Kind: "declares", From: "package-b", To: "ambiguous-owner", Resolution: rkcmodel.ResolutionDeclared},
+			{ID: "default-import", Kind: "imports", From: "package-a", To: "target-dependency", Resolution: rkcmodel.ResolutionDeclared},
+			{ID: "alias-import", Kind: "imports", From: "package-a", To: "target-dependency", Resolution: rkcmodel.ResolutionDeclared, Attributes: map[string]any{"alias": "alias"}},
+			{ID: "cycle-a-contains-b", Kind: "contains", From: "cycle-a", To: "cycle-b", Resolution: rkcmodel.ResolutionDeclared},
+			{ID: "cycle-b-declares-a", Kind: "declares", From: "cycle-b", To: "cycle-a", Resolution: rkcmodel.ResolutionDeclared},
+			{ID: "cycle-a-declares-caller", Kind: "declares", From: "cycle-a", To: "cycle-caller", Resolution: rkcmodel.ResolutionDeclared},
+			{ID: "cycle-b-declares-target", Kind: "declares", From: "cycle-b", To: "cycle-target", Resolution: rkcmodel.ResolutionDeclared},
+			{ID: "local-call", Kind: "calls", From: "caller-a", To: "u-local", Resolution: rkcmodel.ResolutionUnresolved, Attributes: map[string]any{"original_test_id": "local-call"}},
+			{ID: "compiler-owned-call", Kind: "calls", From: "compiler-caller", To: "u-compiler-target", Resolution: rkcmodel.ResolutionUnresolved, Attributes: map[string]any{"original_test_id": "compiler-owned-call"}},
+			{ID: "exact-qualified", Kind: "calls", From: "caller-a", To: "u-exact", Resolution: rkcmodel.ResolutionUnresolved, Attributes: map[string]any{"original_test_id": "exact-qualified"}},
+			{ID: "cross-package", Kind: "calls", From: "caller-a", To: "u-cross", Resolution: rkcmodel.ResolutionUnresolved, Attributes: map[string]any{"original_test_id": "cross-package"}},
+			{ID: "external-qualifier-collision", Kind: "calls", From: "caller-a", To: "u-collision", Resolution: rkcmodel.ResolutionUnresolved, Attributes: map[string]any{"original_test_id": "external-qualifier-collision"}},
+			{ID: "default-import-call", Kind: "calls", From: "caller-a", To: "u-default-import", Resolution: rkcmodel.ResolutionUnresolved, Attributes: map[string]any{"original_test_id": "default-import-call"}},
+			{ID: "alias-import-call", Kind: "calls", From: "caller-a", To: "u-alias-import", Resolution: rkcmodel.ResolutionUnresolved, Attributes: map[string]any{"original_test_id": "alias-import-call"}},
+			{ID: "ambiguous-ownership", Kind: "calls", From: "caller-a", To: "u-ambiguous-owner", Resolution: rkcmodel.ResolutionUnresolved, Attributes: map[string]any{"original_test_id": "ambiguous-ownership"}},
+			{ID: "unowned-language-call", Kind: "calls", From: "unowned-caller", To: "u-unowned", Resolution: rkcmodel.ResolutionUnresolved, Producer: "rkc.go-ast", Attributes: map[string]any{"original_test_id": "unowned-language-call"}},
+			{ID: "framework-artifact-call", Kind: "references", From: "framework-caller", To: "u-framework", Resolution: rkcmodel.ResolutionUnresolved, Producer: openapi.PluginID, Attributes: map[string]any{"original_test_id": "framework-artifact-call"}},
+			{ID: "cyclic-ownership-call", Kind: "calls", From: "cycle-caller", To: "u-cycle-target", Resolution: rkcmodel.ResolutionUnresolved, Attributes: map[string]any{"original_test_id": "cyclic-ownership-call"}},
+		},
+	}
+
+	resolveHeuristicEdges(&bundle)
+	for id, want := range map[string]struct {
+		target string
+		proof  string
+	}{
+		"local-call":              {target: "local", proof: "shared_language_scope"},
+		"compiler-owned-call":     {target: "compiler-target", proof: "shared_language_scope"},
+		"exact-qualified":         {target: "exact", proof: "exact_qualified"},
+		"framework-artifact-call": {target: "framework-local", proof: "framework_artifact"},
+	} {
+		edge := pipelineEdgeByOriginalID(t, bundle.Edges, id)
+		if edge.To != want.target || edge.Resolution != rkcmodel.ResolutionSyntaxInferred || edge.Attributes["resolver_proof"] != want.proof {
+			t.Errorf("edge %q = %+v, want target=%q proof=%q", id, edge, want.target, want.proof)
+		}
+	}
+	for id, target := range map[string]string{
+		"cross-package":                "u-cross",
+		"external-qualifier-collision": "u-collision",
+		"default-import-call":          "u-default-import",
+		"alias-import-call":            "u-alias-import",
+		"ambiguous-ownership":          "u-ambiguous-owner",
+		"unowned-language-call":        "u-unowned",
+		"cyclic-ownership-call":        "u-cycle-target",
+	} {
+		edge := pipelineEdgeByOriginalID(t, bundle.Edges, id)
+		if edge.To != target || edge.Resolution != rkcmodel.ResolutionUnresolved || edge.Attributes["resolver"] != nil {
+			t.Errorf("edge %q was not kept unresolved: %+v", id, edge)
 		}
 	}
 }
