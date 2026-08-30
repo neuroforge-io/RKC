@@ -84,6 +84,40 @@ func TestScanFiltersPlaceholdersReferencesAndMergesOverlappingDetectors(t *testi
 	}
 }
 
+func TestScanIgnoresTypedParametersAndRetainsAssignmentDetection(t *testing.T) {
+	t.Parallel()
+
+	key := "pass" + "word"
+	typedSource := []byte(strings.Join([]string{
+		"authenticate(username: string, " + key + ": string): User | undefined",
+		"login(\n  username: string,\n  " + key + ": PasswordValue,\n): User",
+		"const login = (" + key + ": \"required-password\"): void => {}",
+		"const handler = (" + key + ": PasswordValue) => {}",
+		"login(" + key + ": PasswordValue) {}",
+	}, "\n"))
+	if findings := Scan(typedSource); len(findings) != 0 {
+		t.Fatalf("typed parameters produced findings: %+v", findings)
+	}
+
+	assignments := []byte(strings.Join([]string{
+		key + " = \"assigned-credential-value\"",
+		"if (" + key + " = \"parenthesized-credential\") use(" + key + ")",
+		"const config = {" + key + ": \"object-credential-value\"}",
+		"configure({" + key + ": \"nested-object-credential\"})",
+		key + ": yaml-credential-value",
+		"audit(" + key + ": labeled-credential-value)",
+	}, "\n"))
+	findings := Scan(assignments)
+	if len(findings) != 6 {
+		t.Fatalf("Scan found %d assignments, want 6: %+v", len(findings), findings)
+	}
+	for _, finding := range findings {
+		if finding.Kind != "secret_assignment" || finding.KeyName != key {
+			t.Errorf("assignment metadata = %+v", finding)
+		}
+	}
+}
+
 func TestSecretNameAndPlaceholderClassification(t *testing.T) {
 	t.Parallel()
 

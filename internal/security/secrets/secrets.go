@@ -74,6 +74,9 @@ func Scan(data []byte) []Finding {
 		if len(match) < 6 || match[4] < 0 {
 			continue
 		}
+		if isTypedParameterAnnotation(data, match[2], match[3], match[4]) {
+			continue
+		}
 		key := string(data[match[2]:match[3]])
 		start, end := match[4], match[5]
 		value := string(data[start:end])
@@ -87,6 +90,96 @@ func Scan(data []byte) []Finding {
 		findings = append(findings, makeFinding(data, start, end, "secret_assignment", confidence, key))
 	}
 	return mergeFindings(findings)
+}
+
+func isTypedParameterAnnotation(data []byte, keyStart, keyEnd, valueStart int) bool {
+	if keyStart < 0 || keyEnd < keyStart || valueStart < keyEnd || valueStart > len(data) {
+		return false
+	}
+	separator := strings.TrimSpace(string(data[keyEnd:valueStart]))
+	if separator == "" || separator[0] != ':' {
+		return false
+	}
+
+	// A name followed by a colon directly inside a declaration's parentheses is
+	// a parameter type annotation in languages such as TypeScript. Real colon
+	// assignments inside calls require an intervening object/map opener, while
+	// equals assignments remain eligible for scanning.
+	parentheses, brackets, braces := 0, 0, 0
+	parameterOpen := -1
+
+findParameterOpen:
+	for index := keyStart - 1; index >= 0; index-- {
+		switch data[index] {
+		case ')':
+			parentheses++
+		case '(':
+			if parentheses > 0 {
+				parentheses--
+			} else {
+				parameterOpen = index
+				break findParameterOpen
+			}
+		case ']':
+			brackets++
+		case '[':
+			if brackets > 0 {
+				brackets--
+			} else {
+				return false
+			}
+		case '}':
+			braces++
+		case '{':
+			if braces > 0 {
+				braces--
+			} else {
+				return false
+			}
+		}
+	}
+	if parameterOpen < 0 {
+		return false
+	}
+
+	depth := 1
+	parameterClose := -1
+
+findParameterClose:
+	for index := parameterOpen + 1; index < len(data); index++ {
+		switch data[index] {
+		case '(':
+			depth++
+		case ')':
+			depth--
+			if depth == 0 {
+				parameterClose = index
+				break findParameterClose
+			}
+		}
+	}
+	if parameterClose < 0 {
+		return false
+	}
+	suffixStart := parameterClose + 1
+	for suffixStart < len(data) {
+		switch data[suffixStart] {
+		case ' ', '\t', '\r', '\n':
+			suffixStart++
+			continue
+		}
+		break
+	}
+	if suffixStart >= len(data) {
+		return false
+	}
+	switch data[suffixStart] {
+	case ':', '{', ';':
+		return true
+	case '=', '-':
+		return suffixStart+1 < len(data) && data[suffixStart+1] == '>'
+	}
+	return false
 }
 
 func IsSecretName(name string) bool {
