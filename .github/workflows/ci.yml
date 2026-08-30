@@ -84,6 +84,7 @@ jobs:
       - name: Build profiled quality gap index
         env:
           RKC_RESOURCE_GUARD_MODE: service
+          RKC_QUALITY_BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
         run: |
           set -eu
           profile_root=.rkc-quality-coverage
@@ -125,9 +126,29 @@ jobs:
           PY
             go_profile="$combined_profile"
           fi
+          quality_base=${RKC_QUALITY_BASE-}
+          case "$quality_base" in
+            '')
+              echo 'quality index: event did not provide a comparison base' >&2
+              exit 1
+              ;;
+            *[!0]*)
+              ;;
+            *)
+              # A branch-creation/root push carries an all-zero `before` SHA.
+              # Compare its complete committed tree with a real empty-tree
+              # object instead of silently falling back to the clean worktree.
+              quality_base=$(git mktree </dev/null)
+              ;;
+          esac
+          if ! git rev-parse --verify "${quality_base}^{tree}" >/dev/null 2>&1; then
+            echo "quality index: comparison base is unavailable: $quality_base" >&2
+            exit 1
+          fi
           sh scripts/with-rkc-limits.sh python3 scripts/quality_index.py \
             --root . \
             --output .rkc-quality \
+            --base "$quality_base" \
             --go-profile "$go_profile" \
             --go-report "$go_report" \
             --python-report "$python_report"

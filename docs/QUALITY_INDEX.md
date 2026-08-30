@@ -117,7 +117,12 @@ coverage workflow so their paths and branch semantics remain auditable.
 The main CI workflow runs that coverage gate in the same low-priority
 envelope before building its quality artifact, then supplies the fresh merged
 Go profile (including the maintained nested Go example module) and branch-aware
-Python report to this index. Local
+Python report to this index. CI always fetches complete history and passes an
+event-bound comparison: a pull request uses its recorded base commit and a
+push uses the recorded pre-push commit. A first/root or branch-creation push
+has an all-zero pre-push SHA, so CI creates an empty Git tree and reports the
+complete committed tree as its delta. A missing non-zero base is an explicit
+CI error; it never degrades to a misleading clean-worktree comparison. Local
 `make quality-index` runs remain intentionally fast and omit profiles unless
 you pass them explicitly.
 
@@ -127,3 +132,9 @@ License](../LICENSE). Retain [`NOTICE`](../NOTICE) and credit NeuroForgeIO/RKC
 contributors in redistributed products; third-party dependencies, model
 weights, and compiler indexes keep their own licenses as documented in
 [`THIRD_PARTY_NOTICES.md`](../THIRD_PARTY_NOTICES.md).
+
+---
+_RKC is stewarded by **NeuroForgeIO** and released under the **MIT License**.
+Redistributions must retain the copyright and permission notices required by
+that license. Attribution to NeuroForgeIO is requested, but is not an additional
+license condition._

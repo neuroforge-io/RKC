@@ -399,13 +399,64 @@ class QualityIndexTests(unittest.TestCase):
         self.run_git("commit", "-q", "-m", "fixture")
         identity = index._git_identity(self.root)
         self.assertEqual(identity["status"], "available")
+        root_commit = identity["commit"]
+        empty_tree = subprocess.run(
+            ["git", "-C", str(self.root), "mktree"],
+            check=True,
+            input="",
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        ).stdout.strip()
+        root_delta = index._git_changes(self.root, empty_tree, identity)
+        self.assertEqual(root_delta["status"], "available")
+        self.assertEqual(root_delta["scope"], f"{empty_tree}..HEAD")
+        self.assertEqual(
+            root_delta["items"], [{"status": "A", "path": "src/main.go"}]
+        )
+        root_index = index.build_index(self.root, base=empty_tree)
+        self.assertEqual(root_index["deltas"], root_delta)
+        self.assertTrue(root_index["gaps"])
+        self.assertTrue(
+            all(gap["priority"] == "high" for gap in root_index["gaps"])
+        )
+
         self.write("src/main.go", "package src\nfunc Main() {}\n")
         self.write("new.py", "print(1)\n")
         delta = index._git_changes(self.root, None, identity)
         self.assertEqual(delta["status"], "available")
         self.assertEqual([item["path"] for item in delta["items"]], ["new.py", "src/main.go"])
+        self.run_git("add", "new.py", "src/main.go")
+        self.run_git("commit", "-q", "-m", "second")
+        committed_delta = index._git_changes(
+            self.root, root_commit, index._git_identity(self.root)
+        )
+        self.assertEqual(committed_delta["status"], "available")
+        self.assertEqual(committed_delta["scope"], f"{root_commit}..HEAD")
+        self.assertEqual(
+            committed_delta["items"],
+            [
+                {"status": "A", "path": "new.py"},
+                {"status": "M", "path": "src/main.go"},
+            ],
+        )
         bad = index._git_changes(self.root, "does-not-exist", identity)
         self.assertEqual(bad["status"], "unavailable")
+
+    def test_ci_quality_index_has_a_commit_delta_contract(self) -> None:
+        workflow = (
+            Path(__file__).resolve().parents[1] / ".github" / "workflows" / "ci.yml"
+        ).read_text(encoding="utf-8")
+        self.assertIn("fetch-depth: 0", workflow)
+        self.assertIn(
+            "RKC_QUALITY_BASE: ${{ github.event.pull_request.base.sha || github.event.before }}",
+            workflow,
+        )
+        self.assertIn("quality_base=$(git mktree </dev/null)", workflow)
+        self.assertIn(
+            'git rev-parse --verify "${quality_base}^{tree}"', workflow
+        )
+        self.assertIn('--base "$quality_base"', workflow)
 
     def run_git(self, *arguments: str) -> None:
         subprocess.run(["git", "-C", str(self.root), *arguments], check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
