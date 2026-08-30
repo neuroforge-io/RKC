@@ -400,6 +400,8 @@ class QualityIndexTests(unittest.TestCase):
         self.assertIn("profile error", errors.getvalue())
         payload = json.loads((output / "index.json").read_text(encoding="utf-8"))
         self.assertTrue(payload["profile_errors"])
+        self.assertEqual(payload["summary"]["profile_errors"], 1)
+        self.assertIn("Profile errors", (output / "index.md").read_text(encoding="utf-8"))
 
 
 if __name__ == "__main__":

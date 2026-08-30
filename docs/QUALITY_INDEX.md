@@ -73,6 +73,8 @@ When a coverage-gate report is supplied, the summary separately counts
 `profiling_scope_excluded_files` and `profiling_zero_executable_files`; those
 files remain in the source inventory but are removed from the percentage
 denominator for a principled, auditable reason.
+The summary also counts `profile_errors`; the Markdown report lists each one,
+and any supplied profile error makes the command fail closed.
 
 The `gaps` array is the actionable queue. Changed files are marked `high`
 priority when they lack a test, documentation evidence, or an applicable

@@ -737,6 +737,7 @@ def build_index(
         "profile_units": profile_units,
         "profile_covered_units": profile_covered,
         "profile_statement_or_branch_percent": _ratio(profile_covered, profile_units),
+        "profile_errors": len(profile_errors),
         "open_gaps": len(gaps),
     }
     return {
@@ -781,6 +782,7 @@ def render_markdown(index: Mapping[str, Any]) -> str:
         f"| Profile units covered | {summary['profile_statement_or_branch_percent'] if summary['profile_statement_or_branch_percent'] is not None else 'n/a'}% |",
         f"| Platform-excluded profile files | {summary['profiling_scope_excluded_files']} |",
         f"| Zero-executable profile files | {summary['profiling_zero_executable_files']} |",
+        f"| Profile errors | {summary['profile_errors']} |",
         f"| Open gaps | {summary['open_gaps']} |",
         "",
         "## Open gaps",
@@ -791,6 +793,10 @@ def render_markdown(index: Mapping[str, Any]) -> str:
         lines.extend(f"- **{gap['priority']} {gap['kind']}** `{gap['path']}` — {gap['detail']}." for gap in gaps)
     else:
         lines.append("- No gaps were detected by the configured evidence rules.")
+    profile_errors = index.get("profile_errors", [])
+    if profile_errors:
+        lines.extend(["", "## Profile errors", ""])
+        lines.extend(f"- {error}" for error in profile_errors)
     lines.extend(["", "## Source inventory", "", "| Path | Language | Tests | Docs | Profile |", "| --- | --- | --- | --- | --- |"])
     for record in index["files"]:
         lines.append(
