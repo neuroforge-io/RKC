@@ -21,8 +21,9 @@ import (
 )
 
 const (
-	PluginID      = "rkc.manifest"
-	PluginVersion = "0.2.0"
+	PluginID                 = "rkc.manifest"
+	PluginVersion            = "0.2.0"
+	maxDockerInstructionSize = 4 * 1024 * 1024
 )
 
 type Options struct {
@@ -251,24 +252,21 @@ func (c *collector) dockerfile(root string, file pluginapi.FileRef) {
 	}
 	projectID := c.project(file, "docker", projectName, "", "Dockerfile")
 	scanner := bufio.NewScanner(input)
-	scanner.Buffer(make([]byte, 64*1024), 4*1024*1024)
-	lineNumber := 0
+	scanner.Buffer(make([]byte, 64*1024), maxDockerInstructionSize)
 	currentStage := projectID
-	for scanner.Scan() {
-		lineNumber++
-		line := strings.TrimSpace(scanner.Text())
-		if line == "" || strings.HasPrefix(line, "#") {
-			continue
-		}
+	err = scanDockerInstructions(scanner, maxDockerInstructionSize, func(instruction dockerInstruction) {
+		line := instruction.text
 		fields := strings.Fields(line)
 		if len(fields) == 0 {
-			continue
+			return
 		}
+		lineNumber := instruction.startLine
+		sourceRange := dockerSourceRange(file, instruction)
 		directive := strings.ToUpper(fields[0])
 		switch directive {
 		case "FROM":
 			if len(fields) < 2 {
-				continue
+				return
 			}
 			image := fields[1]
 			stageName := fmt.Sprintf("stage-%d", lineNumber)
@@ -279,8 +277,8 @@ func (c *collector) dockerfile(root string, file pluginapi.FileRef) {
 				}
 			}
 			stageID := rkcmodel.StableID("node", "build_target", file.Path, stageName)
-			evidence := c.addEvidence(file, "dockerfile.from", fmt.Sprintf("line:%d", lineNumber), line)
-			c.addNode(rkcmodel.Node{ID: stageID, LogicalID: rkcmodel.StableID("logical", "docker-stage", projectName, stageName), Kind: "build_target", Name: stageName, QualifiedName: file.Path + " stage " + stageName, Language: "dockerfile", Visibility: "repository", ArtifactID: file.ArtifactID, Source: &rkcmodel.SourceRange{ArtifactID: file.ArtifactID, Path: file.Path, StartLine: lineNumber, EndLine: lineNumber}, EvidenceIDs: []string{evidence}, Attributes: map[string]any{"base_image": image, "line": lineNumber}})
+			evidence := c.addDockerEvidence(file, "dockerfile.from", instruction, line)
+			c.addNode(rkcmodel.Node{ID: stageID, LogicalID: rkcmodel.StableID("logical", "docker-stage", projectName, stageName), Kind: "build_target", Name: stageName, QualifiedName: file.Path + " stage " + stageName, Language: "dockerfile", Visibility: "repository", ArtifactID: file.ArtifactID, Source: sourceRange, EvidenceIDs: []string{evidence}, Attributes: map[string]any{"base_image": image, "line": lineNumber}})
 			c.addEdgeWithEvidence("builds", projectID, stageID, "declared", evidence, nil)
 			imageID := rkcmodel.StableID("node", "container_image", image)
 			c.addNode(rkcmodel.Node{ID: imageID, LogicalID: imageID, Kind: "container_image", Name: image, QualifiedName: image, Language: "oci", Visibility: "external", EvidenceIDs: []string{evidence}, Attributes: map[string]any{"reference": image}})
@@ -289,8 +287,8 @@ func (c *collector) dockerfile(root string, file pluginapi.FileRef) {
 		case "EXPOSE":
 			for _, port := range fields[1:] {
 				id := rkcmodel.StableID("node", "config_key", file.Path, "port", port)
-				evidence := c.addEvidence(file, "dockerfile.expose", fmt.Sprintf("line:%d", lineNumber), port)
-				c.addNode(rkcmodel.Node{ID: id, LogicalID: rkcmodel.StableID("logical", "container-port", projectName, port), Kind: "config_key", Name: port, QualifiedName: file.Path + " exposed port " + port, Language: "dockerfile", Visibility: "public", PublicSurface: true, ArtifactID: file.ArtifactID, Source: &rkcmodel.SourceRange{ArtifactID: file.ArtifactID, Path: file.Path, StartLine: lineNumber, EndLine: lineNumber}, EvidenceIDs: []string{evidence}, Attributes: map[string]any{"kind": "port"}})
+				evidence := c.addDockerEvidence(file, "dockerfile.expose", instruction, port)
+				c.addNode(rkcmodel.Node{ID: id, LogicalID: rkcmodel.StableID("logical", "container-port", projectName, port), Kind: "config_key", Name: port, QualifiedName: file.Path + " exposed port " + port, Language: "dockerfile", Visibility: "public", PublicSurface: true, ArtifactID: file.ArtifactID, Source: sourceRange, EvidenceIDs: []string{evidence}, Attributes: map[string]any{"kind": "port"}})
 				c.addEdgeWithEvidence("exposes", currentStage, id, "declared", evidence, nil)
 			}
 		case "ENV", "ARG":
@@ -309,15 +307,102 @@ func (c *collector) dockerfile(root string, file pluginapi.FileRef) {
 					defaultValue = "<redacted>"
 				}
 				id := rkcmodel.StableID("node", kind, file.Path, name)
-				evidence := c.addEvidence(file, "dockerfile."+strings.ToLower(directive), fmt.Sprintf("line:%d", lineNumber), name)
-				c.addNode(rkcmodel.Node{ID: id, LogicalID: rkcmodel.StableID("logical", kind, projectName, name), Kind: kind, Name: name, QualifiedName: file.Path + " " + name, Language: "dockerfile", Visibility: "repository", ArtifactID: file.ArtifactID, Source: &rkcmodel.SourceRange{ArtifactID: file.ArtifactID, Path: file.Path, StartLine: lineNumber, EndLine: lineNumber}, EvidenceIDs: []string{evidence}, Attributes: map[string]any{"directive": directive, "default": defaultValue, "has_default": assignment.value != "", "secret_like": secretLike}})
+				evidence := c.addDockerEvidence(file, "dockerfile."+strings.ToLower(directive), instruction, name)
+				c.addNode(rkcmodel.Node{ID: id, LogicalID: rkcmodel.StableID("logical", kind, projectName, name), Kind: kind, Name: name, QualifiedName: file.Path + " " + name, Language: "dockerfile", Visibility: "repository", ArtifactID: file.ArtifactID, Source: sourceRange, EvidenceIDs: []string{evidence}, Attributes: map[string]any{"directive": directive, "default": defaultValue, "has_default": assignment.value != "", "secret_like": secretLike}})
 				c.addEdgeWithEvidence("configures", currentStage, id, "declared", evidence, nil)
 			}
 		}
-	}
-	if err := scanner.Err(); err != nil {
+	})
+	if err != nil {
 		c.error(file, "RKC-MAN-1302", err.Error())
 	}
+}
+
+type dockerInstruction struct {
+	text      string
+	startLine int
+	endLine   int
+}
+
+// scanDockerInstructions joins Docker's backslash-continuation lines without
+// retaining the whole file. The explicit logical-instruction limit prevents a
+// file containing indefinitely many continued physical lines from growing the
+// builder without bound.
+func scanDockerInstructions(scanner *bufio.Scanner, limit int, visit func(dockerInstruction)) error {
+	var logical strings.Builder
+	lineNumber := 0
+	startLine := 0
+	endLine := 0
+	for scanner.Scan() {
+		lineNumber++
+		physical := strings.TrimSpace(scanner.Text())
+		if physical == "" || strings.HasPrefix(physical, "#") {
+			continue
+		}
+		if startLine == 0 {
+			startLine = lineNumber
+		}
+		part, continued := dockerContinuation(physical)
+		separatorSize := 0
+		if logical.Len() > 0 && part != "" {
+			separatorSize = 1
+		}
+		if limit < 1 || separatorSize > limit-logical.Len() || len(part) > limit-logical.Len()-separatorSize {
+			return fmt.Errorf("Dockerfile instruction beginning at line %d exceeds %d bytes", startLine, limit)
+		}
+		if separatorSize != 0 {
+			logical.WriteByte(' ')
+		}
+		logical.WriteString(part)
+		endLine = lineNumber
+		if continued {
+			continue
+		}
+		if text := strings.TrimSpace(logical.String()); text != "" {
+			visit(dockerInstruction{text: text, startLine: startLine, endLine: endLine})
+		}
+		logical.Reset()
+		startLine = 0
+		endLine = 0
+	}
+	if err := scanner.Err(); err != nil {
+		return err
+	}
+	if text := strings.TrimSpace(logical.String()); text != "" {
+		visit(dockerInstruction{text: text, startLine: startLine, endLine: endLine})
+	}
+	return nil
+}
+
+func dockerContinuation(line string) (string, bool) {
+	backslashes := 0
+	for index := len(line) - 1; index >= 0 && line[index] == '\\'; index-- {
+		backslashes++
+	}
+	if backslashes%2 == 0 {
+		return line, false
+	}
+	return strings.TrimSpace(line[:len(line)-1]), true
+}
+
+func dockerLineAnchor(instruction dockerInstruction) string {
+	if instruction.startLine == instruction.endLine {
+		return fmt.Sprintf("line:%d", instruction.startLine)
+	}
+	return fmt.Sprintf("line:%d-%d", instruction.startLine, instruction.endLine)
+}
+
+func dockerSourceRange(file pluginapi.FileRef, instruction dockerInstruction) *rkcmodel.SourceRange {
+	return &rkcmodel.SourceRange{ArtifactID: file.ArtifactID, Path: file.Path, StartLine: instruction.startLine, EndLine: instruction.endLine}
+}
+
+func (c *collector) addDockerEvidence(file pluginapi.FileRef, method string, instruction dockerInstruction, detail string) string {
+	anchor := dockerLineAnchor(instruction)
+	id := rkcmodel.StableID("evidence", PluginID, file.ArtifactID, method, anchor, detail)
+	evidenceSource := dockerSourceRange(file, instruction)
+	evidenceSource.Anchor = anchor
+	c.fragment.Evidence = append(c.fragment.Evidence, rkcmodel.Evidence{ID: id, Kind: "manifest", Method: method, Confidence: 1, Source: evidenceSource, Tool: PluginID, ToolVersion: PluginVersion, InputDigest: file.SHA256, Detail: detail})
+	return id
 }
 
 type dockerAssignment struct {

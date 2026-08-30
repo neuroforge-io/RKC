@@ -1,7 +1,9 @@
 package manifest
 
 import (
+	"bufio"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -9,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/neuroforge-io/RKC/pkg/pluginapi"
+	"github.com/neuroforge-io/RKC/pkg/rkcmodel"
 )
 
 func TestExtractManifestsRichInputsAndDeterminism(t *testing.T) {
@@ -235,6 +238,81 @@ func TestExtractManifestRejectsPathsOutsideRoot(t *testing.T) {
 	}
 }
 
+func TestDockerfileBackslashContinuations(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	writeManifestTestFile(t, root, "Dockerfile", strings.Join([]string{
+		"FROM \\",
+		"  alpine:3 AS base",
+		"ENV RKC_PLUGIN_ROOT=/opt/rkc/plugins \\",
+		"  # comments do not terminate a continued instruction",
+		"  XDG_CACHE_HOME=/tmp/rkc-cache",
+		"ENV LEGACY value \\",
+		"  with spaces",
+		"EXPOSE 8080 \\",
+		"  8443",
+		"",
+	}, "\n"))
+	fragment, err := Extract(Options{Root: root, Files: []pluginapi.FileRef{{ArtifactID: "docker", Path: "Dockerfile", SHA256: "sha"}}})
+	if err != nil {
+		t.Fatalf("Extract() error = %v", err)
+	}
+	if len(fragment.Diagnostics) != 0 {
+		t.Fatalf("diagnostics = %#v", fragment.Diagnostics)
+	}
+
+	type expectedNode struct {
+		start, end int
+		value      string
+	}
+	want := map[string]expectedNode{
+		"base":            {start: 1, end: 2, value: "alpine:3"},
+		"RKC_PLUGIN_ROOT": {start: 3, end: 5, value: "/opt/rkc/plugins"},
+		"XDG_CACHE_HOME":  {start: 3, end: 5, value: "/tmp/rkc-cache"},
+		"LEGACY":          {start: 6, end: 7, value: "value with spaces"},
+		"8080":            {start: 8, end: 9},
+		"8443":            {start: 8, end: 9},
+	}
+	evidenceByID := make(map[string]rkcmodel.Evidence, len(fragment.Evidence))
+	for _, evidence := range fragment.Evidence {
+		evidenceByID[evidence.ID] = evidence
+	}
+	for _, node := range fragment.Nodes {
+		if node.Name == "\\" {
+			t.Fatal("continuation marker was emitted as an environment variable")
+		}
+		expected, ok := want[node.Name]
+		if !ok {
+			continue
+		}
+		if node.Source == nil || node.Source.StartLine != expected.start || node.Source.EndLine != expected.end {
+			t.Errorf("%s source = %#v, want lines %d-%d", node.Name, node.Source, expected.start, expected.end)
+		}
+		if expected.value != "" {
+			value := node.Attributes["default"]
+			if node.Kind == "build_target" {
+				value = node.Attributes["base_image"]
+			}
+			if value != expected.value {
+				t.Errorf("%s value = %#v, want %q", node.Name, value, expected.value)
+			}
+		}
+		if len(node.EvidenceIDs) != 1 {
+			t.Errorf("%s evidence IDs = %#v", node.Name, node.EvidenceIDs)
+			continue
+		}
+		evidence := evidenceByID[node.EvidenceIDs[0]]
+		wantAnchor := fmt.Sprintf("line:%d-%d", expected.start, expected.end)
+		if evidence.Source == nil || evidence.Source.StartLine != expected.start || evidence.Source.EndLine != expected.end || evidence.Source.Anchor != wantAnchor {
+			t.Errorf("%s evidence source = %#v, want lines/anchor %s", node.Name, evidence.Source, wantAnchor)
+		}
+		delete(want, node.Name)
+	}
+	if len(want) != 0 {
+		t.Errorf("missing continued Dockerfile nodes: %#v", want)
+	}
+}
+
 func TestManifestHelpersBoundaries(t *testing.T) {
 	t.Parallel()
 	if got := dockerAssignments(nil); got != nil {
@@ -245,6 +323,13 @@ func TestManifestHelpersBoundaries(t *testing.T) {
 	}
 	if got := dockerAssignments([]string{"A=1", "B=", "C"}); !reflect.DeepEqual(got, []dockerAssignment{{name: "A", value: "1"}, {name: "B", value: ""}, {name: "C", value: ""}}) {
 		t.Errorf("key=value assignments = %#v", got)
+	}
+	if got, continued := dockerContinuation(`ENV PATH=C:\\`); continued || got != `ENV PATH=C:\\` {
+		t.Errorf("escaped trailing backslash = %q, %v", got, continued)
+	}
+	scanner := bufio.NewScanner(strings.NewReader("ENV A=123456 \\\n B=more\n"))
+	if err := scanDockerInstructions(scanner, 12, func(dockerInstruction) {}); err == nil {
+		t.Error("over-limit continued instruction was accepted")
 	}
 	if got := escapeJSONPointer("a~/b"); got != "a~0~1b" {
 		t.Errorf("escapeJSONPointer() = %q", got)
