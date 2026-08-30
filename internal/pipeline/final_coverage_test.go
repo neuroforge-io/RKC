@@ -226,19 +226,34 @@ func TestDedupeBundleCompletesMetadataAndKeepsStrongestEdge(t *testing.T) {
 func TestResolveHeuristicEdgesCoversFallbackAndBoundaryCases(t *testing.T) {
 	bundle := rkcmodel.Bundle{
 		Nodes: []rkcmodel.Node{
-			{ID: "caller", Kind: "function", Name: "Caller"},
-			{ID: "unique", Kind: "function", Name: "Unique", QualifiedName: "pkg.Unique"},
-			{ID: "other", Kind: "function", Name: "Other", QualifiedName: "pkg.Other"},
-			{ID: "thing", Kind: "function", Name: "Thing", QualifiedName: "pkg.Thing"},
-			{ID: "dup-a", Kind: "function", Name: "Dup", QualifiedName: "a.Dup"},
-			{ID: "dup-b", Kind: "function", Name: "Dup", QualifiedName: "b.Dup"},
-			{ID: "self", Kind: "function", Name: "Self", QualifiedName: "pkg.Self"},
-			{ID: "u-unique", Kind: "unresolved_symbol", Name: "scope/Unique"},
-			{ID: "u-other", Kind: "unresolved_symbol", Name: "pkg.Other"},
-			{ID: "u-thing", Kind: "unresolved_symbol", Name: "Thing"},
-			{ID: "u-dup", Kind: "unresolved_symbol", Name: "Dup"},
-			{ID: "u-self", Kind: "unresolved_symbol", Name: "Self"},
-			{ID: "orphan", Kind: "unresolved_symbol", Name: "Orphan"},
+			{ID: "caller", Kind: "function", Name: "Caller", Language: "go"},
+			{ID: "unique", Kind: "function", Name: "Unique", QualifiedName: "pkg.Unique", Language: "go"},
+			{ID: "other", Kind: "function", Name: "Other", QualifiedName: "pkg.Other", Language: "go"},
+			{ID: "thing", Kind: "function", Name: "Thing", QualifiedName: "pkg.Thing", Language: "go"},
+			{ID: "dup-a", Kind: "function", Name: "Dup", QualifiedName: "a.Dup", Language: "go"},
+			{ID: "dup-b", Kind: "function", Name: "Dup", QualifiedName: "b.Dup", Language: "go"},
+			{ID: "self", Kind: "function", Name: "Self", QualifiedName: "pkg.Self", Language: "go"},
+			{ID: "python-caller", Kind: "function", Name: "python_caller", Language: "python"},
+			{ID: "python-shared", Kind: "function", Name: "Shared", QualifiedName: "scripts.Shared", Language: "python"},
+			{ID: "go-shared", Kind: "function", Name: "Shared", QualifiedName: "pkg.Shared", Language: "go"},
+			{ID: "go-only", Kind: "function", Name: "GoOnly", QualifiedName: "pkg.GoOnly", Language: "go"},
+			{ID: "openapi-only", Kind: "schema", Name: "OpenAPIOnly", QualifiedName: "api.OpenAPIOnly", Language: "openapi"},
+			{ID: "javascript-caller", Kind: "function", Name: "caller", Language: "javascript"},
+			{ID: "typescript-family", Kind: "function", Name: "FamilyTarget", QualifiedName: "src.FamilyTarget", Language: "typescript"},
+			{ID: "missing-domain-caller", Kind: "function", Name: "missing_domain_caller"},
+			{ID: "u-unique", Kind: "unresolved_symbol", Name: "scope/Unique", Language: "go"},
+			{ID: "u-other", Kind: "unresolved_symbol", Name: "pkg.Other", Language: "go"},
+			{ID: "u-thing", Kind: "unresolved_symbol", Name: "Thing", Language: "go"},
+			{ID: "u-dup", Kind: "unresolved_symbol", Name: "Dup", Language: "go"},
+			{ID: "u-self", Kind: "unresolved_symbol", Name: "Self", Language: "go"},
+			{ID: "u-python-shared", Kind: "unresolved_symbol", Name: "Shared", Language: "python"},
+			{ID: "u-python-go-only", Kind: "unresolved_symbol", Name: "GoOnly", Language: "python"},
+			{ID: "u-python-openapi-only", Kind: "unresolved_symbol", Name: "OpenAPIOnly", Language: "python"},
+			{ID: "u-go-mismatched-caller", Kind: "unresolved_symbol", Name: "GoOnly", Language: "go"},
+			{ID: "u-javascript-family", Kind: "unresolved_symbol", Name: "FamilyTarget", Language: "javascript"},
+			{ID: "u-missing-domain", Kind: "unresolved_symbol", Name: "Unique"},
+			{ID: "u-go-from-missing-caller", Kind: "unresolved_symbol", Name: "GoOnly", Language: "go"},
+			{ID: "orphan", Kind: "unresolved_symbol", Name: "Orphan", Language: "go"},
 		},
 		Edges: []rkcmodel.Edge{
 			{ID: "already-resolved", Kind: "calls", From: "caller", To: "unique", Resolution: rkcmodel.ResolutionDeclared},
@@ -249,20 +264,36 @@ func TestResolveHeuristicEdgesCoversFallbackAndBoundaryCases(t *testing.T) {
 			{ID: "non-string-spelling", Kind: "calls", From: "caller", To: "u-thing", Resolution: rkcmodel.ResolutionUnresolved, Attributes: map[string]any{"spelling": 17}},
 			{ID: "ambiguous", Kind: "calls", From: "caller", To: "u-dup", Resolution: rkcmodel.ResolutionUnresolved},
 			{ID: "self-reference", Kind: "calls", From: "self", To: "u-self", Resolution: rkcmodel.ResolutionUnresolved},
+			{ID: "same-domain", Kind: "calls", From: "python-caller", To: "u-python-shared", Resolution: rkcmodel.ResolutionUnresolved, Attributes: map[string]any{"original_test_id": "same-domain"}},
+			{ID: "cross-domain-candidate", Kind: "calls", From: "python-caller", To: "u-python-go-only", Resolution: rkcmodel.ResolutionUnresolved, Attributes: map[string]any{"original_test_id": "cross-domain-candidate"}},
+			{ID: "python-openapi-candidate", Kind: "calls", From: "python-caller", To: "u-python-openapi-only", Resolution: rkcmodel.ResolutionUnresolved, Attributes: map[string]any{"original_test_id": "python-openapi-candidate"}},
+			{ID: "mismatched-domains", Kind: "calls", From: "python-caller", To: "u-go-mismatched-caller", Resolution: rkcmodel.ResolutionUnresolved, Attributes: map[string]any{"original_test_id": "mismatched-domains"}},
+			{ID: "javascript-typescript-family", Kind: "calls", From: "javascript-caller", To: "u-javascript-family", Resolution: rkcmodel.ResolutionUnresolved, Attributes: map[string]any{"original_test_id": "javascript-typescript-family"}},
+			{ID: "missing-domain", Kind: "calls", From: "caller", To: "u-missing-domain", Resolution: rkcmodel.ResolutionUnresolved, Attributes: map[string]any{"original_test_id": "missing-domain"}},
+			{ID: "missing-caller-domain", Kind: "calls", From: "missing-domain-caller", To: "u-go-from-missing-caller", Resolution: rkcmodel.ResolutionUnresolved, Attributes: map[string]any{"original_test_id": "missing-caller-domain"}},
 		},
 	}
 
 	resolveHeuristicEdges(&bundle)
-	for _, id := range []string{"fallback-separator", "blank-spelling", "non-string-spelling"} {
+	for id, target := range map[string]string{
+		"fallback-separator":           "unique",
+		"blank-spelling":               "other",
+		"non-string-spelling":          "thing",
+		"same-domain":                  "python-shared",
+		"javascript-typescript-family": "typescript-family",
+	} {
 		edge := pipelineEdgeByOriginalID(t, bundle.Edges, id)
 		if edge.Resolution != rkcmodel.ResolutionSyntaxInferred || edge.Attributes["resolver"] != "unique_name_match" {
 			t.Errorf("edge %q was not resolved: %+v", id, edge)
+		}
+		if edge.To != target {
+			t.Errorf("edge %q target = %q, want %q", id, edge.To, target)
 		}
 	}
 	if edge := pipelineEdgeByOriginalID(t, bundle.Edges, "fallback-separator"); edge.Confidence != 0.9 {
 		t.Fatalf("existing higher confidence was lowered: %+v", edge)
 	}
-	for _, id := range []string{"ambiguous", "self-reference", "missing-target", "concrete-target"} {
+	for _, id := range []string{"ambiguous", "self-reference", "missing-target", "concrete-target", "cross-domain-candidate", "python-openapi-candidate", "mismatched-domains", "missing-domain", "missing-caller-domain"} {
 		if edge := pipelineEdgeByOriginalID(t, bundle.Edges, id); edge.Resolution != rkcmodel.ResolutionUnresolved {
 			t.Errorf("edge %q unexpectedly resolved: %+v", id, edge)
 		}

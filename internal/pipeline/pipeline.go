@@ -708,16 +708,23 @@ func resolutionRank(value string) int {
 
 func resolveHeuristicEdges(bundle *rkcmodel.Bundle) {
 	byID := map[string]rkcmodel.Node{}
-	byName := map[string][]rkcmodel.Node{}
-	byQualified := map[string][]rkcmodel.Node{}
+	type symbolKey struct {
+		domain   string
+		spelling string
+	}
+	byName := map[symbolKey][]rkcmodel.Node{}
+	byQualified := map[symbolKey][]rkcmodel.Node{}
 	for _, node := range bundle.Nodes {
 		byID[node.ID] = node
-		if rkcmodel.IsSymbolKind(node.Kind) && node.Kind != "unresolved_symbol" {
+		domain := heuristicResolutionDomain(node.Language)
+		if domain != "" && rkcmodel.IsSymbolKind(node.Kind) && node.Kind != "unresolved_symbol" {
 			if node.Name != "" {
-				byName[node.Name] = append(byName[node.Name], node)
+				key := symbolKey{domain: domain, spelling: node.Name}
+				byName[key] = append(byName[key], node)
 			}
 			if node.QualifiedName != "" {
-				byQualified[node.QualifiedName] = append(byQualified[node.QualifiedName], node)
+				key := symbolKey{domain: domain, spelling: node.QualifiedName}
+				byQualified[key] = append(byQualified[key], node)
 			}
 		}
 	}
@@ -730,17 +737,26 @@ func resolveHeuristicEdges(bundle *rkcmodel.Bundle) {
 		if !ok || target.Kind != "unresolved_symbol" {
 			continue
 		}
+		caller, ok := byID[edge.From]
+		if !ok {
+			continue
+		}
+		callerDomain := heuristicResolutionDomain(caller.Language)
+		targetDomain := heuristicResolutionDomain(target.Language)
+		if callerDomain == "" || targetDomain == "" || callerDomain != targetDomain {
+			continue
+		}
 		spelling := target.Name
 		if value, ok := edge.Attributes["spelling"].(string); ok && strings.TrimSpace(value) != "" {
 			spelling = value
 		}
-		candidates := byQualified[spelling]
+		candidates := byQualified[symbolKey{domain: targetDomain, spelling: spelling}]
 		if len(candidates) != 1 {
 			name := spelling
 			if index := strings.LastIndexAny(spelling, "./:#"); index >= 0 {
 				name = spelling[index+1:]
 			}
-			candidates = byName[name]
+			candidates = byName[symbolKey{domain: targetDomain, spelling: name}]
 		}
 		if len(candidates) == 1 && candidates[0].ID != edge.From {
 			edge.To = candidates[0].ID
@@ -769,6 +785,19 @@ func resolveHeuristicEdges(bundle *rkcmodel.Bundle) {
 	}
 	bundle.Nodes = filtered
 }
+
+func heuristicResolutionDomain(language string) string {
+	// JavaScript and TypeScript share one module/runtime ecosystem. Every other
+	// language remains isolated, and a missing language deliberately produces
+	// no domain so the heuristic cannot invent a cross-language relationship.
+	switch normalized := strings.ToLower(strings.TrimSpace(language)); normalized {
+	case "javascript", "js", "jsx", "typescript", "ts", "tsx":
+		return "javascript-typescript"
+	default:
+		return normalized
+	}
+}
+
 func maxFloat(a, b float64) float64 {
 	if a > b {
 		return a

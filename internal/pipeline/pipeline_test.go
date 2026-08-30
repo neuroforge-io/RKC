@@ -271,11 +271,11 @@ func TestPipelineFragmentMergeDedupeAndHeuristicResolution(t *testing.T) {
 		Artifacts: []rkcmodel.Artifact{{ID: artifactID, Path: "x.go", Kind: "file", Status: "recorded"}},
 		Nodes: []rkcmodel.Node{
 			artifactNode(rkcmodel.Artifact{ID: artifactID, Path: "x.go", Kind: "file", Status: "recorded"}),
-			{ID: "caller", LogicalID: "caller", Kind: "function", Name: "Caller", Attributes: map[string]any{}},
-			{ID: targetID, LogicalID: targetID, Kind: "function", Name: "Target", QualifiedName: "pkg.Target", EvidenceIDs: []string{evidenceID}},
-			{ID: targetID, Kind: "function", Name: "Target", Signature: "func Target()", EvidenceIDs: []string{evidenceID, ""}},
-			{ID: unresolvedID, LogicalID: unresolvedID, Kind: "unresolved_symbol", Name: "pkg.Target"},
-			{ID: "orphan", Kind: "unresolved_symbol", Name: "Orphan"},
+			{ID: "caller", LogicalID: "caller", Kind: "function", Name: "Caller", Language: "go", Attributes: map[string]any{}},
+			{ID: targetID, LogicalID: targetID, Kind: "function", Name: "Target", QualifiedName: "pkg.Target", Language: "go", EvidenceIDs: []string{evidenceID}},
+			{ID: targetID, Kind: "function", Name: "Target", Signature: "func Target()", Language: "go", EvidenceIDs: []string{evidenceID, ""}},
+			{ID: unresolvedID, LogicalID: unresolvedID, Kind: "unresolved_symbol", Name: "pkg.Target", Language: "go"},
+			{ID: "orphan", Kind: "unresolved_symbol", Name: "Orphan", Language: "go"},
 		},
 		Edges: []rkcmodel.Edge{
 			{Kind: "calls", From: "caller", To: unresolvedID, Resolution: "unresolved", Confidence: .2, Attributes: map[string]any{"spelling": "pkg.Target"}},
@@ -324,6 +324,22 @@ func TestPipelineSmallHelpers(t *testing.T) {
 	}
 	if firstNonEmpty(" ", "x", "y") != "x" || firstNonEmpty("", " ") != "" || maxFloat(2, 1) != 2 || maxFloat(1, 2) != 2 {
 		t.Fatal("small helper mismatch")
+	}
+	for language, want := range map[string]string{
+		"":           "",
+		"  ":         "",
+		"Go":         "go",
+		" python ":   "python",
+		"javascript": "javascript-typescript",
+		"JS":         "javascript-typescript",
+		"jsx":        "javascript-typescript",
+		"TypeScript": "javascript-typescript",
+		"ts":         "javascript-typescript",
+		"tsx":        "javascript-typescript",
+	} {
+		if got := heuristicResolutionDomain(language); got != want {
+			t.Errorf("heuristicResolutionDomain(%q)=%q want %q", language, got, want)
+		}
 	}
 	for status, want := range map[string]int{"semantic_parsed": 5, "syntax_parsed": 4, "text": 3, "recorded": 2, "binary": 1} {
 		if got := artifactRank(status); got != want {
