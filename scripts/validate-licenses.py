@@ -82,6 +82,12 @@ SAFE_ATTRIBUTION_QUALIFIER = re.compile(
     r"\bwithout\b[^.!?\n]{0,80}\b(?:requiring|mandating|obliging)\b",
     re.IGNORECASE,
 )
+MANDATORY_ATTRIBUTION_QUALIFIER = re.compile(
+    r"\b(?:must|shall|required|mandatory|obligatory|compulsory|necessary|"
+    r"prerequisite|requirement|restriction|condition|obligation)\b|"
+    r"\b(?:need|have)\s+to\b|\boblig(?:ed|ated)\b",
+    re.IGNORECASE,
+)
 ATTRIBUTION_CLAUSE_BOUNDARY = re.compile(
     r";|,\s*(?:but|while|however|yet)\b|\b(?:but|while|however|yet)\b",
     re.IGNORECASE,
@@ -423,10 +429,19 @@ def validate_attribution_language() -> None:
                     elif boundary.start() >= match_end:
                         clause_end = boundary.start()
                         break
-                if SAFE_ATTRIBUTION_QUALIFIER.search(
-                    sentence[clause_start:clause_end]
-                ):
-                    continue
+                clause = sentence[clause_start:clause_end]
+                if SAFE_ATTRIBUTION_QUALIFIER.search(clause):
+                    # Remove the complete non-mandatory phrase before looking
+                    # for a contradictory positive obligation in the same
+                    # clause. A lone word such as "optional" must not mask a
+                    # later "mandatory" condition.
+                    without_safe_language = SAFE_ATTRIBUTION_QUALIFIER.sub(
+                        " ", clause
+                    )
+                    if not MANDATORY_ATTRIBUTION_QUALIFIER.search(
+                        without_safe_language
+                    ):
+                        continue
                 line = value.count("\n", 0, match.start()) + 1
                 failures.append(
                     f"{relative}:{line}: mandatory-sounding first-party attribution"

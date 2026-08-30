@@ -42,6 +42,7 @@ FINAL_STATUS="$WORK/git-status-final"
 BUILD_INFO="$WORK/rkc-build-info"
 STAGING=
 COMMIT=
+GIT_CONTROL_DIR=
 
 quarantine_incomplete_staging() {
   [[ -n ${STAGING:-} && -e $STAGING ]] || return 0
@@ -149,12 +150,17 @@ EXCLUSIONS=(
 COMMIT=$(git rev-parse HEAD)
 TREE=$(git rev-parse 'HEAD^{tree}')
 OBJECT_FORMAT=$(git rev-parse --show-object-format)
+GIT_CONTROL_DIR=$(git rev-parse --absolute-git-dir)
 if [[ ! $COMMIT =~ ^[0-9a-f]{40}$ && ! $COMMIT =~ ^[0-9a-f]{64}$ ]]; then
   echo "self-catalogue: invalid Git commit identity" >&2
   exit 1
 fi
 if [[ ! $TREE =~ ^[0-9a-f]{40}$ && ! $TREE =~ ^[0-9a-f]{64}$ ]]; then
   echo "self-catalogue: invalid Git tree identity" >&2
+  exit 1
+fi
+if [[ ! -d $GIT_CONTROL_DIR || -L $GIT_CONTROL_DIR ]]; then
+  echo "self-catalogue: Git control directory must be a real directory" >&2
   exit 1
 fi
 
@@ -520,7 +526,12 @@ SCAN_ARGS=(
 for excluded in "${EXCLUSIONS[@]}"; do
   SCAN_ARGS+=(--exclude "$excluded")
 done
-"$RKC_BIN" "${SCAN_ARGS[@]}" "$SOURCE" >"$WORK/scan.json"
+# The staged source is byte-for-byte bound to COMMIT but deliberately has no
+# embedded .git directory. Give RKC read-only discovery access to the original
+# control directory and the verified staged work tree so every independently
+# copied atlas retains the same commit and public origin as the outer receipt.
+GIT_DIR="$GIT_CONTROL_DIR" GIT_WORK_TREE="$SOURCE" \
+  "$RKC_BIN" "${SCAN_ARGS[@]}" "$SOURCE" >"$WORK/scan.json"
 
 "$RKC_BIN" check \
   --json \
@@ -656,6 +667,16 @@ scan = strict_json(Path(scan_value))
 check = strict_json(Path(check_value))
 coverage = strict_json(atlas / "coverage.json")
 export_manifest = strict_json(atlas / "rkc-export-manifest.json")
+snapshot_manifest = strict_json(atlas / "rkc.manifest.json")
+snapshot_git = snapshot_manifest.get("git")
+if not isinstance(snapshot_git, dict):
+    raise SystemExit("self-catalogue manifest: atlas Git identity is missing")
+if (
+    snapshot_git.get("commit") != commit
+    or snapshot_git.get("unavailable") is True
+    or snapshot_git.get("dirty") is True
+):
+    raise SystemExit("self-catalogue manifest: atlas is not bound to the clean recorded commit")
 if scan.get("snapshot_id") != coverage.get("snapshot_id"):
     raise SystemExit("self-catalogue manifest: scan and coverage snapshot identities differ")
 if scan.get("deterministic_digest") != coverage.get("deterministic_output_digest"):
@@ -736,15 +757,21 @@ manifest = {
     "atlas": {
         "deterministic_output_digest": coverage["deterministic_output_digest"],
         "canonical_files_digest": export_manifest["canonical_files_digest"],
+        "canonical_file_count": len(records),
         "file_count": len(records),
         "files": records,
-        "operational_files_excluded_from_deterministic_hashes": [
-            "atlas/rkc-export-manifest.json",
-            "atlas/rkc.execution.json",
+        "operational_files": [
+            observed["atlas/rkc-export-manifest.json"],
+            observed["atlas/rkc.execution.json"],
+        ],
+        "operational_files_excluded_from_canonical_digest": [
+            "atlas/rkc-export-manifest.json", "atlas/rkc.execution.json"
         ],
         "required_products": ["docs", "graph", "search"],
         "snapshot_id": coverage["snapshot_id"],
+        "total_file_count": len(observed),
         "total_bytes": sum(item["size_bytes"] for item in records),
+        "total_output_bytes": sum(item["size_bytes"] for item in observed.values()),
     },
     "safety": {
         "generated_output_ingested": False,
@@ -767,7 +794,10 @@ checksum_records = [
         "sha256": hashlib.sha256(stable_file(output / ".rkc-self-catalogue.json")[0]).hexdigest(),
     },
     {"path": "MANIFEST.json", "sha256": hashlib.sha256(encoded).hexdigest()},
-    *({"path": item["path"], "sha256": item["sha256"]} for item in records),
+    *(
+        {"path": item["path"], "sha256": item["sha256"]}
+        for item in observed.values()
+    ),
 ]
 checksum_records.sort(key=lambda item: item["path"])
 with checksums_path.open("x", encoding="utf-8") as handle:
@@ -776,6 +806,20 @@ with checksums_path.open("x", encoding="utf-8") as handle:
     handle.flush()
     os.fchmod(handle.fileno(), 0o644)
     os.fsync(handle.fileno())
+
+expected_checksum_paths = {
+    path.relative_to(output).as_posix()
+    for path in output.rglob("*")
+    if path.is_file() and not path.is_symlink() and path != checksums_path
+}
+actual_checksum_paths = {item["path"] for item in checksum_records}
+if actual_checksum_paths != expected_checksum_paths:
+    missing = sorted(expected_checksum_paths - actual_checksum_paths)
+    extra = sorted(actual_checksum_paths - expected_checksum_paths)
+    raise SystemExit(
+        "self-catalogue manifest: checksum inventory is incomplete "
+        f"(missing={missing[:5]}, extra={extra[:5]})"
+    )
 PY
 
 verify_staged_source
@@ -848,6 +892,7 @@ from __future__ import annotations
 
 import ctypes
 import errno
+import hashlib
 import json
 import os
 import secrets
@@ -904,6 +949,70 @@ def inspect_owned(name: str, *, private: bool) -> tuple[int, int]:
     return (info.st_dev, info.st_ino)
 
 
+def verify_checksum_closure(name: str) -> None:
+    """Re-prove exact whole-pack hashes immediately before publication."""
+    candidate = dist / name
+    checksum_path = candidate / "SHA256SUMS.txt"
+    declared = {}
+    for number, line in enumerate(checksum_path.read_text(encoding="utf-8").splitlines(), 1):
+        try:
+            digest, relative = line.split("  ", 1)
+        except ValueError as exc:
+            raise SystemExit(
+                f"self-catalogue publication: malformed checksum row {number}"
+            ) from exc
+        path = Path(relative)
+        if (
+            len(digest) != 64
+            or any(char not in "0123456789abcdef" for char in digest)
+            or path.is_absolute()
+            or path.as_posix() != relative
+            or any(part in {"", ".", ".."} for part in path.parts)
+            or relative in declared
+        ):
+            raise SystemExit(
+                f"self-catalogue publication: invalid checksum row {number}"
+            )
+        declared[relative] = digest
+    observed = set()
+    for current, directories, files in os.walk(candidate, topdown=True, followlinks=False):
+        directories.sort()
+        files.sort()
+        base = Path(current)
+        for directory in directories:
+            info = os.lstat(base / directory)
+            if stat.S_ISLNK(info.st_mode) or not stat.S_ISDIR(info.st_mode):
+                raise SystemExit("self-catalogue publication: invalid checksum directory")
+        for filename in files:
+            path = base / filename
+            relative = path.relative_to(candidate).as_posix()
+            info = os.lstat(path)
+            if stat.S_ISLNK(info.st_mode) or not stat.S_ISREG(info.st_mode):
+                raise SystemExit("self-catalogue publication: invalid checksum file")
+            if relative == "SHA256SUMS.txt":
+                continue
+            descriptor = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+            with os.fdopen(descriptor, "rb") as handle:
+                before = os.fstat(handle.fileno())
+                hasher = hashlib.sha256()
+                for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+                    hasher.update(chunk)
+                digest = hasher.hexdigest()
+                after = os.fstat(handle.fileno())
+            identity = lambda item: (
+                item.st_dev, item.st_ino, item.st_size, item.st_mtime_ns
+            )
+            if identity(info) != identity(before) or identity(before) != identity(after):
+                raise SystemExit("self-catalogue publication: file changed during final hash")
+            if declared.get(relative) != digest:
+                raise SystemExit(
+                    f"self-catalogue publication: final checksum mismatch: {relative}"
+                )
+            observed.add(relative)
+    if observed != set(declared):
+        raise SystemExit("self-catalogue publication: final checksum inventory differs")
+
+
 libc = ctypes.CDLL(None, use_errno=True)
 renameat2 = getattr(libc, "renameat2", None)
 if renameat2 is None:
@@ -937,6 +1046,7 @@ def rollback_exchange(stage_name: str) -> None:
 
 try:
     stage_identity = inspect_owned(stage.name, private=True)
+    verify_checksum_closure(stage.name)
     try:
         os.stat(final_name, dir_fd=dist_fd, follow_symlinks=False)
     except FileNotFoundError:

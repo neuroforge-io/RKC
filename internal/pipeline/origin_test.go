@@ -3,6 +3,7 @@ package pipeline
 import (
 	"context"
 	"encoding/json"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
@@ -84,6 +85,43 @@ func TestLocalGitOriginsAreNotPublished(t *testing.T) {
 			t.Fatalf("publicDiscoveredOrigin(%q) = %q, %v; want omitted", origin, canonical, err)
 		}
 	}
+}
+
+func TestInspectGitSupportsVerifiedExternalWorkTree(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git unavailable")
+	}
+	repository := initialiseOriginFixture(t)
+	workTree := t.TempDir()
+	source, err := os.ReadFile(filepath.Join(repository, "README.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(workTree, "README.md"), source, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	gitDirectory := gitFixtureOutput(t, repository, "rev-parse", "--absolute-git-dir")
+	wantCommit := gitFixtureOutput(t, repository, "rev-parse", "HEAD")
+	t.Setenv("GIT_DIR", gitDirectory)
+	t.Setenv("GIT_WORK_TREE", workTree)
+
+	info, err := inspectGit(context.Background(), workTree)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Commit != wantCommit || info.Unavailable || info.Dirty {
+		t.Fatalf("external work-tree Git identity = %+v, want clean commit %q", info, wantCommit)
+	}
+}
+
+func gitFixtureOutput(t *testing.T, root string, arguments ...string) string {
+	t.Helper()
+	command := exec.Command("git", append([]string{"-C", root}, arguments...)...)
+	output, err := command.CombinedOutput()
+	if err != nil {
+		t.Fatalf("git %v: %v: %s", arguments, err, output)
+	}
+	return strings.TrimSpace(string(output))
 }
 
 func initialiseOriginFixture(t *testing.T) string {

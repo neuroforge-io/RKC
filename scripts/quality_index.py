@@ -24,7 +24,7 @@ from pathlib import Path
 from typing import Any, Mapping, Sequence
 
 
-SCRIPT_VERSION = "1.3.0"
+SCRIPT_VERSION = "1.3.1"
 PROJECT = "RKC"
 PUBLISHER = "NeuroForgeIO"
 LICENSE = "MIT"
@@ -566,12 +566,27 @@ def _walk_files(root: Path, output: Path | None) -> tuple[list[Path], list[dict[
     return files, exclusions
 
 
-def _file_stats(path: Path, root: Path) -> dict[str, Any]:
+def _stat_identity(value: os.stat_result) -> tuple[int, int, int, int, int]:
+    return (
+        value.st_dev,
+        value.st_ino,
+        value.st_size,
+        value.st_mtime_ns,
+        stat.S_IFMT(value.st_mode),
+    )
+
+
+def _file_stats_with_identity(
+    path: Path, root: Path
+) -> tuple[dict[str, Any], tuple[int, int, int, int, int]]:
     digest = hashlib.sha256()
     size = 0
     lines = 0
     try:
-        with path.open("rb") as handle:
+        initial = os.lstat(path)
+        descriptor = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+        with os.fdopen(descriptor, "rb") as handle:
+            before = os.fstat(handle.fileno())
             while True:
                 chunk = handle.read(1024 * 1024)
                 if not chunk:
@@ -579,16 +594,30 @@ def _file_stats(path: Path, root: Path) -> dict[str, Any]:
                 digest.update(chunk)
                 size += len(chunk)
                 lines += chunk.count(b"\n")
+            after = os.fstat(handle.fileno())
     except OSError as exc:
         raise QualityIndexError(f"cannot read {_relative(path, root)}: {exc}") from exc
+    if (
+        not stat.S_ISREG(initial.st_mode)
+        or _stat_identity(initial) != _stat_identity(before)
+        or _stat_identity(before) != _stat_identity(after)
+    ):
+        raise QualityIndexError(f"file changed while hashing: {_relative(path, root)}")
     if size and lines == 0:
         lines = 1
-    return {
-        "path": _relative(path, root),
-        "bytes": size,
-        "lines": lines,
-        "sha256": digest.hexdigest(),
-    }
+    return (
+        {
+            "path": _relative(path, root),
+            "bytes": size,
+            "lines": lines,
+            "sha256": digest.hexdigest(),
+        },
+        _stat_identity(after),
+    )
+
+
+def _file_stats(path: Path, root: Path) -> dict[str, Any]:
+    return _file_stats_with_identity(path, root)[0]
 
 
 def _text(path: Path, limit: int = 1_048_576) -> str:
@@ -810,6 +839,42 @@ def _git_tracked_paths(
     return {
         "status": "available",
         "paths": sorted(path for path in result.stdout.split("\0") if path),
+    }
+
+
+def _git_stability_token(
+    root: Path, identity: Mapping[str, Any]
+) -> dict[str, Any]:
+    """Bind the observed commit, index entries, and working-tree status."""
+    if identity.get("status") != "available":
+        return {"status": "unavailable"}
+    outputs: dict[str, str] = {}
+    for name, arguments in (
+        ("index", ["ls-files", "--stage", "-z", "--", "."]),
+        (
+            "worktree",
+            [
+                "status",
+                "--porcelain=v1",
+                "-z",
+                "--untracked-files=all",
+                "--ignore-submodules=none",
+            ],
+        ),
+    ):
+        result = _run_git(root, arguments)
+        if result.returncode != 0:
+            return {
+                "status": "unavailable",
+                "reason": (result.stderr or f"Git {name} inspection failed").strip()[:240],
+            }
+        outputs[name] = hashlib.sha256(result.stdout.encode("utf-8")).hexdigest()
+    return {
+        "status": "available",
+        "commit": identity["commit"],
+        "tree": identity["tree"],
+        "index_sha256": outputs["index"],
+        "worktree_status_sha256": outputs["worktree"],
     }
 
 
@@ -1147,14 +1212,21 @@ def build_index(
     python_report: Path | None = None,
 ) -> dict[str, Any]:
     root = _validate_root(root)
+    identity = _git_identity(root)
+    git_inventory = _git_tracked_paths(root, identity)
+    git_stability = _git_stability_token(root, identity)
     files, exclusions = _walk_files(root, output)
-    stats = {_relative(path, root): _file_stats(path, root) for path in files}
+    stats: dict[str, dict[str, Any]] = {}
+    file_identities: dict[str, tuple[int, int, int, int, int]] = {}
+    for path in files:
+        relative = _relative(path, root)
+        stats[relative], file_identities[relative] = _file_stats_with_identity(
+            path, root
+        )
     source_paths = sorted(relative for relative in stats if _language(Path(relative)))
     source_set = set(source_paths)
     documentation_paths = [relative for relative in stats if Path(relative).suffix.lower() in DOCUMENT_SUFFIXES]
     other_paths = sorted(set(stats) - source_set - set(documentation_paths))
-    identity = _git_identity(root)
-    git_inventory = _git_tracked_paths(root, identity)
     tracked_paths = set(git_inventory.get("paths", []))
     for relative, record in stats.items():
         record["git_status"] = (
@@ -1402,6 +1474,28 @@ def build_index(
         "profile_errors": len(profile_errors),
         "open_gaps": len(gaps),
     }
+    final_files, final_exclusions = _walk_files(root, output)
+    final_paths = [_relative(path, root) for path in final_files]
+    if final_paths != sorted(stats) or final_exclusions != exclusions:
+        raise QualityIndexError("regular-file inventory changed during indexing")
+    for relative, expected_identity in file_identities.items():
+        try:
+            current_identity = _stat_identity(os.lstat(root / relative))
+        except OSError as exc:
+            raise QualityIndexError(
+                f"cannot revalidate {relative}: {exc}"
+            ) from exc
+        if current_identity != expected_identity:
+            raise QualityIndexError(f"file changed during indexing: {relative}")
+    final_identity = _git_identity(root)
+    final_git_inventory = _git_tracked_paths(root, final_identity)
+    final_git_stability = _git_stability_token(root, final_identity)
+    if (
+        final_identity != identity
+        or final_git_inventory != git_inventory
+        or final_git_stability != git_stability
+    ):
+        raise QualityIndexError("Git commit, index, or working tree changed during indexing")
     return {
         "schema_version": "1.1.0",
         "generated_by": {"tool": "rkc quality-index", "version": SCRIPT_VERSION},
@@ -1426,6 +1520,12 @@ def build_index(
                 "profiling_file_percent": "production Go/Python files with executable profile applicability on the current platform",
                 "inventory_accounting_percent": "all admitted regular files partitioned into analyzable source, documentation, or other files",
             },
+            "observation_stability": (
+                "Each file is descriptor-stable while hashed; the admitted path set, "
+                "file identities, Git commit/tree, index, and working-tree status are "
+                "revalidated before publication. Non-Git folders have no repository-wide "
+                "atomic snapshot primitive."
+            ),
         },
         "summary": summary,
         "files": records,

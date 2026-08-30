@@ -98,7 +98,7 @@ Successful output is published below `dist/self-catalogue`:
 dist/self-catalogue/
 ├── .rkc-self-catalogue.json   outer ownership marker
 ├── MANIFEST.json              source, tool, atlas, and safety provenance
-├── SHA256SUMS.txt             deterministic canonical-file hashes
+├── SHA256SUMS.txt             complete per-run file hashes
 └── atlas/
     ├── bundle.json
     ├── coverage.json
@@ -113,15 +113,18 @@ dist/self-catalogue/
 `MANIFEST.json` binds the Git commit and tree, every admitted source path and
 Git object, the ephemeral detached-tree `rkc` binary hash and normalized Go
 build metadata, snapshot identity, deterministic bundle digest, RKC
-canonical-files digest, and every canonical atlas file. The executable itself
-is not retained. The outer checksum list covers that manifest, ownership
-markers, and all canonical atlas files.
+canonical-files digest, every canonical atlas file, and the two operational
+receipts. The same commit is retained inside the standalone atlas manifest and
+derived browser/NotebookLM products. The executable itself is not retained.
+The outer checksum list covers every regular published file except the checksum
+list itself.
 
 `atlas/rkc.execution.json` is deliberately operational: it contains the run
 timestamp. `atlas/rkc-export-manifest.json` includes that operational file's
-hash. Both are validated by `rkc check` but explicitly excluded from the outer
-deterministic hash set; the exclusion is recorded in `MANIFEST.json`. All other
-atlas paths must match RKC's exact export and ownership manifests.
+hash. Both remain excluded from RKC's reproducible canonical-files digest, and
+that classification is recorded in `MANIFEST.json`; both are nevertheless
+hashed by the complete outer `SHA256SUMS.txt`. All other atlas paths must match
+RKC's exact export and ownership manifests.
 
 Verify a completed catalogue without rescanning:
 

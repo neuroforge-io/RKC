@@ -64,6 +64,14 @@ syntax and never imports, builds, or executes the indexed repository. A
 missing toolchain, parse failure, timeout, or malformed helper result fails the
 index instead of silently overstating documentation coverage.
 
+Each regular file is opened without following symlinks and must keep one
+device/inode/size/mtime identity throughout hashing. Before returning a report,
+the indexer rechecks the admitted path set and file identities. In a Git
+worktree it also rechecks the exact commit/tree, staged index digest, tracked
+paths, and working-tree status digest. Concurrent change fails the run instead
+of mixing provenance. A non-Git folder remains a stable per-file observation;
+no repository-wide atomic snapshot primitive is claimed for it.
+
 ## Reading the report
 
 Each `files` record contains:

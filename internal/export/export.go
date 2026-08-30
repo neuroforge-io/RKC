@@ -694,10 +694,12 @@ func writeSite(bundle model.Bundle, coverage model.Coverage, opts Options) error
 	return nil
 }
 
-// BrowserAssets returns a complete, deterministic static atlas. In addition to
-// the browser application shell, it includes data/atlas.json so the export can
-// be served without the RKC API. Keys are canonical forward-slash paths for
-// filesystem and HTTP consumers.
+const staticBootstrapNodeLimit = 120
+
+// BrowserAssets returns a complete, deterministic static atlas. The compact
+// bootstrap supports immediate overview and bounded browsing; data/atlas.json
+// remains available for lazy detail loading without an RKC API. Keys are
+// canonical forward-slash paths for filesystem and HTTP consumers.
 func BrowserAssets(bundle model.Bundle, coverage model.Coverage) (map[string][]byte, error) {
 	siteBundle, err := canonicalExportBundle(bundle)
 	if err != nil {
@@ -712,7 +714,66 @@ func BrowserAssets(bundle model.Bundle, coverage model.Coverage) (map[string][]b
 		return nil, fmt.Errorf("encode static atlas data: %w", err)
 	}
 	data = append(data, '\n')
-	return buildSiteAssets(data)
+	bootstrap, err := browserBootstrapData(siteBundle, coverage)
+	if err != nil {
+		return nil, err
+	}
+	return buildSiteAssets(data, bootstrap)
+}
+
+func browserBootstrapData(bundle model.Bundle, coverage model.Coverage) ([]byte, error) {
+	limit := min(len(bundle.Nodes), staticBootstrapNodeLimit)
+	nodes := make([]model.Node, 0, limit)
+	artifactIDs := make(map[string]struct{}, limit)
+	for _, node := range bundle.Nodes[:limit] {
+		node.Signature = ""
+		node.Attributes = nil
+		node.EvidenceIDs = nil
+		nodes = append(nodes, node)
+		if node.ArtifactID != "" {
+			artifactIDs[node.ArtifactID] = struct{}{}
+		}
+	}
+	artifacts := make([]model.Artifact, 0, len(artifactIDs))
+	languages := map[string]int{}
+	for _, artifact := range bundle.Artifacts {
+		if artifact.Language != "" {
+			languages[artifact.Language]++
+		}
+		if _, ok := artifactIDs[artifact.ID]; ok {
+			artifacts = append(artifacts, artifact)
+		}
+	}
+	resolutions := map[string]int{}
+	for _, edge := range bundle.Edges {
+		resolutions[edge.Resolution]++
+	}
+	payload := struct {
+		Bundle          model.Bundle              `json:"bundle"`
+		Coverage        model.Coverage            `json:"coverage"`
+		Facets          map[string]map[string]int `json:"facets"`
+		StaticBootstrap bool                      `json:"static_bootstrap"`
+		ListTruncated   bool                      `json:"list_truncated"`
+	}{
+		Bundle: model.Bundle{
+			Snapshot: bundle.Snapshot, Artifacts: artifacts, Nodes: nodes,
+			Edges: []model.Edge{}, Evidence: []model.Evidence{},
+			Diagnostics: []model.Diagnostic{},
+		},
+		Coverage: coverage,
+		Facets: map[string]map[string]int{
+			"languages": languages, "node_kinds": coverage.NodeKinds,
+			"edge_resolutions": resolutions,
+			"diagnostics":      coverage.DiagnosticsBySeverity,
+		},
+		StaticBootstrap: true,
+		ListTruncated:   len(bundle.Nodes) > limit,
+	}
+	data, err := json.MarshalIndent(payload, "", "  ")
+	if err != nil {
+		return nil, fmt.Errorf("encode static atlas bootstrap: %w", err)
+	}
+	return append(data, '\n'), nil
 }
 
 // SiteAssets returns the deterministic application shell used by a live RKC
@@ -720,10 +781,10 @@ func BrowserAssets(bundle model.Bundle, coverage model.Coverage) (map[string][]b
 // bounded API, and retaining a second serialized copy of the full bundle would
 // make server memory scale with the export projection as well as the indexes.
 func SiteAssets() (map[string][]byte, error) {
-	return buildSiteAssets(nil)
+	return buildSiteAssets(nil, nil)
 }
 
-func buildSiteAssets(atlasData []byte) (map[string][]byte, error) {
+func buildSiteAssets(atlasData, bootstrapData []byte) (map[string][]byte, error) {
 	catalogue, err := json.Marshal(commandcatalog.Commands(commandcatalog.Context{}))
 	if err != nil {
 		return nil, fmt.Errorf("encode browser command catalogue: %w", err)
@@ -739,6 +800,9 @@ func buildSiteAssets(atlasData []byte) (map[string][]byte, error) {
 	}
 	if atlasData != nil {
 		assets["data/atlas.json"] = atlasData
+	}
+	if bootstrapData != nil {
+		assets["data/bootstrap.json"] = bootstrapData
 	}
 	return assets, nil
 }
@@ -1291,7 +1355,7 @@ footer { display: flex; justify-content: space-between; gap: 16px; padding: 12px
 
 const siteJS = `'use strict';
 const commandCatalog=__RKC_COMMAND_CATALOG__;
-const state={bundle:null,coverage:null,nodes:new Map(),artifacts:new Map(),evidence:new Map(),outgoing:new Map(),incoming:new Map(),selected:null,view:'overview',results:[],workbench:null,commandName:'quickstart',api:false,facets:null,listTruncated:false,diagnosticsTruncated:false,searchTimer:null};
+const state={bundle:null,coverage:null,nodes:new Map(),artifacts:new Map(),evidence:new Map(),outgoing:new Map(),incoming:new Map(),selected:null,view:'overview',results:[],workbench:null,commandName:'quickstart',api:false,facets:null,listTruncated:false,diagnosticsTruncated:false,searchTimer:null,staticBootstrap:false,staticLoad:null};
 const maximumGraphNeighbors=32,maximumGraphNodesShown=16;
 const $=id=>document.getElementById(id);
 const esc=value=>String(value??'').replace(/[&<>"']/g,ch=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch]));
@@ -1302,18 +1366,13 @@ const number=value=>new Intl.NumberFormat().format(value||0);
 async function boot(){
   try{
     const data=await loadInitialData();
-    if(!data?.bundle?.snapshot||!Array.isArray(data.bundle.nodes)||!data.coverage)throw new Error('atlas data is incomplete');
-    state.bundle=data.bundle;
-    state.coverage=data.coverage;
-    for(const node of state.bundle.nodes)state.nodes.set(node.id,node);
-    for(const artifact of state.bundle.artifacts||[])state.artifacts.set(artifact.id,artifact);
-    for(const evidence of state.bundle.evidence||[])state.evidence.set(evidence.id,evidence);
-    for(const edge of state.bundle.edges||[]){push(state.outgoing,edge.from,edge);push(state.incoming,edge.to,edge)}
+    applyAtlasData(data);
     initialiseControls();
     renderHeader();
     renderList();
     await probeWorkbench();
     const hash=safeHash();
+    if(hash&&state.staticBootstrap)await ensureFullStaticData();
     if(hash&&state.api&&!state.nodes.has(hash))await loadAPINode(hash);
     if(hash&&state.nodes.has(hash))await selectNode(hash,'symbol',false);else setView('overview',false);
     $('content').setAttribute('aria-busy','false');
@@ -1332,14 +1391,38 @@ async function loadInitialData(){
       fetchJSON('/api/v1/nodes?limit=120'),fetchJSON('/api/v1/diagnostics?limit=200'),
       fetchJSON('/api/v1/facets')
     ]);
-    state.api=true;state.facets=facets;state.listTruncated=Boolean(nodes.truncated);state.diagnosticsTruncated=Boolean(diagnostics.truncated);
-    return {bundle:{snapshot:manifest,nodes:nodes.items||[],artifacts:[],edges:[],evidence:[],diagnostics:diagnostics.items||[]},coverage};
+    state.api=true;
+    return {bundle:{snapshot:manifest,nodes:nodes.items||[],artifacts:[],edges:[],evidence:[],diagnostics:diagnostics.items||[]},coverage,facets,list_truncated:Boolean(nodes.truncated),diagnostics_truncated:Boolean(diagnostics.truncated)};
   }catch(_error){
     state.api=false;
+    const bootstrap=await fetch('./data/bootstrap.json',{cache:'no-store'});
+    if(bootstrap.ok)return bootstrap.json();
+    const full=await fetch('./data/atlas.json',{cache:'no-store'});
+    if(!full.ok)throw new Error('HTTP '+full.status);
+    return full.json();
+  }
+}
+
+function applyAtlasData(data){
+  if(!data?.bundle?.snapshot||!Array.isArray(data.bundle.nodes)||!data.coverage)throw new Error('atlas data is incomplete');
+  state.bundle=data.bundle;state.coverage=data.coverage;state.facets=data.facets||state.facets;
+  state.staticBootstrap=Boolean(data.static_bootstrap);state.listTruncated=Boolean(data.list_truncated);state.diagnosticsTruncated=Boolean(data.diagnostics_truncated);
+  state.nodes.clear();state.artifacts.clear();state.evidence.clear();state.outgoing.clear();state.incoming.clear();
+  for(const node of state.bundle.nodes)state.nodes.set(node.id,node);
+  for(const artifact of state.bundle.artifacts||[])state.artifacts.set(artifact.id,artifact);
+  for(const evidence of state.bundle.evidence||[])state.evidence.set(evidence.id,evidence);
+  for(const edge of state.bundle.edges||[]){push(state.outgoing,edge.from,edge);push(state.incoming,edge.to,edge)}
+}
+
+async function ensureFullStaticData(){
+  if(state.api||!state.staticBootstrap)return;
+  if(!state.staticLoad)state.staticLoad=(async()=>{
     const response=await fetch('./data/atlas.json',{cache:'no-store'});
     if(!response.ok)throw new Error('HTTP '+response.status);
-    return response.json();
-  }
+    const data=await response.json();
+    applyAtlasData(data);state.staticBootstrap=false;state.listTruncated=false;renderHeader();
+  })();
+  try{await state.staticLoad}finally{state.staticLoad=null}
 }
 
 async function fetchJSON(path,options){
@@ -1386,7 +1469,14 @@ function filtersActive(){return Boolean($('search').value||$('kind').value||$('l
 function clearFilters(){$('search').value='';$('kind').value='';$('language').value='';scheduleListRefresh()}
 
 function scheduleListRefresh(){
-  if(!state.api){renderList();return}
+  if(!state.api){
+    if(state.staticBootstrap&&filtersActive()){
+      $('result-summary').textContent='Loading the complete offline index…';
+      ensureFullStaticData().then(renderList).catch(error=>{$('result-summary').textContent='Search failed: '+String(error?.message||error)});
+      return;
+    }
+    renderList();return
+  }
   clearTimeout(state.searchTimer);
   state.searchTimer=setTimeout(refreshAPIList,180);
 }
@@ -1434,6 +1524,7 @@ function renderHeader(){
   $('metrics').innerHTML=values.map(([name,value])=>'<span class="metric"><b>'+number(value)+'</b> '+esc(name)+'</span>').join('');
   $('runtime-status').textContent='Verified static snapshot';
   $('runtime-status').className='connection live';
+  if(state.staticBootstrap)$('runtime-status').textContent='Verified static snapshot · fast overview';
   if(state.api){$('runtime-status').textContent='Bounded local API · read only';$('runtime-status').className='connection live'}
 }
 
@@ -1472,6 +1563,11 @@ async function probeWorkbench(){
 }
 
 function setView(view,focusContent=true){
+  if(!state.api&&state.staticBootstrap&&['diagnostics','graph','symbol'].includes(view)){
+    $('content').innerHTML='<div class="loading" role="status">Loading complete offline details…</div>';
+    ensureFullStaticData().then(()=>setView(view,focusContent)).catch(error=>{$('content').innerHTML='<div class="card empty-state" role="alert"><h2>Details failed to load</h2><p>'+esc(error?.message||error)+'</p></div>'});
+    return;
+  }
   state.view=view;
   document.body.classList.toggle('command-view',view==='commands');
   for(const button of document.querySelectorAll('[role="tab"]')){
@@ -1498,6 +1594,7 @@ function renderSelectionPrompt(view){
 }
 
 function selectNode(id,view='symbol',focusContent=true){
+  if(!state.api&&state.staticBootstrap)return ensureFullStaticData().then(()=>selectNode(id,view,focusContent));
   if(state.api&&!state.nodes.has(id))return loadAPINode(id).then(()=>selectNode(id,view,focusContent));
   if(!state.nodes.has(id))return;
   state.selected=id;

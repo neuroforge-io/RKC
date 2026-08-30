@@ -437,6 +437,8 @@ class LicenseValidationTests(unittest.TestCase):
                 "Commercial products must display the NeuroForgeIO name.\n",
                 "Redistribution is permitted only after naming NeuroForgeIO.\n",
                 "Users are obliged to mention NeuroForgeIO.\n",
+                "Crediting NeuroForgeIO is optional and mandatory for "
+                "distribution.\n",
                 "NeuroForgeIO credit is requested. Retain NOTICE and credit "
                 "NeuroForgeIO.\n",
                 "Attribution to NeuroForgeIO is requested, but users must credit "

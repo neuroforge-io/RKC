@@ -45,6 +45,7 @@ func TestWriteAllProducesCompleteDeterministicRedactedExport(t *testing.T) {
 			"normalized/src/login.go.md", "normalized/redactions.json", "notebooklm/manifest.json",
 			"notebooklm/UPLOAD.md",
 			"site/index.html", "site/styles.css", "site/app.js", "site/data/atlas.json",
+			"site/data/bootstrap.json",
 			"integrations/diagnostics.sarif.json", "integrations/graph.graphml", "integrations/architecture.mmd",
 			"integrations/symbols.csv", "integrations/edges.csv", "rkc-export-manifest.json",
 		} {
@@ -217,8 +218,11 @@ func TestExportFormattingAndIntegrationHelpers(t *testing.T) {
 	}
 	bundle := exportFixture(t.TempDir(), "x.go", []byte("x"))
 	coverage := model.BuildCoverage(bundle)
-	if overview := repositoryOverview(bundle, coverage); !strings.Contains(overview, "Repository atlas") || !strings.Contains(overview, "Provenance") {
+	if overview := repositoryOverview(bundle, coverage); !strings.Contains(overview, "Repository atlas") || !strings.Contains(overview, "Provenance") || !strings.Contains(overview, bundle.Snapshot.Git.Commit) {
 		t.Fatalf("overview = %q", overview)
+	}
+	if overview := notebookRepositoryOverview(bundle, coverage); !strings.Contains(overview, bundle.Snapshot.Git.Commit) {
+		t.Fatalf("NotebookLM overview omitted commit provenance: %q", overview)
 	}
 	if report := coverageMarkdown(coverage); !strings.Contains(report, "Coverage and confidence") {
 		t.Fatalf("coverage report = %q", report)
@@ -330,8 +334,8 @@ func TestBrowserAssetsAccessibilityAndSerializationContract(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(assets) != 4 {
-		t.Fatalf("browser asset count = %d, want 4", len(assets))
+	if len(assets) != 5 {
+		t.Fatalf("browser asset count = %d, want 5", len(assets))
 	}
 	for name, markers := range map[string][]string{
 		"index.html": {
@@ -356,6 +360,8 @@ func TestBrowserAssetsAccessibilityAndSerializationContract(t *testing.T) {
 			`"default_args":["--dir",".rkc","resource guard"]`,
 			"--scip-index /path/index.scip", "Compiler evidence",
 			"Safe CLI workflows", "executes only its explicit allowlist",
+			"./data/bootstrap.json", "ensureFullStaticData",
+			"Loading complete offline details",
 		},
 	} {
 		content := string(assets[name])
@@ -397,6 +403,22 @@ func TestBrowserAssetsAccessibilityAndSerializationContract(t *testing.T) {
 	if data.Bundle.Snapshot.ID != bundle.Snapshot.ID || data.Coverage.SymbolsTotal != coverage.SymbolsTotal {
 		t.Fatalf("browser data binding mismatch: snapshot=%q symbols=%d", data.Bundle.Snapshot.ID, data.Coverage.SymbolsTotal)
 	}
+	var bootstrap struct {
+		Bundle          model.Bundle              `json:"bundle"`
+		Coverage        model.Coverage            `json:"coverage"`
+		Facets          map[string]map[string]int `json:"facets"`
+		StaticBootstrap bool                      `json:"static_bootstrap"`
+		ListTruncated   bool                      `json:"list_truncated"`
+	}
+	if err := json.Unmarshal(assets["data/bootstrap.json"], &bootstrap); err != nil {
+		t.Fatalf("decode browser bootstrap: %v", err)
+	}
+	if !bootstrap.StaticBootstrap || bootstrap.Bundle.Snapshot.ID != bundle.Snapshot.ID || bootstrap.Coverage.SymbolsTotal != coverage.SymbolsTotal || len(bootstrap.Bundle.Nodes) > staticBootstrapNodeLimit || len(bootstrap.Bundle.Edges) != 0 || len(bootstrap.Bundle.Evidence) != 0 {
+		t.Fatalf("invalid bounded browser bootstrap: %+v", bootstrap)
+	}
+	if len(assets["data/bootstrap.json"]) >= len(assets["data/atlas.json"]) {
+		t.Fatalf("browser bootstrap is not smaller than full atlas: %d >= %d", len(assets["data/bootstrap.json"]), len(assets["data/atlas.json"]))
+	}
 
 	invalid := bundle
 	invalid.Nodes[0].Attributes = map[string]any{"channel": make(chan int)}
@@ -423,6 +445,9 @@ func TestSiteAssetsOmitStaticAtlasData(t *testing.T) {
 	}
 	if _, ok := assets["data/atlas.json"]; ok {
 		t.Fatal("live site assets retained the full static atlas payload")
+	}
+	if _, ok := assets["data/bootstrap.json"]; ok {
+		t.Fatal("live site assets retained the static bootstrap payload")
 	}
 	for _, name := range []string{"index.html", "styles.css", "app.js"} {
 		if len(assets[name]) == 0 {
@@ -587,7 +612,7 @@ func exportFixture(root, artifactPath string, source []byte) model.Bundle {
 	edge := model.Edge{ID: "edge-1", Kind: "contains", From: repository.ID, To: node.ID, Resolution: "declared", Confidence: 1, Producer: "test", EvidenceIDs: []string{evidence.ID}}
 	diagnostic := model.Diagnostic{ID: "diagnostic-1", Severity: "warning", Code: "RKC-TEST", Message: "First sentence. More detail.", Stage: "test", Plugin: "test", Source: evidence.Source, HelpURI: "https://example.invalid/help"}
 	return model.Bundle{
-		Snapshot:  model.Snapshot{SchemaVersion: model.SchemaVersion, ID: "snapshot-1", RepositoryID: repository.ID, CreatedAt: time.Unix(1, 0).UTC(), Status: "committed", RootName: "fixture", RootPath: root, ContentDigest: "digest", Tool: model.ToolInfo{Name: "rkc", Version: "test"}},
+		Snapshot:  model.Snapshot{SchemaVersion: model.SchemaVersion, ID: "snapshot-1", RepositoryID: repository.ID, CreatedAt: time.Unix(1, 0).UTC(), Status: "committed", RootName: "fixture", RootPath: root, ContentDigest: "digest", Git: model.GitInfo{Commit: strings.Repeat("a", 40)}, Tool: model.ToolInfo{Name: "rkc", Version: "test"}},
 		Artifacts: []model.Artifact{artifact}, Nodes: []model.Node{repository, node}, Edges: []model.Edge{edge}, Evidence: []model.Evidence{evidence}, Diagnostics: []model.Diagnostic{diagnostic},
 	}
 }

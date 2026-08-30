@@ -12,7 +12,55 @@ The labels below mean:
 - **planned**: architecture and work order exist, code does not yet satisfy the
   production exit gate.
 
-## 2026-07-27 production acceptance checkpoint
+## 2026-08-30 commit-bound acceptance evidence
+
+The latest manually reviewed complete evidence checkpoint is commit
+`0d04bcdd386c494046f0e99297099dec2ee9736c`, tree
+`cd7d1be961ab7835ad2d641961409d731cb9280b`. Its [main-branch CI
+run](https://github.com/neuroforge-io/RKC/actions/runs/33303846351) passed the
+guarded release verifier, two cache-isolated reproducibility builds, portable
+target builds, Docker build/runtime smoke, self-catalogue, fresh Go/Python
+profiles, quality index, and every artifact upload.
+
+- The two complete-package builds produced the same 53,468,068-byte archive,
+  SHA-256
+  `3b4dbd6cb96004c5722d87f2ab5853f9eb4bc5f9a334c9e1d6a26853de973eab`.
+- The quality evidence denominator contains 162 production source files. All
+  162 have conservative file-level test and documentation evidence; all 131
+  applicable executable files have a profile. Executable coverage is
+  **28,553/31,635 units (90.26%)**, not 100%. Go exported-declaration
+  documentation is **467/773 (60.41%)**, leaving 306 exact declaration gaps
+  and 110 files with uncovered executable units. A complete audit of the same
+  tracked tree partitions all 405 files into 304 analyzable source files (162
+  production and 142 test), 38 documentation files, and 63 build,
+  configuration, schema, data, license, lock, and support files outside the
+  source analyzers.
+- The self-catalogue selected 405 regular tracked blobs totaling 5,078,939
+  bytes directly from that commit tree. It produced 7,989 atlas files, and all
+  7,991 published checksum entries (canonical atlas files plus two outer
+  receipts) were manually rehashed successfully. The two operational atlas
+  receipts were validated but not part of that old checksum set; complete-pack
+  hashing is therefore a required successor gate. Its safety receipt proves no
+  generated output, model weight, symlink, or model execution entered the build.
+- The generated knowledge base contains 13,898 nodes, 7,549 symbols, 37,085
+  relationships, a 30 MB persisted lexical index, browser assets, deterministic
+  Markdown, and six NotebookLM knowledge sources totaling 11,676,045 bytes;
+  the largest pack is 3,999,948 bytes. It reports zero potential or
+  high-confidence secret findings.
+- The same review exposes the next quality work rather than hiding it: this
+  no-SCIP self-run has zero compiler-semantic parses, resolves only
+  10,965/37,085 relationships (29.57%), and finds source documentation on
+  892/4,720 public symbols (18.90%). The human repository overview is useful
+  but too terse for first-class onboarding. The standalone atlas also lost the
+  outer Git identity, and the static browser eagerly loaded a 68.8 MB copy of
+  the graph while ignoring the separate 30.3 MB lexical index. Commit retention,
+  complete-pack hashing, compiler-index integration, narrative overview
+  quality, residual executable coverage, exported Go comments, payload
+  efficiency, and reproducible browser/assistive-technology acceptance
+  therefore remain explicit acceptance gates until successor evidence closes
+  each one.
+
+## Production acceptance checkpoint (updated 2026-08-30)
 
 | Area | Current state | Production boundary |
 |---|---|---|
@@ -22,7 +70,7 @@ The labels below mean:
 | HTTP listener confidentiality | Implemented | Loopback is the fail-closed default; non-loopback read-only serving requires explicit `--allow-remote`, the workbench requires an ephemeral loopback origin, API responses use `private, no-store`, and every workbench-origin response is non-cacheable plus same-origin resource protected |
 | Workbench containment | Implemented for the allowlisted command profile | One guarded server scope, single-job admission, per-command process groups, deadline/cancel TERM-to-KILL cleanup proof, and rejection of nested servers or model/Python commands that may create separately managed units prevent supported work from escaping. Unprovable cleanup fails visibly and blocks a success claim; nested managed runtimes remain disabled until an aggregate session ceiling is proved |
 | Model default | Intentionally unset after complete qualification | Qwen3.5 4B Q4_0 improved to 4/6 generation cases with no unsupported claim or canary leakage, but over-abstained on the hostile-input case, timed out at exact 32K, and exceeded the strict process-RSS gate despite a safe 4.156 GB cgroup peak. Granite 4 H 1B and Qwen3.5 0.8B each passed only 2/6; Gemma 4 E2B and Qwen3.5 2B were also rejected. The paired Qwen3 embedding role passed all gates, but pair-level promotion correctly remained disabled |
-| Release verification | Passed locally and enforced on every `main` push | The guarded immutable release verifier passed in 371 seconds on production code commit `03f56e7`; Go coverage was above the 90% gate, Python line+branch coverage was above 90%, race/portability/contracts/licenses/smokes/benchmark passed, and two cache-isolated builds produced the identical 51,652,037-byte archive with SHA-256 `45e16892f0345b73cbad68adc174100c6cb65870e6969d4e0e2329dc7d4a0908`. The guarded self-catalogue then republished and answered live lexical queries over RKC itself; CI repeats release packaging, self-cataloguing, and a hardened read-only container smoke with an explicit isolated state volume |
+| Release verification | Passed remotely and enforced on every `main` push | Main-branch CI run `33303846351` passed on commit `0d04bcdd386c494046f0e99297099dec2ee9736c`: Go/Python coverage gates, race, portability, contracts, licenses, smokes, benchmark, Docker runtime, and artifact publication were green. Two cache-isolated builds produced the identical 53,468,068-byte archive with SHA-256 `3b4dbd6cb96004c5722d87f2ab5853f9eb4bc5f9a334c9e1d6a26853de973eab`. The commit/tree-bound self-catalogue then republished atlas, graph, lexical search, deterministic docs, browser assets, NotebookLM packs, manifest, and 7,991 verified checksums without recursive output or model ingestion |
 
 ## Core
 
@@ -159,11 +207,13 @@ production declaration by symbol and source coordinate without importing,
 building, or executing repository code. It deduplicates Go profile blocks,
 rejects inconsistent profile denominators and Python branch counters, and
 retains exact uncovered Go coordinates and Python line/branch arcs for direct
-test triage. The current working tree reports 100% test and file-documentation
-evidence under the documented heuristics, **206/206 public `pkg/*` exported Go
-declarations documented**, and **350/773 across all production Go code**; the
-remaining 423 command/internal/example declarations are an explicit queue, not
-a hidden 100% claim. Fresh CI profiles remain authoritative for executable
+test triage. The latest reviewed commit-bound index reports 100% test and
+file-documentation evidence under the documented heuristics, **206/206 public
+`pkg/*` exported Go declarations documented**, and **467/773 across all
+production Go code**; the remaining 306 command/internal/example declarations
+are an explicit queue, not a hidden 100% claim. Its fresh combined Go/Python
+profile covers **28,553/31,635 units (90.26%)**, leaving 3,082 exact uncovered
+units across 110 files. Fresh CI profiles remain authoritative for executable
 coverage percentages and residual test gaps.
 
 `make safe-complete-package` runs that logged sequence inside the mandatory

@@ -583,6 +583,10 @@ class QualityIndexTests(unittest.TestCase):
         self.assertEqual(
             index._git_tracked_paths(self.root, identity)["status"], "unavailable"
         )
+        self.assertEqual(
+            index._git_stability_token(self.root, identity)["status"],
+            "unavailable",
+        )
 
         self.run_git("init", "-q", "-b", "main")
         self.run_git("config", "user.email", "rkc-quality@example.invalid")
@@ -592,6 +596,9 @@ class QualityIndexTests(unittest.TestCase):
         self.run_git("commit", "-q", "-m", "fixture")
         identity = index._git_identity(self.root)
         self.assertEqual(identity["status"], "available")
+        self.assertEqual(
+            index._git_stability_token(self.root, identity)["status"], "available"
+        )
         root_commit = identity["commit"]
         empty_tree = subprocess.run(
             ["git", "-C", str(self.root), "mktree"],
@@ -798,6 +805,17 @@ class QualityIndexTests(unittest.TestCase):
                 for record in built["other_files"]
             )
         )
+
+    def test_build_index_rejects_a_concurrent_file_change(self) -> None:
+        source = self.write("worker.py", "print('before')\n")
+
+        def mutate(_path: Path) -> bool:
+            source.write_text("print('after')\n", encoding="utf-8")
+            return False
+
+        with mock.patch.object(index, "_generated", side_effect=mutate):
+            with self.assertRaisesRegex(index.QualityIndexError, "changed during indexing"):
+                index.build_index(self.root)
 
     def test_main_can_fail_closed_when_strict_gap_mode_is_requested(self) -> None:
         self.write("src/main.go", "package src\nfunc Main() {}\n")

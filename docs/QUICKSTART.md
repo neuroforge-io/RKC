@@ -318,7 +318,9 @@ literal terms, while `--kinds`, `--languages`, `--objects`, and `--path-prefix`
 provide explicit filters. Hybrid mode fuses the same FTS result with the
 qualified vector index before bounded graph expansion.
 
-The static site is also available directly under `/tmp/my-atlas/site`.
+The static site is also available directly under `/tmp/my-atlas/site`. It loads
+a compact snapshot-bound overview first; the complete offline graph is fetched
+only when search, diagnostics, symbol detail, or graph navigation needs it.
 
 The responsive GUI covers repository overview, bounded search, entity and
 evidence inspection, graph navigation, diagnostics, coverage, and 19 bounded
@@ -379,7 +381,8 @@ snapshot:
 - `docs/` — linked Markdown pages suitable for a repository wiki or static
   documentation site;
 - `site/` — the responsive static browser served read-only by ordinary
-  `serve`/`open`, or augmented by the explicitly protected Linux workbench;
+  `serve`/`open`, or augmented by the explicitly protected Linux workbench; its
+  bounded bootstrap avoids making the complete graph an initial page-load tax;
 - `notebooklm/` — ordered Markdown sources plus `manifest.json` and
   `UPLOAD.md` for NotebookLM-style notebooks and agent context windows.
 
