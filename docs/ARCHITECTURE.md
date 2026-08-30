@@ -247,3 +247,9 @@ separately and must not be confused with the local daemon's current surface.
 - exporters receive immutable snapshot readers;
 - language adapters emit fragments or GraphPatch records;
 - derived products never become hidden sources of canonical truth.
+
+---
+_RKC is stewarded by **NeuroForgeIO** and released under the **MIT License**.
+Redistributions must retain the copyright and permission notices required by
+that license. Attribution to NeuroForgeIO is requested, but is not an additional
+license condition._

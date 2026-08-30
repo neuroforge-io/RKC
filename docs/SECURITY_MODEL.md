@@ -277,3 +277,9 @@ A production release fails if:
 - plugin or model artifact digest is not verified;
 - an interrupted write publishes a partial snapshot;
 - release signatures, SBOM, or provenance are missing.
+
+---
+_RKC is stewarded by **NeuroForgeIO** and released under the **MIT License**.
+Redistributions must retain the copyright and permission notices required by
+that license. Attribution to NeuroForgeIO is requested, but is not an additional
+license condition._

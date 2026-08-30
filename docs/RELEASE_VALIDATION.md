@@ -202,3 +202,9 @@ durable local SQLite backend. It does not prove future compiler adapters,
 general third-party native-plugin sandboxing, PostgreSQL team mode, signed
 publication, container SBOMs, provenance, or a qualified real-GGUF
 memory/quality target. Those have separate exit gates in the remainder plan.
+
+---
+_RKC is stewarded by **NeuroForgeIO** and released under the **MIT License**.
+Redistributions must retain the copyright and permission notices required by
+that license. Attribution to NeuroForgeIO is requested, but is not an additional
+license condition._

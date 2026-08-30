@@ -229,3 +229,9 @@ demo, and the exact receipt-bound validation/benchmark evidence. Production
 publication still adds signed checksums, provenance, container
 multi-architecture builds and SBOMs, vulnerability scanning, and a
 clean-environment installation test.
+
+---
+_RKC is stewarded by **NeuroForgeIO** and released under the **MIT License**.
+Redistributions must retain the copyright and permission notices required by
+that license. Attribution to NeuroForgeIO is requested, but is not an additional
+license condition._

@@ -342,3 +342,9 @@ execution paths, coverage records, and audit events.
 
 The current release validates this schema but does not yet use it as the
 canonical runtime writer. That migration is Workstream 1 of the remainder plan.
+
+---
+_RKC is stewarded by **NeuroForgeIO** and released under the **MIT License**.
+Redistributions must retain the copyright and permission notices required by
+that license. Attribution to NeuroForgeIO is requested, but is not an additional
+license condition._

@@ -461,3 +461,9 @@ make safe-complete-package
 The package builder refuses to proceed without release verification and two
 cache-isolated, byte-identical builds. The coherent output is under
 `dist/release`.
+
+---
+_RKC is stewarded by **NeuroForgeIO** and released under the **MIT License**.
+Redistributions must retain the copyright and permission notices required by
+that license. Attribution to NeuroForgeIO is requested, but is not an additional
+license condition._

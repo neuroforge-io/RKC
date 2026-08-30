@@ -834,3 +834,9 @@ Accept:
 
 The code-level sequence, interfaces, SQL, tests, and exit gates are expanded in
 `REMAINDER_IMPLEMENTATION_PLAN.md`.
+
+---
+_RKC is stewarded by **NeuroForgeIO** and released under the **MIT License**.
+Redistributions must retain the copyright and permission notices required by
+that license. Attribution to NeuroForgeIO is requested, but is not an additional
+license condition._

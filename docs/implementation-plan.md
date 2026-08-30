@@ -4546,3 +4546,9 @@ The reference package is considered complete when:
 This definition applies to the reference release only. It does not convert
 planned semantic adapters, sandboxes, or team-service features into completed
 work through compression.
+
+---
+_RKC is stewarded by **NeuroForgeIO** and released under the **MIT License**.
+Redistributions must retain the copyright and permission notices required by
+that license. Attribution to NeuroForgeIO is requested, but is not an additional
+license condition._

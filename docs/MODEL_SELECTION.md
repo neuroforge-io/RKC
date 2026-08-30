@@ -224,3 +224,9 @@ and the same memory ceiling. Generation and embedding execute sequentially.
 If either role fails, RKC retains no default model. Lexical retrieval, GraphRAG
 expansion, evidence packets, deterministic documentation, and every canonical
 repository fact remain fully usable without a model.
+
+---
+_RKC is stewarded by **NeuroForgeIO** and released under the **MIT License**.
+Redistributions must retain the copyright and permission notices required by
+that license. Attribution to NeuroForgeIO is requested, but is not an additional
+license condition._

@@ -22,6 +22,23 @@ REQUIRED_FILES = (
     Path("go.sum"),
     Path("third_party/go-modules.lock.json"),
 )
+MARKDOWN_EXCLUDED_FILES = {Path("THIRD_PARTY_NOTICES.md")}
+MARKDOWN_EXCLUDED_TREES = {
+    ".git",
+    ".pytest_cache",
+    ".rkc",
+    ".venv",
+    "LICENSES",
+    "bin",
+    "dist",
+    "third_party",
+    "vendor",
+}
+ATTRIBUTION_FOOTER = """---
+_RKC is stewarded by **NeuroForgeIO** and released under the **MIT License**.
+Redistributions must retain the copyright and permission notices required by
+that license. Attribution to NeuroForgeIO is requested, but is not an additional
+license condition._"""
 PROHIBITED_TRACKED_SUFFIXES = frozenset(
     {
         ".a",
@@ -244,6 +261,48 @@ def require_markers(label: str, value: str | None, markers: tuple[str, ...]) -> 
         return
     missing = [marker for marker in markers if marker not in value]
     record(label, not missing, "missing: " + ", ".join(missing) if missing else "")
+
+
+def markdown_attribution_required(relative: Path) -> bool:
+    """Return whether a Markdown file is first-party policy-controlled prose."""
+    if relative in MARKDOWN_EXCLUDED_FILES:
+        return False
+    return not any(
+        part in MARKDOWN_EXCLUDED_TREES or part.startswith(".rkc-")
+        for part in relative.parts
+    )
+
+
+def validate_markdown_attribution() -> None:
+    """Require the exact MIT attribution footer on first-party Markdown."""
+    failures: list[str] = []
+    checked = 0
+    for path in sorted(ROOT.rglob("*.md")):
+        relative = path.relative_to(ROOT)
+        if not markdown_attribution_required(relative):
+            continue
+        checked += 1
+        try:
+            info = os.lstat(path)
+            if stat.S_ISLNK(info.st_mode) or not stat.S_ISREG(info.st_mode):
+                failures.append(f"{relative}: must be a regular file")
+                continue
+            if info.st_size > 8 * 1024 * 1024:
+                failures.append(f"{relative}: exceeds 8388608 bytes")
+                continue
+            value = path.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError) as exc:
+            failures.append(f"{relative}: cannot read UTF-8 text: {exc}")
+            continue
+        if not value.rstrip().endswith(ATTRIBUTION_FOOTER):
+            failures.append(f"{relative}: missing standard footer")
+    if checked == 0:
+        failures.append("no first-party Markdown files found")
+    record(
+        "first-party Markdown attribution",
+        not failures,
+        "; ".join(failures[:20]),
+    )
 
 
 def reject_duplicate_keys(pairs: list[tuple[str, object]]) -> dict[str, object]:
@@ -820,6 +879,7 @@ def validate_tracked_artifacts() -> None:
 def main() -> int:
     """Run all checks and print one machine-readable report."""
     validate_root_documents()
+    validate_markdown_attribution()
     validate_declared_metadata()
     validate_dependency_boundary()
     validate_tracked_artifacts()

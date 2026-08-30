@@ -176,3 +176,9 @@ mixed-language demonstration atlas plus a complete-distribution SPDX SBOM.
 | local unauthenticated API | OIDC/RBAC/tenant-aware service API |
 | fake integration tests plus rejected real-GGUF receipts | a model that passes every unchanged gate |
 | source checksums plus binary/distribution SPDX SBOMs | signed releases, container SBOM, provenance, transparency records |
+
+---
+_RKC is stewarded by **NeuroForgeIO** and released under the **MIT License**.
+Redistributions must retain the copyright and permission notices required by
+that license. Attribution to NeuroForgeIO is requested, but is not an additional
+license condition._

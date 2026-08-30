@@ -144,3 +144,9 @@ rolled back, while failed pre-publication staging is marker-checked and moved to
 an explicit failed quarantine. The wrapper never mutates the last-known-good
 catalogue before success, recursively deletes a catalogue, or adopts an
 unmarked directory.
+
+---
+_RKC is stewarded by **NeuroForgeIO** and released under the **MIT License**.
+Redistributions must retain the copyright and permission notices required by
+that license. Attribution to NeuroForgeIO is requested, but is not an additional
+license condition._

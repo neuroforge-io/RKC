@@ -27,3 +27,9 @@ creating proprietary-only hooks in canonical formats.
 
 Stable releases require passing conformance, reproducibility, security,
 migration, and benchmark gates described in `docs/implementation-plan.md`.
+
+---
+_RKC is stewarded by **NeuroForgeIO** and released under the **MIT License**.
+Redistributions must retain the copyright and permission notices required by
+that license. Attribution to NeuroForgeIO is requested, but is not an additional
+license condition._

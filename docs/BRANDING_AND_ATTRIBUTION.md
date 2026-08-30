@@ -24,3 +24,21 @@ Generated atlases and NotebookLM packs describe their source repository's
 license separately; they do not silently change that repository's terms. Keep
 the generated provenance, citation, and attribution records when sharing an
 export.
+
+## Standard first-party document footer
+
+Every first-party Markdown document ends with the same short stewardship and
+license footer below. Documentation validation enforces the exact terminal
+footer so newly added guides, examples, governance documents, and architecture
+records cannot omit the public-use terms.
+
+Generated RKC output, vendored or upstream license text under `LICENSES/`,
+third-party/vendor trees, and the mixed-source `THIRD_PARTY_NOTICES.md`
+inventory are explicitly excluded. Those materials retain their own generated
+provenance or upstream terms and must not be rewritten as RKC-owned prose.
+
+---
+_RKC is stewarded by **NeuroForgeIO** and released under the **MIT License**.
+Redistributions must retain the copyright and permission notices required by
+that license. Attribution to NeuroForgeIO is requested, but is not an additional
+license condition._

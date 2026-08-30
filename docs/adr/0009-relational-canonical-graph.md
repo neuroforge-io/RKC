@@ -21,3 +21,9 @@ interfaces and only after measured workloads justify it.
 - storage and graph truth stay transactional;
 - extreme cross-repository graph workloads may later require a derived engine;
 - graph-engine synchronization must remain rebuildable and non-canonical.
+
+---
+_RKC is stewarded by **NeuroForgeIO** and released under the **MIT License**.
+Redistributions must retain the copyright and permission notices required by
+that license. Attribution to NeuroForgeIO is requested, but is not an additional
+license condition._

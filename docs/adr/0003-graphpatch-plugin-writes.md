@@ -13,3 +13,9 @@ database handles and cannot publish snapshots.
 - Core validation, migrations, cache ownership, and audit remain enforceable.
 - Plugins can be implemented in multiple languages.
 - Large patches require streaming protocols and backpressure.
+
+---
+_RKC is stewarded by **NeuroForgeIO** and released under the **MIT License**.
+Redistributions must retain the copyright and permission notices required by
+that license. Attribution to NeuroForgeIO is requested, but is not an additional
+license condition._

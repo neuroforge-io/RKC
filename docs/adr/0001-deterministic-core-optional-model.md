@@ -22,3 +22,9 @@ validated before publication.
 - Every generated claim can be traced and rejected.
 - The graph and evidence model require more initial engineering than a simple
   retrieval wrapper.
+
+---
+_RKC is stewarded by **NeuroForgeIO** and released under the **MIT License**.
+Redistributions must retain the copyright and permission notices required by
+that license. Attribution to NeuroForgeIO is requested, but is not an additional
+license condition._

@@ -24,6 +24,8 @@ LICENSES = importlib.util.module_from_spec(SPEC)
 sys.modules[MODULE_NAME] = LICENSES
 SPEC.loader.exec_module(LICENSES)
 
+ATTRIBUTION_FOOTER = LICENSES.ATTRIBUTION_FOOTER + "\n"
+
 
 def index_entry(mode: str, path: str, stage: str = "0") -> bytes:
     return f"{mode} {'0' * 40} {stage}\t{path}".encode("utf-8") + b"\0"
@@ -308,6 +310,63 @@ class LicenseValidationTests(unittest.TestCase):
             any("LICENSES/Extra.txt" in error for error in LICENSES.ERRORS),
             LICENSES.ERRORS,
         )
+
+    def test_markdown_attribution_requires_footer_and_excludes_boundaries(
+        self,
+    ) -> None:
+        self.write("README.md", "# RKC\n\n" + ATTRIBUTION_FOOTER)
+        self.write("docs/guide.md", "# Guide\n\n" + ATTRIBUTION_FOOTER)
+        self.write("THIRD_PARTY_NOTICES.md", "mixed-source inventory\n")
+        self.write("LICENSES/vendor/LICENSE.md", "upstream terms\n")
+        self.write("third_party/vendor/NOTICE.md", "upstream notice\n")
+        self.write("vendor/upstream/README.md", "vendored documentation\n")
+        self.write("dist/generated/README.md", "generated output\n")
+        self.write(".rkc-output/docs/README.md", "generated output\n")
+
+        LICENSES.validate_markdown_attribution()
+
+        self.assertTrue(LICENSES.CHECKS[-1]["ok"], LICENSES.CHECKS[-1])
+        self.write("docs/missing.md", "# Missing\n")
+        LICENSES.validate_markdown_attribution()
+        self.assertFalse(LICENSES.CHECKS[-1]["ok"])
+        self.assertIn("docs/missing.md", str(LICENSES.CHECKS[-1]["detail"]))
+
+    def test_markdown_attribution_rejects_empty_inventory_and_nonregular_file(
+        self,
+    ) -> None:
+        LICENSES.validate_markdown_attribution()
+        self.assertFalse(LICENSES.CHECKS[-1]["ok"])
+        self.assertIn("no first-party Markdown", LICENSES.CHECKS[-1]["detail"])
+
+        self.write("README.md", "# RKC\n\n" + ATTRIBUTION_FOOTER)
+        if hasattr(os, "symlink"):
+            (LICENSES.ROOT / "docs").mkdir()
+            (LICENSES.ROOT / "docs" / "linked.md").symlink_to(
+                LICENSES.ROOT / "README.md"
+            )
+            LICENSES.validate_markdown_attribution()
+            self.assertFalse(LICENSES.CHECKS[-1]["ok"])
+            self.assertIn("must be a regular file", LICENSES.CHECKS[-1]["detail"])
+
+    def test_markdown_attribution_rejects_oversize_and_non_utf8_text(self) -> None:
+        readme = self.write("README.md", "# RKC\n\n" + ATTRIBUTION_FOOTER)
+        original_lstat = os.lstat
+
+        def oversized_lstat(path: str | bytes | os.PathLike[str]) -> mock.Mock:
+            info = original_lstat(path)
+            return mock.Mock(st_mode=info.st_mode, st_size=8 * 1024 * 1024 + 1)
+
+        with mock.patch.object(
+            LICENSES.os, "lstat", side_effect=oversized_lstat
+        ):
+            LICENSES.validate_markdown_attribution()
+        self.assertFalse(LICENSES.CHECKS[-1]["ok"])
+        self.assertIn("exceeds 8388608 bytes", LICENSES.CHECKS[-1]["detail"])
+
+        readme.write_bytes(b"\xff")
+        LICENSES.validate_markdown_attribution()
+        self.assertFalse(LICENSES.CHECKS[-1]["ok"])
+        self.assertIn("cannot read UTF-8 text", LICENSES.CHECKS[-1]["detail"])
 
     def test_declared_metadata_happy_and_invalid_paths(self) -> None:
         self.write(
@@ -656,6 +715,8 @@ class LicenseValidationTests(unittest.TestCase):
         with mock.patch.object(
             LICENSES, "validate_root_documents", good_check
         ), mock.patch.object(
+            LICENSES, "validate_markdown_attribution", good_check
+        ), mock.patch.object(
             LICENSES, "validate_declared_metadata", good_check
         ), mock.patch.object(
             LICENSES, "validate_dependency_boundary", good_check
@@ -673,6 +734,8 @@ class LicenseValidationTests(unittest.TestCase):
             LICENSES,
             "validate_root_documents",
             side_effect=lambda: LICENSES.record("fixture", False, "bad"),
+        ), mock.patch.object(
+            LICENSES, "validate_markdown_attribution"
         ), mock.patch.object(LICENSES, "validate_declared_metadata"), mock.patch.object(
             LICENSES, "validate_dependency_boundary"
         ), mock.patch.object(

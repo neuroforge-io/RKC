@@ -20,3 +20,9 @@ all returned claims against packet evidence and known identifiers.
 - unsupported claims can be rejected;
 - packet/model/prompt digests support cache and audit;
 - broad architectural synthesis requires hierarchical packet composition.
+
+---
+_RKC is stewarded by **NeuroForgeIO** and released under the **MIT License**.
+Redistributions must retain the copyright and permission notices required by
+that license. Attribution to NeuroForgeIO is requested, but is not an additional
+license condition._

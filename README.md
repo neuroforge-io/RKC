@@ -684,3 +684,9 @@ remain separate and are listed in
 [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md).
 Third-party compilers, parsers, language servers, grammars, plugins, and model
 weights retain their own licenses and are not bundled by this project.
+
+---
+_RKC is stewarded by **NeuroForgeIO** and released under the **MIT License**.
+Redistributions must retain the copyright and permission notices required by
+that license. Attribution to NeuroForgeIO is requested, but is not an additional
+license condition._

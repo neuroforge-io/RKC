@@ -328,3 +328,9 @@ Before claiming the protected 4 GiB operating / 4.5 GiB hard profile, publish:
 
 Until that gate is met, 4.5 GiB is a guarded engineering ceiling, not a
 marketing measurement or evidence that any candidate model is satisfactory.
+
+---
+_RKC is stewarded by **NeuroForgeIO** and released under the **MIT License**.
+Redistributions must retain the copyright and permission notices required by
+that license. Attribution to NeuroForgeIO is requested, but is not an additional
+license condition._

@@ -12,6 +12,12 @@ from unittest import mock
 
 
 VALIDATOR = Path(__file__).with_name("validate-docs.py").absolute()
+FOOTER = """---
+_RKC is stewarded by **NeuroForgeIO** and released under the **MIT License**.
+Redistributions must retain the copyright and permission notices required by
+that license. Attribution to NeuroForgeIO is requested, but is not an additional
+license condition._
+"""
 
 
 class ValidateDocsTests(unittest.TestCase):
@@ -50,7 +56,7 @@ class ValidateDocsTests(unittest.TestCase):
         return status, json.loads(stdout.getvalue())
 
     def test_accepts_canonical_links_fences_and_ignored_output_trees(self) -> None:
-        self.write("docs/target.md", "# Target\n")
+        self.write("docs/target.md", "# Target\n\n" + FOOTER)
         self.write(
             "README.md",
             """# Valid documentation
@@ -73,26 +79,43 @@ class ValidateDocsTests(unittest.TestCase):
 ~~~text
 [these are ignored too](another-missing-file)
 ~~~
-""",
+\n""" + FOOTER,
         )
         self.write("dist/broken.md", "[ignored](missing)\n```\n")
         self.write(".rkc-generated/broken.md", "[ignored](missing)\n```\n")
+        self.write("LICENSES/vendor/LICENSE.md", "third-party terms\n")
+        self.write("third_party/vendor/NOTICE.md", "third-party notice\n")
+        self.write("vendor/upstream/README.md", "vendored documentation\n")
+        self.write("THIRD_PARTY_NOTICES.md", "governed notice inventory\n")
 
         status, report = self.run_validator()
 
         self.assertEqual(status, 0)
         self.assertTrue(report["ok"])
-        self.assertEqual(report["files_checked"], 2)
+        self.assertEqual(report["files_checked"], 6)
         self.assertEqual(report["issues"], [])
 
-    def test_reports_missing_escaping_and_unclosed_fence(self) -> None:
+    def test_reports_missing_or_nonterminal_first_party_footer(self) -> None:
+        self.write("README.md", "# Missing footer\n")
+        self.write("docs/not-a-footer.md", FOOTER + "\n# Content after footer\n")
+
+        status, report = self.run_validator()
+
+        self.assertEqual(status, 1)
+        messages = [issue["message"] for issue in report["issues"]]
+        self.assertEqual(
+            messages.count("missing standard NeuroForgeIO/MIT attribution footer"),
+            2,
+        )
+
+    def test_reports_missing_and_escaping_links(self) -> None:
         self.write(
             "README.md",
             """# Invalid documentation
 
 [missing](missing.md)
 [escaping](../outside.md)
-""",
+\n""" + FOOTER,
         )
         self.write(
             "docs/unclosed.md",
@@ -100,7 +123,7 @@ class ValidateDocsTests(unittest.TestCase):
 
 ```text
 [ignored while fenced](also-missing.md)
-""",
+```\n\n""" + FOOTER,
         )
 
         status, report = self.run_validator()
@@ -111,9 +134,25 @@ class ValidateDocsTests(unittest.TestCase):
         issues = report["issues"]
         self.assertIsInstance(issues, list)
         messages = [issue["message"] for issue in issues]
-        self.assertTrue(any("missing local link target" in message for message in messages))
-        self.assertTrue(any("local link escapes repository" in message for message in messages))
-        self.assertTrue(any("unclosed ``` code fence" in message for message in messages))
+        self.assertTrue(
+            any("missing local link target" in message for message in messages)
+        )
+        self.assertTrue(
+            any("local link escapes repository" in message for message in messages)
+        )
+        self.assertFalse(any("unclosed ``` code fence" in message for message in messages))
+
+    def test_reports_unclosed_fence_alongside_footer_contract(self) -> None:
+        self.write("README.md", "# Unclosed\n\n```text\n")
+
+        status, report = self.run_validator()
+
+        self.assertEqual(status, 1)
+        messages = [issue["message"] for issue in report["issues"]]
+        self.assertIn("unclosed ``` code fence", messages)
+        self.assertIn(
+            "missing standard NeuroForgeIO/MIT attribution footer", messages
+        )
 
 
 if __name__ == "__main__":

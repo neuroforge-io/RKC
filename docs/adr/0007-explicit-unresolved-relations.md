@@ -21,3 +21,9 @@ candidates, and resolution attempts as attributes/evidence.
 - unresolved work is measurable and queryable;
 - later semantic adapters can replace placeholders through explicit merge logic;
 - graphs contain visible uncertainty rather than cleaner fiction.
+
+---
+_RKC is stewarded by **NeuroForgeIO** and released under the **MIT License**.
+Redistributions must retain the copyright and permission notices required by
+that license. Attribution to NeuroForgeIO is requested, but is not an additional
+license condition._

@@ -47,3 +47,9 @@ runtime evidence for operations that create release or temporary artifacts.
 RKC-owned documentation and workflows are MIT-licensed by NeuroForgeIO and RKC
 contributors. Retain [`NOTICE`](../NOTICE) and review
 [`THIRD_PARTY_NOTICES.md`](../THIRD_PARTY_NOTICES.md) when redistributing.
+
+---
+_RKC is stewarded by **NeuroForgeIO** and released under the **MIT License**.
+Redistributions must retain the copyright and permission notices required by
+that license. Attribution to NeuroForgeIO is requested, but is not an additional
+license condition._

@@ -14,3 +14,9 @@ schema, plugin, and toolchain digests. Re-analysis creates a new snapshot.
 - Diffs and audit are reliable.
 - Storage retention must be managed.
 - Mutable aliases such as `latest` resolve to immutable IDs.
+
+---
+_RKC is stewarded by **NeuroForgeIO** and released under the **MIT License**.
+Redistributions must retain the copyright and permission notices required by
+that license. Attribution to NeuroForgeIO is requested, but is not an additional
+license condition._

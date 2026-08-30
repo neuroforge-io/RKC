@@ -31,3 +31,9 @@ A stable RKC release must enforce:
 
 See the security section of `docs/implementation-plan.md` for the full threat
 model and control set.
+
+---
+_RKC is stewarded by **NeuroForgeIO** and released under the **MIT License**.
+Redistributions must retain the copyright and permission notices required by
+that license. Attribution to NeuroForgeIO is requested, but is not an additional
+license condition._
