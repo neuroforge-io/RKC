@@ -199,7 +199,7 @@ fragment before exchanging it once for the same-origin session token.
 Maintainers can pair the atlas with a deterministic quality/change report:
 `make quality-index` writes `.rkc-quality/index.json` and `index.md`, including
 source hashes, test and documentation evidence, optional Go/Python profile
-coverage, and Git deltas.
+coverage, exact exported-Go documentation gaps, and Git deltas.
 
 The dependency-light profile does not need a model, daemon, database server, or
 Python sandbox. `quickstart` remains the equivalent headless compile-and-check

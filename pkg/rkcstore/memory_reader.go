@@ -8,6 +8,8 @@ import (
 	"github.com/neuroforge-io/RKC/pkg/rkcmodel"
 )
 
+// Snapshot returns a defensive clone of the immutable snapshot metadata for
+// id. It returns ErrSnapshotNotFound when id is not published.
 func (store *MemoryStore) Snapshot(ctx context.Context, id SnapshotID) (rkcmodel.Snapshot, error) {
 	const operation = "read snapshot"
 	if err := validReadID(ctx, operation, "snapshot_id", string(id)); err != nil {
@@ -27,6 +29,8 @@ func (store *MemoryStore) Snapshot(ctx context.Context, id SnapshotID) (rkcmodel
 	return cloneJSON(snapshot.bundle.Snapshot)
 }
 
+// Bundle returns a defensive clone of the complete, canonically ordered bundle
+// for a published snapshot.
 func (store *MemoryStore) Bundle(ctx context.Context, id SnapshotID) (rkcmodel.Bundle, error) {
 	const operation = "read bundle"
 	if err := validReadID(ctx, operation, "snapshot_id", string(id)); err != nil {
@@ -46,6 +50,8 @@ func (store *MemoryStore) Bundle(ctx context.Context, id SnapshotID) (rkcmodel.B
 	return cloneJSON(snapshot.bundle)
 }
 
+// Current returns a defensive clone of a repository's current snapshot
+// metadata. It returns ErrSnapshotNotFound before the first successful commit.
 func (store *MemoryStore) Current(ctx context.Context, repositoryID RepositoryID) (rkcmodel.Snapshot, error) {
 	const operation = "read current snapshot"
 	if err := validReadID(ctx, operation, "repository_id", string(repositoryID)); err != nil {
@@ -70,6 +76,9 @@ func (store *MemoryStore) Current(ctx context.Context, repositoryID RepositoryID
 	return cloneJSON(snapshot.bundle.Snapshot)
 }
 
+// ListSnapshots returns published snapshots newest first, using snapshot ID as
+// a deterministic ascending tie-breaker. RepositoryID optionally restricts
+// the result. A continuation cursor is authenticated and bound to that filter.
 func (store *MemoryStore) ListSnapshots(ctx context.Context, query SnapshotQuery) (SnapshotPage, error) {
 	const operation = "list snapshots"
 	if err := checkContext(ctx, operation); err != nil {
@@ -125,6 +134,8 @@ func (store *MemoryStore) ListSnapshots(ctx context.Context, query SnapshotQuery
 	return page, err
 }
 
+// Artifact returns a defensive clone of one artifact in a published snapshot.
+// A missing snapshot and a missing artifact have distinct error codes.
 func (store *MemoryStore) Artifact(ctx context.Context, snapshotID SnapshotID, artifactID string) (rkcmodel.Artifact, error) {
 	const operation = "read artifact"
 	if err := validLookup(ctx, operation, snapshotID, "artifact_id", artifactID); err != nil {
@@ -155,6 +166,8 @@ func (store *MemoryStore) Artifact(ctx context.Context, snapshotID SnapshotID, a
 	return cloneJSON(value)
 }
 
+// Node returns a defensive clone of one node in a published snapshot. A
+// missing snapshot and a missing node have distinct error codes.
 func (store *MemoryStore) Node(ctx context.Context, snapshotID SnapshotID, nodeID string) (rkcmodel.Node, error) {
 	const operation = "read node"
 	if err := validLookup(ctx, operation, snapshotID, "node_id", nodeID); err != nil {
@@ -185,6 +198,8 @@ func (store *MemoryStore) Node(ctx context.Context, snapshotID SnapshotID, nodeI
 	return cloneJSON(value)
 }
 
+// Evidence returns a defensive clone of one evidence record in a published
+// snapshot. A missing snapshot and missing evidence have distinct error codes.
 func (store *MemoryStore) Evidence(ctx context.Context, snapshotID SnapshotID, evidenceID string) (rkcmodel.Evidence, error) {
 	const operation = "read evidence"
 	if err := validLookup(ctx, operation, snapshotID, "evidence_id", evidenceID); err != nil {
@@ -215,6 +230,9 @@ func (store *MemoryStore) Evidence(ctx context.Context, snapshotID SnapshotID, e
 	return cloneJSON(value)
 }
 
+// QueryNodes returns nodes in canonical order after applying every non-empty
+// exact-match filter. Continuation cursors are authenticated and bound to the
+// snapshot and complete filter set.
 func (store *MemoryStore) QueryNodes(ctx context.Context, query NodeQuery) (NodePage, error) {
 	const operation = "query nodes"
 	limit, snapshot, err := store.querySnapshot(ctx, operation, query.SnapshotID, query.PageRequest)
@@ -238,6 +256,9 @@ func (store *MemoryStore) QueryNodes(ctx context.Context, query NodeQuery) (Node
 	return store.nodePage(operation, values, limit, payload, scope)
 }
 
+// QueryEdges returns edges in canonical order after applying every non-empty
+// exact-match filter. Resolution is normalized and vocabulary-checked before
+// use. Cursors are bound to the snapshot and normalized filter set.
 func (store *MemoryStore) QueryEdges(ctx context.Context, query EdgeQuery) (EdgePage, error) {
 	const operation = "query edges"
 	limit, snapshot, err := store.querySnapshot(ctx, operation, query.SnapshotID, query.PageRequest)
@@ -266,6 +287,9 @@ func (store *MemoryStore) QueryEdges(ctx context.Context, query EdgeQuery) (Edge
 	return store.edgePage(operation, values, limit, payload, scope)
 }
 
+// QueryDiagnostics returns diagnostics in canonical order after applying every
+// non-empty exact-match filter. Cursors are authenticated and bound to the
+// snapshot and complete filter set.
 func (store *MemoryStore) QueryDiagnostics(ctx context.Context, query DiagnosticQuery) (DiagnosticPage, error) {
 	const operation = "query diagnostics"
 	limit, snapshot, err := store.querySnapshot(ctx, operation, query.SnapshotID, query.PageRequest)
@@ -287,6 +311,8 @@ func (store *MemoryStore) QueryDiagnostics(ctx context.Context, query Diagnostic
 	return store.diagnosticPage(operation, values, limit, payload, scope)
 }
 
+// Coverage returns a defensive clone of the exact coverage record accepted
+// when snapshotID was committed.
 func (store *MemoryStore) Coverage(ctx context.Context, snapshotID SnapshotID) (rkcmodel.Coverage, error) {
 	const operation = "read coverage"
 	if err := validReadID(ctx, operation, "snapshot_id", string(snapshotID)); err != nil {

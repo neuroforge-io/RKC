@@ -76,7 +76,7 @@ The labels below mean:
 | graph paths, impact, SCCs | Implemented | bounded in-memory graph operations |
 | semantic diff | Implemented | conservative logical/signature comparison |
 | guarded self-catalogue | Implemented | immutable commit-tree blob staging; recursive-output/model-weight exclusion; atomic complete publication and deterministic receipts |
-| quality and delta index | Implemented | dependency-free deterministic source/documentation inventory with SHA-256 metadata, conservative test/documentation associations, optional Go/Python profile mapping, and Git change triage; percentages are explicit evidence signals rather than semantic 100% claims |
+| quality and delta index | Implemented | deterministic standard-library source/documentation inventory with SHA-256 metadata, conservative test/documentation associations, exact local-Go-parser coverage for exported production declarations, optional Go/Python profile mapping, and Git change triage; percentages are explicit evidence signals rather than semantic 100% claims, and Go parsing never imports, builds, or executes the indexed repository |
 | embeddings | Implemented, model-gated | Exact asset/runtime qualification binding, vector receipt generation, CLI integration, and strict retrieval scoring are complete. The Qwen3 embedding candidate passed its isolated gate, but the required generation/embedding pair did not, so no default is selected |
 
 ## Model subsystem
@@ -151,14 +151,20 @@ file-level test, documentation, profiling, and Git-delta evidence described in
 guarded Go/Python profile first and feeds both reports into the uploaded index;
 local fast runs omit profiles unless they are supplied explicitly.
 
-The index is now package-aware for Go documentation, recognizes explicit
-cross-language test-harness references, rejects symlinked output ancestors,
-and imports the coverage gate's zero-statement/current-platform metadata. It
-deduplicates Go blocks, rejects inconsistent profile denominators and Python
-branch counters, and retains exact uncovered Go coordinates and Python
-line/branch arcs for direct test triage. The current working tree reports 100%
-test and documentation evidence under these heuristics; the fresh CI artifact
-remains the authority for executable profile percentages and residual gaps.
+The index is now package-aware for file-level Go documentation, recognizes
+explicit cross-language test-harness references, rejects symlinked output
+ancestors, and imports the coverage gate's zero-statement/current-platform
+metadata. A separate fail-closed Go AST pass lists every undocumented exported
+production declaration by symbol and source coordinate without importing,
+building, or executing repository code. It deduplicates Go profile blocks,
+rejects inconsistent profile denominators and Python branch counters, and
+retains exact uncovered Go coordinates and Python line/branch arcs for direct
+test triage. The current working tree reports 100% test and file-documentation
+evidence under the documented heuristics, **206/206 public `pkg/*` exported Go
+declarations documented**, and **350/773 across all production Go code**; the
+remaining 423 command/internal/example declarations are an explicit queue, not
+a hidden 100% claim. Fresh CI profiles remain authoritative for executable
+coverage percentages and residual test gaps.
 
 `make safe-complete-package` runs that logged sequence inside the mandatory
 resource guard. Commit-bound release commands reject tracked or untracked source

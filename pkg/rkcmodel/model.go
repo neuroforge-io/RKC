@@ -36,11 +36,17 @@ type GitInfo struct {
 	Unavailable       bool   `json:"unavailable,omitempty"`
 }
 
+// ToolInfo identifies the RKC implementation that produced a Snapshot.
 type ToolInfo struct {
-	Name       string            `json:"name"`
-	Version    string            `json:"version"`
-	Build      string            `json:"build,omitempty"`
-	Runtime    string            `json:"runtime,omitempty"`
+	// Name is the producer's stable product or executable name.
+	Name string `json:"name"`
+	// Version is the producer release version.
+	Version string `json:"version"`
+	// Build identifies a more specific binary or source build when available.
+	Build string `json:"build,omitempty"`
+	// Runtime describes the execution runtime relevant to reproducibility.
+	Runtime string `json:"runtime,omitempty"`
+	// Attributes carries producer-specific, non-core provenance.
 	Attributes map[string]string `json:"attributes,omitempty"`
 }
 
@@ -148,15 +154,26 @@ type Evidence struct {
 	Attributes  map[string]any `json:"attributes,omitempty"`
 }
 
+// Diagnostic is a stable, machine-readable finding emitted while constructing
+// or validating repository knowledge.
 type Diagnostic struct {
-	ID         string         `json:"id"`
-	Severity   string         `json:"severity"`
-	Code       string         `json:"code"`
-	Message    string         `json:"message"`
-	Source     *SourceRange   `json:"source,omitempty"`
-	Stage      string         `json:"stage,omitempty"`
-	Plugin     string         `json:"plugin,omitempty"`
-	HelpURI    string         `json:"help_uri,omitempty"`
+	// ID uniquely identifies this diagnostic occurrence within a snapshot.
+	ID string `json:"id"`
+	// Severity is one of DiagnosticSeverities.
+	Severity string `json:"severity"`
+	// Code is the stable identifier integrations should use for classification.
+	Code string `json:"code"`
+	// Message is the human-readable explanation of the finding.
+	Message string `json:"message"`
+	// Source locates the finding in an immutable artifact when applicable.
+	Source *SourceRange `json:"source,omitempty"`
+	// Stage identifies the pipeline stage that emitted the finding.
+	Stage string `json:"stage,omitempty"`
+	// Plugin identifies the analyzer plugin that emitted the finding, if any.
+	Plugin string `json:"plugin,omitempty"`
+	// HelpURI points to operator guidance for the diagnostic code.
+	HelpURI string `json:"help_uri,omitempty"`
+	// Attributes carries producer-specific structured detail.
 	Attributes map[string]any `json:"attributes,omitempty"`
 }
 
@@ -173,44 +190,82 @@ type Conflict struct {
 	Attributes   map[string]any `json:"attributes,omitempty"`
 }
 
+// Claim is a generated or curated statement about a canonical subject. Its
+// certainty describes epistemic strength; Validation records review state.
 type Claim struct {
-	ID               string         `json:"id"`
-	SubjectID        string         `json:"subject_id"`
-	Text             string         `json:"text"`
-	Category         string         `json:"category,omitempty"`
-	Certainty        string         `json:"certainty"`
-	Generator        string         `json:"generator"`
-	GeneratorVersion string         `json:"generator_version,omitempty"`
-	EvidenceIDs      []string       `json:"evidence_ids"`
-	Validation       string         `json:"validation"`
-	Attributes       map[string]any `json:"attributes,omitempty"`
+	// ID uniquely identifies the claim within a snapshot.
+	ID string `json:"id"`
+	// SubjectID references the node described by Text.
+	SubjectID string `json:"subject_id"`
+	// Text contains the statement presented to people or downstream agents.
+	Text string `json:"text"`
+	// Category is a producer-defined claim classification.
+	Category string `json:"category,omitempty"`
+	// Certainty is one of ClaimCertaintyStates.
+	Certainty string `json:"certainty"`
+	// Generator identifies the process or model responsible for the claim.
+	Generator string `json:"generator"`
+	// GeneratorVersion identifies the specific generator release when known.
+	GeneratorVersion string `json:"generator_version,omitempty"`
+	// EvidenceIDs cite canonical evidence supporting or challenging the claim.
+	EvidenceIDs []string `json:"evidence_ids"`
+	// Validation is one of ClaimValidationStates.
+	Validation string `json:"validation"`
+	// Attributes carries generator-specific structured detail.
+	Attributes map[string]any `json:"attributes,omitempty"`
 }
 
+// DocumentSection is an ordered, evidence-bearing unit of a generated
+// Document. Markdown is canonical display content; PlainText is an optional
+// accessibility and machine-consumption projection.
 type DocumentSection struct {
-	ID          string         `json:"id"`
-	ParentID    string         `json:"parent_id,omitempty"`
-	Ordinal     int            `json:"ordinal"`
-	Heading     string         `json:"heading,omitempty"`
-	Markdown    string         `json:"markdown"`
-	PlainText   string         `json:"plain_text,omitempty"`
-	ClaimIDs    []string       `json:"claim_ids,omitempty"`
-	EvidenceIDs []string       `json:"evidence_ids,omitempty"`
-	Attributes  map[string]any `json:"attributes,omitempty"`
+	// ID uniquely identifies the section within its document.
+	ID string `json:"id"`
+	// ParentID references either a parent section or a canonical node.
+	ParentID string `json:"parent_id,omitempty"`
+	// Ordinal determines section order; IDs break ties deterministically.
+	Ordinal int `json:"ordinal"`
+	// Heading is the optional display heading.
+	Heading string `json:"heading,omitempty"`
+	// Markdown is the section's canonical rich-text content.
+	Markdown string `json:"markdown"`
+	// PlainText is an optional formatting-free projection of Markdown.
+	PlainText string `json:"plain_text,omitempty"`
+	// ClaimIDs reference claims presented or discussed by this section.
+	ClaimIDs []string `json:"claim_ids,omitempty"`
+	// EvidenceIDs cite evidence supporting the section.
+	EvidenceIDs []string `json:"evidence_ids,omitempty"`
+	// Attributes carries generator-specific structured detail.
+	Attributes map[string]any `json:"attributes,omitempty"`
 }
 
+// Document is a versioned knowledge artifact linked to canonical subjects.
+// Sections carry its display content, claims, and evidence citations.
 type Document struct {
-	ID               string            `json:"id"`
-	LogicalID        string            `json:"logical_id,omitempty"`
-	Kind             string            `json:"kind"`
-	Title            string            `json:"title"`
-	Path             string            `json:"path,omitempty"`
-	SubjectIDs       []string          `json:"subject_ids,omitempty"`
-	Generator        string            `json:"generator"`
-	GeneratorVersion string            `json:"generator_version,omitempty"`
-	ContentSHA256    string            `json:"content_sha256,omitempty"`
-	Status           string            `json:"status"`
-	Sections         []DocumentSection `json:"sections,omitempty"`
-	Attributes       map[string]any    `json:"attributes,omitempty"`
+	// ID identifies this document occurrence within a snapshot.
+	ID string `json:"id"`
+	// LogicalID can remain stable when the generated occurrence changes.
+	LogicalID string `json:"logical_id,omitempty"`
+	// Kind classifies the document for renderers and downstream consumers.
+	Kind string `json:"kind"`
+	// Title is the human-readable document name.
+	Title string `json:"title"`
+	// Path is the optional relative export location.
+	Path string `json:"path,omitempty"`
+	// SubjectIDs reference the nodes, artifacts, or claims covered as a whole.
+	SubjectIDs []string `json:"subject_ids,omitempty"`
+	// Generator identifies the process or model that produced the document.
+	Generator string `json:"generator"`
+	// GeneratorVersion identifies the specific generator release when known.
+	GeneratorVersion string `json:"generator_version,omitempty"`
+	// ContentSHA256 binds the document to exported content when populated.
+	ContentSHA256 string `json:"content_sha256,omitempty"`
+	// Status is one of DocumentStatuses.
+	Status string `json:"status"`
+	// Sections contains the ordered, evidence-bearing document body.
+	Sections []DocumentSection `json:"sections,omitempty"`
+	// Attributes carries generator-specific structured detail.
+	Attributes map[string]any `json:"attributes,omitempty"`
 }
 
 // ExecutionPath is a named, evidence-backed path through the graph.
@@ -225,6 +280,8 @@ type ExecutionPath struct {
 	Attributes  map[string]any `json:"attributes,omitempty"`
 }
 
+// Fragment is a snapshot-less collection of canonical records produced by one
+// analyzer. References may target records supplied by the host Bundle.
 type Fragment struct {
 	Artifacts   []Artifact      `json:"artifacts,omitempty"`
 	Nodes       []Node          `json:"nodes,omitempty"`
@@ -237,6 +294,9 @@ type Fragment struct {
 	Paths       []ExecutionPath `json:"execution_paths,omitempty"`
 }
 
+// Bundle is the complete portable knowledge representation for one Snapshot.
+// ValidateBundle checks its vocabulary, provenance, and referential integrity;
+// CanonicalJSON produces its deterministic interchange representation.
 type Bundle struct {
 	Snapshot    Snapshot        `json:"snapshot"`
 	Artifacts   []Artifact      `json:"artifacts"`
@@ -250,6 +310,9 @@ type Bundle struct {
 	Paths       []ExecutionPath `json:"execution_paths,omitempty"`
 }
 
+// Coverage contains auditable counts and ratios derived from one Bundle by
+// BuildCoverage. Ratios use 1 when their denominator is zero, representing no
+// outstanding eligible item rather than missing evidence.
 type Coverage struct {
 	SnapshotID                   string         `json:"snapshot_id"`
 	ArtifactsEncountered         int            `json:"artifacts_encountered"`
@@ -278,12 +341,20 @@ type Coverage struct {
 	EdgeKinds                    map[string]int `json:"edge_kinds"`
 	EvidenceKinds                map[string]int `json:"evidence_kinds"`
 	ArtifactStatuses             map[string]int `json:"artifact_statuses"`
-	InventoryAccountingRatio     float64        `json:"inventory_accounting_ratio"`
-	SyntacticParseRatio          float64        `json:"syntactic_parse_ratio"`
-	SemanticParseRatio           float64        `json:"semantic_parse_ratio"`
-	SymbolEvidenceRatio          float64        `json:"symbol_evidence_ratio"`
-	PublicDocumentationRatio     float64        `json:"public_documentation_ratio"`
-	EdgeResolutionRatio          float64        `json:"edge_resolution_ratio"`
-	ClaimCitationRatio           float64        `json:"claim_citation_ratio"`
-	DeterministicOutputDigest    string         `json:"deterministic_output_digest"`
+	// InventoryAccountingRatio compares inventoried with encountered artifacts.
+	InventoryAccountingRatio float64 `json:"inventory_accounting_ratio"`
+	// SyntacticParseRatio covers eligible text artifacts parsed syntactically.
+	SyntacticParseRatio float64 `json:"syntactic_parse_ratio"`
+	// SemanticParseRatio covers eligible text artifacts parsed semantically.
+	SemanticParseRatio float64 `json:"semantic_parse_ratio"`
+	// SymbolEvidenceRatio compares evidence-backed with all symbol nodes.
+	SymbolEvidenceRatio float64 `json:"symbol_evidence_ratio"`
+	// PublicDocumentationRatio compares documented with public symbol nodes.
+	PublicDocumentationRatio float64 `json:"public_documentation_ratio"`
+	// EdgeResolutionRatio compares resolved with all graph edges.
+	EdgeResolutionRatio float64 `json:"edge_resolution_ratio"`
+	// ClaimCitationRatio compares evidence-citing with all claims.
+	ClaimCitationRatio float64 `json:"claim_citation_ratio"`
+	// DeterministicOutputDigest is CanonicalDigest of the measured Bundle.
+	DeterministicOutputDigest string `json:"deterministic_output_digest"`
 }

@@ -10,15 +10,23 @@ import (
 	"github.com/neuroforge-io/RKC/internal/sourceorigin"
 )
 
+// ValidationOptions selects optional policy checks layered over the structural
+// and provenance checks that ValidateBundle always performs.
 type ValidationOptions struct {
+	// StrictVocabulary rejects values outside the published canonical sets.
 	StrictVocabulary bool
-	RequireEvidence  bool
+	// RequireEvidence reports uncited symbols and claims as warnings.
+	RequireEvidence bool
 }
 
+// ValidationReport contains deterministic canonical-model diagnostics.
 type ValidationReport struct {
+	// Diagnostics is sorted by ID and then message.
 	Diagnostics []Diagnostic `json:"diagnostics"`
 }
 
+// HasErrors reports whether the validation produced an error or fatal
+// diagnostic. Warnings and notes do not make a report erroneous.
 func (report ValidationReport) HasErrors() bool {
 	for _, diagnostic := range report.Diagnostics {
 		if diagnostic.Severity == "error" || diagnostic.Severity == "fatal" {

@@ -13,54 +13,97 @@ import (
 	"github.com/neuroforge-io/RKC/pkg/rkcmodel"
 )
 
+// ProtocolVersion is the GraphPatch wire-contract version accepted by this
+// package. It is independent of rkcmodel.SchemaVersion.
 const ProtocolVersion = "1.0"
 
+// Producer identifies the plugin process that emitted a Patch.
 type Producer struct {
-	PluginID   string `json:"plugin_id"`
-	Version    string `json:"version"`
-	Runtime    string `json:"runtime,omitempty"`
+	// PluginID is the installed plugin identifier authorized by the host.
+	PluginID string `json:"plugin_id"`
+	// Version is the producer's release version.
+	Version string `json:"version"`
+	// Runtime identifies the producer runtime when it aids diagnostics.
+	Runtime string `json:"runtime,omitempty"`
+	// InstanceID distinguishes concurrent instances of the same plugin.
 	InstanceID string `json:"instance_id,omitempty"`
 }
 
+// Patch is a plugin-authored, provenance-bearing fragment proposed for one
+// repository snapshot. Hosts must validate a Patch before applying it.
 type Patch struct {
-	ProtocolVersion string            `json:"protocol_version"`
-	SchemaVersion   string            `json:"schema_version"`
-	SnapshotID      string            `json:"snapshot_id"`
-	Producer        Producer          `json:"producer"`
-	GeneratedAt     time.Time         `json:"generated_at,omitempty"`
-	InputDigest     string            `json:"input_digest,omitempty"`
-	Fragment        rkcmodel.Fragment `json:"fragment"`
-	Metadata        map[string]string `json:"metadata,omitempty"`
+	// ProtocolVersion selects the GraphPatch wire contract.
+	ProtocolVersion string `json:"protocol_version"`
+	// SchemaVersion selects the canonical RKC model schema used by Fragment.
+	SchemaVersion string `json:"schema_version"`
+	// SnapshotID binds the proposal to the host snapshot it was derived from.
+	SnapshotID string `json:"snapshot_id"`
+	// Producer identifies the plugin responsible for the proposal.
+	Producer Producer `json:"producer"`
+	// GeneratedAt records when the producer created the proposal, if known.
+	GeneratedAt time.Time `json:"generated_at,omitempty"`
+	// InputDigest binds the proposal to producer-specific input material.
+	InputDigest string `json:"input_digest,omitempty"`
+	// Fragment contains the canonical records proposed for insertion.
+	Fragment rkcmodel.Fragment `json:"fragment"`
+	// Metadata carries non-canonical producer annotations.
+	Metadata map[string]string `json:"metadata,omitempty"`
 }
 
+// Limits bounds the number of records admitted from one Patch. A zero or
+// negative value disables that individual count limit.
 type Limits struct {
-	MaxArtifacts   int
-	MaxNodes       int
-	MaxEdges       int
-	MaxEvidence    int
+	// MaxArtifacts bounds physical artifact records.
+	MaxArtifacts int
+	// MaxNodes bounds graph node records.
+	MaxNodes int
+	// MaxEdges bounds graph edge records.
+	MaxEdges int
+	// MaxEvidence bounds evidence records.
+	MaxEvidence int
+	// MaxDiagnostics bounds diagnostic records.
 	MaxDiagnostics int
-	MaxDocuments   int
-	MaxClaims      int
+	// MaxDocuments bounds generated document records.
+	MaxDocuments int
+	// MaxClaims bounds grounded claim records.
+	MaxClaims int
 }
 
+// ValidationOptions defines host expectations and resource policy for
+// validating or applying a Patch.
 type ValidationOptions struct {
+	// ExpectedSnapshotID, when non-empty, must match Patch.SnapshotID.
 	ExpectedSnapshotID string
-	AllowedPluginID    string
-	StrictVocabulary   bool
-	RequireEvidence    bool
-	Limits             Limits
+	// AllowedPluginID, when non-empty, must match Patch.Producer.PluginID.
+	AllowedPluginID string
+	// StrictVocabulary rejects canonical records with unknown vocabulary terms.
+	StrictVocabulary bool
+	// RequireEvidence reports symbol evidence omissions and external references.
+	RequireEvidence bool
+	// Limits bounds records supplied by a single patch.
+	Limits Limits
 }
 
+// ValidationIssue is one deterministic finding from Patch validation or
+// application. Error and fatal severities make the report unaccepted.
 type ValidationIssue struct {
+	// Severity classifies the finding, such as warning or error.
 	Severity string `json:"severity"`
-	Code     string `json:"code"`
-	Message  string `json:"message"`
+	// Code is the stable RKC-PATCH diagnostic identifier.
+	Code string `json:"code"`
+	// Message explains the violated contract.
+	Message string `json:"message"`
+	// ObjectID identifies the offending record or value when available.
 	ObjectID string `json:"object_id,omitempty"`
 }
 
+// ValidationReport is the result of validating or applying a Patch. Accepted
+// is false when Issues contains an error or fatal finding.
 type ValidationReport struct {
-	Accepted bool              `json:"accepted"`
-	Issues   []ValidationIssue `json:"issues,omitempty"`
+	// Accepted reports whether the host may commit the patch.
+	Accepted bool `json:"accepted"`
+	// Issues contains the validation and application findings.
+	Issues []ValidationIssue `json:"issues,omitempty"`
 }
 
 func (report *ValidationReport) add(severity, code, message, objectID string) {
@@ -70,6 +113,9 @@ func (report *ValidationReport) add(severity, code, message, objectID string) {
 	}
 }
 
+// Validate checks protocol, provenance, configured limits, record identity,
+// vocabulary, and evidence shape without mutating the patch or a host bundle.
+// Endpoint references to pre-existing host nodes are deferred to Apply.
 func Validate(patch Patch, options ValidationOptions) ValidationReport {
 	report := ValidationReport{Accepted: true}
 	if patch.ProtocolVersion != ProtocolVersion {

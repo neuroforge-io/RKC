@@ -16,7 +16,11 @@ import (
 )
 
 const (
-	MaxBatchSize      = 10_000
+	// MaxBatchSize is the maximum record count accepted by one Put call.
+	// StageBundle automatically partitions larger record families.
+	MaxBatchSize = 10_000
+	// MaxIdentifierSize is the maximum UTF-8 byte length accepted for build,
+	// snapshot, repository, and record identifiers.
 	MaxIdentifierSize = 1_024
 )
 
@@ -94,6 +98,10 @@ func NewMemoryStoreWithOptions(options MemoryOptions) (*MemoryStore, error) {
 	return store, nil
 }
 
+// BeginBuild opens an isolated staging transaction for one repository.
+// ParentSnapshotID must equal that repository's current snapshot, or be empty
+// when the repository has no snapshot. The store clones Metadata and defaults
+// an empty ExpectedSchema to rkcmodel.SchemaVersion.
 func (store *MemoryStore) BeginBuild(ctx context.Context, opts BuildOptions) (BuildID, error) {
 	const operation = "begin build"
 	if err := checkContext(ctx, operation); err != nil {
@@ -164,6 +172,8 @@ func (store *MemoryStore) BeginBuild(ctx context.Context, opts BuildOptions) (Bu
 	return id, nil
 }
 
+// PutArtifacts defensively clones and atomically adds one bounded artifact
+// batch to an open build. Record identifiers must be unique within the build.
 func (store *MemoryStore) PutArtifacts(ctx context.Context, build BuildID, values []rkcmodel.Artifact) error {
 	return store.putArtifacts(ctx, build, values)
 }
@@ -183,6 +193,8 @@ func (store *MemoryStore) putArtifacts(ctx context.Context, buildID BuildID, val
 	return mergeBatch(operation, buildID, build, build.artifacts, batch, func(value rkcmodel.Artifact) string { return value.ID }, store.options)
 }
 
+// PutNodes defensively clones and atomically adds one bounded node batch to an
+// open build. Record identifiers must be unique within the build.
 func (store *MemoryStore) PutNodes(ctx context.Context, buildID BuildID, values []rkcmodel.Node) error {
 	const operation = "put nodes"
 	batch, err := prepareLimitedBatch(ctx, operation, values, func(value rkcmodel.Node) string { return value.ID }, store.options)
@@ -198,6 +210,8 @@ func (store *MemoryStore) PutNodes(ctx context.Context, buildID BuildID, values 
 	return mergeBatch(operation, buildID, build, build.nodes, batch, func(value rkcmodel.Node) string { return value.ID }, store.options)
 }
 
+// PutEdges defensively clones and atomically adds one bounded edge batch to an
+// open build. Record identifiers must be unique within the build.
 func (store *MemoryStore) PutEdges(ctx context.Context, buildID BuildID, values []rkcmodel.Edge) error {
 	const operation = "put edges"
 	batch, err := prepareLimitedBatch(ctx, operation, values, func(value rkcmodel.Edge) string { return value.ID }, store.options)
@@ -213,6 +227,8 @@ func (store *MemoryStore) PutEdges(ctx context.Context, buildID BuildID, values 
 	return mergeBatch(operation, buildID, build, build.edges, batch, func(value rkcmodel.Edge) string { return value.ID }, store.options)
 }
 
+// PutEvidence defensively clones and atomically adds one bounded evidence
+// batch to an open build. Record identifiers must be unique within the build.
 func (store *MemoryStore) PutEvidence(ctx context.Context, buildID BuildID, values []rkcmodel.Evidence) error {
 	const operation = "put evidence"
 	batch, err := prepareLimitedBatch(ctx, operation, values, func(value rkcmodel.Evidence) string { return value.ID }, store.options)
@@ -228,6 +244,8 @@ func (store *MemoryStore) PutEvidence(ctx context.Context, buildID BuildID, valu
 	return mergeBatch(operation, buildID, build, build.evidence, batch, func(value rkcmodel.Evidence) string { return value.ID }, store.options)
 }
 
+// PutDiagnostics defensively clones and atomically adds one bounded diagnostic
+// batch to an open build. Record identifiers must be unique within the build.
 func (store *MemoryStore) PutDiagnostics(ctx context.Context, buildID BuildID, values []rkcmodel.Diagnostic) error {
 	const operation = "put diagnostics"
 	batch, err := prepareLimitedBatch(ctx, operation, values, func(value rkcmodel.Diagnostic) string { return value.ID }, store.options)
@@ -243,6 +261,8 @@ func (store *MemoryStore) PutDiagnostics(ctx context.Context, buildID BuildID, v
 	return mergeBatch(operation, buildID, build, build.diagnostics, batch, func(value rkcmodel.Diagnostic) string { return value.ID }, store.options)
 }
 
+// PutConflicts defensively clones and atomically adds one bounded conflict
+// batch to an open build. Record identifiers must be unique within the build.
 func (store *MemoryStore) PutConflicts(ctx context.Context, buildID BuildID, values []rkcmodel.Conflict) error {
 	const operation = "put conflicts"
 	batch, err := prepareLimitedBatch(ctx, operation, values, func(value rkcmodel.Conflict) string { return value.ID }, store.options)
@@ -258,6 +278,8 @@ func (store *MemoryStore) PutConflicts(ctx context.Context, buildID BuildID, val
 	return mergeBatch(operation, buildID, build, build.conflicts, batch, func(value rkcmodel.Conflict) string { return value.ID }, store.options)
 }
 
+// PutDocuments defensively clones and atomically adds one bounded document
+// batch to an open build. Record identifiers must be unique within the build.
 func (store *MemoryStore) PutDocuments(ctx context.Context, buildID BuildID, values []rkcmodel.Document) error {
 	const operation = "put documents"
 	batch, err := prepareLimitedBatch(ctx, operation, values, func(value rkcmodel.Document) string { return value.ID }, store.options)
@@ -273,6 +295,8 @@ func (store *MemoryStore) PutDocuments(ctx context.Context, buildID BuildID, val
 	return mergeBatch(operation, buildID, build, build.documents, batch, func(value rkcmodel.Document) string { return value.ID }, store.options)
 }
 
+// PutClaims defensively clones and atomically adds one bounded claim batch to
+// an open build. Record identifiers must be unique within the build.
 func (store *MemoryStore) PutClaims(ctx context.Context, buildID BuildID, values []rkcmodel.Claim) error {
 	const operation = "put claims"
 	batch, err := prepareLimitedBatch(ctx, operation, values, func(value rkcmodel.Claim) string { return value.ID }, store.options)
@@ -288,6 +312,8 @@ func (store *MemoryStore) PutClaims(ctx context.Context, buildID BuildID, values
 	return mergeBatch(operation, buildID, build, build.claims, batch, func(value rkcmodel.Claim) string { return value.ID }, store.options)
 }
 
+// PutPaths defensively clones and atomically adds one bounded execution-path
+// batch to an open build. Record identifiers must be unique within the build.
 func (store *MemoryStore) PutPaths(ctx context.Context, buildID BuildID, values []rkcmodel.ExecutionPath) error {
 	const operation = "put paths"
 	batch, err := prepareLimitedBatch(ctx, operation, values, func(value rkcmodel.ExecutionPath) string { return value.ID }, store.options)
@@ -303,6 +329,9 @@ func (store *MemoryStore) PutPaths(ctx context.Context, buildID BuildID, values 
 	return mergeBatch(operation, buildID, build, build.paths, batch, func(value rkcmodel.ExecutionPath) string { return value.ID }, store.options)
 }
 
+// PutCoverage defensively clones and stages the build's derived coverage.
+// Calling it again atomically replaces the previously staged coverage while
+// retaining the build's configured record and byte bounds.
 func (store *MemoryStore) PutCoverage(ctx context.Context, buildID BuildID, coverage rkcmodel.Coverage) error {
 	const operation = "put coverage"
 	if err := checkContext(ctx, operation); err != nil {
@@ -336,6 +365,10 @@ func (store *MemoryStore) PutCoverage(ctx context.Context, buildID BuildID, cove
 	return nil
 }
 
+// Validate returns deterministic semantic diagnostics and the expected
+// coverage for an open build without publishing or closing it. Invalid bundle
+// content is represented in ValidationResult; operational failures are
+// returned as errors.
 func (store *MemoryStore) Validate(ctx context.Context, buildID BuildID) (ValidationResult, error) {
 	const operation = "validate build"
 	store.mu.RLock()
@@ -356,6 +389,11 @@ func (store *MemoryStore) Validate(ctx context.Context, buildID BuildID) (Valida
 	return validateBundle(bundle, provided), nil
 }
 
+// Commit validates and atomically publishes an open build as the repository's
+// current immutable snapshot. The snapshot must match the build options,
+// declare committed status, and have exact staged coverage. A concurrent head
+// change produces ErrConflict. Any failed commit leaves the build open; a
+// successful commit closes it.
 func (store *MemoryStore) Commit(ctx context.Context, buildID BuildID, snapshot rkcmodel.Snapshot) error {
 	const operation = "commit build"
 	if err := checkContext(ctx, operation); err != nil {
@@ -426,6 +464,9 @@ func (store *MemoryStore) Commit(ctx context.Context, buildID BuildID, snapshot 
 	return nil
 }
 
+// Abort closes an open build and releases its staged payload. Repeating Abort
+// for an already aborted build is safe; aborting a committed build returns
+// ErrBuildCommitted. The bounded reason is diagnostic only.
 func (store *MemoryStore) Abort(ctx context.Context, buildID BuildID, reason error) error {
 	const operation = "abort build"
 	store.mu.Lock()
@@ -451,6 +492,9 @@ func (store *MemoryStore) Abort(ctx context.Context, buildID BuildID, reason err
 	return nil
 }
 
+// Recover deterministically aborts every build that is still open and returns
+// their sorted identifiers. Store implementations can invoke the same contract
+// during startup after an interrupted process.
 func (store *MemoryStore) Recover(ctx context.Context) (RecoveryResult, error) {
 	const operation = "recover builds"
 	store.mu.Lock()

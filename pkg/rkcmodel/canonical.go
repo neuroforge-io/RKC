@@ -10,17 +10,25 @@ import (
 	"time"
 )
 
+// StableID returns a deterministic, namespace-qualified identifier derived
+// from the ordered parts. Parts are separated before hashing, so distinct part
+// boundaries cannot collapse to the same input string.
 func StableID(namespace string, parts ...string) string {
 	key := namespace + "\x00" + strings.Join(parts, "\x00")
 	sum := sha256.Sum256([]byte(key))
 	return fmt.Sprintf("rkc:%s:%s", namespace, hex.EncodeToString(sum[:12]))
 }
 
+// ContentID returns the full SHA-256 content address for data, including the
+// "sha256:" algorithm prefix used by the canonical model.
 func ContentID(data []byte) string {
 	sum := sha256.Sum256(data)
 	return "sha256:" + hex.EncodeToString(sum[:])
 }
 
+// DigestJSON returns the lowercase SHA-256 digest of encoding/json's output for
+// v. It returns an empty string when v cannot be marshaled; use CanonicalDigest
+// for Bundle identity.
 func DigestJSON(v any) string {
 	b, err := json.Marshal(v)
 	if err != nil {
@@ -207,6 +215,9 @@ func canonicalBundle(bundle Bundle) (Bundle, error) {
 	return out, nil
 }
 
+// CanonicalJSON returns deterministic JSON for bundle after deep-copying it,
+// removing operational snapshot fields, normalizing resolutions, and sorting
+// canonical collections. The input bundle is not mutated.
 func CanonicalJSON(bundle Bundle) ([]byte, error) {
 	canonical, err := canonicalBundle(bundle)
 	if err != nil {
@@ -215,6 +226,8 @@ func CanonicalJSON(bundle Bundle) ([]byte, error) {
 	return json.Marshal(canonical)
 }
 
+// CanonicalDigest returns the lowercase SHA-256 digest of CanonicalJSON. It
+// returns an empty string when the bundle cannot be represented as JSON.
 func CanonicalDigest(bundle Bundle) string {
 	data, err := CanonicalJSON(bundle)
 	if err != nil {
