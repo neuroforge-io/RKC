@@ -116,8 +116,7 @@ func Load(outputRoot string) (*Dataset, error) {
 	if !legacyLayout && integrity.status == IntegrityLegacyUnverified {
 		return nil, errors.New("canonical dataset is missing its export manifest")
 	}
-	canonical := model.CanonicalBundle(bundle)
-	if !reflect.DeepEqual(bundle, canonical) {
+	if !model.IsCanonicalDecodedBundle(bundle) {
 		return nil, errors.New("bundle.json is not in canonical form")
 	}
 	validation := model.ValidateBundle(bundle, model.ValidationOptions{StrictVocabulary: true, RequireEvidence: true})
@@ -292,6 +291,7 @@ func verifyDatasetExportManifest(root, manifestPath string) (datasetExportManife
 	}
 	captured := map[string][]byte{}
 	seen := make(map[string]struct{}, len(manifest.Files))
+	hashBuffer := make([]byte, 32*1024)
 	var totalBytes, canonicalBytes, staticSiteBytes int64
 	staticSiteFiles := 0
 	previous := ""
@@ -315,7 +315,7 @@ func verifyDatasetExportManifest(root, manifestPath string) (datasetExportManife
 			return manifest, nil, fmt.Errorf("export manifest has invalid digest for %q", clean)
 		}
 		captureCanonical := clean == "bundle.json" || clean == "rkc.manifest.json" || clean == "coverage.json"
-		captureStatic := strings.HasPrefix(clean, "site/")
+		staticProjection := strings.HasPrefix(clean, "site/")
 		if captureCanonical && !record.Canonical {
 			return manifest, nil, fmt.Errorf("required file %q is not marked canonical", clean)
 		}
@@ -323,7 +323,7 @@ func verifyDatasetExportManifest(root, manifestPath string) (datasetExportManife
 		if captureCanonical {
 			captureLimit = maximumCanonicalDatasetFileSize
 		}
-		if captureStatic {
+		if staticProjection {
 			staticSiteFiles++
 			if staticSiteFiles > maximumStaticSiteFileCount {
 				return manifest, nil, fmt.Errorf("static site file count exceeds %d", maximumStaticSiteFileCount)
@@ -335,16 +335,15 @@ func verifyDatasetExportManifest(root, manifestPath string) (datasetExportManife
 				return manifest, nil, fmt.Errorf("static site total exceeds %d bytes", maximumStaticSiteTotalBytes)
 			}
 			staticSiteBytes += record.Size
-			captureLimit = maximumStaticSiteFileSize
 		}
-		data, size, digest, err := readAndHashRegularFile(path, captureLimit)
+		data, size, digest, err := readAndHashRegularFileWithBuffer(path, captureLimit, hashBuffer)
 		if err != nil {
 			return manifest, nil, fmt.Errorf("verify exported file %q: %w", clean, err)
 		}
 		if size != record.Size || digest != record.SHA256 {
 			return manifest, nil, fmt.Errorf("exported file %q does not match its size or sha256", clean)
 		}
-		if captureCanonical || captureStatic {
+		if captureCanonical {
 			captured[clean] = data
 		}
 		seen[clean] = struct{}{}
@@ -440,6 +439,10 @@ func canonicalDatasetPath(value string) (string, error) {
 }
 
 func readAndHashRegularFile(path string, captureLimit int64) ([]byte, int64, string, error) {
+	return readAndHashRegularFileWithBuffer(path, captureLimit, nil)
+}
+
+func readAndHashRegularFileWithBuffer(path string, captureLimit int64, copyBuffer []byte) ([]byte, int64, string, error) {
 	before, err := os.Lstat(path)
 	if err != nil {
 		return nil, 0, "", err
@@ -467,10 +470,20 @@ func readAndHashRegularFile(path string, captureLimit int64) ([]byte, int64, str
 	writer := io.Writer(hash)
 	reader := io.Reader(file)
 	if captureLimit > 0 {
+		// The size is bounded before this allocation. Reserving it once avoids
+		// repeatedly copying large canonical bundles while their integrity is
+		// checked. The 512 MiB canonical ceiling also fits on 32-bit targets.
+		buffer.Grow(int(opened.Size()))
 		writer = io.MultiWriter(hash, &buffer)
 		reader = io.LimitReader(file, captureLimit+1)
 	}
-	size, err := io.Copy(writer, reader)
+	if len(copyBuffer) == 0 {
+		copyBuffer = make([]byte, 32*1024)
+	}
+	// Hide os.File.WriteTo so io.CopyBuffer uses the caller's reusable bounded
+	// buffer instead of allocating one scratch region for every exported file.
+	reader = struct{ io.Reader }{reader}
+	size, err := io.CopyBuffer(writer, reader, copyBuffer)
 	if err != nil {
 		return nil, 0, "", err
 	}

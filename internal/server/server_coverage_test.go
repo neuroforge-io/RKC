@@ -279,6 +279,20 @@ func TestLiveServerNeverExecutesImportedAtlasJavaScript(t *testing.T) {
 	// Make the crafted atlas internally hash-consistent. This proves that export
 	// integrity is not being confused with trusted publisher identity.
 	rewriteServerExportManifest(t, root, richDataset().Bundle.Snapshot.ID)
+	integrity, err := inspectDatasetIntegrity(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name := range integrity.files {
+		if strings.HasPrefix(name, "site/") {
+			t.Fatalf("integrity verifier retained disposable live site asset %q", name)
+		}
+	}
+	for _, required := range []string{"bundle.json", "rkc.manifest.json", "coverage.json"} {
+		if _, ok := integrity.files[required]; !ok {
+			t.Fatalf("integrity verifier did not retain required canonical file %q", required)
+		}
+	}
 	dataset, err := Load(root)
 	if err != nil {
 		t.Fatal(err)
@@ -382,6 +396,17 @@ func TestLoadFailsClosedOnTampering(t *testing.T) {
 		rewriteServerExportManifest(t, root, bundle.Snapshot.ID)
 		if _, err := Load(root); err == nil || !strings.Contains(err.Error(), "validate bundle") || !strings.Contains(err.Error(), "edge target missing") {
 			t.Fatalf("invalid graph error = %v", err)
+		}
+	})
+	t.Run("noncanonical bundle order", func(t *testing.T) {
+		root := writeVerifiedServerAtlas(t, bundle)
+		changed := bundle
+		changed.Nodes = append([]model.Node(nil), bundle.Nodes...)
+		changed.Nodes[0], changed.Nodes[1] = changed.Nodes[1], changed.Nodes[0]
+		writeServerJSON(t, filepath.Join(root, "bundle.json"), changed)
+		rewriteServerExportManifest(t, root, bundle.Snapshot.ID)
+		if _, err := Load(root); err == nil || !strings.Contains(err.Error(), "bundle.json is not in canonical form") {
+			t.Fatalf("noncanonical bundle error = %v", err)
 		}
 	})
 	t.Run("coverage mismatch", func(t *testing.T) {

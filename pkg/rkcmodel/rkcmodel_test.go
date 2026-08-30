@@ -150,6 +150,110 @@ func TestCanonicalBundleIsDeterministicAndDoesNotMutateInput(t *testing.T) {
 	}
 }
 
+func TestIsCanonicalDecodedBundleChecksEveryCanonicalRuleWithoutMutation(t *testing.T) {
+	t.Parallel()
+
+	bundle := CanonicalBundle(Bundle{
+		Snapshot:    Snapshot{Metadata: map[string]string{"keep": "yes"}},
+		Artifacts:   []Artifact{{ID: "b", Path: "b"}, {ID: "a", Path: "a"}},
+		Nodes:       []Node{{ID: "b", EvidenceIDs: []string{"e2", "e1"}}, {ID: "a"}},
+		Edges:       []Edge{{ID: "b", Resolution: "resolved", EvidenceIDs: []string{"e2", "e1"}}, {ID: "a", Resolution: "observed"}},
+		Evidence:    []Evidence{{ID: "b"}, {ID: "a"}},
+		Diagnostics: []Diagnostic{{ID: "b"}, {ID: "a"}},
+		Conflicts:   []Conflict{{ID: "b", CandidateIDs: []string{"n2", "n1"}, EvidenceIDs: []string{"e2", "e1"}}, {ID: "a"}},
+		Documents:   []Document{{ID: "b", SubjectIDs: []string{"n2", "n1"}, Sections: []DocumentSection{{ID: "b", Ordinal: 2}, {ID: "b", Ordinal: 1}, {ID: "a", Ordinal: 1}}}, {ID: "a"}},
+		Claims:      []Claim{{ID: "b", EvidenceIDs: []string{"e2", "e1"}}, {ID: "a"}},
+		Paths:       []ExecutionPath{{ID: "b"}, {ID: "a"}},
+	})
+	before := CanonicalBundle(bundle)
+	if !IsCanonicalDecodedBundle(bundle) {
+		t.Fatal("canonical bundle was rejected")
+	}
+	if !reflect.DeepEqual(bundle, before) {
+		t.Fatal("canonical validation mutated its input")
+	}
+
+	nonCanonical := []Bundle{}
+	add := func(mutate func(*Bundle)) {
+		variant := CanonicalBundle(bundle)
+		mutate(&variant)
+		nonCanonical = append(nonCanonical, variant)
+	}
+	add(func(value *Bundle) { value.Snapshot.CreatedAt = time.Now() })
+	add(func(value *Bundle) {
+		value.Snapshot.CreatedAt = time.Date(1, 1, 1, 0, 0, 0, 0, time.FixedZone("noncanonical-zero", 0))
+	})
+	add(func(value *Bundle) { value.Snapshot.RootPath = "/machine/local" })
+	for _, key := range []string{"host", "pid", "duration_ms"} {
+		key := key
+		add(func(value *Bundle) { value.Snapshot.Metadata[key] = "operational" })
+	}
+	add(func(value *Bundle) { value.Artifacts[0], value.Artifacts[1] = value.Artifacts[1], value.Artifacts[0] })
+	add(func(value *Bundle) { value.Nodes[0], value.Nodes[1] = value.Nodes[1], value.Nodes[0] })
+	add(func(value *Bundle) { value.Edges[0], value.Edges[1] = value.Edges[1], value.Edges[0] })
+	add(func(value *Bundle) { value.Evidence[0], value.Evidence[1] = value.Evidence[1], value.Evidence[0] })
+	add(func(value *Bundle) {
+		value.Diagnostics[0], value.Diagnostics[1] = value.Diagnostics[1], value.Diagnostics[0]
+	})
+	add(func(value *Bundle) { value.Conflicts[0], value.Conflicts[1] = value.Conflicts[1], value.Conflicts[0] })
+	add(func(value *Bundle) { value.Documents[0], value.Documents[1] = value.Documents[1], value.Documents[0] })
+	add(func(value *Bundle) { value.Claims[0], value.Claims[1] = value.Claims[1], value.Claims[0] })
+	add(func(value *Bundle) { value.Paths[0], value.Paths[1] = value.Paths[1], value.Paths[0] })
+	add(func(value *Bundle) {
+		value.Nodes[1].EvidenceIDs[0], value.Nodes[1].EvidenceIDs[1] = value.Nodes[1].EvidenceIDs[1], value.Nodes[1].EvidenceIDs[0]
+	})
+	add(func(value *Bundle) {
+		value.Edges[1].EvidenceIDs[0], value.Edges[1].EvidenceIDs[1] = value.Edges[1].EvidenceIDs[1], value.Edges[1].EvidenceIDs[0]
+	})
+	add(func(value *Bundle) { value.Edges[0].Resolution = " resolved " })
+	add(func(value *Bundle) {
+		value.Conflicts[1].CandidateIDs[0], value.Conflicts[1].CandidateIDs[1] = value.Conflicts[1].CandidateIDs[1], value.Conflicts[1].CandidateIDs[0]
+	})
+	add(func(value *Bundle) {
+		value.Conflicts[1].EvidenceIDs[0], value.Conflicts[1].EvidenceIDs[1] = value.Conflicts[1].EvidenceIDs[1], value.Conflicts[1].EvidenceIDs[0]
+	})
+	add(func(value *Bundle) {
+		value.Claims[1].EvidenceIDs[0], value.Claims[1].EvidenceIDs[1] = value.Claims[1].EvidenceIDs[1], value.Claims[1].EvidenceIDs[0]
+	})
+	add(func(value *Bundle) {
+		value.Documents[1].SubjectIDs[0], value.Documents[1].SubjectIDs[1] = value.Documents[1].SubjectIDs[1], value.Documents[1].SubjectIDs[0]
+	})
+	add(func(value *Bundle) {
+		value.Documents[1].Sections[0], value.Documents[1].Sections[1] = value.Documents[1].Sections[1], value.Documents[1].Sections[0]
+	})
+	add(func(value *Bundle) { value.Snapshot.Policy = map[string]any{} })
+	add(func(value *Bundle) { value.Snapshot.Metadata = map[string]string{} })
+	add(func(value *Bundle) { value.Snapshot.Tool.Attributes = map[string]string{} })
+	add(func(value *Bundle) { value.Conflicts = []Conflict{} })
+	add(func(value *Bundle) { value.Documents = []Document{} })
+	add(func(value *Bundle) { value.Claims = []Claim{} })
+	add(func(value *Bundle) { value.Paths = []ExecutionPath{} })
+	add(func(value *Bundle) { value.Artifacts[0].Attributes = map[string]string{} })
+	add(func(value *Bundle) { value.Nodes[0].EvidenceIDs = []string{} })
+	add(func(value *Bundle) { value.Nodes[0].Attributes = map[string]any{} })
+	add(func(value *Bundle) { value.Edges[0].EvidenceIDs = []string{} })
+	add(func(value *Bundle) { value.Edges[0].Attributes = map[string]any{} })
+	add(func(value *Bundle) { value.Evidence[0].Attributes = map[string]any{} })
+	add(func(value *Bundle) { value.Diagnostics[0].Attributes = map[string]any{} })
+	add(func(value *Bundle) { value.Conflicts[0].CandidateIDs = []string{} })
+	add(func(value *Bundle) { value.Conflicts[0].EvidenceIDs = []string{} })
+	add(func(value *Bundle) { value.Conflicts[0].Attributes = map[string]any{} })
+	add(func(value *Bundle) { value.Claims[0].Attributes = map[string]any{} })
+	add(func(value *Bundle) { value.Documents[0].SubjectIDs = []string{} })
+	add(func(value *Bundle) { value.Documents[0].Sections = []DocumentSection{} })
+	add(func(value *Bundle) { value.Documents[0].Attributes = map[string]any{} })
+	add(func(value *Bundle) { value.Documents[1].Sections[0].ClaimIDs = []string{} })
+	add(func(value *Bundle) { value.Documents[1].Sections[0].EvidenceIDs = []string{} })
+	add(func(value *Bundle) { value.Documents[1].Sections[0].Attributes = map[string]any{} })
+	add(func(value *Bundle) { value.Paths[0].EvidenceIDs = []string{} })
+	add(func(value *Bundle) { value.Paths[0].Attributes = map[string]any{} })
+	for i, variant := range nonCanonical {
+		if IsCanonicalDecodedBundle(variant) || reflect.DeepEqual(variant, CanonicalBundle(variant)) {
+			t.Errorf("non-canonical variant %d was accepted", i)
+		}
+	}
+}
+
 func TestSortFragmentUsesBundleCanonicalRules(t *testing.T) {
 	t.Parallel()
 

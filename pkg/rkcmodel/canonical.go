@@ -73,6 +73,111 @@ func SortBundle(bundle *Bundle) {
 	}
 }
 
+// IsCanonicalDecodedBundle reports whether a Bundle produced by encoding/json
+// already satisfies every ordering, omitted-container, and operational-metadata
+// rule applied by CanonicalBundle. The JSON-decoded precondition matters because
+// arbitrary programmatic map values can change type during canonicalization.
+// The check is a read-only linear scan for bounded trust-boundary readers.
+func IsCanonicalDecodedBundle(bundle Bundle) bool {
+	if bundle.Snapshot.CreatedAt != (time.Time{}) || bundle.Snapshot.RootPath != "" {
+		return false
+	}
+	if nonNilEmptyMap(bundle.Snapshot.Policy) || nonNilEmptyMap(bundle.Snapshot.Metadata) ||
+		nonNilEmptyMap(bundle.Snapshot.Tool.Attributes) || nonNilEmptySlice(bundle.Conflicts) ||
+		nonNilEmptySlice(bundle.Documents) || nonNilEmptySlice(bundle.Claims) || nonNilEmptySlice(bundle.Paths) {
+		return false
+	}
+	for _, key := range []string{"host", "pid", "duration_ms"} {
+		if _, ok := bundle.Snapshot.Metadata[key]; ok {
+			return false
+		}
+	}
+	if !sort.SliceIsSorted(bundle.Artifacts, func(i, j int) bool {
+		if bundle.Artifacts[i].Path == bundle.Artifacts[j].Path {
+			return bundle.Artifacts[i].ID < bundle.Artifacts[j].ID
+		}
+		return bundle.Artifacts[i].Path < bundle.Artifacts[j].Path
+	}) ||
+		!sort.SliceIsSorted(bundle.Nodes, func(i, j int) bool { return bundle.Nodes[i].ID < bundle.Nodes[j].ID }) ||
+		!sort.SliceIsSorted(bundle.Edges, func(i, j int) bool { return bundle.Edges[i].ID < bundle.Edges[j].ID }) ||
+		!sort.SliceIsSorted(bundle.Evidence, func(i, j int) bool { return bundle.Evidence[i].ID < bundle.Evidence[j].ID }) ||
+		!sort.SliceIsSorted(bundle.Diagnostics, func(i, j int) bool { return bundle.Diagnostics[i].ID < bundle.Diagnostics[j].ID }) ||
+		!sort.SliceIsSorted(bundle.Conflicts, func(i, j int) bool { return bundle.Conflicts[i].ID < bundle.Conflicts[j].ID }) ||
+		!sort.SliceIsSorted(bundle.Documents, func(i, j int) bool { return bundle.Documents[i].ID < bundle.Documents[j].ID }) ||
+		!sort.SliceIsSorted(bundle.Claims, func(i, j int) bool { return bundle.Claims[i].ID < bundle.Claims[j].ID }) ||
+		!sort.SliceIsSorted(bundle.Paths, func(i, j int) bool { return bundle.Paths[i].ID < bundle.Paths[j].ID }) {
+		return false
+	}
+	for _, node := range bundle.Nodes {
+		if nonNilEmptySlice(node.EvidenceIDs) || nonNilEmptyMap(node.Attributes) || !sort.StringsAreSorted(node.EvidenceIDs) {
+			return false
+		}
+	}
+	for _, edge := range bundle.Edges {
+		if nonNilEmptySlice(edge.EvidenceIDs) || nonNilEmptyMap(edge.Attributes) ||
+			edge.Resolution != NormalizeResolution(edge.Resolution) || !sort.StringsAreSorted(edge.EvidenceIDs) {
+			return false
+		}
+	}
+	for _, artifact := range bundle.Artifacts {
+		if nonNilEmptyMap(artifact.Attributes) {
+			return false
+		}
+	}
+	for _, evidence := range bundle.Evidence {
+		if nonNilEmptyMap(evidence.Attributes) {
+			return false
+		}
+	}
+	for _, diagnostic := range bundle.Diagnostics {
+		if nonNilEmptyMap(diagnostic.Attributes) {
+			return false
+		}
+	}
+	for _, conflict := range bundle.Conflicts {
+		if nonNilEmptySlice(conflict.CandidateIDs) || nonNilEmptySlice(conflict.EvidenceIDs) ||
+			nonNilEmptyMap(conflict.Attributes) || !sort.StringsAreSorted(conflict.CandidateIDs) ||
+			!sort.StringsAreSorted(conflict.EvidenceIDs) {
+			return false
+		}
+	}
+	for _, claim := range bundle.Claims {
+		if nonNilEmptyMap(claim.Attributes) || !sort.StringsAreSorted(claim.EvidenceIDs) {
+			return false
+		}
+	}
+	for _, document := range bundle.Documents {
+		if nonNilEmptySlice(document.SubjectIDs) || nonNilEmptySlice(document.Sections) || nonNilEmptyMap(document.Attributes) ||
+			!sort.StringsAreSorted(document.SubjectIDs) || !sort.SliceIsSorted(document.Sections, func(i, j int) bool {
+			if document.Sections[i].Ordinal == document.Sections[j].Ordinal {
+				return document.Sections[i].ID < document.Sections[j].ID
+			}
+			return document.Sections[i].Ordinal < document.Sections[j].Ordinal
+		}) {
+			return false
+		}
+		for _, section := range document.Sections {
+			if nonNilEmptySlice(section.ClaimIDs) || nonNilEmptySlice(section.EvidenceIDs) || nonNilEmptyMap(section.Attributes) {
+				return false
+			}
+		}
+	}
+	for _, path := range bundle.Paths {
+		if nonNilEmptySlice(path.EvidenceIDs) || nonNilEmptyMap(path.Attributes) {
+			return false
+		}
+	}
+	return true
+}
+
+func nonNilEmptySlice[T any](values []T) bool {
+	return values != nil && len(values) == 0
+}
+
+func nonNilEmptyMap[K comparable, V any](values map[K]V) bool {
+	return values != nil && len(values) == 0
+}
+
 // CanonicalBundle returns a deep-enough copy for deterministic serialization,
 // removing machine-local and clock-derived fields while preserving provenance.
 // It returns the zero bundle for a non-serializable value; trust-boundary code

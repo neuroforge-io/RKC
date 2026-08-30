@@ -30,6 +30,7 @@ type ValidationReport = rkcmodel.ValidationReport
 var StableID = rkcmodel.StableID
 var SortBundle = rkcmodel.SortBundle
 var SortFragment = rkcmodel.SortFragment
+var IsCanonicalDecodedBundle = rkcmodel.IsCanonicalDecodedBundle
 var CanonicalBundle = rkcmodel.CanonicalBundle
 var CanonicalJSON = rkcmodel.CanonicalJSON
 var CanonicalDigest = rkcmodel.CanonicalDigest
