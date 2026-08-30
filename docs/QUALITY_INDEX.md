@@ -5,7 +5,10 @@ release reviewers. It inventories admitted source and documentation files,
 records byte/line counts and SHA-256 digests, associates production files with
 nearby tests, records documentation evidence, reads optional Go and
 branch-aware Python profiles, and reports Git deltas. The JSON output is the
-machine contract; the Markdown file is the review surface.
+machine contract; the Markdown file is the review surface. When admitted Go
+source exists, the index also uses the local Go parser to report exact
+exported-declaration documentation coverage independently of file-level
+documentation evidence.
 
 ## Run it
 
@@ -44,6 +47,12 @@ executes repository code, follows symlinks, or downloads a model. It skips
 standard dependency, build, cache, RKC-output, and virtual-environment trees,
 and records skipped symlinks/non-regular files explicitly. JSON and Markdown
 files are replaced through same-directory temporary files and `fsync`.
+Folders containing Go source require an installed local Go toolchain. RKC
+compiles a standard-library-only parser helper in a private temporary
+directory with module downloads disabled; the helper parses admitted files as
+syntax and never imports, builds, or executes the indexed repository. A
+missing toolchain, parse failure, timeout, or malformed helper result fails the
+index instead of silently overstating documentation coverage.
 
 ## Reading the report
 
@@ -59,6 +68,14 @@ Each `files` record contains:
   package), a Python module docstring, or an exact path/basename mention in
   admitted Markdown/reStructuredText is recorded as `evidence`. This is a
   review signal, not a semantic documentation proof.
+- `go_exported_documentation`: a separate Go-AST measurement for exported
+  production declarations. It counts exported functions, methods, types,
+  constants, and variables with a non-empty leading comment attached by
+  `go/parser`. The record gives exact declaration/documented counts and lists
+  every missing symbol with declaration kind, line, and column. Generated and
+  test sources are explicitly `not-applicable`; a production file with no
+  exported declarations is `no-exported-declarations`. This measures comment
+  attachment, not prose quality, examples, or API correctness.
 - `profile`: Go statement blocks and Python statements plus branches are
   reported when the corresponding profile is supplied. `missing` means a
   supplied profile omitted the file; `not-provided` means no profile was
@@ -83,11 +100,14 @@ and any supplied profile error makes the command fail closed.
 
 The `gaps` array is the actionable queue. Changed files are marked `high`
 priority when they lack a test, documentation evidence, or an applicable
-profile. A profiled file with uncovered executable units is also listed with
-the exact uncovered/total count, so a passing file association cannot hide
-unfinished behavior coverage. The `deltas` object records the Git comparison
-scope and status. A non-Git folder remains fully indexable; its delta status is
-simply `unavailable`.
+profile. Every undocumented exported Go declaration is a distinct
+`go-exported-documentation` gap carrying its symbol, declaration kind, and
+source coordinate; this queue is intentionally separate from the heuristic
+file-level `documentation` status. A profiled file with uncovered executable
+units is also listed with the exact uncovered/total count, so a passing file
+association cannot hide unfinished behavior coverage. The `deltas` object
+records the Git comparison scope and status. A non-Git folder remains fully
+indexable; its delta status is simply `unavailable`.
 
 Malformed or unowned profile rows are retained in `profile_errors`. Go profiles
 must declare a supported mode, use valid coordinates, and keep one statement

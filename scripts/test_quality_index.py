@@ -157,6 +157,193 @@ class QualityIndexTests(unittest.TestCase):
         )
         self.assertEqual(package_evidence, ["pkg/api_test.go"])
 
+    def test_go_ast_exported_documentation_is_exact_and_separate(self) -> None:
+        self.write(
+            "pkg/api.go",
+            "package pkg\n\n"
+            "// PublicType is documented.\n"
+            "type PublicType struct{}\n"
+            "type MissingType struct{}\n\n"
+            "type (\n"
+            "\t// Grouped is documented.\n"
+            "\tGrouped struct{}\n"
+            "\tMissingGrouped struct{}\n"
+            ")\n\n"
+            "// ExportedConstant is documented.\n"
+            "const ExportedConstant = 1\n"
+            "const MissingConstant = 2\n\n"
+            "// DocumentedVariable is documented.\n"
+            "var DocumentedVariable = 1\n"
+            "var MissingVariable = 2\n\n"
+            "// Run is documented.\n"
+            "func Run() {}\n"
+            "func MissingFunction() {}\n\n"
+            "// Do is documented.\n"
+            "func (*PublicType) Do() {}\n"
+            "func (*PublicType) MissingMethod() {}\n"
+            "func hidden() {}\n",
+        )
+        values = index._go_exported_documentation(self.root, ["pkg/api.go"])
+        declarations = values["pkg/api.go"]
+        self.assertEqual(len(declarations), 12)
+        self.assertEqual(
+            {item["symbol"] for item in declarations if not item["documented"]},
+            {
+                "MissingType",
+                "MissingGrouped",
+                "MissingConstant",
+                "MissingVariable",
+                "MissingFunction",
+                "(*PublicType).MissingMethod",
+            },
+        )
+        self.assertEqual(
+            {item["kind"] for item in declarations},
+            {"type", "constant", "variable", "function", "method"},
+        )
+
+        report = index.build_index(self.root)
+        record = report["files"][0]
+        exported = record["go_exported_documentation"]
+        self.assertEqual(record["documentation"]["status"], "gap")
+        self.assertEqual(exported["status"], "gap")
+        self.assertEqual(exported["declarations"], 12)
+        self.assertEqual(exported["documented_declarations"], 6)
+        self.assertEqual(exported["percent"], 50.0)
+        self.assertEqual(len(exported["missing_symbols"]), 6)
+        self.assertEqual(report["summary"]["go_exported_declarations"], 12)
+        self.assertEqual(report["summary"]["go_exported_documentation_missing"], 6)
+        declaration_gaps = [
+            gap
+            for gap in report["gaps"]
+            if gap["kind"] == "go-exported-documentation"
+        ]
+        self.assertEqual(len(declaration_gaps), 6)
+        self.assertTrue(all(gap["line"] > 0 for gap in declaration_gaps))
+        self.assertIn("(*PublicType).MissingMethod", index.render_markdown(report))
+        self.assertIn("Exported Go declarations documented | 50.0% (6/12)", index.render_markdown(report))
+
+    def test_go_ast_documentation_contract_fails_closed(self) -> None:
+        self.assertEqual(index._go_exported_documentation(self.root, []), {})
+        with mock.patch.object(index.shutil, "which", return_value=None):
+            with self.assertRaisesRegex(index.QualityIndexError, "toolchain"):
+                index._go_exported_documentation(self.root, ["pkg/api.go"])
+
+        timeout = subprocess.TimeoutExpired(["go", "run"], 30)
+        with mock.patch.object(index.subprocess, "run", side_effect=timeout):
+            with self.assertRaisesRegex(index.QualityIndexError, "inspection failed"):
+                index._go_exported_documentation(self.root, ["pkg/api.go"])
+        failed = subprocess.CompletedProcess([], 1, stdout="", stderr="parser failed\n")
+        with mock.patch.object(index.subprocess, "run", return_value=failed):
+            with self.assertRaisesRegex(index.QualityIndexError, "parser failed"):
+                index._go_exported_documentation(self.root, ["pkg/api.go"])
+        invalid_json = subprocess.CompletedProcess([], 0, stdout="not-json", stderr="")
+        with mock.patch.object(index.subprocess, "run", return_value=invalid_json):
+            with self.assertRaisesRegex(index.QualityIndexError, "valid JSON"):
+                index._go_exported_documentation(self.root, ["pkg/api.go"])
+
+        valid_declaration = {
+            "symbol": "API",
+            "kind": "function",
+            "line": 2,
+            "column": 1,
+            "documented": True,
+        }
+        malformed_payloads = [
+            None,
+            {},
+            {"version": "wrong", "files": []},
+            {"version": "1.0.0", "files": "bad"},
+            {"version": "1.0.0", "files": ["bad"]},
+            {
+                "version": "1.0.0",
+                "files": [{"path": "other.go", "declarations": []}],
+            },
+            {
+                "version": "1.0.0",
+                "files": [
+                    {"path": "pkg/api.go", "declarations": []},
+                    {"path": "pkg/api.go", "declarations": []},
+                ],
+            },
+            {
+                "version": "1.0.0",
+                "files": [{"path": "pkg/api.go", "declarations": "bad"}],
+            },
+            {
+                "version": "1.0.0",
+                "files": [{"path": "pkg/api.go", "declarations": [{}]}],
+            },
+            {
+                "version": "1.0.0",
+                "files": [
+                    {
+                        "path": "pkg/api.go",
+                        "declarations": [{**valid_declaration, "symbol": ""}],
+                    }
+                ],
+            },
+            {
+                "version": "1.0.0",
+                "files": [
+                    {
+                        "path": "pkg/api.go",
+                        "declarations": [{**valid_declaration, "line": 0}],
+                    }
+                ],
+            },
+            {
+                "version": "1.0.0",
+                "files": [
+                    {
+                        "path": "pkg/api.go",
+                        "declarations": [
+                            {**valid_declaration, "documented": "yes"}
+                        ],
+                    }
+                ],
+            },
+            {
+                "version": "1.0.0",
+                "files": [
+                    {
+                        "path": "pkg/api.go",
+                        "declarations": [valid_declaration, valid_declaration],
+                    }
+                ],
+            },
+            {"version": "1.0.0", "files": []},
+        ]
+        for payload in malformed_payloads:
+            with self.subTest(payload=payload):
+                with self.assertRaises(index.QualityIndexError):
+                    index._validate_go_documentation_payload(payload, ["pkg/api.go"])
+
+    def test_go_exported_documentation_non_applicable_statuses(self) -> None:
+        self.assertEqual(
+            index._go_documentation_result(
+                "python", generated=False, is_test=False, declarations=None
+            ),
+            {"status": "not-applicable", "reason": "non-Go source"},
+        )
+        self.assertEqual(
+            index._go_documentation_result(
+                "go", generated=True, is_test=False, declarations=None
+            )["reason"],
+            "generated source",
+        )
+        self.assertEqual(
+            index._go_documentation_result(
+                "go", generated=False, is_test=True, declarations=None
+            )["reason"],
+            "test source",
+        )
+        empty = index._go_documentation_result(
+            "go", generated=False, is_test=False, declarations=[]
+        )
+        self.assertEqual(empty["status"], "no-exported-declarations")
+        self.assertEqual(empty["percent"], 100.0)
+
     def test_profile_parsers_and_path_resolution(self) -> None:
         go = self.write("pkg/api.go", "package pkg\nfunc API() {}\n")
         py = self.write("tools/worker.py", "print(1)\n")

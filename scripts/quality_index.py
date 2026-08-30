@@ -15,6 +15,7 @@ import hashlib
 import json
 import os
 import re
+import shutil
 import stat
 import subprocess
 import sys
@@ -23,7 +24,7 @@ from pathlib import Path
 from typing import Any, Mapping, Sequence
 
 
-SCRIPT_VERSION = "1.1.0"
+SCRIPT_VERSION = "1.2.0"
 PROJECT = "RKC"
 PUBLISHER = "NeuroForgeIO"
 LICENSE = "MIT"
@@ -99,10 +100,389 @@ GO_PACKAGE_DECL_RE = re.compile(
     r"(?m)^[ \t]*package[ \t]+([A-Za-z_][A-Za-z0-9_]*)\b"
 )
 TEST_SUFFIXES = ("_test", ".test", ".spec")
+GO_DOCUMENTATION_AST_VERSION = "1.0.0"
+GO_DOCUMENTATION_AST_TIMEOUT_SECONDS = 30
+
+# The helper is compiled from an RKC-owned, standard-library-only source in a
+# private temporary directory.  It parses declarations but never imports,
+# builds, or executes code from the indexed repository.
+GO_DOCUMENTATION_AST_HELPER = r'''package main
+
+import (
+	"bytes"
+	"encoding/json"
+	"fmt"
+	"go/ast"
+	"go/format"
+	"go/parser"
+	"go/token"
+	"io"
+	"os"
+	"path/filepath"
+	"sort"
+	"strings"
+)
+
+const schemaVersion = "1.0.0"
+
+type request struct {
+	Root  string   `json:"root"`
+	Files []string `json:"files"`
+}
+
+type declaration struct {
+	Symbol     string `json:"symbol"`
+	Kind       string `json:"kind"`
+	Line       int    `json:"line"`
+	Column     int    `json:"column"`
+	Documented bool   `json:"documented"`
+}
+
+type fileResult struct {
+	Path         string        `json:"path"`
+	Declarations []declaration `json:"declarations"`
+}
+
+type response struct {
+	Version string       `json:"version"`
+	Files   []fileResult `json:"files"`
+}
+
+func fail(format string, arguments ...any) {
+	fmt.Fprintf(os.Stderr, "Go documentation AST inspection failed: "+format+"\n", arguments...)
+	os.Exit(1)
+}
+
+func hasDocumentation(primary, fallback *ast.CommentGroup) bool {
+	if primary != nil && strings.TrimSpace(primary.Text()) != "" {
+		return true
+	}
+	return fallback != nil && strings.TrimSpace(fallback.Text()) != ""
+}
+
+func receiverName(files *token.FileSet, declaration *ast.FuncDecl) (string, error) {
+	if declaration.Recv == nil || len(declaration.Recv.List) == 0 {
+		return "", nil
+	}
+	var rendered bytes.Buffer
+	if err := format.Node(&rendered, files, declaration.Recv.List[0].Type); err != nil {
+		return "", err
+	}
+	return rendered.String(), nil
+}
+
+func appendDeclaration(
+	results []declaration,
+	files *token.FileSet,
+	name *ast.Ident,
+	kind string,
+	symbol string,
+	documented bool,
+) []declaration {
+	position := files.Position(name.Pos())
+	return append(results, declaration{
+		Symbol: symbol, Kind: kind, Line: position.Line,
+		Column: position.Column, Documented: documented,
+	})
+}
+
+func inspect(relative string, source []byte) (fileResult, error) {
+	files := token.NewFileSet()
+	parsed, err := parser.ParseFile(files, relative, source, parser.ParseComments)
+	if err != nil {
+		return fileResult{}, err
+	}
+	result := fileResult{Path: relative, Declarations: []declaration{}}
+	for _, node := range parsed.Decls {
+		switch declaration := node.(type) {
+		case *ast.FuncDecl:
+			if !ast.IsExported(declaration.Name.Name) {
+				continue
+			}
+			symbol := declaration.Name.Name
+			kind := "function"
+			receiver, receiverErr := receiverName(files, declaration)
+			if receiverErr != nil {
+				return fileResult{}, receiverErr
+			}
+			if receiver != "" {
+				symbol = "(" + receiver + ")." + symbol
+				kind = "method"
+			}
+			result.Declarations = appendDeclaration(
+				result.Declarations, files, declaration.Name, kind, symbol,
+				hasDocumentation(declaration.Doc, nil),
+			)
+		case *ast.GenDecl:
+			if declaration.Tok != token.TYPE && declaration.Tok != token.CONST && declaration.Tok != token.VAR {
+				continue
+			}
+			for _, rawSpec := range declaration.Specs {
+				switch spec := rawSpec.(type) {
+				case *ast.TypeSpec:
+					if ast.IsExported(spec.Name.Name) {
+						result.Declarations = appendDeclaration(
+							result.Declarations, files, spec.Name, "type", spec.Name.Name,
+							hasDocumentation(spec.Doc, declaration.Doc),
+						)
+					}
+				case *ast.ValueSpec:
+					kind := "variable"
+					if declaration.Tok == token.CONST {
+						kind = "constant"
+					}
+					for _, name := range spec.Names {
+						if ast.IsExported(name.Name) {
+							result.Declarations = appendDeclaration(
+								result.Declarations, files, name, kind, name.Name,
+								hasDocumentation(spec.Doc, declaration.Doc),
+							)
+						}
+					}
+				}
+			}
+		}
+	}
+	return result, nil
+}
+
+func main() {
+	decoder := json.NewDecoder(io.LimitReader(os.Stdin, 16<<20))
+	decoder.DisallowUnknownFields()
+	var input request
+	if err := decoder.Decode(&input); err != nil {
+		fail("cannot decode request: %v", err)
+	}
+	var trailing any
+	if err := decoder.Decode(&trailing); err != io.EOF {
+		fail("request must contain exactly one JSON value")
+	}
+	root, err := filepath.Abs(input.Root)
+	if err != nil {
+		fail("cannot resolve root: %v", err)
+	}
+	seen := make(map[string]bool, len(input.Files))
+	results := make([]fileResult, 0, len(input.Files))
+	for _, relative := range input.Files {
+		native := filepath.FromSlash(relative)
+		if relative == "" || filepath.IsAbs(native) || filepath.Clean(native) != native ||
+			native == "." || native == ".." || strings.HasPrefix(native, ".."+string(filepath.Separator)) {
+			fail("unsafe source path %q", relative)
+		}
+		if seen[relative] {
+			fail("duplicate source path %q", relative)
+		}
+		seen[relative] = true
+		path := filepath.Join(root, native)
+		info, statErr := os.Lstat(path)
+		if statErr != nil {
+			fail("cannot inspect %q: %v", relative, statErr)
+		}
+		if info.Mode()&os.ModeSymlink != 0 || !info.Mode().IsRegular() {
+			fail("source path is not a regular non-symlink file: %q", relative)
+		}
+		source, readErr := os.ReadFile(path)
+		if readErr != nil {
+			fail("cannot read %q: %v", relative, readErr)
+		}
+		result, inspectErr := inspect(relative, source)
+		if inspectErr != nil {
+			fail("cannot parse %q: %v", relative, inspectErr)
+		}
+		results = append(results, result)
+	}
+	sort.Slice(results, func(left, right int) bool { return results[left].Path < results[right].Path })
+	encoder := json.NewEncoder(os.Stdout)
+	encoder.SetEscapeHTML(false)
+	if err := encoder.Encode(response{Version: schemaVersion, Files: results}); err != nil {
+		fail("cannot encode response: %v", err)
+	}
+}
+'''
 
 
 class QualityIndexError(RuntimeError):
     """Raised when an index cannot be built without guessing."""
+
+
+def _validate_go_documentation_payload(
+    payload: object, expected_paths: Sequence[str]
+) -> dict[str, list[dict[str, Any]]]:
+    """Validate the private AST helper contract before trusting its evidence."""
+    if not isinstance(payload, Mapping):
+        raise QualityIndexError("Go documentation AST output is not an object")
+    if set(payload) != {"version", "files"}:
+        raise QualityIndexError("Go documentation AST output has unknown or missing fields")
+    if payload.get("version") != GO_DOCUMENTATION_AST_VERSION:
+        raise QualityIndexError("Go documentation AST output has an unsupported version")
+    rows = payload.get("files")
+    if not isinstance(rows, list):
+        raise QualityIndexError("Go documentation AST output has no file list")
+
+    expected = set(expected_paths)
+    values: dict[str, list[dict[str, Any]]] = {}
+    declaration_keys: set[tuple[str, int, int, str, str]] = set()
+    valid_kinds = {"function", "method", "type", "constant", "variable"}
+    for row in rows:
+        if not isinstance(row, Mapping) or set(row) != {"path", "declarations"}:
+            raise QualityIndexError("Go documentation AST output has a malformed file row")
+        relative = row.get("path")
+        declarations = row.get("declarations")
+        if not isinstance(relative, str) or relative not in expected:
+            raise QualityIndexError("Go documentation AST output contains an unowned path")
+        if relative in values:
+            raise QualityIndexError("Go documentation AST output repeats a file")
+        if not isinstance(declarations, list):
+            raise QualityIndexError("Go documentation AST output has no declaration list")
+        validated: list[dict[str, Any]] = []
+        for declaration in declarations:
+            required = {"symbol", "kind", "line", "column", "documented"}
+            if not isinstance(declaration, Mapping) or set(declaration) != required:
+                raise QualityIndexError(
+                    "Go documentation AST output has a malformed declaration"
+                )
+            symbol = declaration.get("symbol")
+            kind = declaration.get("kind")
+            line = declaration.get("line")
+            column = declaration.get("column")
+            documented = declaration.get("documented")
+            if not isinstance(symbol, str) or not symbol or kind not in valid_kinds:
+                raise QualityIndexError(
+                    "Go documentation AST output has an invalid declaration identity"
+                )
+            if type(line) is not int or type(column) is not int or line < 1 or column < 1:
+                raise QualityIndexError(
+                    "Go documentation AST output has an invalid declaration position"
+                )
+            if type(documented) is not bool:
+                raise QualityIndexError(
+                    "Go documentation AST output has an invalid documentation status"
+                )
+            key = (relative, line, column, str(kind), symbol)
+            if key in declaration_keys:
+                raise QualityIndexError("Go documentation AST output repeats a declaration")
+            declaration_keys.add(key)
+            validated.append(
+                {
+                    "symbol": symbol,
+                    "kind": kind,
+                    "line": line,
+                    "column": column,
+                    "documented": documented,
+                }
+            )
+        values[relative] = sorted(
+            validated,
+            key=lambda item: (
+                item["line"],
+                item["column"],
+                item["kind"],
+                item["symbol"],
+            ),
+        )
+    if set(values) != expected:
+        raise QualityIndexError("Go documentation AST output omitted a source file")
+    return {relative: values[relative] for relative in sorted(values)}
+
+
+def _go_exported_documentation(
+    root: Path, source_paths: Sequence[str]
+) -> dict[str, list[dict[str, Any]]]:
+    """Inspect exported declarations with Go's parser without executing the repo."""
+    admitted = sorted(set(source_paths))
+    if not admitted:
+        return {}
+    go = shutil.which("go")
+    if go is None:
+        raise QualityIndexError(
+            "Go toolchain is required to inspect exported Go documentation"
+        )
+    request = json.dumps(
+        {"root": str(root), "files": admitted}, separators=(",", ":"), sort_keys=True
+    )
+    environment = os.environ.copy()
+    environment.update(
+        {
+            "CGO_ENABLED": "0",
+            "GO111MODULE": "off",
+            "GOFLAGS": "-p=1",
+            "GONOSUMDB": "*",
+            "GOPROXY": "off",
+            "GOSUMDB": "off",
+            "GOTOOLCHAIN": "local",
+            "GOWORK": "off",
+        }
+    )
+    environment.setdefault("GOMAXPROCS", "1")
+    try:
+        with tempfile.TemporaryDirectory(prefix="rkc-quality-go-ast-") as temporary:
+            helper = Path(temporary) / "quality_index_go_ast.go"
+            helper.write_text(GO_DOCUMENTATION_AST_HELPER, encoding="utf-8")
+            completed = subprocess.run(
+                [go, "run", os.fspath(helper)],
+                check=False,
+                cwd=root,
+                env=environment,
+                input=request,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                timeout=GO_DOCUMENTATION_AST_TIMEOUT_SECONDS,
+            )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        raise QualityIndexError(f"Go documentation AST inspection failed: {exc}") from exc
+    if completed.returncode != 0:
+        detail = " ".join(completed.stderr.split())[:480]
+        raise QualityIndexError(
+            "Go documentation AST inspection failed"
+            + (f": {detail}" if detail else " without an error message")
+        )
+    try:
+        payload = json.loads(completed.stdout)
+    except json.JSONDecodeError as exc:
+        raise QualityIndexError("Go documentation AST output is not valid JSON") from exc
+    return _validate_go_documentation_payload(payload, admitted)
+
+
+def _go_documentation_result(
+    language: str,
+    *,
+    generated: bool,
+    is_test: bool,
+    declarations: Sequence[Mapping[str, Any]] | None,
+) -> dict[str, Any]:
+    """Summarise AST evidence independently of file-level documentation."""
+    if language != "go" or generated or is_test:
+        reason = "non-Go source"
+        if generated:
+            reason = "generated source"
+        elif is_test:
+            reason = "test source"
+        return {"status": "not-applicable", "reason": reason}
+    values = list(declarations or ())
+    missing = [
+        {
+            "symbol": item["symbol"],
+            "kind": item["kind"],
+            "line": item["line"],
+            "column": item["column"],
+        }
+        for item in values
+        if not item["documented"]
+    ]
+    documented = len(values) - len(missing)
+    if not values:
+        status = "no-exported-declarations"
+    else:
+        status = "complete" if not missing else "gap"
+    return {
+        "status": status,
+        "declarations": len(values),
+        "documented_declarations": documented,
+        "percent": _ratio(documented, len(values)) if values else 100.0,
+        "missing_symbols": missing,
+        "method": "Go parser AST attached declaration comments",
+    }
 
 
 def _relative(path: Path, root: Path) -> str:
@@ -750,6 +1130,19 @@ def build_index(
         for relative in source_paths
         if _is_test_path(relative)
     }
+    generated_paths = {
+        relative: _generated(root / relative) for relative in source_paths
+    }
+    go_documentation_values = _go_exported_documentation(
+        root,
+        [
+            relative
+            for relative in source_paths
+            if _language(Path(relative)) == "go"
+            and not _is_test_path(relative)
+            and not generated_paths[relative]
+        ],
+    )
     go_package_docs = _go_package_documentation(root, source_paths)
     go_package_names = {
         relative: _go_package_name(root / relative)
@@ -789,11 +1182,12 @@ def build_index(
         )
         docs = _documentation_evidence(relative, path, documentation, root, go_package_docs)
         is_test = _is_test_path(relative)
+        generated = generated_paths[relative]
         record = dict(stats[relative])
         record.update(
             {
                 "language": language,
-                "generated": _generated(path),
+                "generated": generated,
                 "is_test": is_test,
                 "tests": {
                     "status": "test-file" if is_test else ("associated" if tests else "gap"),
@@ -802,6 +1196,12 @@ def build_index(
                 "documentation": {"status": "not-applicable", "evidence": [], "method": "test-file"}
                 if is_test
                 else docs,
+                "go_exported_documentation": _go_documentation_result(
+                    language,
+                    generated=generated,
+                    is_test=is_test,
+                    declarations=go_documentation_values.get(relative),
+                ),
                 "profile": {"status": "not-applicable"}
                 if is_test
                 else _profile_result(
@@ -828,6 +1228,22 @@ def build_index(
             gaps.append({"kind": "test", "path": record["path"], "priority": "high" if changed else "normal", "detail": "no matching test file was found"})
         if record["documentation"]["status"] != "evidence":
             gaps.append({"kind": "documentation", "path": record["path"], "priority": "high" if changed else "normal", "detail": "no nearby or referenced documentation evidence was found"})
+        for missing in record["go_exported_documentation"].get("missing_symbols", []):
+            gaps.append(
+                {
+                    "kind": "go-exported-documentation",
+                    "path": record["path"],
+                    "priority": "high" if changed else "normal",
+                    "symbol": missing["symbol"],
+                    "declaration_kind": missing["kind"],
+                    "line": missing["line"],
+                    "column": missing["column"],
+                    "detail": (
+                        f"exported {missing['kind']} {missing['symbol']} has no attached "
+                        f"Go documentation comment at L{missing['line']}:{missing['column']}"
+                    ),
+                }
+            )
         if record["language"] in {"go", "python"}:
             profile = record["profile"]
             if profile["status"] in {"missing", "not-provided"}:
@@ -849,11 +1265,31 @@ def build_index(
                             "uncovered": profile.get("uncovered", {}),
                         }
                     )
-    gaps.sort(key=lambda item: (item["priority"] != "high", item["kind"], item["path"]))
+    gaps.sort(
+        key=lambda item: (
+            item["priority"] != "high",
+            item["kind"],
+            item["path"],
+            item.get("line", 0),
+            item.get("column", 0),
+            item.get("symbol", ""),
+        )
+    )
 
     applicable = [record for record in records if not record["generated"] and not record["is_test"]]
     tested = sum(record["tests"]["status"] == "associated" for record in applicable)
     documented = sum(record["documentation"]["status"] == "evidence" for record in applicable)
+    go_documentation_applicable = [
+        record for record in applicable if record["language"] == "go"
+    ]
+    go_exported_declarations = sum(
+        int(record["go_exported_documentation"].get("declarations", 0))
+        for record in go_documentation_applicable
+    )
+    go_documented_exported_declarations = sum(
+        int(record["go_exported_documentation"].get("documented_declarations", 0))
+        for record in go_documentation_applicable
+    )
     profile_applicable = [
         record
         for record in applicable
@@ -872,6 +1308,14 @@ def build_index(
         "profiled_files": profiled,
         "test_evidence_percent": _ratio(tested, len(applicable)),
         "documentation_evidence_percent": _ratio(documented, len(applicable)),
+        "go_exported_declarations": go_exported_declarations,
+        "go_documented_exported_declarations": go_documented_exported_declarations,
+        "go_exported_documentation_missing": (
+            go_exported_declarations - go_documented_exported_declarations
+        ),
+        "go_exported_documentation_percent": _ratio(
+            go_documented_exported_declarations, go_exported_declarations
+        ),
         "profiling_file_percent": _ratio(profiled, len(profile_applicable)),
         "profiling_scope_excluded_files": sum(
             record["profile"]["status"] == "platform-excluded" for record in applicable
@@ -902,6 +1346,10 @@ def build_index(
             "profile_location_semantics": (
                 "Go uncovered block coordinates and Python missing lines/branch arcs "
                 "are retained exactly from validated profiles"
+            ),
+            "go_exported_documentation_semantics": (
+                "Go parser AST attachment of non-empty leading comments to exported "
+                "production declarations; package/file documentation evidence remains separate"
             ),
         },
         "summary": summary,
@@ -957,6 +1405,14 @@ def render_markdown(index: Mapping[str, Any]) -> str:
     profile_uncovered_text = (
         str(profile_uncovered) if profile_uncovered is not None else "n/a"
     )
+    go_documentation_percent = summary["go_exported_documentation_percent"]
+    go_documentation_text = (
+        f"{go_documentation_percent}% "
+        f"({summary['go_documented_exported_declarations']}/"
+        f"{summary['go_exported_declarations']})"
+        if go_documentation_percent is not None
+        else "n/a (0/0)"
+    )
     lines = [
         "# RKC quality index",
         "",
@@ -971,6 +1427,7 @@ def render_markdown(index: Mapping[str, Any]) -> str:
         f"| Source files | {summary['source_files']} |",
         f"| Test evidence | {summary['test_evidence_percent'] if summary['test_evidence_percent'] is not None else 'n/a'}% |",
         f"| Documentation evidence | {summary['documentation_evidence_percent'] if summary['documentation_evidence_percent'] is not None else 'n/a'}% |",
+        f"| Exported Go declarations documented | {go_documentation_text} |",
         f"| Profiled Go/Python files | {summary['profiling_file_percent'] if summary['profiling_file_percent'] is not None else 'n/a'}% |",
         f"| Profile units covered | {summary['profile_statement_or_branch_percent'] if summary['profile_statement_or_branch_percent'] is not None else 'n/a'}% |",
         f"| Profile units remaining | {profile_uncovered_text} |",
@@ -997,10 +1454,21 @@ def render_markdown(index: Mapping[str, Any]) -> str:
     if profile_errors:
         lines.extend(["", "## Profile errors", ""])
         lines.extend(f"- {error}" for error in profile_errors)
-    lines.extend(["", "## Source inventory", "", "| Path | Language | Tests | Docs | Profile |", "| --- | --- | --- | --- | --- |"])
+    lines.extend(
+        [
+            "",
+            "## Source inventory",
+            "",
+            "| Path | Language | Tests | File docs | Exported Go docs | Profile |",
+            "| --- | --- | --- | --- | --- | --- |",
+        ]
+    )
     for record in index["files"]:
         lines.append(
-            f"| `{record['path']}` | {record['language']} | {record['tests']['status']} | {record['documentation']['status']} | {record['profile']['status']} |"
+            f"| `{record['path']}` | {record['language']} | {record['tests']['status']} | "
+            f"{record['documentation']['status']} | "
+            f"{record['go_exported_documentation']['status']} | "
+            f"{record['profile']['status']} |"
         )
     lines.extend(["", "## Changed paths", ""])
     changes = index["deltas"].get("items", [])
