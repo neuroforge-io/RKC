@@ -7,8 +7,8 @@ import (
 
 func TestCommandsAreUniqueValidAndIndependentlyOwned(t *testing.T) {
 	commands := Commands(Context{})
-	if len(commands) != 19 {
-		t.Fatalf("command count = %d, want 19", len(commands))
+	if len(commands) != 20 {
+		t.Fatalf("command count = %d, want 20", len(commands))
 	}
 	seen := make(map[string]bool, len(commands))
 	for _, command := range commands {
@@ -30,6 +30,7 @@ func TestCommandsAreUniqueValidAndIndependentlyOwned(t *testing.T) {
 		byName[command.Name] = command
 	}
 	for name, want := range map[string][]string{
+		"wizard":     {"--help"},
 		"plan":       {"."},
 		"scan":       {"--no-python", "--out", ".rkc", "--state-dir", ".rkc-state", "."},
 		"check":      {"--coverage", ".rkc/coverage.json"},
@@ -45,7 +46,7 @@ func TestCommandsAreUniqueValidAndIndependentlyOwned(t *testing.T) {
 		}
 	}
 	commands[0].DefaultArgs[0] = "changed"
-	if Commands(Context{})[0].DefaultArgs[0] != "." {
+	if Commands(Context{})[0].DefaultArgs[0] != "--help" {
 		t.Fatal("command defaults share mutable storage across calls")
 	}
 }

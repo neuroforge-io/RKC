@@ -8,7 +8,7 @@ The shortest source-checkout path is:
 git clone https://github.com/neuroforge-io/RKC.git
 cd RKC
 ./install.sh
-rkc open .
+rkc wizard
 ```
 
 The installer builds both CGO-free binaries, installs them under
@@ -20,6 +20,14 @@ RKC-owned code and generated tooling are from **NeuroForgeIO** and RKC
 contributors; see [`BRANDING_AND_ATTRIBUTION.md`](BRANDING_AND_ATTRIBUTION.md)
 for the commercial attribution and third-party license boundary.
 Existing symbolic-link or non-file destinations are rejected.
+
+`rkc wizard` (alias `rkc tui`) is a dependency-free terminal guide. It asks for
+the folder and offers only three bounded first-run choices: build and open the
+read-only local browser, compile and verify without a server, or print the full
+CLI help. It also offers an explicit cancel choice, and EOF starts no work. The
+wizard calls the existing `open` and `quickstart` implementations directly; it
+does not invoke a shell or claim to expose every CLI option. You can still run
+either command below directly when you already know which workflow you need.
 
 `rkc open /path/to/repository` produces an atlas, retains immutable snapshot
 state, runs the strict local integrity and quality checks, and prints the local

@@ -152,13 +152,20 @@ boundaries are maintained in
 
 ## One-minute local atlas
 
-From a source checkout, installation and a verified browser atlas are two
-commands:
+From a source checkout, installation and the guided first run are two commands:
 
 ```sh
 ./install.sh
-rkc open .
+rkc wizard
 ```
+
+The dependency-free terminal guide asks which folder to catalogue, then lets a
+non-technical user build and open the read-only browser atlas, compile without
+starting a server, view the complete command help, or cancel without starting
+work. It intentionally covers the safe first-run workflows rather than claiming
+full CLI parity. `rkc tui` is an alias. EOF and explicit cancellation stop
+without starting a scan. Scripts and experienced users can continue to run
+`rkc open .` or `rkc quickstart .` directly.
 
 `open` performs the scan and locked integrity/quality checks, starts the
 loopback read-only browser, and opens the default desktop browser when one is

@@ -118,4 +118,4 @@ case ":$PATH:" in
 	*":$BIN_DIRECTORY:"*) ;;
 	*) echo "Add $BIN_DIRECTORY to PATH." ;;
 esac
-echo "First run: rkc open /path/to/repository"
+echo "First run: rkc wizard"

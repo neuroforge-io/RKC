@@ -729,6 +729,12 @@ func workbenchMayLaunchManagedUnits(args []string) bool {
 		return !pythonDisabled && !pluginsDisabled
 	case "quickstart":
 		return workbenchFlagCanBeTrue(args[1:], "python")
+	case "wizard":
+		// The browser catalogue may display the terminal guide's help, but an
+		// interactive wizard can select open and therefore start a nested server.
+		// The workbench has no terminal input and must not rely on that incidental
+		// EOF behavior as its safety boundary.
+		return len(args) != 2 || args[1] != "--help"
 	default:
 		return false
 	}

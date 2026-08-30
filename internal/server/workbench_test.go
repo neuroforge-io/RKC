@@ -135,6 +135,9 @@ func TestWorkbenchManagedUnitRiskClassification(t *testing.T) {
 		{name: "scan without plugins", args: []string{"scan", "--no-plugins"}},
 		{name: "quickstart python", args: []string{"quickstart", "--python"}, want: true},
 		{name: "quickstart", args: []string{"quickstart"}},
+		{name: "wizard", args: []string{"wizard"}, want: true},
+		{name: "wizard folder", args: []string{"wizard", "."}, want: true},
+		{name: "wizard help", args: []string{"wizard", "--help"}},
 		{name: "other", args: []string{"help"}},
 	}
 	for _, test := range tests {
@@ -160,6 +163,8 @@ func TestWorkbenchExecutionRejectsCommandsThatCanEscapeAggregateCeiling(t *testi
 		{"scan", "-no-plugins=false", "."},
 		{"quickstart", "-python", "."},
 		{"quickstart", "--python=true", "."},
+		{"wizard"},
+		{"wizard", "."},
 	} {
 		if err := validateWorkbenchExecution(arguments); err == nil || !strings.Contains(err.Error(), "aggregate resource ceiling") {
 			t.Errorf("managed-unit command %q was not rejected: %v", arguments, err)
@@ -174,6 +179,7 @@ func TestWorkbenchExecutionRejectsCommandsThatCanEscapeAggregateCeiling(t *testi
 		{"scan", "--no-python", "."},
 		{"scan", "-no-plugins=true", "."},
 		{"quickstart", "--python=false", "."},
+		{"wizard", "--help"},
 	} {
 		if err := validateWorkbenchExecution(arguments); err != nil {
 			t.Errorf("bounded command %q was rejected: %v", arguments, err)

@@ -10,6 +10,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"log"
 	"os"
 )
@@ -39,6 +40,8 @@ func dispatch(args []string) error {
 		return nil
 	}
 	switch args[0] {
+	case "wizard", "tui":
+		return runWizard(args[1:])
 	case "scan":
 		return runScan(args[1:])
 	case "quickstart":
@@ -95,13 +98,18 @@ func dispatch(args []string) error {
 }
 
 func printUsage() {
-	fmt.Print(`NeuroForgeIO · Repository Knowledge Compiler
+	_ = printUsageTo(os.Stdout)
+}
+
+func printUsageTo(output io.Writer) error {
+	_, err := fmt.Fprint(output, `NeuroForgeIO · Repository Knowledge Compiler
 MIT-licensed open source with attribution; see LICENSE and NOTICE.
 
 Usage:
   rkc <command> [options]
 
 Get started:
+  rkc wizard
   rkc open .
   rkc quickstart .
   rkc doctor --repository .
@@ -110,6 +118,7 @@ Get started:
   rkc serve --dir .rkc
 
 Core commands:
+  wizard       Guided terminal first run (alias: tui)
   open         Compile, verify, and open a local browser atlas (alias: start)
   quickstart   Build and verify a ready-to-search atlas in one command
   init         Generate a complete, safe local configuration
@@ -144,6 +153,7 @@ fail closed until exact qualified assets and runtimes are supplied. The Python
 adapter additionally requires its Linux user-systemd isolation boundary; use
 'scan --no-python' for the portable deterministic profile.
 `)
+	return err
 }
 
 func init() { log.SetFlags(0) }

@@ -24,8 +24,11 @@ cmp "$ROOT/VERSION" "$WORK/version.txt"
 "$PREFIX/bin/rkc" open --help >"$WORK/open-help.txt" 2>&1
 grep -F -- "-no-browser" "$WORK/open-help.txt" >/dev/null
 grep -F -- "-workbench" "$WORK/open-help.txt" >/dev/null
-grep -F "protected local command workbench" "$WORK/open-help.txt" >/dev/null
-grep -F "First run: rkc open" "$WORK/output.txt" >/dev/null
+grep -F "trusted-user local command launcher" "$WORK/open-help.txt" >/dev/null
+"$PREFIX/bin/rkc" wizard --help >"$WORK/wizard-help.txt" 2>&1
+grep -F "rkc tui" "$WORK/wizard-help.txt" >/dev/null
+grep -F "not a replacement for every CLI option" "$WORK/wizard-help.txt" >/dev/null
+grep -F "First run: rkc wizard" "$WORK/output.txt" >/dev/null
 
 mkdir "$WORK/unsafe"
 ln -s "$WORK/unsafe" "$WORK/linked-prefix"

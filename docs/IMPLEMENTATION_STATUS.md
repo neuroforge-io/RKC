@@ -95,7 +95,7 @@ The labels below mean:
 
 | Interface | Status |
 |---|---|
-| CLI | Implemented | `open` (alias `start`) composes scan, strict checks, loopback serving, and optional desktop-browser launch. Linux self-reexecutes inside the exact low-priority envelope before scan, continuously yields to ERAIS, publishes readiness out of band, launches the browser outside the disposable service, and preserves standard XDG state locations; static mode is portable, while `--workbench` is explicit and Linux-only |
+| CLI and guided terminal first run | Implemented | `wizard` (alias `tui`) is a dependency-free, line-oriented guide over the existing safe workflows: choose a folder, open the verified read-only browser, compile only, show complete help, or cancel. It handles EOF without starting work and does not claim full CLI parity. `open` (alias `start`) composes scan, strict checks, loopback serving, and optional desktop-browser launch. Linux self-reexecutes inside the exact low-priority envelope before scan, continuously yields to ERAIS, publishes readiness out of band, launches the browser outside the disposable service, and preserves standard XDG state locations; static mode is portable, while `--workbench` is explicit and Linux-only |
 | local read-only HTTP API | Implemented |
 | OpenAPI parity validation | Implemented |
 | MCP stdio server | Implemented |

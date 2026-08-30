@@ -50,6 +50,7 @@ func Commands(context Context) []Command {
 		return append(result, tail...)
 	}
 	return []Command{
+		{"wizard", "Launch the guided terminal first run.", ModeWrites, []string{"--help"}, "The interactive guide requires a terminal; this safe default shows its help. It covers common first-run workflows, not every CLI option."},
 		{"quickstart", "Build and verify a ready-to-search atlas.", ModeWrites, []string{"."}, semanticGuidance},
 		{"init", "Create or preview a complete local configuration.", ModeWrites, []string{"--stdout"}, generalGuidance},
 		{"doctor", "Diagnose repository and optional capabilities.", ModeRead, []string{"--repository", "."}, generalGuidance},
