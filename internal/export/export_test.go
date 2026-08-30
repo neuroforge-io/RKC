@@ -107,6 +107,16 @@ func TestWriteAllProducesCompleteDeterministicRedactedExport(t *testing.T) {
 		if err != nil || !bytes.Contains(guide, []byte("Recommended upload order")) || !bytes.Contains(guide, []byte(markdownText(bundle.Snapshot.ID))) || !bytes.Contains(guide, []byte("NeuroForgeIO")) || !bytes.Contains(guide, []byte("MIT License")) {
 			t.Fatalf("invalid NotebookLM upload guide: %q (error %v)", guide, err)
 		}
+		overview, err := os.ReadFile(filepath.Join(output, "notebooklm", "00_repository_overview.md"))
+		if err != nil || !bytes.Contains(overview, []byte("01_coverage_and_diagnostics.md")) ||
+			bytes.Contains(overview, []byte("(coverage.md)")) || bytes.Contains(overview, []byte("(symbols/)")) ||
+			bytes.Contains(overview, []byte("commit: \"\"")) {
+			t.Fatalf("invalid pack-local NotebookLM overview: %q (error %v)", overview, err)
+		}
+		symbolPack, err := os.ReadFile(filepath.Join(output, "notebooklm", "02_symbols_001.md"))
+		if err != nil || bytes.Count(symbolPack, []byte(untrustedRepositoryDataNotice)) != 1 {
+			t.Fatalf("NotebookLM symbol pack trust notice count = %d (error %v)", bytes.Count(symbolPack, []byte(untrustedRepositoryDataNotice)), err)
+		}
 	}
 	var firstManifest, secondManifest exportManifest
 	readExportJSON(t, filepath.Join(first, "rkc-export-manifest.json"), &firstManifest)
@@ -274,6 +284,41 @@ func TestNotebookSourceInventoryIsSortedAndRejectsLinks(t *testing.T) {
 	}
 	if _, _, _, err := notebookSourceInventory(directory); err == nil || !strings.Contains(err.Error(), "not a regular file") {
 		t.Fatalf("symlink inventory error = %v", err)
+	}
+}
+
+func TestNotebookPacksAreSortedForHumanAndAgentNavigation(t *testing.T) {
+	t.Parallel()
+	bundle := model.Bundle{
+		Nodes: []model.Node{
+			{ID: "z-node", Kind: "function", Name: "Zulu"},
+			{ID: "a-node", Kind: "function", Name: "Alpha"},
+		},
+		Edges: []model.Edge{
+			{ID: "a-edge", Kind: "calls", From: "z-node", To: "a-node", Resolution: "declared"},
+			{ID: "z-edge", Kind: "calls", From: "a-node", To: "z-node", Resolution: "declared"},
+		},
+	}
+	directory := t.TempDir()
+	if err := writeNotebookSymbolPacks(directory, bundle, 1_000_000); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeNotebookRelationPacks(directory, bundle, 1_000_000); err != nil {
+		t.Fatal(err)
+	}
+	symbols, err := os.ReadFile(filepath.Join(directory, "02_symbols_001.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if alpha, zulu := bytes.Index(symbols, []byte("## Alpha")), bytes.Index(symbols, []byte("## Zulu")); alpha < 0 || zulu <= alpha {
+		t.Fatalf("symbol pack is not name-sorted:\n%s", symbols)
+	}
+	relations, err := os.ReadFile(filepath.Join(directory, "03_relationships_001.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if alpha, zulu := bytes.Index(relations, []byte("From: Alpha")), bytes.Index(relations, []byte("From: Zulu")); alpha < 0 || zulu <= alpha {
+		t.Fatalf("relationship pack is not source-sorted:\n%s", relations)
 	}
 }
 
