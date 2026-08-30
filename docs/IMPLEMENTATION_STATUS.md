@@ -146,10 +146,12 @@ local fast runs omit profiles unless they are supplied explicitly.
 
 The index is now package-aware for Go documentation, recognizes explicit
 cross-language test-harness references, rejects symlinked output ancestors,
-and imports the coverage gate's zero-statement/current-platform metadata. The
-current working tree reports 100% test and documentation evidence under these
-heuristics; the fresh CI artifact remains the authority for executable profile
-percentages and any residual gaps.
+and imports the coverage gate's zero-statement/current-platform metadata. It
+deduplicates Go blocks, rejects inconsistent profile denominators and Python
+branch counters, and retains exact uncovered Go coordinates and Python
+line/branch arcs for direct test triage. The current working tree reports 100%
+test and documentation evidence under these heuristics; the fresh CI artifact
+remains the authority for executable profile percentages and residual gaps.
 
 `make safe-complete-package` runs that logged sequence inside the mandatory
 resource guard. Commit-bound release commands reject tracked or untracked source

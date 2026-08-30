@@ -169,12 +169,48 @@ class QualityIndexTests(unittest.TestCase):
             "mode: set\n"
             "example/module/pkg/api.go:2.1,2.18 3 0\n"
             "example/module/pkg/api.go:2.1,2.18 3 1\n"
+            "example/module/pkg/api.go:3.1,4.2 2 0\n"
             "bad row\n"
             "other.go:1.1,1.2 1 1\n",
         )
         values, errors = index._go_profile(go_profile, source_go, self.root)
-        self.assertEqual(values["pkg/api.go"], {"statements": 6, "covered_statements": 3})
+        self.assertEqual(
+            values["pkg/api.go"],
+            {
+                "statements": 5,
+                "covered_statements": 3,
+                "uncovered_regions": [
+                    {
+                        "start_line": 3,
+                        "start_column": 1,
+                        "end_line": 4,
+                        "end_column": 2,
+                        "units": 2,
+                    }
+                ],
+            },
+        )
         self.assertEqual(len(errors), 2)
+        conflicting = self.write(
+            "conflicting.out",
+            "mode: atomic\n"
+            "pkg/api.go:2.1,2.18 1 0\n"
+            "pkg/api.go:2.1,2.18 2 1\n"
+            "pkg/api.go:4.2,3.1 1 0\n",
+        )
+        conflicting_values, conflicting_errors = index._go_profile(
+            conflicting, source_go, self.root
+        )
+        self.assertEqual(conflicting_values, {})
+        self.assertEqual(len(conflicting_errors), 2)
+        unsupported = self.write("unsupported.out", "mode: mystery\n")
+        self.assertIn(
+            "unsupported", index._go_profile(unsupported, source_go, self.root)[1][0]
+        )
+        no_header = self.write("no-header.out", "pkg/api.go:1.1,1.2 1 0\n")
+        self.assertIn(
+            "mode header", index._go_profile(no_header, source_go, self.root)[1][0]
+        )
         missing = self.root / "missing.out"
         values, errors = index._go_profile(missing, source_go, self.root)
         self.assertEqual(values, {})
@@ -184,8 +220,11 @@ class QualityIndexTests(unittest.TestCase):
             "python.json",
             json.dumps(
                 {
+                    "meta": {"branch_coverage": True},
                     "files": {
                         str(py): {
+                            "missing_lines": [1],
+                            "missing_branches": [[1, -1]],
                             "summary": {
                                 "num_statements": 4,
                                 "covered_lines": 3,
@@ -200,9 +239,78 @@ class QualityIndexTests(unittest.TestCase):
                 }
             ),
         )
-        values, errors = index._python_profile(python_report, {"tools/worker.py"}, self.root)
-        self.assertEqual(values["tools/worker.py"], {"units": 6, "covered_units": 4})
+        values, errors = index._python_profile(
+            python_report, {"tools/worker.py"}, self.root
+        )
+        self.assertEqual(
+            values["tools/worker.py"],
+            {
+                "units": 6,
+                "covered_units": 4,
+                "uncovered_lines": [1],
+                "uncovered_branches": [[1, -1]],
+            },
+        )
         self.assertEqual(len(errors), 3)
+        line_only = self.write(
+            "line-only.json",
+            json.dumps({"meta": {"branch_coverage": False}, "files": {}}),
+        )
+        self.assertIn(
+            "branch coverage", index._python_profile(line_only, set(), self.root)[1][0]
+        )
+        inconsistent = self.write(
+            "inconsistent.json",
+            json.dumps(
+                {
+                    "meta": {"branch_coverage": True},
+                    "files": {
+                        "tools/worker.py": {
+                            "missing_lines": [],
+                            "missing_branches": [],
+                            "summary": {
+                                "num_statements": 1,
+                                "covered_lines": 2,
+                                "num_branches": 0,
+                                "covered_branches": 0,
+                            },
+                        }
+                    },
+                }
+            ),
+        )
+        self.assertIn(
+            "denominator",
+            index._python_profile(
+                inconsistent, {"tools/worker.py"}, self.root
+            )[1][0],
+        )
+        missing_detail = self.write(
+            "missing-detail.json",
+            json.dumps(
+                {
+                    "meta": {"branch_coverage": True},
+                    "files": {
+                        "tools/worker.py": {
+                            "missing_lines": [],
+                            "missing_branches": [],
+                            "summary": {
+                                "num_statements": 2,
+                                "covered_lines": 1,
+                                "num_branches": 0,
+                                "covered_branches": 0,
+                            },
+                        }
+                    },
+                }
+            ),
+        )
+        self.assertIn(
+            "missing-line",
+            index._python_profile(
+                missing_detail, {"tools/worker.py"}, self.root
+            )[1][0],
+        )
         invalid_json = self.write("invalid.json", "not-json")
         self.assertTrue(index._python_profile(invalid_json, set(), self.root)[1])
         no_files = self.write("no-files.json", "{}")
@@ -215,8 +323,30 @@ class QualityIndexTests(unittest.TestCase):
             index._profile_result("python", "tools/worker.py", {}, {}, False, True)["status"],
             "missing",
         )
-        profiled = index._profile_result("go", "pkg/api.go", {"pkg/api.go": {"statements": 2, "covered_statements": 1}}, {}, True, False)
+        profiled = index._profile_result(
+            "go",
+            "pkg/api.go",
+            {
+                "pkg/api.go": {
+                    "statements": 2,
+                    "covered_statements": 1,
+                    "uncovered_regions": [
+                        {
+                            "start_line": 2,
+                            "start_column": 1,
+                            "end_line": 2,
+                            "end_column": 18,
+                            "units": 1,
+                        }
+                    ],
+                }
+            },
+            {},
+            True,
+            False,
+        )
         self.assertEqual(profiled["percent"], 50.0)
+        self.assertEqual(profiled["uncovered"]["regions"][0]["start_line"], 2)
         zero_report = self.write(
             "go-summary.json",
             json.dumps(
@@ -301,7 +431,23 @@ class QualityIndexTests(unittest.TestCase):
         )
         python_report = self.write(
             "profiles/python.json",
-            json.dumps({"files": {"tools/worker.py": {"summary": {"num_statements": 2, "covered_lines": 2, "num_branches": 0, "covered_branches": 0}}}}),
+            json.dumps(
+                {
+                    "meta": {"branch_coverage": True},
+                    "files": {
+                        "tools/worker.py": {
+                            "missing_lines": [],
+                            "missing_branches": [],
+                            "summary": {
+                                "num_statements": 2,
+                                "covered_lines": 2,
+                                "num_branches": 0,
+                                "covered_branches": 0,
+                            },
+                        }
+                    },
+                }
+            ),
         )
         built = index.build_index(
             self.root,
@@ -315,6 +461,7 @@ class QualityIndexTests(unittest.TestCase):
         self.assertEqual(built["publisher"], "NeuroForgeIO")
         self.assertEqual(built["license"]["spdx"], "MIT")
         self.assertEqual(built["summary"]["profiling_file_percent"], 100.0)
+        self.assertEqual(built["summary"]["profile_uncovered_units"], 0)
         self.assertEqual(built["summary"]["profiling_zero_executable_files"], 1)
         self.assertEqual(
             next(record for record in built["files"] if record["path"] == "src/types.go")[
@@ -382,6 +529,8 @@ class QualityIndexTests(unittest.TestCase):
         profile_gaps = [gap for gap in report["gaps"] if gap["kind"] == "profiling"]
         self.assertEqual(len(profile_gaps), 1)
         self.assertIn("2 of 2", profile_gaps[0]["detail"])
+        self.assertEqual(profile_gaps[0]["uncovered"]["regions"][0]["start_line"], 3)
+        self.assertIn("L3:1-L3:14", index.render_markdown(report))
 
         malformed = self.write("profiles/malformed.out", "mode: set\nnot a profile row\n")
         output = self.root / "strict-quality"

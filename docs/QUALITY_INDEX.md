@@ -68,6 +68,11 @@ Each `files` record contains:
   profiler is integrated. Pass `--go-report` alongside `--go-profile` when
   using `scripts/coverage_gate.py` so build-tag exclusions and type-only files
   do not become false profiling gaps.
+- `profile.uncovered`: every uncovered Go block retains its exact start/end
+  line and column plus statement count. Python reports retain every missing
+  executable line and branch arc. The Markdown report shows a bounded preview;
+  `index.json` retains the complete deterministic location inventory so a
+  human or agent can go directly from a gap to the behavior that needs a test.
 
 When a coverage-gate report is supplied, the summary separately counts
 `profiling_scope_excluded_files` and `profiling_zero_executable_files`; those
@@ -84,9 +89,14 @@ unfinished behavior coverage. The `deltas` object records the Git comparison
 scope and status. A non-Git folder remains fully indexable; its delta status is
 simply `unavailable`.
 
-Malformed or unowned profile rows are retained in `profile_errors`. The command
-returns a failure when supplied profile evidence cannot be trusted, including
-in non-strict mode; this prevents a broken report from being mistaken for a
+Malformed or unowned profile rows are retained in `profile_errors`. Go profiles
+must declare a supported mode, use valid coordinates, and keep one statement
+denominator for each block; repeated blocks are deduplicated with covered-OR
+semantics. Python reports must prove branch coverage, use non-negative exact
+integer counters, retain complete missing-line/branch details, and cannot map
+two entries to one source file. The command returns a failure when supplied
+profile evidence cannot be trusted, including in non-strict mode; this prevents
+a duplicated or internally inconsistent report from being mistaken for a
 complete one.
 
 The report deliberately does not claim 100% coverage. RKC's release gate
