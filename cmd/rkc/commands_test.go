@@ -222,6 +222,27 @@ func TestDoctorCommandReportsPassAndFatalFailure(t *testing.T) {
 	}
 }
 
+func TestPythonIsolationDoctorNeverReportsManagerEnvironment(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("user-systemd isolation check is Linux-specific")
+	}
+	bin := t.TempDir()
+	for _, name := range []string{"systemd-run", "env"} {
+		writeExecutable(t, filepath.Join(bin, name), "#!/bin/sh\nexit 0\n")
+	}
+	const sentinel = "SUPER_SECRET_USER_MANAGER_ENV_SENTINEL"
+	writeExecutable(t, filepath.Join(bin, "systemctl"), "#!/bin/sh\nprintf 'TOKEN="+sentinel+"\\n'\nprintf 'private stderr "+sentinel+"\\n' >&2\nexit 7\n")
+	t.Setenv("PATH", bin)
+
+	check := pythonIsolationCheck(defaultConfiguration(), nil)
+	if check.Status != "fail" || !strings.Contains(check.Detail, "status 7") {
+		t.Fatalf("unexpected isolation failure: %+v", check)
+	}
+	if strings.Contains(check.Detail, sentinel) || strings.Contains(check.Detail, "TOKEN=") {
+		t.Fatalf("isolation diagnostic disclosed manager environment: %+v", check)
+	}
+}
+
 func TestScanSafePublicationAndInvalidFlags(t *testing.T) {
 	root := t.TempDir()
 	repository := filepath.Join(root, "repo")

@@ -585,8 +585,36 @@ def _priority_path_tokens(value: bytes) -> set[bytes]:
     }
 
 
+def _priority_process_class(command: bytes, process_name: bytes = b"") -> str:
+    """Return a fixed, non-sensitive class for a matched priority process."""
+    arguments = command.lower().split()
+    launch_values = [process_name.lower()]
+    if arguments:
+        launch_values.append(arguments[0])
+        launch_values.extend(
+            arguments[index + 1]
+            for index, argument in enumerate(arguments[:8])
+            if argument == b"-m" and index + 1 < len(arguments)
+        )
+        launch_values.extend(
+            argument
+            for argument in arguments[1:5]
+            if argument and not argument.startswith(b"-")
+        )
+    for value in launch_values:
+        tokens = _priority_path_tokens(value)
+        for name in PRIORITY_NAMES:
+            if name in tokens:
+                return name.decode("ascii")
+    return "priority-workload"
+
+
 def active_priority_processes() -> list[tuple[int, str]]:
-    """Return bounded command summaries for higher-priority ERAIS processes."""
+    """Return PID and fixed class for higher-priority processes.
+
+    Raw command lines can contain credentials, prompts, or private paths. They
+    are used only for matching and are never returned to diagnostics.
+    """
     matches: list[tuple[int, str]] = []
     if sys.platform.startswith("linux") and Path("/proc").is_dir():
         ancestors = _ancestor_pids()
@@ -600,8 +628,7 @@ def active_priority_processes() -> list[tuple[int, str]]:
             except (FileNotFoundError, PermissionError, ProcessLookupError, OSError):
                 continue
             if _matches_priority_process(pid, command, process_name, ancestors):
-                summary = command.decode("utf-8", errors="replace")[:300]
-                matches.append((pid, summary))
+                matches.append((pid, _priority_process_class(command, process_name)))
         return sorted(matches)
     try:
         result = subprocess.run(
@@ -616,7 +643,9 @@ def active_priority_processes() -> list[tuple[int, str]]:
     for line in result.stdout.decode("utf-8", errors="replace").splitlines()[:32]:
         raw_pid, _, command = line.partition(" ")
         if raw_pid.isdigit() and int(raw_pid) != os.getpid():
-            matches.append((int(raw_pid), command[:300]))
+            matches.append(
+                (int(raw_pid), _priority_process_class(command.encode("utf-8")))
+            )
     return matches
 
 
@@ -624,7 +653,10 @@ def assert_priority_available() -> None:
     """Fail before or during heavy work whenever ERAIS is active."""
     matches = active_priority_processes()
     if matches:
-        summary = "; ".join(f"pid={pid} {command}" for pid, command in matches[:4])
+        summary = "; ".join(
+            f"pid={pid} class={process_class}"
+            for pid, process_class in matches[:4]
+        )
         raise PriorityBlocked(f"ERAIS has priority; RKC work is deferred: {summary}")
 
 

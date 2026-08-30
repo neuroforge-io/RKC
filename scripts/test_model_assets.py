@@ -107,7 +107,7 @@ class ModelAssetTests(unittest.TestCase):
         self.assertTrue(
             model_assets._matches_priority_process(
                 202,
-                b"python /home/lloyd/erais/train.py",
+                b"python /workspace/priority-project/erais/train.py",
                 b"python3",
                 ancestors,
             )
@@ -402,17 +402,28 @@ class ModelAssetTests(unittest.TestCase):
 
     @mock.patch.object(model_assets.subprocess, "run")
     def test_non_linux_priority_fallback_and_assertion(self, run: mock.Mock) -> None:
+        sentinel = "SUPER_SECRET_PRIORITY_ARGV_SENTINEL"
         run.return_value = subprocess.CompletedProcess(
-            [], 0, stdout=b"123 python /work/erais/train.py\n", stderr=b""
+            [],
+            0,
+            stdout=(
+                f"123 python /private/project/erais/train.py --token {sentinel}\n"
+            ).encode(),
+            stderr=b"",
         )
         with mock.patch.object(model_assets.sys, "platform", "darwin"):
             matches = model_assets.active_priority_processes()
-        self.assertEqual(matches[0][0], 123)
+        self.assertEqual(matches, [(123, "erais")])
         with mock.patch.object(
             model_assets, "active_priority_processes", return_value=matches
         ):
-            with self.assertRaisesRegex(model_assets.PriorityBlocked, "priority"):
+            with self.assertRaisesRegex(
+                model_assets.PriorityBlocked, r"pid=123 class=erais"
+            ) as raised:
                 model_assets.assert_priority_available()
+        diagnostic = str(raised.exception)
+        self.assertNotIn(sentinel, diagnostic)
+        self.assertNotIn("/private/project", diagnostic)
         run.side_effect = FileNotFoundError("pgrep")
         with mock.patch.object(
             model_assets.sys, "platform", "darwin"
@@ -443,7 +454,7 @@ class ModelAssetTests(unittest.TestCase):
                 model_assets, "Path", side_effect=mapped
             ), mock.patch.object(model_assets, "_ancestor_pids", return_value={999}):
                 matches = model_assets.active_priority_processes()
-            self.assertEqual(matches, [(101, "python /work/erais/train.py ")])
+            self.assertEqual(matches, [(101, "erais")])
 
             pid = os.getpid()
             own = proc / str(pid)

@@ -73,7 +73,16 @@ higher_priority=$(
             esac
             case "$ancestry" in
                 *" $process_id "*) ;;
-                *) printf '%s %s\n' "$process_id" "$command_line" ;;
+                *)
+                    normalized_command=$(printf '%s' "$command_line" | tr '[:upper:]' '[:lower:]')
+                    case "$normalized_command" in
+                        *torchrun*) priority_class=torchrun ;;
+                        *lm_eval*) priority_class=lm_eval ;;
+                        *erais*) priority_class=erais ;;
+                        *) priority_class=priority-workload ;;
+                    esac
+                    printf 'pid=%s class=%s\n' "$process_id" "$priority_class"
+                    ;;
             esac
         done
 )

@@ -9,9 +9,11 @@ release/CI jobs provide the execution evidence for the destructive paths.
 """
 from __future__ import annotations
 
+import os
 import re
 import shutil
 import subprocess
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -66,6 +68,43 @@ class ShellWorkflowTests(unittest.TestCase):
                     text=True,
                 )
                 self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_resource_guard_never_reports_priority_process_argv(self) -> None:
+        sentinel = "SUPER_SECRET_PRIORITY_ARGV_SENTINEL"
+        with tempfile.TemporaryDirectory() as temporary:
+            binary_dir = Path(temporary)
+            scripts = {
+                "pgrep": (
+                    "#!/bin/sh\n"
+                    "printf '%s\\n' '999999 python /private/project/erais/train.py "
+                    f"--token {sentinel}'\n"
+                ),
+                "ps": "#!/bin/sh\nprintf '1\\n'\n",
+            }
+            for name in ("systemd-run", "ionice", "nice", "choom"):
+                scripts[name] = "#!/bin/sh\nexit 0\n"
+            for name, body in scripts.items():
+                path = binary_dir / name
+                path.write_text(body, encoding="utf-8")
+                path.chmod(0o700)
+            environment = os.environ.copy()
+            environment["PATH"] = os.pathsep.join(
+                (str(binary_dir), "/usr/bin", "/bin")
+            )
+            result = subprocess.run(
+                ["/bin/sh", str(ROOT / "scripts/with-rkc-limits.sh"), "true"],
+                cwd=ROOT,
+                env=environment,
+                check=False,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                timeout=10,
+            )
+        self.assertEqual(result.returncode, 75, result.stderr)
+        self.assertIn("pid=999999 class=erais", result.stderr)
+        self.assertNotIn(sentinel, result.stderr)
+        self.assertNotIn("/private/project", result.stderr)
 
 
 if __name__ == "__main__":

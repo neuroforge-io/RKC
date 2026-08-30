@@ -50,6 +50,10 @@ No downstream component treats repository text as instructions.
 - model packets contain redacted bounded excerpts;
 - `llama-cli` is invoked directly, not through a shell;
 - model and plugin environments are sanitized;
+- priority admission receipts expose only process IDs and a fixed workload
+  class, never another process's command line, arguments, prompts, or paths;
+- the Python-isolation doctor discards user-manager environment output and
+  reports only a bounded reachability result and exit status;
 - model output must be structured and cite packet evidence;
 - generated HTML uses controlled templates and browser security headers;
 - plugin artifacts and manifests are digest locked;

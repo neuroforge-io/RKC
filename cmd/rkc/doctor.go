@@ -165,14 +165,18 @@ func pythonIsolationCheck(cfg Configuration, configurationErr error) doctorCheck
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	output, err := exec.CommandContext(ctx, paths[1], "--user", "show-environment").CombinedOutput()
+	err := exec.CommandContext(ctx, paths[1], "--user", "show-environment").Run()
 	if err != nil {
 		check.Status = "fail"
-		detail := strings.TrimSpace(string(output))
-		if detail == "" {
-			detail = err.Error()
+		detail := "user-systemd manager is unreachable"
+		if ctx.Err() != nil {
+			detail += ": check timed out"
+		} else if exitError, ok := err.(*exec.ExitError); ok {
+			detail += fmt.Sprintf(": systemctl exited with status %d", exitError.ExitCode())
+		} else {
+			detail += ": systemctl could not be executed"
 		}
-		check.Detail = "user-systemd manager is unreachable: " + detail
+		check.Detail = detail
 		return check
 	}
 	check.Status = "pass"
