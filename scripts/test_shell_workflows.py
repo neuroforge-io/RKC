@@ -17,13 +17,33 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
-SHELL_WORKFLOWS = ("install.sh",) + tuple(
-    path.relative_to(ROOT).as_posix() for path in sorted((ROOT / "scripts").glob("*.sh"))
+SHELL_WORKFLOWS = (
+    "install.sh",
+    "scripts/benchmark-reference.sh",
+    "scripts/build-release-binaries.sh",
+    "scripts/check-portable-builds.sh",
+    "scripts/generate-demo.sh",
+    "scripts/reproducibility.sh",
+    "scripts/reproducible-complete-package.sh",
+    "scripts/self-catalogue.sh",
+    "scripts/smoke-api.sh",
+    "scripts/smoke-git-acquisition.sh",
+    "scripts/smoke-mcp.sh",
+    "scripts/smoke-reference.sh",
+    "scripts/test_install.sh",
+    "scripts/validate-dco.sh",
+    "scripts/verify-release.sh",
+    "scripts/verify-resource-guard.sh",
+    "scripts/with-rkc-limits.sh",
 )
 
 
 class ShellWorkflowTests(unittest.TestCase):
     def test_workflows_exist_have_strict_mode_and_parse(self) -> None:
+        discovered = {"install.sh"} | {
+            path.relative_to(ROOT).as_posix() for path in (ROOT / "scripts").glob("*.sh")
+        }
+        self.assertEqual(set(SHELL_WORKFLOWS), discovered)
         for relative in SHELL_WORKFLOWS:
             with self.subTest(relative=relative):
                 path = ROOT / relative
