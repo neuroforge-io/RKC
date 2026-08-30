@@ -205,6 +205,22 @@ func TestRepairQueriesNeutralizeFiltersControlsAndBounds(t *testing.T) {
 	}
 }
 
+func TestRepairQueriesStayBoundedWithoutCombiningUntrustedSlices(t *testing.T) {
+	result := groundedanswer.Result{Audit: groundedanswer.Audit{
+		RejectedClaims: []modelruntime.RejectedClaim{
+			{Claim: modelruntime.ClaimDraft{Text: "Alpha"}},
+			{Claim: modelruntime.ClaimDraft{Text: "alpha"}},
+			{Claim: modelruntime.ClaimDraft{Text: "\x00"}},
+			{Claim: modelruntime.ClaimDraft{Text: "Beta"}},
+		},
+		UntrustedUnresolvedQuestions: []string{"Gamma", "Delta", "must not be scanned after the bound"},
+	}}
+	want := []string{"Alpha", "Beta", "Gamma"}
+	if got := repairQueries(result); !reflect.DeepEqual(got, want) {
+		t.Fatalf("repairQueries() = %#v, want %#v", got, want)
+	}
+}
+
 func TestAnswerSelectsSemanticAndHybridGraphRetrieval(t *testing.T) {
 	bundle := answerBundle()
 	lexical := search.BuildFromBundle(bundle)

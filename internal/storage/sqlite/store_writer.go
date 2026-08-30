@@ -557,11 +557,11 @@ func writerPrepareCanonicalRecords(
 	bundle rkcmodel.Bundle,
 	coverage rkcmodel.Coverage,
 ) ([]writerCanonicalRecord, error) {
-	records := make([]writerCanonicalRecord, 0,
-		len(bundle.Artifacts)+len(bundle.Nodes)+len(bundle.Edges)+
-			len(bundle.Evidence)+len(bundle.Diagnostics)+len(bundle.Conflicts)+
-			len(bundle.Documents)+len(bundle.Claims)+len(bundle.Paths)+1,
-	)
+	records := make([]writerCanonicalRecord, 0, writerSafePreallocationCapacity(
+		1, len(bundle.Artifacts), len(bundle.Nodes), len(bundle.Edges),
+		len(bundle.Evidence), len(bundle.Diagnostics), len(bundle.Conflicts),
+		len(bundle.Documents), len(bundle.Claims), len(bundle.Paths),
+	))
 	appendFamily := func(family string, id string, ordinal int, value any) error {
 		body, err := json.Marshal(value)
 		if err != nil {
@@ -626,6 +626,18 @@ func writerPrepareCanonicalRecords(
 		return nil, err
 	}
 	return records, nil
+}
+
+func writerSafePreallocationCapacity(lengths ...int) int {
+	maximumInt := int(^uint(0) >> 1)
+	total := 0
+	for _, length := range lengths {
+		if length < 0 || total > maximumInt-length {
+			return 0
+		}
+		total += length
+	}
+	return total
 }
 
 func writerPutBatch[T any](

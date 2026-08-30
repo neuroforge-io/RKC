@@ -262,6 +262,18 @@ func TestSQLiteWriterUsesDurableReaderBundleCeiling(t *testing.T) {
 	}
 }
 
+func TestSQLiteWriterSafePreallocationCapacityRejectsIntegerOverflow(t *testing.T) {
+	maximumInt := int(^uint(0) >> 1)
+	if got := writerSafePreallocationCapacity(1, 2, 3); got != 6 {
+		t.Fatalf("writerSafePreallocationCapacity() = %d, want 6", got)
+	}
+	for _, lengths := range [][]int{{maximumInt, 1}, {1, -1}} {
+		if got := writerSafePreallocationCapacity(lengths...); got != 0 {
+			t.Fatalf("writerSafePreallocationCapacity(%v) = %d, want fail-safe zero", lengths, got)
+		}
+	}
+}
+
 func TestSQLiteWriterListSnapshotsUsesCreatedAtOrdering(t *testing.T) {
 	database := writerTestOpen(t)
 	committedFirst := writerTestBundle("created-later", "repository", "")

@@ -85,7 +85,9 @@ type termFields struct {
 }
 
 func BuildFromBundle(bundle rkcmodel.Bundle) *Index {
-	documents := make([]Document, 0, len(bundle.Nodes)+len(bundle.Artifacts)+len(bundle.Documents))
+	documents := make([]Document, 0, safePreallocationCapacity(
+		len(bundle.Nodes), len(bundle.Artifacts), len(bundle.Documents),
+	))
 	artifactPaths := make(map[string]string, len(bundle.Artifacts))
 	for _, artifact := range bundle.Artifacts {
 		artifactPaths[artifact.ID] = artifact.Path
@@ -132,6 +134,18 @@ func BuildFromBundle(bundle rkcmodel.Bundle) *Index {
 		})
 	}
 	return Build(documents)
+}
+
+func safePreallocationCapacity(lengths ...int) int {
+	maximumInt := int(^uint(0) >> 1)
+	total := 0
+	for _, length := range lengths {
+		if length < 0 || total > maximumInt-length {
+			return 0
+		}
+		total += length
+	}
+	return total
 }
 
 func Build(documents []Document) *Index {

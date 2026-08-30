@@ -58,6 +58,18 @@ func TestBuildFromBundleIndexesCanonicalObjectTypesAndSelectedText(t *testing.T)
 	}
 }
 
+func TestSafePreallocationCapacityRejectsIntegerOverflow(t *testing.T) {
+	maximumInt := int(^uint(0) >> 1)
+	if got := safePreallocationCapacity(3, 5, 7); got != 15 {
+		t.Fatalf("safePreallocationCapacity() = %d, want 15", got)
+	}
+	for _, lengths := range [][]int{{maximumInt, 1}, {1, -1}} {
+		if got := safePreallocationCapacity(lengths...); got != 0 {
+			t.Fatalf("safePreallocationCapacity(%v) = %d, want fail-safe zero", lengths, got)
+		}
+	}
+}
+
 func TestBuildIsDeterministicAndPreservesBoostedFieldTraces(t *testing.T) {
 	t.Parallel()
 

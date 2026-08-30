@@ -241,26 +241,29 @@ func repairQueries(result groundedanswer.Result) []string {
 	if result.Abstention != nil && result.Abstention.Code == groundedanswer.AbstentionInsufficientEvidence {
 		return nil
 	}
-	candidates := make([]string, 0, len(result.Audit.RejectedClaims)+len(result.Audit.UntrustedUnresolvedQuestions))
-	for _, rejected := range result.Audit.RejectedClaims {
-		candidates = append(candidates, rejected.Claim.Text)
-	}
-	candidates = append(candidates, result.Audit.UntrustedUnresolvedQuestions...)
 	seen := map[string]struct{}{}
 	queries := make([]string, 0, maximumRepairQueries)
-	for _, candidate := range candidates {
+	appendCandidate := func(candidate string) bool {
 		query := sanitizeRepairQuery(candidate)
 		if query == "" {
-			continue
+			return false
 		}
 		key := strings.ToLower(query)
 		if _, duplicate := seen[key]; duplicate {
-			continue
+			return false
 		}
 		seen[key] = struct{}{}
 		queries = append(queries, query)
-		if len(queries) == maximumRepairQueries {
-			break
+		return len(queries) == maximumRepairQueries
+	}
+	for _, rejected := range result.Audit.RejectedClaims {
+		if appendCandidate(rejected.Claim.Text) {
+			return queries
+		}
+	}
+	for _, candidate := range result.Audit.UntrustedUnresolvedQuestions {
+		if appendCandidate(candidate) {
+			return queries
 		}
 	}
 	return queries
