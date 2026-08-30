@@ -43,7 +43,7 @@ func TestWriteAllProducesCompleteDeterministicRedactedExport(t *testing.T) {
 			"rkc.manifest.json", "rkc.execution.json", "rkc.export-policy.json", "coverage.json", "bundle.json",
 			"graph/nodes.jsonl", "search/index.json", "docs/README.md", "docs/symbols/function-1.md",
 			"normalized/src/login.go.md", "normalized/redactions.json", "notebooklm/manifest.json",
-			"notebooklm/UPLOAD.md",
+			"notebooklm/UPLOAD.md", "notebooklm/04_evidence_001.md",
 			"site/index.html", "site/styles.css", "site/app.js", "site/data/atlas.json",
 			"site/data/bootstrap.json", "site/data/search.json",
 			"integrations/diagnostics.sarif.json", "integrations/graph.graphml", "integrations/architecture.mmd",
@@ -89,23 +89,39 @@ func TestWriteAllProducesCompleteDeterministicRedactedExport(t *testing.T) {
 			t.Fatal(err)
 		}
 		var notebookManifest struct {
-			SourceCount    int   `json:"source_count"`
-			SourceBytes    int64 `json:"source_bytes"`
-			MaxSourceBytes int64 `json:"max_source_bytes"`
+			GeneratedFiles []string `json:"generated_files"`
+			SourceCount    int      `json:"source_count"`
+			SourceBytes    int64    `json:"source_bytes"`
+			MaxSourceBytes int64    `json:"max_source_bytes"`
 			SourceFiles    []struct {
-				Path  string `json:"path"`
-				Bytes int64  `json:"bytes"`
+				Path   string `json:"path"`
+				Bytes  int64  `json:"bytes"`
+				SHA256 string `json:"sha256"`
 			} `json:"source_files"`
-			UploadGuide string `json:"upload_guide"`
+			LicenseIncluded bool   `json:"license_included"`
+			UploadGuide     string `json:"upload_guide"`
 		}
 		if err := json.Unmarshal(notebookManifestData, &notebookManifest); err != nil {
 			t.Fatal(err)
 		}
-		if notebookManifest.SourceCount != len(notebookManifest.SourceFiles) || notebookManifest.SourceCount < 4 || notebookManifest.SourceBytes <= 0 || notebookManifest.MaxSourceBytes <= 0 || notebookManifest.UploadGuide != "UPLOAD.md" {
+		if notebookManifest.SourceCount != len(notebookManifest.SourceFiles) || notebookManifest.SourceCount < 5 || notebookManifest.SourceBytes <= 0 || notebookManifest.MaxSourceBytes <= 0 || notebookManifest.UploadGuide != "UPLOAD.md" || notebookManifest.LicenseIncluded {
 			t.Fatalf("invalid NotebookLM manifest: %+v", notebookManifest)
 		}
+		for index, sourceFile := range notebookManifest.SourceFiles {
+			data, err := os.ReadFile(filepath.Join(output, "notebooklm", sourceFile.Path))
+			if err != nil {
+				t.Fatal(err)
+			}
+			digest := sha256.Sum256(data)
+			if sourceFile.Bytes != int64(len(data)) || sourceFile.SHA256 != hex.EncodeToString(digest[:]) || (index > 0 && notebookManifest.SourceFiles[index-1].Path >= sourceFile.Path) {
+				t.Fatalf("invalid NotebookLM source inventory entry: %+v", sourceFile)
+			}
+		}
+		if strings.Join(notebookManifest.GeneratedFiles, "|") != "00_repository_overview.md|01_coverage_and_diagnostics.md|02_symbols_*.md|03_relationships_*.md|04_evidence_*.md|UPLOAD.md" {
+			t.Fatalf("unexpected NotebookLM generated-file order: %v", notebookManifest.GeneratedFiles)
+		}
 		guide, err := os.ReadFile(filepath.Join(output, "notebooklm", "UPLOAD.md"))
-		if err != nil || !bytes.Contains(guide, []byte("Recommended upload order")) || !bytes.Contains(guide, []byte(markdownText(bundle.Snapshot.ID))) || !bytes.Contains(guide, []byte("NeuroForgeIO")) || !bytes.Contains(guide, []byte("MIT License")) {
+		if err != nil || !bytes.Contains(guide, []byte("Recommended upload order")) || !bytes.Contains(guide, []byte(markdownText(bundle.Snapshot.ID))) || !bytes.Contains(guide, []byte("NeuroForgeIO")) || !bytes.Contains(guide, []byte("MIT License")) || !bytes.Contains(guide, []byte("No admitted top-level regular text artifact")) || !bytes.Contains(guide, []byte("04_evidence_*.md")) {
 			t.Fatalf("invalid NotebookLM upload guide: %q (error %v)", guide, err)
 		}
 		overview, err := os.ReadFile(filepath.Join(output, "notebooklm", "00_repository_overview.md"))
@@ -117,6 +133,10 @@ func TestWriteAllProducesCompleteDeterministicRedactedExport(t *testing.T) {
 		symbolPack, err := os.ReadFile(filepath.Join(output, "notebooklm", "02_symbols_001.md"))
 		if err != nil || bytes.Count(symbolPack, []byte(untrustedRepositoryDataNotice)) != 1 {
 			t.Fatalf("NotebookLM symbol pack trust notice count = %d (error %v)", bytes.Count(symbolPack, []byte(untrustedRepositoryDataNotice)), err)
+		}
+		evidencePack, err := os.ReadFile(filepath.Join(output, "notebooklm", "04_evidence_001.md"))
+		if err != nil || bytes.Count(evidencePack, []byte(untrustedRepositoryDataNotice)) != 1 || !bytes.Contains(evidencePack, []byte("Evidence ID: evidence\\-1")) {
+			t.Fatalf("invalid NotebookLM evidence pack: %q (error %v)", evidencePack, err)
 		}
 	}
 	var firstManifest, secondManifest exportManifest
@@ -221,7 +241,7 @@ func TestExportFormattingAndIntegrationHelpers(t *testing.T) {
 	if overview := repositoryOverview(bundle, coverage); !strings.Contains(overview, "Repository atlas") || !strings.Contains(overview, "Provenance") || !strings.Contains(overview, bundle.Snapshot.Git.Commit) {
 		t.Fatalf("overview = %q", overview)
 	}
-	if overview := notebookRepositoryOverview(bundle, coverage); !strings.Contains(overview, bundle.Snapshot.Git.Commit) {
+	if overview := notebookRepositoryOverview(bundle, coverage); !strings.Contains(overview, bundle.Snapshot.Git.Commit) || !strings.Contains(overview, "Top-level areas") || !strings.Contains(overview, "Bounded public-surface sample") || !strings.Contains(overview, markdownText("fixture.Login")) || strings.Contains(overview, "repository purpose") {
 		t.Fatalf("NotebookLM overview omitted commit provenance: %q", overview)
 	}
 	if report := coverageMarkdown(coverage); !strings.Contains(report, "Coverage and confidence") {
@@ -280,7 +300,12 @@ func TestNotebookSourceInventoryIsSortedAndRejectsLinks(t *testing.T) {
 		t.Fatal(err)
 	}
 	sources, total, max, err := notebookSourceInventory(directory)
-	if err != nil || len(sources) != 2 || sources[0].Path != "00_repository_overview.md" || sources[1].Path != "02_symbols_001.md" || total != 6 || max != 3 {
+	oneDigest := sha256.Sum256([]byte("one"))
+	twoDigest := sha256.Sum256([]byte("two"))
+	if err != nil || len(sources) != 2 ||
+		sources[0].Path != "00_repository_overview.md" || sources[0].SHA256 != hex.EncodeToString(oneDigest[:]) ||
+		sources[1].Path != "02_symbols_001.md" || sources[1].SHA256 != hex.EncodeToString(twoDigest[:]) ||
+		total != 6 || max != 3 {
 		t.Fatalf("inventory = %+v total=%d max=%d err=%v", sources, total, max, err)
 	}
 	if err := os.Symlink(filepath.Join(directory, "00_repository_overview.md"), filepath.Join(directory, "linked.md")); err != nil {
@@ -288,6 +313,150 @@ func TestNotebookSourceInventoryIsSortedAndRejectsLinks(t *testing.T) {
 	}
 	if _, _, _, err := notebookSourceInventory(directory); err == nil || !strings.Contains(err.Error(), "not a regular file") {
 		t.Fatalf("symlink inventory error = %v", err)
+	}
+}
+
+func TestNotebookEvidencePacksResolveEveryFieldAndRedactDetail(t *testing.T) {
+	t.Parallel()
+	secret := "sk_live_" + "0123456789abcdef0123456789"
+	bundle := model.Bundle{Evidence: []model.Evidence{
+		{
+			ID: "z-evidence", Kind: "runtime_observed", Method: "trace", Confidence: 0.625,
+			Tool: "runner", ToolVersion: "2.1", InputDigest: "sha256:z", Detail: "plain detail",
+			Attributes: map[string]any{"forbidden": "ATTRIBUTE_SENTINEL"},
+		},
+		{
+			ID: "a-evidence", Kind: "syntax_inferred", Method: "go.ast.call", Confidence: 0.875,
+			Source: &model.SourceRange{
+				ArtifactID: "artifact-a", Path: "src/a.go", StartByte: 4, EndByte: 18,
+				StartLine: 2, EndLine: 3, StartColumn: 1, EndColumn: 7, Anchor: "call-site",
+			},
+			Tool: "goast", ToolVersion: "1.4", InputDigest: "sha256:a",
+			Detail:     "repository detail api_key=" + secret,
+			Attributes: map[string]any{"forbidden": "ATTRIBUTE_SENTINEL"},
+		},
+	}}
+	directory := t.TempDir()
+	if err := writeNotebookEvidencePacks(directory, bundle, 1_000_000); err != nil {
+		t.Fatal(err)
+	}
+	pack, err := os.ReadFile(filepath.Join(directory, "04_evidence_001.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first, second := bytes.Index(pack, []byte("Evidence: a\\-evidence")), bytes.Index(pack, []byte("Evidence: z\\-evidence")); first < 0 || second <= first {
+		t.Fatalf("evidence records are not ID-sorted:\n%s", pack)
+	}
+	for _, expected := range []string{
+		"Evidence ID: a\\-evidence",
+		"Kind: syntax\\_inferred",
+		"Method: go\\.ast\\.call",
+		"Confidence: 0.875",
+		"Tool: goast",
+		"Tool version: 1\\.4",
+		"Input digest: sha256:a",
+		"Source artifact ID: artifact\\-a",
+		"Source path: src/a\\.go",
+		"Source bytes: 4-18 (half-open)",
+		"Source lines: 2-3 (one-based)",
+		"Source columns: 1-7 (zero-based)",
+		"Source anchor: call\\-site",
+		"Source range: not recorded",
+		"Repository-provided evidence detail (secret-redacted)",
+	} {
+		if !bytes.Contains(pack, []byte(expected)) {
+			t.Errorf("evidence pack lacks %q:\n%s", expected, pack)
+		}
+	}
+	if bytes.Count(pack, []byte("- Evidence ID:")) != len(bundle.Evidence) || bytes.Contains(pack, []byte(secret)) || !bytes.Contains(pack, []byte("***")) || bytes.Contains(pack, []byte("ATTRIBUTE_SENTINEL")) || bytes.Contains(pack, []byte("Attributes")) {
+		t.Fatalf("evidence resolution or projection boundary failed:\n%s", pack)
+	}
+}
+
+func TestNotebookLicensePacksAreVerifiedRedactedAndOrdered(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	secret := "sk_live_" + "abcdef0123456789abcdef0123"
+	licenseData := []byte("MIT terms\napi_key=" + secret + "\n")
+	noticeData := []byte("Third-party notice\n")
+	nestedData := []byte("Nested terms must not be promoted.\n")
+	for path, data := range map[string][]byte{
+		"LICENSE": licenseData, "NOTICE.md": noticeData, "docs/COPYING": nestedData,
+	} {
+		target := filepath.Join(root, filepath.FromSlash(path))
+		if err := os.MkdirAll(filepath.Dir(target), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(target, data, 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	bundle := model.Bundle{Artifacts: []model.Artifact{
+		notebookArtifact("NOTICE.md", noticeData, true, "text"),
+		notebookArtifact("docs/COPYING", nestedData, true, "text"),
+		notebookArtifact("LICENSE", licenseData, true, "text"),
+		notebookArtifact("COPYING.bin", []byte{0}, false, "binary"),
+	}}
+	output := filepath.Join(t.TempDir(), "atlas")
+	if err := writeNotebookBundle(bundle, model.BuildCoverage(bundle), Options{Root: root, Output: output, NotebookMaxSize: 1_000_000}); err != nil {
+		t.Fatal(err)
+	}
+	directory := filepath.Join(output, "notebooklm")
+	pack, err := os.ReadFile(filepath.Join(directory, "05_license_and_attribution_001.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if licenseIndex, noticeIndex := bytes.Index(pack, []byte("## LICENSE")), bytes.Index(pack, []byte("## NOTICE\\.md")); licenseIndex < 0 || noticeIndex <= licenseIndex {
+		t.Fatalf("license records are not path-sorted:\n%s", pack)
+	}
+	if !bytes.Contains(pack, []byte("MIT terms")) || !bytes.Contains(pack, []byte("Third-party notice")) || bytes.Contains(pack, nestedData) || bytes.Contains(pack, []byte(secret)) || !bytes.Contains(pack, []byte("***")) || bytes.Count(pack, []byte(untrustedRepositoryDataNotice)) != 1 {
+		t.Fatalf("license inclusion or redaction boundary failed:\n%s", pack)
+	}
+	guide, err := os.ReadFile(filepath.Join(directory, "UPLOAD.md"))
+	if err != nil || !bytes.Contains(guide, []byte("Verified admitted top-level license")) || !bytes.Contains(guide, []byte("05_license_and_attribution_*.md")) {
+		t.Fatalf("license upload guidance = %q, error %v", guide, err)
+	}
+	var manifest struct {
+		GeneratedFiles  []string `json:"generated_files"`
+		LicenseIncluded bool     `json:"license_included"`
+	}
+	readExportJSON(t, filepath.Join(directory, "manifest.json"), &manifest)
+	if !manifest.LicenseIncluded || strings.Join(manifest.GeneratedFiles, "|") != "00_repository_overview.md|01_coverage_and_diagnostics.md|02_symbols_*.md|03_relationships_*.md|04_evidence_*.md|05_license_and_attribution_*.md|UPLOAD.md" {
+		t.Fatalf("license manifest = %+v", manifest)
+	}
+
+	if err := os.WriteFile(filepath.Join(root, "LICENSE"), []byte("changed after inventory\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := writeNotebookLicensePacks(t.TempDir(), bundle, Options{Root: root, NotebookMaxSize: 1_000_000}); err == nil || !strings.Contains(err.Error(), "content changed after inventory") {
+		t.Fatalf("tampered license verification error = %v", err)
+	}
+}
+
+func TestNotebookBundleOmitsLicensePackAndStatesAbsence(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	source := []byte("package fixture\n")
+	bundle := exportFixture(root, "source.go", source)
+	output := filepath.Join(t.TempDir(), "atlas")
+	if err := writeNotebookBundle(bundle, model.BuildCoverage(bundle), Options{Root: root, Output: output, NotebookMaxSize: 1_000_000}); err != nil {
+		t.Fatal(err)
+	}
+	directory := filepath.Join(output, "notebooklm")
+	matches, err := filepath.Glob(filepath.Join(directory, "05_license_and_attribution_*.md"))
+	if err != nil || len(matches) != 0 {
+		t.Fatalf("unexpected absent-license packs: %v, error %v", matches, err)
+	}
+	guide, err := os.ReadFile(filepath.Join(directory, "UPLOAD.md"))
+	if err != nil || !bytes.Contains(guide, []byte("No admitted top-level regular text artifact")) {
+		t.Fatalf("missing absent-license guidance: %q, error %v", guide, err)
+	}
+	manifestData, err := os.ReadFile(filepath.Join(directory, "manifest.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bytes.Contains(manifestData, []byte("05_license_and_attribution_*.md")) || !bytes.Contains(manifestData, []byte(`"license_included": false`)) {
+		t.Fatalf("absent-license manifest is misleading: %s", manifestData)
 	}
 }
 
@@ -714,6 +883,15 @@ func exportFixture(root, artifactPath string, source []byte) model.Bundle {
 	return model.Bundle{
 		Snapshot:  model.Snapshot{SchemaVersion: model.SchemaVersion, ID: "snapshot-1", RepositoryID: repository.ID, CreatedAt: time.Unix(1, 0).UTC(), Status: "committed", RootName: "fixture", RootPath: root, ContentDigest: "digest", Git: model.GitInfo{Commit: strings.Repeat("a", 40)}, Tool: model.ToolInfo{Name: "rkc", Version: "test"}},
 		Artifacts: []model.Artifact{artifact}, Nodes: []model.Node{repository, node}, Edges: []model.Edge{edge}, Evidence: []model.Evidence{evidence}, Diagnostics: []model.Diagnostic{diagnostic},
+	}
+}
+
+func notebookArtifact(path string, data []byte, text bool, status string) model.Artifact {
+	digest := sha256.Sum256(data)
+	return model.Artifact{
+		ID:   "artifact-" + strings.NewReplacer("/", "-", ".", "-").Replace(strings.ToLower(path)),
+		Path: path, Kind: "file", Language: "text", MediaType: "text/plain",
+		SHA256: hex.EncodeToString(digest[:]), SizeBytes: int64(len(data)), Text: text, Status: status,
 	}
 }
 

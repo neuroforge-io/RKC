@@ -13,6 +13,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/neuroforge-io/RKC/internal/commandcatalog"
@@ -388,8 +389,82 @@ func documentationOverview(bundle model.Bundle, coverage model.Coverage) string 
 }
 
 func notebookRepositoryOverview(bundle model.Bundle, coverage model.Coverage) string {
-	return repositoryOverview(bundle, coverage) +
-		"\nContinue with [`01_coverage_and_diagnostics.md`](01_coverage_and_diagnostics.md), then use the `02_symbols_*.md` and `03_relationships_*.md` packs for cited detail.\n"
+	var b strings.Builder
+	b.WriteString(repositoryOverview(bundle, coverage))
+	b.WriteString("\n## Top-level areas\n\n")
+	b.WriteString("These counts are derived from catalogued artifact records, including explicit exclusions. They describe repository layout, not inferred purpose.\n\n")
+	type areaCount struct {
+		name  string
+		count int
+	}
+	counts := map[string]int{}
+	for _, artifact := range bundle.Artifacts {
+		area := "[repository root]"
+		if separator := strings.IndexByte(artifact.Path, '/'); separator >= 0 {
+			area = artifact.Path[:separator]
+		}
+		counts[area]++
+	}
+	areas := make([]areaCount, 0, len(counts))
+	for name, count := range counts {
+		areas = append(areas, areaCount{name: name, count: count})
+	}
+	sort.Slice(areas, func(i, j int) bool {
+		if areas[i].count != areas[j].count {
+			return areas[i].count > areas[j].count
+		}
+		return areas[i].name < areas[j].name
+	})
+	const areaLimit = 32
+	b.WriteString("| Area | Artifact records |\n|---|---:|\n")
+	visibleAreas := min(len(areas), areaLimit)
+	for _, area := range areas[:visibleAreas] {
+		fmt.Fprintf(&b, "| %s | %d |\n", markdownCell(area.name), area.count)
+	}
+	if visibleAreas < len(areas) {
+		omittedArtifacts := 0
+		for _, area := range areas[visibleAreas:] {
+			omittedArtifacts += area.count
+		}
+		fmt.Fprintf(&b, "\n%d additional top-level areas containing %d artifacts are omitted from this bounded overview.\n", len(areas)-visibleAreas, omittedArtifacts)
+	}
+
+	b.WriteString("\n## Bounded public-surface sample\n\n")
+	publicNodes := make([]model.Node, 0)
+	for _, node := range bundle.Nodes {
+		if node.PublicSurface {
+			publicNodes = append(publicNodes, node)
+		}
+	}
+	sort.Slice(publicNodes, func(i, j int) bool {
+		left := firstNonEmpty(publicNodes[i].QualifiedName, publicNodes[i].Name, publicNodes[i].ID)
+		right := firstNonEmpty(publicNodes[j].QualifiedName, publicNodes[j].Name, publicNodes[j].ID)
+		if left != right {
+			return left < right
+		}
+		return publicNodes[i].ID < publicNodes[j].ID
+	})
+	if len(publicNodes) == 0 {
+		b.WriteString("No nodes were marked as public surface by the configured extractors.\n")
+	} else {
+		const publicSurfaceLimit = 24
+		visibleNodes := min(len(publicNodes), publicSurfaceLimit)
+		b.WriteString("| Symbol | Kind | Source | Node ID |\n|---|---|---|---|\n")
+		for _, node := range publicNodes[:visibleNodes] {
+			source := "not recorded"
+			if node.Source != nil {
+				source = fmt.Sprintf("%s:%d-%d", node.Source.Path, node.Source.StartLine, node.Source.EndLine)
+			}
+			fmt.Fprintf(&b, "| %s | %s | %s | %s |\n",
+				markdownCell(firstNonEmpty(node.QualifiedName, node.Name, node.ID)),
+				markdownCell(node.Kind), markdownCell(source), markdownCell(node.ID))
+		}
+		if visibleNodes < len(publicNodes) {
+			fmt.Fprintf(&b, "\n%d additional public-surface nodes are omitted from this bounded sample.\n", len(publicNodes)-visibleNodes)
+		}
+	}
+	b.WriteString("\nContinue with [`01_coverage_and_diagnostics.md`](01_coverage_and_diagnostics.md), then use the `02_symbols_*.md`, `03_relationships_*.md`, and `04_evidence_*.md` packs for cited detail. License and notice packs appear as `05_license_and_attribution_*.md` only when verified top-level artifacts were admitted.\n")
+	return b.String()
 }
 
 func coverageMarkdown(c model.Coverage) string {
@@ -515,21 +590,34 @@ func writeNotebookBundle(bundle model.Bundle, coverage model.Coverage, opts Opti
 	if err := writeNotebookRelationPacks(dir, bundle, opts.NotebookMaxSize); err != nil {
 		return err
 	}
+	if err := writeNotebookEvidencePacks(dir, bundle, opts.NotebookMaxSize); err != nil {
+		return err
+	}
+	licenseIncluded, err := writeNotebookLicensePacks(dir, bundle, opts)
+	if err != nil {
+		return err
+	}
 	sources, totalBytes, maxBytes, err := notebookSourceInventory(dir)
 	if err != nil {
 		return err
 	}
-	if err := os.WriteFile(filepath.Join(dir, "UPLOAD.md"), []byte(notebookUploadGuide(bundle, sources, totalBytes, maxBytes, opts.NotebookMaxSize)), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "UPLOAD.md"), []byte(notebookUploadGuide(bundle, sources, totalBytes, maxBytes, opts.NotebookMaxSize, licenseIncluded)), 0o644); err != nil {
 		return err
 	}
+	generatedFiles := []string{"00_repository_overview.md", "01_coverage_and_diagnostics.md", "02_symbols_*.md", "03_relationships_*.md", "04_evidence_*.md"}
+	if licenseIncluded {
+		generatedFiles = append(generatedFiles, "05_license_and_attribution_*.md")
+	}
+	generatedFiles = append(generatedFiles, "UPLOAD.md")
 	manifest := map[string]any{
 		"snapshot_id":          bundle.Snapshot.ID,
-		"generated_files":      []string{"00_repository_overview.md", "01_coverage_and_diagnostics.md", "02_symbols_*.md", "03_relationships_*.md", "UPLOAD.md"},
+		"generated_files":      generatedFiles,
 		"packing_target_bytes": opts.NotebookMaxSize,
 		"source_count":         len(sources),
 		"source_bytes":         totalBytes,
 		"max_source_bytes":     maxBytes,
 		"source_files":         sources,
+		"license_included":     licenseIncluded,
 		"upload_guide":         "UPLOAD.md",
 		"excluded_files":       []string{"manifest.json", "UPLOAD.md"},
 		"note":                 "Upload limits vary by NotebookLM plan and can change independently of this exporter; UPLOAD.md explains the deterministic source order and trust boundary.",
@@ -538,8 +626,9 @@ func writeNotebookBundle(bundle model.Bundle, coverage model.Coverage, opts Opti
 }
 
 type notebookSource struct {
-	Path  string `json:"path"`
-	Bytes int64  `json:"bytes"`
+	Path   string `json:"path"`
+	Bytes  int64  `json:"bytes"`
+	SHA256 string `json:"sha256"`
 }
 
 func notebookSourceInventory(dir string) ([]notebookSource, int64, int64, error) {
@@ -554,15 +643,13 @@ func notebookSourceInventory(dir string) ([]notebookSource, int64, int64, error)
 		if entry.IsDir() || strings.EqualFold(entry.Name(), "UPLOAD.md") || filepath.Ext(entry.Name()) != ".md" {
 			continue
 		}
-		info, err := entry.Info()
+		data, info, err := readStableRegularFile(filepath.Join(dir, entry.Name()))
 		if err != nil {
-			return nil, 0, 0, fmt.Errorf("inspect NotebookLM source %s: %w", entry.Name(), err)
-		}
-		if !info.Mode().IsRegular() {
-			return nil, 0, 0, fmt.Errorf("NotebookLM source is not a regular file: %s", entry.Name())
+			return nil, 0, 0, fmt.Errorf("read NotebookLM source %s: %w", entry.Name(), err)
 		}
 		size := info.Size()
-		sources = append(sources, notebookSource{Path: entry.Name(), Bytes: size})
+		digest := sha256.Sum256(data)
+		sources = append(sources, notebookSource{Path: entry.Name(), Bytes: size, SHA256: hex.EncodeToString(digest[:])})
 		totalBytes += size
 		if size > maxBytes {
 			maxBytes = size
@@ -572,16 +659,62 @@ func notebookSourceInventory(dir string) ([]notebookSource, int64, int64, error)
 	return sources, totalBytes, maxBytes, nil
 }
 
-func notebookUploadGuide(bundle model.Bundle, sources []notebookSource, totalBytes, maxBytes int64, target int) string {
+func readStableRegularFile(path string) ([]byte, os.FileInfo, error) {
+	before, err := os.Lstat(path)
+	if err != nil {
+		return nil, nil, err
+	}
+	if !before.Mode().IsRegular() || before.Mode()&os.ModeSymlink != 0 {
+		return nil, nil, errors.New("NotebookLM source is not a regular file or is a symlink")
+	}
+	file, err := os.Open(path)
+	if err != nil {
+		return nil, nil, err
+	}
+	defer file.Close()
+	openedBefore, err := file.Stat()
+	if err != nil {
+		return nil, nil, err
+	}
+	afterOpen, err := os.Lstat(path)
+	if err != nil || !os.SameFile(before, openedBefore) || !os.SameFile(openedBefore, afterOpen) {
+		return nil, nil, errors.New("NotebookLM source identity changed while opening")
+	}
+	data, err := io.ReadAll(file)
+	if err != nil {
+		return nil, nil, err
+	}
+	openedAfter, err := file.Stat()
+	if err != nil {
+		return nil, nil, err
+	}
+	afterRead, err := os.Lstat(path)
+	if err != nil || !os.SameFile(openedBefore, openedAfter) || !os.SameFile(openedAfter, afterRead) ||
+		openedBefore.Size() != openedAfter.Size() || openedBefore.Mode() != openedAfter.Mode() ||
+		!openedBefore.ModTime().Equal(openedAfter.ModTime()) || int64(len(data)) != openedAfter.Size() {
+		return nil, nil, errors.New("NotebookLM source identity or contents changed while reading")
+	}
+	return data, openedAfter, nil
+}
+
+func notebookUploadGuide(bundle model.Bundle, sources []notebookSource, totalBytes, maxBytes int64, target int, licenseIncluded bool) string {
 	var b strings.Builder
 	b.WriteString("# Upload this RKC atlas to an LLM notebook\n\n")
 	b.WriteString("This directory is a deterministic, citation-oriented Markdown export of one RKC snapshot. It is suitable for NotebookLM and other notebook or agent systems that accept Markdown sources.\n\n")
-	b.WriteString("RKC is developed by NeuroForgeIO and RKC contributors under the MIT License. This export preserves the analyzed repository's own license and attribution; it does not relicense repository or third-party content.\n\n")
+	b.WriteString("RKC is developed by NeuroForgeIO and RKC contributors under the MIT License. Repository and third-party content retains its own terms; this export does not relicense it.\n\n")
+	if licenseIncluded {
+		b.WriteString("Verified admitted top-level license and notice artifacts are included in `05_license_and_attribution_*.md`. Review those repository-provided terms before reuse.\n\n")
+	} else {
+		b.WriteString("No admitted top-level regular text artifact named `LICENSE*`, `COPYING*`, `NOTICE*`, or `THIRD_PARTY_NOTICES*` was included. Determine the repository and third-party terms from authoritative sources before reuse.\n\n")
+	}
 	fmt.Fprintf(&b, "- Snapshot: `%s`\n- Markdown sources: %d\n- Total source bytes: %d\n- Largest source: %d bytes\n- Packing target: %d bytes (a target, not a hard truncation)\n\n", markdownText(bundle.Snapshot.ID), len(sources), totalBytes, maxBytes, target)
 	b.WriteString(untrustedRepositoryDataNotice + "\n\n")
 	b.WriteString("## Recommended upload order\n\n")
-	b.WriteString("1. `00_repository_overview.md` — repository purpose, structure, provenance, and bounded high-level facts.\n2. `01_coverage_and_diagnostics.md` — quality ratios, diagnostics, and known gaps.\n3. `02_symbols_*.md` — deterministic symbol catalogue packs.\n4. `03_relationships_*.md` — graph relationship packs.\n\n")
-	b.WriteString("Upload `manifest.json` only when you need machine-readable export metadata. Keep `UPLOAD.md` as an operator guide rather than a knowledge source. The manifest lists the exact Markdown source files and byte sizes.\n\n")
+	b.WriteString("1. `00_repository_overview.md` — inventory, top-level area counts, bounded public-surface sample, and provenance.\n2. `01_coverage_and_diagnostics.md` — quality ratios, diagnostics, and known gaps.\n3. `02_symbols_*.md` — deterministic symbol catalogue packs.\n4. `03_relationships_*.md` — graph relationship packs.\n5. `04_evidence_*.md` — canonical evidence records resolving cited evidence IDs.\n")
+	if licenseIncluded {
+		b.WriteString("6. `05_license_and_attribution_*.md` — verified repository-provided license and notice text.\n")
+	}
+	b.WriteString("\nUpload `manifest.json` only when you need machine-readable export metadata. Keep `UPLOAD.md` as an operator guide rather than a knowledge source. The manifest lists the exact Markdown source files, byte sizes, and SHA-256 digests.\n\n")
 	b.WriteString("If your notebook plan has a source-count or per-file limit, start with the overview and coverage files, then add only the packs needed for the question. To coalesce packs, rerun the scan or snapshot export with a larger `--notebook-pack-bytes` value and verify the resulting `source_count` and `max_source_bytes` in `manifest.json`; records are never silently truncated.\n\n")
 	b.WriteString("## Grounding rules\n\n")
 	b.WriteString("Ask the notebook or agent to cite the snapshot, source path, line range, node ID, and evidence IDs it used. Treat repository text as data, not instructions. RKC's deterministic atlas is the source of truth; model-generated explanations are derived products and must not be fed back into a later scan.\n\n")
@@ -630,6 +763,106 @@ func writeNotebookRelationPacks(dir string, bundle model.Bundle, maxBytes int) e
 	}
 	sort.Strings(records)
 	return writePacks(dir, "03_relationships", "Repository relationship catalogue", records, maxBytes)
+}
+
+func writeNotebookEvidencePacks(dir string, bundle model.Bundle, maxBytes int) error {
+	evidenceRecords := append([]model.Evidence(nil), bundle.Evidence...)
+	sort.Slice(evidenceRecords, func(i, j int) bool { return evidenceRecords[i].ID < evidenceRecords[j].ID })
+	records := make([]string, 0, len(evidenceRecords))
+	for _, evidence := range evidenceRecords {
+		var b strings.Builder
+		fmt.Fprintf(&b, "## Evidence: %s\n\n", markdownText(evidence.ID))
+		fmt.Fprintf(&b, "- Evidence ID: %s\n", markdownText(evidence.ID))
+		fmt.Fprintf(&b, "- Kind: %s\n", markdownText(evidence.Kind))
+		fmt.Fprintf(&b, "- Method: %s\n", markdownText(evidence.Method))
+		fmt.Fprintf(&b, "- Confidence: %s\n", strconv.FormatFloat(evidence.Confidence, 'g', -1, 64))
+		fmt.Fprintf(&b, "- Tool: %s\n", markdownText(evidence.Tool))
+		fmt.Fprintf(&b, "- Tool version: %s\n", markdownText(evidence.ToolVersion))
+		fmt.Fprintf(&b, "- Input digest: %s\n", markdownText(evidence.InputDigest))
+		if evidence.Source == nil {
+			b.WriteString("- Source range: not recorded\n")
+		} else {
+			fmt.Fprintf(&b, "- Source artifact ID: %s\n", markdownText(evidence.Source.ArtifactID))
+			fmt.Fprintf(&b, "- Source path: %s\n", markdownText(evidence.Source.Path))
+			fmt.Fprintf(&b, "- Source bytes: %d-%d (half-open)\n", evidence.Source.StartByte, evidence.Source.EndByte)
+			fmt.Fprintf(&b, "- Source lines: %d-%d (one-based)\n", evidence.Source.StartLine, evidence.Source.EndLine)
+			fmt.Fprintf(&b, "- Source columns: %d-%d (zero-based)\n", evidence.Source.StartColumn, evidence.Source.EndColumn)
+			if evidence.Source.Anchor != "" {
+				fmt.Fprintf(&b, "- Source anchor: %s\n", markdownText(evidence.Source.Anchor))
+			}
+		}
+		if evidence.Detail != "" {
+			detail := []byte(evidence.Detail)
+			detail = secrets.Redact(detail, secrets.Scan(detail))
+			b.WriteString("\nRepository-provided evidence detail (secret-redacted):\n\n")
+			b.WriteString(markdownFencedBlock(string(detail), "text"))
+		}
+		records = append(records, b.String())
+	}
+	return writePacks(dir, "04_evidence", "Canonical evidence catalogue", records, maxBytes)
+}
+
+func writeNotebookLicensePacks(dir string, bundle model.Bundle, opts Options) (bool, error) {
+	artifacts := make([]model.Artifact, 0)
+	for _, artifact := range bundle.Artifacts {
+		if isNotebookLicenseArtifact(artifact) {
+			artifacts = append(artifacts, artifact)
+		}
+	}
+	sort.Slice(artifacts, func(i, j int) bool {
+		if artifacts[i].Path != artifacts[j].Path {
+			return artifacts[i].Path < artifacts[j].Path
+		}
+		return artifacts[i].ID < artifacts[j].ID
+	})
+	records := make([]string, 0)
+	for _, artifact := range artifacts {
+		data, err := readVerifiedArtifact(opts.Root, artifact)
+		if err != nil {
+			return false, fmt.Errorf("read NotebookLM license source %q: %w", artifact.Path, err)
+		}
+		findings := secrets.Scan(data)
+		if !opts.UnsafeIncludeSecrets {
+			data = secrets.Redact(data, findings)
+		}
+		digest := sha256.Sum256(data)
+		var b strings.Builder
+		fmt.Fprintf(&b, "## %s\n\n", markdownText(artifact.Path))
+		fmt.Fprintf(&b, "- Repository path: %s\n", markdownText(artifact.Path))
+		fmt.Fprintf(&b, "- Artifact ID: %s\n", markdownText(artifact.ID))
+		fmt.Fprintf(&b, "- Inventoried SHA-256: %s\n", markdownText(artifact.SHA256))
+		fmt.Fprintf(&b, "- Exported-text SHA-256: %s\n", hex.EncodeToString(digest[:]))
+		fmt.Fprintf(&b, "- Potential secret findings: %d\n", len(findings))
+		fmt.Fprintf(&b, "- Secret redaction applied: %t\n", !opts.UnsafeIncludeSecrets)
+		b.WriteString("\nRepository-provided license or attribution text:\n\n")
+		b.WriteString(markdownFencedBlock(string(data), artifact.Language))
+		records = append(records, b.String())
+	}
+	if len(records) == 0 {
+		return false, nil
+	}
+	if err := writePacks(dir, "05_license_and_attribution", "Repository license and attribution", records, opts.NotebookMaxSize); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+func isNotebookLicenseArtifact(artifact model.Artifact) bool {
+	if !artifact.Text || strings.Contains(artifact.Path, "/") {
+		return false
+	}
+	switch artifact.Status {
+	case "text", "parsed", "syntax_parsed", "semantic_parsed":
+	default:
+		return false
+	}
+	name := strings.ToUpper(artifact.Path)
+	for _, prefix := range []string{"LICENSE", "COPYING", "NOTICE", "THIRD_PARTY_NOTICES"} {
+		if strings.HasPrefix(name, prefix) {
+			return true
+		}
+	}
+	return false
 }
 
 func writePacks(dir, prefix, title string, records []string, maxBytes int) error {

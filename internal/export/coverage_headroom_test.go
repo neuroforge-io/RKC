@@ -43,6 +43,7 @@ func TestCoverageHeadroomWriteAllStageFailures(t *testing.T) {
 		{"notebook diagnostics", "notebooklm/01_coverage_and_diagnostics.md", false},
 		{"notebook symbols", "notebooklm/02_symbols_001.md", false},
 		{"notebook relations", "notebooklm/03_relationships_001.md", false},
+		{"notebook evidence", "notebooklm/04_evidence_001.md", false},
 		{"notebook upload guide", "notebooklm/UPLOAD.md", false},
 		{"notebook manifest", "notebooklm/manifest.json", false},
 		{"site directory", "site", true},
