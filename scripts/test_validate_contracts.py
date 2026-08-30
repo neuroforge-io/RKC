@@ -95,20 +95,21 @@ class ValidateContractsTests(unittest.TestCase):
         namespace = self.validator_namespace()
         validate = namespace["validate_sqlite_migrations"]
         detail = validate()  # type: ignore[operator]
-        self.assertEqual(detail["migration_count"], 4)
-        self.assertEqual(detail["database_schema_version"], "0.4.0")
+        self.assertEqual(detail["migration_count"], 5)
+        self.assertEqual(detail["database_schema_version"], "0.5.0")
         self.assertRegex(detail["manifest_sha256"], r"^[0-9a-f]{64}$")
         self.assertRegex(detail["catalog_sha256"], r"^[0-9a-f]{64}$")
         self.assertEqual(
             detail["publication_contract"],
             {
                 "contract": "transactional-canonical-v2",
-                "journal_migration_count": 4,
+                "journal_migration_count": 5,
                 "canonical_status": "committed",
                 "legacy_projection_status": "complete",
                 "legacy_v02_upgrade_policy": "empty-only-explicit-backfill-required",
                 "publication_compare_and_swap": "enforced",
                 "current_pointer_clear_policy": "forbidden-after-publication",
+                "repository_affinity": "opaque-id-bound-immutable",
             },
         )
 
@@ -276,7 +277,7 @@ class ValidateContractsTests(unittest.TestCase):
         with sqlite_contract_fixture() as root:
 
             def drift_final(document: dict[str, object]) -> None:
-                document["database_schema_version"] = "0.5.0"
+                document["database_schema_version"] = "0.6.0"
 
             expected = rewrite_manifest(root, drift_final)
             with self.assertRaisesRegex(error, "final migration target"):

@@ -48,7 +48,7 @@ SELF_BENCHMARK_EXCLUSIONS = SAFE_DEFAULT_EXCLUSIONS | frozenset(
     }
 )
 SQLITE_MIGRATION_MANIFEST_SHA256 = (
-    "102a6cae08c2b81dff1556ce791cf1396fd9f02dbaf29d71c59e17a67e61d435"
+    "1015fc01a1002875062e7468c137d4d573772542abcc461ac4995786b4dacd73"
 )
 SQLITE_IMMUTABLE_MIGRATION_HISTORY = {
     1: (
@@ -67,8 +67,16 @@ SQLITE_IMMUTABLE_MIGRATION_HISTORY = {
         "publication_compare_and_swap",
         "c75e1bc04038c3385acd15fc370c0a866929d33102885a72b305a1a28d9635fc",
     ),
+    5: (
+        "repository_affinity",
+        "cdcb55ab759aaaa5c9970e4ff0fa328fa0c82f79737be9c6e761e8edb80023c8",
+    ),
 }
-SQLITE_REFERENCE_MIGRATION_APPLIED_AT = "2026-07-22T00:00:00Z"
+SQLITE_REFERENCE_MIGRATION_APPLIED_AT = {
+    3: "2026-07-22T00:00:00Z",
+    4: "2026-07-22T00:00:00Z",
+    5: "2026-08-30T00:00:00Z",
+}
 SQLITE_V02_CONTENT_TABLES = (
     "repositories",
     "snapshots",
@@ -98,7 +106,7 @@ SQLITE_V02_CONTENT_TABLES = (
 SQLITE_PUBLICATION_TABLE_COLUMNS = {
     "repositories": (
         "repository_id",
-        "canonical_origin",
+        "repository_affinity",
         "display_name",
         "created_at",
         "metadata_json",
@@ -185,7 +193,10 @@ SQLITE_PUBLICATION_SCHEMA_OBJECTS = frozenset(
         ("trigger", "repositories_current_snapshot_clear_guard"),
         ("trigger", "repositories_current_snapshot_compare_and_swap_guard"),
         ("trigger", "repositories_current_snapshot_committed_guard"),
+        ("trigger", "repositories_current_snapshot_affinity_guard"),
+        ("trigger", "repositories_current_snapshot_affinity_required_guard"),
         ("trigger", "repositories_current_snapshot_repository_guard"),
+        ("trigger", "repositories_affinity_immutable_guard"),
         ("trigger", "staged_canonical_records_delete_guard"),
         ("trigger", "staged_canonical_records_insert_guard"),
         ("trigger", "staged_canonical_records_update_guard"),
@@ -332,14 +343,21 @@ def validate_sqlite_publication_contract(
             "transactional_publication",
             "0.3.0",
             SQLITE_IMMUTABLE_MIGRATION_HISTORY[3][1],
-            SQLITE_REFERENCE_MIGRATION_APPLIED_AT,
+            SQLITE_REFERENCE_MIGRATION_APPLIED_AT[3],
         ),
         (
             4,
             "publication_compare_and_swap",
             "0.4.0",
             SQLITE_IMMUTABLE_MIGRATION_HISTORY[4][1],
-            SQLITE_REFERENCE_MIGRATION_APPLIED_AT,
+            SQLITE_REFERENCE_MIGRATION_APPLIED_AT[4],
+        ),
+        (
+            5,
+            "repository_affinity",
+            "0.5.0",
+            SQLITE_IMMUTABLE_MIGRATION_HISTORY[5][1],
+            SQLITE_REFERENCE_MIGRATION_APPLIED_AT[5],
         ),
     )
     observed_history = tuple(
@@ -400,7 +418,7 @@ def validate_sqlite_publication_contract(
               version, name, target_schema_version, sha256, applied_at
             ) VALUES (?, ?, ?, ?, ?)
             """,
-            (5, "runtime_entry", "0.5.0", "c" * 64, None),
+            (6, "runtime_entry", "0.6.0", "c" * 64, None),
             "a runtime migration journal entry without an application time",
         )
         connection.execute(
@@ -410,9 +428,9 @@ def validate_sqlite_publication_contract(
             ) VALUES (?, ?, ?, ?, ?)
             """,
             (
-                5,
+                6,
                 "runtime_entry",
-                "0.5.0",
+                "0.6.0",
                 "c" * 64,
                 "2026-01-01T00:00:00Z",
             ),
@@ -424,6 +442,24 @@ def validate_sqlite_publication_contract(
             ) VALUES (?, ?, ?, ?)
             """,
             ("repository-contract", "contract", "2026-01-01T00:00:00Z", "{}"),
+        )
+        connection.execute(
+            """
+            UPDATE repositories
+            SET repository_affinity = repository_id
+            WHERE repository_id = ?
+            """,
+            ("repository-contract",),
+        )
+        expect_sqlite_integrity_rejection(
+            connection,
+            """
+            UPDATE repositories
+            SET repository_affinity = 'different-affinity'
+            WHERE repository_id = ?
+            """,
+            ("repository-contract",),
+            "a repository affinity change after binding",
         )
         expect_sqlite_integrity_rejection(
             connection,
@@ -970,10 +1006,17 @@ def validate_sqlite_publication_contract(
         connection.execute(
             """
             INSERT INTO repositories(
-              repository_id, display_name, created_at, metadata_json
-            ) VALUES (?, ?, ?, ?)
+              repository_id, repository_affinity, display_name,
+              created_at, metadata_json
+            ) VALUES (?, ?, ?, ?, ?)
             """,
-            ("repository-other", "other", "2026-01-01T00:00:00Z", "{}"),
+            (
+                "repository-other",
+                "repository-other",
+                "other",
+                "2026-01-01T00:00:00Z",
+                "{}",
+            ),
         )
         expect_sqlite_integrity_rejection(
             connection,
@@ -989,11 +1032,12 @@ def validate_sqlite_publication_contract(
             connection,
             """
             INSERT INTO repositories(
-              repository_id, display_name, created_at,
-              metadata_json, current_snapshot_id
-            ) VALUES (?, ?, ?, ?, ?)
+              repository_id, repository_affinity, display_name,
+              created_at, metadata_json, current_snapshot_id
+            ) VALUES (?, ?, ?, ?, ?, ?)
             """,
             (
+                "repository-insert-other",
                 "repository-insert-other",
                 "insert-other",
                 "2026-01-01T00:00:00Z",
@@ -1014,6 +1058,7 @@ def validate_sqlite_publication_contract(
         "legacy_v02_upgrade_policy": "empty-only-explicit-backfill-required",
         "publication_compare_and_swap": "enforced",
         "current_pointer_clear_policy": "forbidden-after-publication",
+        "repository_affinity": "opaque-id-bound-immutable",
     }
 
 
@@ -1196,7 +1241,7 @@ def validate_sqlite_migrations(
                         migration["name"],
                         migration["target_schema_version"],
                         migration["sha256"],
-                        SQLITE_REFERENCE_MIGRATION_APPLIED_AT,
+                        SQLITE_REFERENCE_MIGRATION_APPLIED_AT[migration["version"]],
                     ),
                 )
             migrated.commit()
@@ -1490,7 +1535,7 @@ try:
     version = connection.execute(
         "SELECT value FROM schema_meta WHERE key='schema_version'"
     ).fetchone()[0]
-    record("SQLite DDL", version == "0.4.0", f"schema_version={version}")
+    record("SQLite DDL", version == "0.5.0", f"schema_version={version}")
     connection.close()
 except Exception as exc:
     record("SQLite DDL", False, str(exc))
