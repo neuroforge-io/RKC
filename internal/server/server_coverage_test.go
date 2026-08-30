@@ -286,6 +286,9 @@ func TestLiveServerNeverExecutesImportedAtlasJavaScript(t *testing.T) {
 	if !dataset.staticSiteTrusted {
 		t.Fatal("live atlas browser was not regenerated as current-binary code")
 	}
+	if _, ok := dataset.staticSite["data/atlas.json"]; ok {
+		t.Fatal("live atlas browser retained the full static export payload")
+	}
 	requestAsset := func(handler http.Handler, target string) *httptest.ResponseRecorder {
 		t.Helper()
 		response := httptest.NewRecorder()
@@ -297,6 +300,11 @@ func TestLiveServerNeverExecutesImportedAtlasJavaScript(t *testing.T) {
 	}
 	if observed := requestAsset(dataset.Handler(), "/app.js").Body.String(); strings.Contains(observed, importedScript) || !strings.Contains(observed, workbenchBootstrapHeader) {
 		t.Fatal("read-only server executed imported JavaScript instead of current-binary assets")
+	}
+	missingData := httptest.NewRecorder()
+	dataset.Handler().ServeHTTP(missingData, httptest.NewRequest(http.MethodGet, "/data/atlas.json", nil))
+	if missingData.Code != http.StatusNotFound {
+		t.Fatalf("live static atlas status=%d, want %d", missingData.Code, http.StatusNotFound)
 	}
 	workbenchHandler := dataset.HandlerWithWorkbench(&Workbench{})
 	if observed := requestAsset(workbenchHandler, "/app.js").Body.String(); strings.Contains(observed, importedScript) || !strings.Contains(observed, workbenchBootstrapHeader) {

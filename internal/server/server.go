@@ -144,9 +144,10 @@ func Load(outputRoot string) (*Dataset, error) {
 	// adversarial index from returning objects absent from the validated graph.
 	searchIndex := search.BuildFromBundle(bundle)
 	// Persisted site/* files are a portable export projection, not authenticated
-	// publisher code. A live server always regenerates executable browser assets
-	// from the current binary and the validated canonical bundle.
-	browserAssets, err := rkcexport.BrowserAssets(bundle, coverage)
+	// publisher code. A live server always regenerates its executable application
+	// shell from the current binary. Full atlas data stays behind the bounded API
+	// instead of being serialized and retained a second time in process memory.
+	browserAssets, err := rkcexport.SiteAssets()
 	if err != nil {
 		return nil, fmt.Errorf("load current browser: %w", err)
 	}

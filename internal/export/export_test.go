@@ -367,6 +367,25 @@ func TestBrowserAssetsAccessibilityAndSerializationContract(t *testing.T) {
 	}
 }
 
+func TestSiteAssetsOmitStaticAtlasData(t *testing.T) {
+	t.Parallel()
+	assets, err := SiteAssets()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(assets) != 3 {
+		t.Fatalf("live site asset count = %d, want 3", len(assets))
+	}
+	if _, ok := assets["data/atlas.json"]; ok {
+		t.Fatal("live site assets retained the full static atlas payload")
+	}
+	for _, name := range []string{"index.html", "styles.css", "app.js"} {
+		if len(assets[name]) == 0 {
+			t.Errorf("live site asset %q is missing or empty", name)
+		}
+	}
+}
+
 func TestExportRejectsSensitiveRepositoryProvenanceBeforeWriting(t *testing.T) {
 	const sentinel = "EXPORT_ORIGIN_SECRET_SENTINEL"
 	bundle := exportFixture(t.TempDir(), "source.go", []byte("package fixture\n"))

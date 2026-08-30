@@ -2,7 +2,6 @@ package server
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"net/http"
 	"net/http/httptest"
@@ -51,21 +50,21 @@ func TestLoadStoreBuildsVerifiedDataset(t *testing.T) {
 	if !reflect.DeepEqual(dataset.Coverage, reader.coverage) {
 		t.Fatal("dataset coverage changed")
 	}
-	for _, path := range []string{"/", "/styles.css", "/app.js", "/data/atlas.json"} {
+	for _, path := range []string{"/", "/styles.css", "/app.js"} {
 		request := httptest.NewRequest(http.MethodGet, path, nil)
 		response := httptest.NewRecorder()
 		dataset.Handler().ServeHTTP(response, request)
 		if response.Code != http.StatusOK {
 			t.Fatalf("GET %s status = %d", path, response.Code)
 		}
-		if path == "/data/atlas.json" {
-			var payload struct {
-				Bundle rkcmodel.Bundle `json:"bundle"`
-			}
-			if err := json.Unmarshal(response.Body.Bytes(), &payload); err != nil || payload.Bundle.Snapshot.ID != bundle.Snapshot.ID {
-				t.Fatalf("browser atlas payload = %q, %v", response.Body.String(), err)
-			}
-		}
+	}
+	response := httptest.NewRecorder()
+	dataset.Handler().ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/data/atlas.json", nil))
+	if response.Code != http.StatusNotFound {
+		t.Fatalf("GET /data/atlas.json status = %d, want %d", response.Code, http.StatusNotFound)
+	}
+	if _, ok := dataset.staticSite["data/atlas.json"]; ok {
+		t.Fatal("live store dataset retained the full static atlas payload")
 	}
 }
 

@@ -680,9 +680,10 @@ func writeSite(bundle model.Bundle, coverage model.Coverage, opts Options) error
 	return nil
 }
 
-// BrowserAssets returns the deterministic browser shell used by both exported
-// atlases and datasets reconstructed directly from a durable store. Keys are
-// canonical forward-slash paths for filesystem and HTTP consumers.
+// BrowserAssets returns a complete, deterministic static atlas. In addition to
+// the browser application shell, it includes data/atlas.json so the export can
+// be served without the RKC API. Keys are canonical forward-slash paths for
+// filesystem and HTTP consumers.
 func BrowserAssets(bundle model.Bundle, coverage model.Coverage) (map[string][]byte, error) {
 	siteBundle, err := canonicalExportBundle(bundle)
 	if err != nil {
@@ -697,6 +698,18 @@ func BrowserAssets(bundle model.Bundle, coverage model.Coverage) (map[string][]b
 		return nil, fmt.Errorf("encode static atlas data: %w", err)
 	}
 	data = append(data, '\n')
+	return buildSiteAssets(data)
+}
+
+// SiteAssets returns the deterministic application shell used by a live RKC
+// server. It intentionally omits data/atlas.json: the live browser loads the
+// bounded API, and retaining a second serialized copy of the full bundle would
+// make server memory scale with the export projection as well as the indexes.
+func SiteAssets() (map[string][]byte, error) {
+	return buildSiteAssets(nil)
+}
+
+func buildSiteAssets(atlasData []byte) (map[string][]byte, error) {
 	catalogue, err := json.Marshal(commandcatalog.Commands(commandcatalog.Context{}))
 	if err != nil {
 		return nil, fmt.Errorf("encode browser command catalogue: %w", err)
@@ -705,12 +718,15 @@ func BrowserAssets(bundle model.Bundle, coverage model.Coverage) (map[string][]b
 		return nil, errors.New("browser command catalogue placeholder is invalid")
 	}
 	app := strings.Replace(siteJS, "__RKC_COMMAND_CATALOG__", string(catalogue), 1)
-	return map[string][]byte{
-		"index.html":      []byte(siteHTML),
-		"styles.css":      []byte(siteCSS),
-		"app.js":          []byte(app),
-		"data/atlas.json": data,
-	}, nil
+	assets := map[string][]byte{
+		"index.html": []byte(siteHTML),
+		"styles.css": []byte(siteCSS),
+		"app.js":     []byte(app),
+	}
+	if atlasData != nil {
+		assets["data/atlas.json"] = atlasData
+	}
+	return assets, nil
 }
 
 func canonicalExportBundle(bundle model.Bundle) (model.Bundle, error) {
