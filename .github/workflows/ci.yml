@@ -168,6 +168,7 @@ jobs:
           volume="rkc-ci-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
           state_volume="${volume}-state"
           resource_limits=(
+            --cgroupns private
             --cpus 1
             --cpu-shares 2
             --memory 2560m

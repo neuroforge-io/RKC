@@ -30,7 +30,7 @@ import (
 func runScan(args []string) error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	return runScanContext(ctx, args)
+	return runDirectCommandWithAdmission(ctx, "scan", args, runScanContext)
 }
 
 func runScanContext(ctx context.Context, args []string) (resultErr error) {
@@ -63,8 +63,8 @@ func runScanContext(ctx context.Context, args []string) (resultErr error) {
 	pythonPlugin := fs.String("python-plugin", cfg.Plugins.PythonAST.Script, "Python extractor path or 'builtin'")
 	pluginTimeout := fs.Duration("plugin-timeout", cfg.PluginTimeout(), "per-plugin wall-clock timeout")
 	pluginOutput := fs.Int64("plugin-output-bytes", cfg.Plugins.MaximumOutputBytes, "maximum plugin stdout bytes")
-	noPlugins := fs.Bool("no-plugins", !cfg.Plugins.Enabled, "disable all language adapters")
-	noPython := fs.Bool("no-python", !cfg.Plugins.PythonAST.Enabled, "disable the Python syntax adapter")
+	noPlugins := fs.Bool("no-plugins", !cfg.Plugins.Enabled, "disable all language adapters; direct scan requires this or --no-python")
+	noPython := fs.Bool("no-python", !cfg.Plugins.PythonAST.Enabled, "disable the Python syntax adapter; direct scan requires this or --no-plugins")
 	noGo := fs.Bool("no-go", !cfg.Plugins.GoAST.Enabled, "disable the Go syntax adapter")
 	noTypeScript := fs.Bool("no-typescript", !cfg.Plugins.TypeScriptSyntax.Enabled, "disable the JavaScript and TypeScript syntax adapter")
 	scipIndexes := stringList{}

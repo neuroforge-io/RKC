@@ -137,16 +137,16 @@ Git acquisition disables prompts, hooks, global configuration, plaintext
 and exports use one validated credential-free canonical origin; `.git`
 administrative data is never inventoried by the pipeline.
 
-External Python and native-worker execution is disabled. On Linux, the
-digest-pinned built-in Python adapter fails closed unless it can start as a
-transient user-systemd service with a one-core/lowest-priority cgroup, hard
-memory/swap/task limits, a cleared worker environment, network-I/O syscall
-denial, a one-task ceiling that prevents child processes, and control-group-wide
-cancellation. The current user-service path does not claim a mount/filesystem
-namespace; this is deliberately a narrow built-in adapter guard, not a general
-third-party plugin sandbox. On platforms without that Linux enforcement path
-the Python adapter fails closed; the in-process Go and TypeScript analyzers
-remain available.
+External Python and native-worker execution is disabled. The digest-pinned
+built-in Python worker has a fail-closed Linux transient-service boundary with a
+one-core/lowest-priority cgroup, hard memory/swap/task limits, a cleared worker
+environment, network-I/O syscall denial, a one-task ceiling that prevents child
+processes, and control-group-wide cancellation. Public direct analysis keeps it
+disabled until that separately managed unit and the parent process can prove one
+aggregate ceiling. The worker path does not claim a mount/filesystem namespace;
+it is a narrow built-in adapter guard, not a general third-party plugin sandbox.
+The in-process Go and TypeScript analyzers remain available on every supported
+platform.
 
 The static `scratch` reference image has no Python or user-systemd manager and
 cannot provide this boundary. Its container and Compose examples select

@@ -15,7 +15,7 @@ cleanup() {
   rm -rf "$WORK"
 }
 trap cleanup EXIT INT TERM
-./bin/rkc scan --out "$OUT" --force examples >/dev/null
+./bin/rkc scan --no-python --out "$OUT" --force examples >/dev/null
 ./bin/rkc serve --dir "$OUT" --addr "127.0.0.1:0" --ready-file "$READY" >"$LOG" 2>&1 & PID=$!
 i=0
 ready=false

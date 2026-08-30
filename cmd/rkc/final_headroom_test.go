@@ -208,7 +208,7 @@ func TestFinalHeadroomRemoteScanAndConfigurationBoundaries(t *testing.T) {
 	output := filepath.Join(t.TempDir(), "remote-atlas")
 	acquireTemp := t.TempDir()
 	stdout, err := captureStdout(t, func() error {
-		return runScan([]string{
+		return runScanContext(context.Background(), []string{
 			"--out", output,
 			"--state-dir", "",
 			"--allow-file-url",

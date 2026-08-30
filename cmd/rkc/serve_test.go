@@ -233,7 +233,7 @@ func TestRunServePublishesReadyServesAndShutsDownCleanly(t *testing.T) {
 	repository := filepath.Join(root, "repository")
 	writeTestFile(t, filepath.Join(repository, "main.go"), "package fixture\n\nfunc Run() bool { return true }\n")
 	atlas := filepath.Join(root, "atlas")
-	if err := runScan([]string{
+	if err := runScanContext(context.Background(), []string{
 		"--out", atlas, "--state-dir", filepath.Join(root, "state"),
 		"--runs-dir", filepath.Join(root, "runs"), "--no-cache", "--no-plugins",
 		"--no-frameworks", "--no-secret-scan", repository,

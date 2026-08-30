@@ -14,12 +14,12 @@ import (
 )
 
 // runQuickstart provides one safe first-run command without weakening any scan
-// or quality-gate contract. The portable profile is the default; Python remains
-// an explicit opt-in because its fail-closed sandbox is Linux-specific.
+// or quality-gate contract. The portable profile is the default; direct Python
+// remains disabled until its child unit and parent scan share a proven ceiling.
 func runQuickstart(args []string) error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	return runQuickstartContext(ctx, args)
+	return runDirectCommandWithAdmission(ctx, "quickstart", args, runQuickstartContext)
 }
 
 func runQuickstartContext(ctx context.Context, args []string) error {
@@ -28,7 +28,7 @@ func runQuickstartContext(ctx context.Context, args []string) error {
 	config := fs.String("config", "", "optional RKC JSON configuration")
 	output := fs.String("out", "", "atlas directory (default <repository>/.rkc)")
 	state := fs.String("state-dir", "", "snapshot directory (default <repository>/.rkc-state)")
-	enablePython := fs.Bool("python", false, "enable the sandboxed Python adapter after doctor passes")
+	enablePython := fs.Bool("python", false, "request the Python adapter (disabled for direct quickstart until aggregate ceilings are proved)")
 	clean := fs.Bool("clean", false, "disable incremental stage-cache reuse")
 	force := fs.Bool("force", true, "replace an existing RKC-owned atlas")
 	scipIndexes := stringList{}

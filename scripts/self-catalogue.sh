@@ -518,10 +518,12 @@ SCAN_ARGS=(
   scan
   --json
   --fail-on-errors
+  # The Python adapter is a separately managed service. Keep this complete
+  # self-run inside one provable aggregate cgroup until nested-unit accounting
+  # is implemented; compiler-produced SCIP can be imported separately.
+  --no-python
   --out "$ATLAS"
   --force
-  # Keep the canonical toolchain identity independent of checkout location.
-  --python "$PYTHON"
 )
 for excluded in "${EXCLUSIONS[@]}"; do
   SCAN_ARGS+=(--exclude "$excluded")

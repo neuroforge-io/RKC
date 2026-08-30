@@ -200,12 +200,17 @@ directory and tested using the source contained in the archive:
 
 ```sh
 cd repository-knowledge-compiler-complete/source
-make test
-make build
-./bin/rkc scan --out /tmp/rkc-package-test --force examples
+make safe-test
+make safe-build
+./bin/rkc scan --no-python --out /tmp/rkc-package-test --force examples
 ./bin/rkc check --coverage /tmp/rkc-package-test/coverage.json \
   --min-inventory-accounting 1 --min-symbol-evidence 1 --max-errors 0
 ```
+
+The `safe-*` commands are the required Linux acceptance path. On macOS or
+Windows, where Linux cgroup enforcement is unavailable, substitute `make test`
+and `make build` and treat the result as portable functional evidence rather
+than a kernel resource-safety proof.
 
 The outer package checksums and the internal `SHA256SUMS.txt` must also verify.
 

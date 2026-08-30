@@ -34,13 +34,18 @@ either command below directly when you already know which workflow you need.
 `rkc open /path/to/repository` produces an atlas, retains immutable snapshot
 state, runs the strict local integrity and quality checks, and prints the local
 URL while opening the read-only browser when a desktop opener is available.
-On Linux it self-admits to RKC's exact one-core, lowest-priority, 4.5 GiB hard
-ceiling before any atlas, cache, journal, or snapshot write, continuously
-yielding to visible ERAIS/evaluation work. Press Ctrl-C to stop cleanly, or
-pass `--no-browser` on a headless host. It safely replaces only a previous
-RKC-owned atlas. The portable default does not invoke Python. Protected `open`
-rejects `--python` until its separately sandboxed adapter and parent scan can
-prove one aggregate ceiling; deterministic built-in analysis remains available.
+On an ordinary Linux host, `open`, direct `quickstart`, and direct `scan`
+self-admit to RKC's exact one-core, lowest-priority, 4 GiB pressure / 4.5 GiB
+hard ceiling before any atlas, cache, journal, or snapshot write. An existing
+exact RKC unit is reused; the scratch-container path instead requires a private
+cgroup root to prove an equal-or-tighter hard ceiling, swap/task/weight/OOM
+controls, and lowered per-thread scheduling. Both paths continuously recheck
+the envelope and yield to visible ERAIS/evaluation work. Press Ctrl-C to stop
+cleanly, or pass `--no-browser` on a headless host.
+It safely replaces only a previous RKC-owned atlas. The portable default does
+not invoke Python. Protected `open` and direct `quickstart` reject `--python`
+until its separately sandboxed adapter and parent scan can prove one aggregate
+ceiling; deterministic built-in analysis remains available.
 
 For a trusted single-user Linux checkout, `rkc open --workbench
 /path/to/repository` explicitly enables the protected local command center.
@@ -57,9 +62,13 @@ workers and manifests. The advanced direct `serve` command retains its explicit
 address option.
 
 For a compile-only first run, use `rkc quickstart /path/to/repository`; it
-performs the same scan and quality gates without starting a server. Both
-commands accept any local folder, including folders that are not Git
-worktrees.
+performs the same scan and quality gates without starting a server. A direct
+advanced scan must include an explicit final `--no-python=true` or
+`--no-plugins=true` setting before the repository path; `--no-python` is the
+equivalent shorter true form. Both commands accept any local folder, including
+folders that are not Git worktrees. macOS and Windows use the same deterministic
+safety preflight and portable analysis, but cannot claim Linux's kernel cgroup
+or scheduling enforcement.
 
 ## 2. Development prerequisites
 
@@ -76,9 +85,10 @@ python3 -m venv .venv
 The virtual environment keeps the pinned validation dependencies out of the
 system interpreter. Prebuilt binaries need none of these tools for a local
 `--no-python` scan. Native Windows users can build the two Go commands and use
-that portable profile, while the guarded development/release automation and
-the optional Python adapter require Linux; WSL2 is the supported Windows route
-for those Linux-only paths.
+that portable profile, while guarded development/release automation and the
+implemented Python worker boundary require Linux; WSL2 is the supported Windows
+route for those Linux-only paths. Public direct analysis currently keeps that
+worker disabled until it can share one proven aggregate ceiling with its parent.
 
 ## 3. Verify the checkout
 
@@ -94,8 +104,9 @@ acquisition tests.
 `safe-*` targets are intentionally Linux-specific: they require a reachable
 user-systemd manager and delegated CPU, memory, I/O, and process controllers.
 Run `make build` for an unguarded portable build. Run `./bin/rkc doctor` after
-building to see whether the Python adapter and remote-Git conveniences are
-available on the current host.
+building to inspect the worker boundary and remote-Git prerequisites; a passing
+worker diagnostic does not override the current direct-command
+aggregate-ceiling gate.
 
 Run the race detector separately or use the logged release sequence:
 
@@ -195,10 +206,13 @@ platform user-cache directory.
 
 This still performs deterministic Go and JavaScript/TypeScript syntax
 analysis, framework and document extraction, secret-pattern detection, graph
-construction, search indexing, and every configured export. If
+construction, search indexing, and every configured export. Direct `scan` must
+retain `--no-python` (or explicitly set `--no-plugins`) even if
 `./bin/rkc doctor --strict --config rkc.json --repository /path/to/repository`
-passes on Linux, omit `--no-python` to enable the built-in Python AST adapter.
-RKC never falls back to running that adapter without its isolation boundary.
+passes. Direct `quickstart` likewise rejects `--python`. RKC does not enable the
+built-in Python adapter in these direct workflows until its separately managed
+unit and the parent scan can prove one aggregate resource ceiling, and it never
+falls back to running that adapter without its isolation boundary.
 
 ### Add compiler-grade semantics
 

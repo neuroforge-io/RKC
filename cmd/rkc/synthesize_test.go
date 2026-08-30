@@ -89,7 +89,7 @@ func TestSynthesizePacketOnlyLeavesCanonicalBundleUntouched(t *testing.T) {
 	}
 	root := t.TempDir()
 	output := filepath.Join(root, "output")
-	if err := runScan([]string{"--out", output, "--no-python", "--no-typescript", "--force", repository}); err != nil {
+	if err := runScanContext(context.Background(), []string{"--out", output, "--no-python", "--no-typescript", "--force", repository}); err != nil {
 		t.Fatal(err)
 	}
 	before, err := os.ReadFile(filepath.Join(output, "bundle.json"))

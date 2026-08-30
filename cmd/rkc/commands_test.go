@@ -264,7 +264,7 @@ func TestScanSafePublicationAndInvalidFlags(t *testing.T) {
 	root := t.TempDir()
 	repository := filepath.Join(root, "repo")
 	writeTestFile(t, filepath.Join(repository, "readme.txt"), "hello\n")
-	if err := runScan([]string{"one", "two"}); err == nil || !strings.Contains(err.Error(), "at most one") {
+	if err := runScanContext(context.Background(), []string{"one", "two"}); err == nil || !strings.Contains(err.Error(), "at most one") {
 		t.Fatalf("two repositories error = %v", err)
 	}
 
@@ -274,10 +274,10 @@ func TestScanSafePublicationAndInvalidFlags(t *testing.T) {
 		data, _ := json.Marshal(defaultConfiguration())
 		writeTestFile(t, path, string(data))
 	}
-	if err := runScan([]string{"--config", configOne, "--config", configTwo, repository}); err == nil || !strings.Contains(err.Error(), "only once") {
+	if err := runScanContext(context.Background(), []string{"--config", configOne, "--config", configTwo, repository}); err == nil || !strings.Contains(err.Error(), "only once") {
 		t.Fatalf("duplicate config error = %v", err)
 	}
-	if err := runScan([]string{"--out", repository, "--no-plugins", "--no-frameworks", repository}); err == nil {
+	if err := runScanContext(context.Background(), []string{"--out", repository, "--no-plugins", "--no-frameworks", repository}); err == nil {
 		t.Fatal("scan accepted repository root as output")
 	}
 
@@ -288,7 +288,7 @@ func TestScanSafePublicationAndInvalidFlags(t *testing.T) {
 		if force {
 			args = append([]string{"--force"}, args...)
 		}
-		if err := runScan(args); err == nil {
+		if err := runScanContext(context.Background(), args); err == nil {
 			t.Fatalf("scan replaced unowned output with force=%t", force)
 		}
 		data, err := os.ReadFile(filepath.Join(unowned, "sentinel"))
@@ -300,7 +300,7 @@ func TestScanSafePublicationAndInvalidFlags(t *testing.T) {
 	output := filepath.Join(root, "atlas")
 	state := filepath.Join(root, "state")
 	jsonSummary, err := captureStdout(t, func() error {
-		return runScan([]string{"--out", output, "--state-dir", state, "--no-plugins", "--no-frameworks", "--json", repository})
+		return runScanContext(context.Background(), []string{"--out", output, "--state-dir", state, "--no-plugins", "--no-frameworks", "--json", repository})
 	})
 	if err != nil {
 		t.Fatalf("scan: %v\n%s", err, jsonSummary)
@@ -310,7 +310,7 @@ func TestScanSafePublicationAndInvalidFlags(t *testing.T) {
 		t.Fatalf("invalid scan summary: %v %s", err, jsonSummary)
 	}
 	idempotentSummary, err := captureStdout(t, func() error {
-		return runScan([]string{"--out", output, "--state-dir", state, "--no-plugins", "--no-frameworks", "--force", "--json", repository})
+		return runScanContext(context.Background(), []string{"--out", output, "--state-dir", state, "--no-plugins", "--no-frameworks", "--force", "--json", repository})
 	})
 	if err != nil {
 		t.Fatalf("idempotent scan: %v\n%s", err, idempotentSummary)
@@ -324,7 +324,7 @@ func TestScanSafePublicationAndInvalidFlags(t *testing.T) {
 		t.Fatalf("output marker missing: %q err=%v", marker, err)
 	}
 	if _, err := captureStdout(t, func() error {
-		return runScan([]string{"--out", output, "--state-dir", filepath.Join(root, "state-2"), "--no-plugins", "--no-frameworks", "--force", repository})
+		return runScanContext(context.Background(), []string{"--out", output, "--state-dir", filepath.Join(root, "state-2"), "--no-plugins", "--no-frameworks", "--force", repository})
 	}); err != nil {
 		t.Fatalf("replace owned output: %v", err)
 	}
@@ -345,7 +345,7 @@ func TestScanRejectsOutputSnapshotOverlapWithoutMutation(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			writeTestFile(t, filepath.Join(test.out, "out-sentinel"), "output")
 			writeTestFile(t, filepath.Join(test.state, "state-sentinel"), "state")
-			err := runScan([]string{"--out", test.out, "--state-dir", test.state, "--force", "--no-plugins", "--no-frameworks", repository})
+			err := runScanContext(context.Background(), []string{"--out", test.out, "--state-dir", test.state, "--force", "--no-plugins", "--no-frameworks", repository})
 			if !errors.Is(err, safeoutput.ErrUnsafeTarget) {
 				t.Fatalf("overlapping scan error = %v", err)
 			}
@@ -377,7 +377,7 @@ func TestScanCancellationAndMaxFilePolicy(t *testing.T) {
 	repository := filepath.Join(root, "repo")
 	writeTestFile(t, filepath.Join(repository, "large.txt"), "larger-than-limit")
 	output := filepath.Join(root, "atlas")
-	if err := runScan([]string{"--out", output, "--max-file-bytes", "4", "--max-text-bytes", "4", "--no-plugins", "--no-frameworks", repository}); err != nil {
+	if err := runScanContext(context.Background(), []string{"--out", output, "--max-file-bytes", "4", "--max-text-bytes", "4", "--no-plugins", "--no-frameworks", repository}); err != nil {
 		t.Fatalf("bounded scan: %v", err)
 	}
 	data, err := os.ReadFile(filepath.Join(output, "bundle.json"))
@@ -469,7 +469,7 @@ func TestSQLiteScanQueryAndIdempotentReplay(t *testing.T) {
 		"--database", database, "--out", output, "--json", "--no-python", "--no-typescript", "--no-frameworks",
 		"--no-static-site", "--no-jsonl-graph", "--no-search-index", "--no-integrations", repository,
 	}
-	firstOutput, err := captureStdout(t, func() error { return runScan(args) })
+	firstOutput, err := captureStdout(t, func() error { return runScanContext(context.Background(), args) })
 	if err != nil {
 		t.Fatalf("first SQLite scan: %v", err)
 	}
@@ -511,7 +511,7 @@ func TestSQLiteScanQueryAndIdempotentReplay(t *testing.T) {
 
 	secondArgs := append([]string(nil), args...)
 	secondArgs = append([]string{"--force"}, secondArgs...)
-	secondOutput, err := captureStdout(t, func() error { return runScan(secondArgs) })
+	secondOutput, err := captureStdout(t, func() error { return runScanContext(context.Background(), secondArgs) })
 	if err != nil {
 		t.Fatalf("idempotent SQLite scan: %v", err)
 	}
@@ -531,7 +531,7 @@ func TestSQLiteScanQueryAndIdempotentReplay(t *testing.T) {
 		t.Fatalf("decode published SQLite atlas: %v", err)
 	}
 	writeTestFile(t, filepath.Join(repository, "main.go"), "package sample\n\nfunc Beta() {}\n")
-	if _, err := captureStdout(t, func() error { return runScan(args) }); err == nil {
+	if _, err := captureStdout(t, func() error { return runScanContext(context.Background(), args) }); err == nil {
 		t.Fatal("scan unexpectedly replaced an existing atlas without --force")
 	}
 	current, err := loadSQLiteDataset(context.Background(), database, "", published.Snapshot.RepositoryID)
@@ -542,7 +542,7 @@ func TestSQLiteScanQueryAndIdempotentReplay(t *testing.T) {
 	if err := runQuery([]string{"--dir", output, "--database", database, "--snapshot", snapshotID, "Alpha"}); err == nil || !strings.Contains(err.Error(), "mutually exclusive") {
 		t.Fatalf("mixed dataset selector error = %v", err)
 	}
-	if err := runScan([]string{"--database", database, "--state-dir", filepath.Join(root, "legacy"), repository}); err == nil || !strings.Contains(err.Error(), "mutually exclusive") {
+	if err := runScanContext(context.Background(), []string{"--database", database, "--state-dir", filepath.Join(root, "legacy"), repository}); err == nil || !strings.Contains(err.Error(), "mutually exclusive") {
 		t.Fatalf("mixed persistence selector error = %v", err)
 	}
 	missing := filepath.Join(root, "missing.sqlite")

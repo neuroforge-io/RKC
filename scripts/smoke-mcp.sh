@@ -6,7 +6,7 @@ WORK=$(mktemp -d "${TMPDIR:-/tmp}/rkc-mcp-smoke.XXXXXX")
 OUT=$WORK/atlas
 RESPONSES=$WORK/mcp.jsonl
 trap 'rm -rf "$WORK"' EXIT INT TERM
-./bin/rkc scan --out "$OUT" --force examples >/dev/null
+./bin/rkc scan --no-python --out "$OUT" --force examples >/dev/null
 cat <<'JSON' | ./bin/rkc-mcp --dir "$OUT" >"$RESPONSES"
 {"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}
 {"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}

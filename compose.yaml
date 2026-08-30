@@ -2,6 +2,7 @@ services:
   rkc:
     build: .
     working_dir: /workspace
+    cgroup: private
     read_only: true
     cpus: 1.0
     cpu_shares: 2

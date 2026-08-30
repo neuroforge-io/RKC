@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"path/filepath"
@@ -28,7 +29,7 @@ func TestScanCacheUXAndAdministrativeCommands(t *testing.T) {
 		"--json",
 		repository,
 	}
-	firstOutput, err := captureStdout(t, func() error { return runScan(args) })
+	firstOutput, err := captureStdout(t, func() error { return runScanContext(context.Background(), args) })
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -41,7 +42,7 @@ func TestScanCacheUXAndAdministrativeCommands(t *testing.T) {
 	}
 
 	warmArgs := append([]string{"--force"}, args...)
-	warmOutput, err := captureStdout(t, func() error { return runScan(warmArgs) })
+	warmOutput, err := captureStdout(t, func() error { return runScanContext(context.Background(), warmArgs) })
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -141,7 +142,7 @@ func TestScanRejectsRepositoryAndOutputCacheOverlap(t *testing.T) {
 		if cacheDir == filepath.Join(root, "shared") {
 			testOutput = filepath.Join(cacheDir, "atlas")
 		}
-		err := runScan([]string{
+		err := runScanContext(context.Background(), []string{
 			"--out", testOutput,
 			"--cache-dir", cacheDir,
 			"--no-plugins",

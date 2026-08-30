@@ -20,7 +20,7 @@ func TestScanCreatesInspectableRunJournal(t *testing.T) {
 	state := filepath.Join(root, "snapshots")
 	runs := filepath.Join(root, "runs")
 	stdout, err := captureStdout(t, func() error {
-		return runScan([]string{
+		return runScanContext(context.Background(), []string{
 			"--out", output,
 			"--state-dir", state,
 			"--runs-dir", runs,
@@ -99,7 +99,7 @@ func TestScanJournalTracksCommandFailuresAfterDAGCompletion(t *testing.T) {
 			t.Fatal(err)
 		}
 		runs := filepath.Join(root, "runs")
-		err := runScan([]string{
+		err := runScanContext(context.Background(), []string{
 			"--out", output,
 			"--runs-dir", runs,
 			"--no-cache",
@@ -119,7 +119,7 @@ func TestScanJournalTracksCommandFailuresAfterDAGCompletion(t *testing.T) {
 		repository := filepath.Join(root, "repository")
 		writeTestFile(t, filepath.Join(repository, "openapi.json"), "{")
 		runs := filepath.Join(root, "runs")
-		err := runScan([]string{
+		err := runScanContext(context.Background(), []string{
 			"--out", filepath.Join(root, "atlas"),
 			"--runs-dir", runs,
 			"--no-cache",
@@ -248,7 +248,7 @@ func TestRunsInspectionDirectorySafetyAndMissingDirectory(t *testing.T) {
 
 	repository := filepath.Join(t.TempDir(), "repository")
 	writeTestFile(t, filepath.Join(repository, "main.go"), "package fixture\n")
-	if err := runScan([]string{
+	if err := runScanContext(context.Background(), []string{
 		"--out", filepath.Join(t.TempDir(), "atlas"),
 		"--runs-dir", filepath.Join(repository, ".rkc-runs"),
 		"--no-cache",
@@ -264,7 +264,7 @@ func TestRunsInspectionDirectorySafetyAndMissingDirectory(t *testing.T) {
 	}
 	alias := filepath.Join(aliasRoot, "runs-alias")
 	if err := os.Symlink(runs, alias); err == nil {
-		err := runScan([]string{
+		err := runScanContext(context.Background(), []string{
 			"--out", filepath.Join(t.TempDir(), "atlas"),
 			"--runs-dir", runs,
 			"--database", filepath.Join(alias, "state.sqlite"),

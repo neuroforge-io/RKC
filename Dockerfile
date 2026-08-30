@@ -35,7 +35,8 @@ COPY schemas /opt/rkc/schemas
 COPY api /opt/rkc/api
 COPY config /opt/rkc/config
 ENV RKC_PLUGIN_ROOT=/opt/rkc/plugins \
-    XDG_CACHE_HOME=/state
+    XDG_CACHE_HOME=/state \
+    GOMAXPROCS=1
 USER 65532:65532
 WORKDIR /workspace
 ENTRYPOINT ["/usr/local/bin/rkc"]

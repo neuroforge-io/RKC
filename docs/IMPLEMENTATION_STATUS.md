@@ -138,7 +138,7 @@ profiles, quality index, and every artifact upload.
 | bounded evidence packets | Implemented | coherent truncation and redaction |
 | `llama.cpp` CLI provider | Implemented | fake-executable integration tested |
 | pinned native `llama.cpp` bootstrap | Implemented | exact source digest, CPU-only portable/native profiles, guarded build |
-| cgroup, priority, CPU-only and RSS policy | Implemented on Linux; fail-closed elsewhere | Linux cgroup v2 enforces one CPU, weight 1, nice 19, idle I/O, 4 GiB operating/4.5 GiB hard memory, bounded swap/tasks, CPU-only runtime flags, ERAIS pre-emption, process-group reap, and auditable receipts. Priority receipts contain only PID/fixed-class data, never process arguments, and doctor checks never reproduce the user-manager environment. Heavy model operations refuse platforms that cannot prove this contract |
+| cgroup, priority, CPU-only and RSS policy | Implemented on Linux; portable analysis is explicitly unprotected elsewhere | On ordinary Linux, `open`, direct `quickstart`, and direct `scan` self-re-execute before repository or generated-state writes. An existing exact RKC unit is reused rather than creating a sibling allowance. The constrained-container exception requires cgroup-namespace root plus proven equal-or-tighter CPU, hard-memory, swap, task, weight, OOM, and per-thread scheduling controls; generic external cgroups are rejected. Exact host units retain one CPU, weight 1, nice 19, idle I/O, 4 GiB pressure/4.5 GiB hard memory, bounded swap/tasks, ERAIS pre-emption, cancellation/reap, and auditable cleanup. Both reused paths re-prove controls during work. Direct scans require final-effective Python or plugin disablement; direct quickstart rejects Python until an aggregate parent/adapter ceiling is proved. macOS and Windows retain deterministic portable analysis without claiming kernel cgroup or scheduling enforcement |
 | claim/summary validation | Implemented | Atomic statements, citations, identifiers, certainty, inference policy, unsafe markup, and bounds are checked; free-form summaries are never published |
 | grounded repository answers | Implemented | CLI uses bounded lexical/semantic/hybrid plus graph evidence, canonical re-resolution, validation, and abstention. Up to two sanitized retrieval-repair passes repeat the full validator under one deadline, retain a pass audit, select the strongest grounded attempt, and never ingest generated output. Qualified embedding/generation bindings are required for model-backed modes |
 | real GGUF benchmark below 4.5 GiB | Fully qualified rejection; no promotion | Qwen3.5 4B Q4_0 completed the guarded pair gate with a 4.156 GB cgroup peak and 4/6 generation cases, but failed hostile-input grounding, exact-32K latency, and strict process RSS. Qwen3 Embedding 0.6B Q8_0 again passed recall, margin, norm, memory, and latency checks. The required pair failed, so defaults remain null |
@@ -146,33 +146,33 @@ profiles, quality index, and every artifact upload.
 
 ## Interfaces
 
-| Interface | Status |
-|---|---|
-| CLI and guided terminal first run | Implemented | `wizard` (alias `tui`) is a dependency-free, line-oriented guide over the existing safe workflows: choose a folder, open the verified read-only browser, compile only, show complete help, or cancel. It handles EOF without starting work and does not claim full CLI parity. `open` (alias `start`) composes scan, strict checks, loopback serving, and optional desktop-browser launch. Linux self-reexecutes inside the exact low-priority envelope before scan, continuously yields to ERAIS, publishes readiness out of band, launches the browser outside the disposable service, and preserves standard XDG state locations; static mode is portable, while `--workbench` is explicit and Linux-only |
-| local read-only HTTP API | Implemented |
-| OpenAPI parity validation | Implemented |
-| MCP stdio server | Implemented |
-| Go read client | Implemented |
-| TypeScript/Python generated SDKs | Planned |
-| IDE extensions | Planned |
-| team service API | Planned |
+| Interface | Status | Notes |
+|---|---|---|
+| CLI and guided terminal first run | Implemented | `wizard` (alias `tui`) is a dependency-free, line-oriented guide over the existing safe workflows: choose a folder, open the verified read-only browser, compile only, show complete help, or cancel. It handles EOF without starting work and does not claim full CLI parity. `open` (alias `start`) composes scan, strict checks, loopback serving, and optional desktop-browser launch. On Linux, these first-run scans self-admit, reuse only a kernel-proven exact RKC/private-container envelope, and continuously yield to ERAIS; help remains local and guarded internal context calls do not recursively admit. Static analysis stays portable but explicitly lacks Linux kernel enforcement on macOS and Windows, while `--workbench` is opt-in and Linux-only |
+| local read-only HTTP API | Implemented | Bounded loopback-first reads over validated filesystem or SQLite snapshots |
+| OpenAPI parity validation | Implemented | Generated operation inventory and handler parity are contract-checked |
+| MCP stdio server | Implemented | Dependency-light local tools over the same validated snapshot readers |
+| Go read client | Implemented | Typed in-process read API |
+| TypeScript/Python generated SDKs | Planned | OpenAPI remains the machine contract until generated clients are release-gated |
+| IDE extensions | Planned | No editor-specific package is published |
+| team service API | Planned | Local single-user operation is the supported trust boundary |
 
 ## Security and operations
 
-| Capability | Status |
-|---|---|
-| repository code execution denied by normal scan | Implemented |
-| secret redaction in normalized export | Implemented |
-| bounded plugin stdout/stderr and timeout | Implemented |
-| plugin manifests and lock digests | Implemented |
-| WASI capability enforcement | Planned |
-| native-worker OS sandbox | Implemented for the supported built-in adapter | The digest-pinned built-in Python adapter runs only through the fail-closed Linux user-systemd isolation boundary with bounded resources and sanitized environment. Third-party native execution and unsupported platforms are disabled rather than weakly sandboxed |
-| OIDC/RBAC/tenancy/audit retention | Planned |
+| Capability | Status | Notes |
+|---|---|---|
+| repository code execution denied by normal scan | Implemented | Repository files are inert inputs; compiler/indexer execution is separately authorized |
+| secret redaction in normalized export | Implemented | Pattern-based and fail-closed, not represented as complete DLP |
+| bounded plugin stdout/stderr and timeout | Implemented | Exact byte and wall-clock limits |
+| plugin manifests and lock digests | Implemented | Admitted built-ins are digest-bound |
+| WASI capability enforcement | Planned | No unsupported third-party execution fallback |
+| native-worker OS sandbox | Worker boundary implemented; public direct admission pending aggregate proof | The digest-pinned built-in Python adapter can run only through the fail-closed Linux user-systemd isolation boundary with bounded resources and a sanitized environment. Public `scan`, `quickstart`, `open`, and workbench paths currently keep it disabled until worker and parent can prove one aggregate ceiling. Third-party native execution and unsupported platforms are disabled rather than weakly sandboxed |
+| OIDC/RBAC/tenancy/audit retention | Planned | Local single-user server only; no multi-tenant claim |
 | per-binary Go-module SPDX SBOM | Implemented | Deterministic SPDX 2.3 JSON is generated for every Linux executable and independently rebound to its checksum, command, GOOS/GOARCH, normalized GOAMD64/GOARM64 target, default GOEXPERIMENT set, `GOFIPS140=off`, exact Go toolchain, immutable source commit/tree/time, module lock, canonical Go purls, and actual linked modules during packaging; audited declared expressions are retained and every unanalyzed package conclusion remains `NOASSERTION` |
 | complete-distribution SPDX SBOM | Implemented | `SBOM.spdx.json` inventories substantive archive files, all four platform command components, and their linked Go modules; circular receipt files are explicitly excluded, the manifest hashes the SBOM, and final checksums hash both |
 | release signing, container SBOM, provenance | Planned | No publication claim until signatures and attestations are generated and verified |
-| Docker and CI reference files | Implemented |
-| full logged release verification | Implemented |
+| Docker and CI reference files | Implemented | Scratch runtime and pinned CI actions; publication attestations remain separate |
+| full logged release verification | Implemented | Every main push exercises the guarded release path before artifacts are accepted |
 
 ## Release test surface
 

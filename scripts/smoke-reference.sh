@@ -7,7 +7,7 @@ WORK=$(mktemp -d "${TMPDIR:-/tmp}/rkc-smoke.XXXXXX")
 ATLAS=$WORK/atlas
 trap 'rm -rf "$WORK"' EXIT INT TERM
 
-./bin/rkc scan --out "$ATLAS" --force examples
+./bin/rkc scan --no-python --out "$ATLAS" --force examples
 ./bin/rkc check \
   --coverage "$ATLAS/coverage.json" \
   --min-inventory-accounting 1 \

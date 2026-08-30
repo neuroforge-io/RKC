@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"io"
 	"os"
 	"path/filepath"
@@ -71,7 +72,7 @@ func Beta() string { return "beta" }
 	output = filepath.Join(root, "atlas")
 	state = filepath.Join(root, "state")
 	_, err := captureStdout(t, func() error {
-		return runScan([]string{
+		return runScanContext(context.Background(), []string{
 			"--out", output,
 			"--state-dir", state,
 			"--no-python",

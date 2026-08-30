@@ -172,12 +172,19 @@ without starting a scan. Scripts and experienced users can continue to run
 
 `open` performs the scan and locked integrity/quality checks, starts the
 loopback read-only browser, and opens the default desktop browser when one is
-available. On Linux, the installed command first re-executes itself inside the
-exact one-core, nice-19, idle-I/O, 4 GiB pressure / 4.5 GiB hard-memory envelope;
-admission and continuous monitoring yield to visible ERAIS or evaluation work
-before RKC can create an atlas, cache, journal, or snapshot. The browser opener
-runs outside that disposable service, so stopping RKC does not place the
-desktop browser inside RKC's cgroup.
+available. On an ordinary Linux host, `open`, `quickstart`, and direct `scan`
+first re-execute inside the exact one-core, nice-19, idle-I/O, 4 GiB pressure /
+4.5 GiB hard-memory envelope. A command already inside that exact RKC unit is
+reused instead of creating a sibling allowance. The only additional reuse path
+is a private, constrained container whose cgroup root proves the one-core,
+4.5 GiB hard-memory, 256 MiB swap, 128-task, low-weight, and OOM contracts before
+RKC lowers and rechecks every thread's scheduling priority. Admission and
+continuous monitoring yield to visible ERAIS or evaluation work before RKC can
+create an atlas, cache, journal, or snapshot. The browser opener runs outside
+that disposable service, so stopping RKC does not place the desktop browser
+inside RKC's cgroup. Direct `scan` requires an explicit final
+`--no-python=true` or `--no-plugins=true` setting; the shorter true form
+`--no-python` is used throughout these examples.
 
 Press Ctrl-C in the terminal to stop cleanly. Use `open --no-browser` on
 headless hosts; the URL is still printed. The command accepts any local folder,
@@ -207,9 +214,11 @@ coverage, exact exported-Go documentation gaps, and Git deltas.
 The dependency-light profile does not need a model, daemon, database server, or
 Python sandbox. `quickstart` remains the equivalent headless compile-and-check
 command and prints the exact search, browser, and cited-answer entry points.
-Protected `open` deliberately rejects `--python` until the adapter and parent
-scan can prove one aggregate ceiling; the deterministic Go/TypeScript/document
-path remains complete without it.
+Direct `quickstart` and protected `open` deliberately reject `--python` until
+the adapter and parent scan can prove one aggregate ceiling; the deterministic
+Go/TypeScript/document path remains complete without it. On macOS and Windows,
+the same deterministic commands and safety preflight remain available, but
+they run without Linux's kernel cgroup and scheduling guarantees.
 
 If a compiler indexer has produced `index.scip`, add compiler-grade semantics
 without changing the safe scan boundary:
@@ -243,11 +252,14 @@ with `rkc runs list`, or strictly replay one complete lifecycle with
 inspection flag when an explicit state location is required; RKC never
 overwrites an existing run journal.
 
-Run `./bin/rkc doctor --strict` before omitting `--no-python`. The built-in
-Python adapter intentionally requires Python 3.11 or newer and its fail-closed
-Linux user-systemd isolation boundary. Go and JavaScript/TypeScript analysis,
-framework extraction, graph export, search, and browsing remain available in
-the portable profile.
+Direct `scan` must retain `--no-python` (or explicitly disable every plugin with
+`--no-plugins`), even when `doctor --strict` passes. Direct `quickstart` also
+keeps Python disabled and rejects `--python`. The built-in Python adapter still
+requires Python 3.11 or newer and its fail-closed Linux user-systemd isolation
+boundary, but it is not enabled in these direct workflows until the adapter and
+parent process can prove one aggregate ceiling. Go and JavaScript/TypeScript
+analysis, framework extraction, graph export, search, and browsing remain
+available in the portable profile.
 
 ## Requirements
 
@@ -257,9 +269,9 @@ the portable profile.
 - Python 3.11 or later plus `requirements-dev.txt` for repository validation;
 - Git for repository metadata and remote acquisition;
 - `curl` for the HTTP smoke test;
-- on Linux only, a reachable user-systemd manager for protected `rkc open`, the
-  optional Python AST adapter, the local workbench, and guarded `safe-*`
-  development targets.
+- on Linux only, a reachable user-systemd manager for protected `rkc open`,
+  `rkc quickstart`, direct `rkc scan`, the optional Python AST adapter, the local
+  workbench, and guarded `safe-*` development targets.
 
 Prebuilt RKC binaries do not require the Go toolchain. A local-directory scan
 with `--no-python` does not require Python, Git, a model runtime, or network
@@ -362,8 +374,9 @@ same-origin token established through the one-time bootstrap, run one at a
 time, cap captured output, and inherit the one-core / 4.5 GiB / idle-I/O
 envelope. Static exports and ordinary `serve` remain read-only. Commands that
 could create a separately managed Python or model unit currently fail closed in
-the workbench until one aggregate session ceiling is proved; their normal
-guarded CLI paths remain available.
+the workbench until one aggregate session ceiling is proved. Guarded model CLI
+paths remain available; public direct Python analysis stays disabled and uses
+separately generated SCIP input as the compiler-grade route for now.
 
 The low-level route checks ERAIS before and after atlas preparation and during
 the server lifetime, while remaining cgroup-subordinate throughout. Prefer
@@ -632,6 +645,7 @@ The equivalent explicit Docker invocation is:
 ```sh
 docker build -t rkc:local .
 docker run --rm \
+  --cgroupns private \
   --cpus 1 --cpu-shares 2 \
   --memory 4608m --memory-reservation 4096m --memory-swap 4864m \
   --pids-limit 128 --oom-score-adj 750 --blkio-weight 10 \
@@ -644,8 +658,12 @@ docker run --rm \
 The static `scratch` image contains only the two CGO-free RKC executables,
 runtime contracts/configuration, and attribution material; it has no shell,
 package manager, Python, or user-systemd manager. Container scans must pass
-`--no-python` explicitly; RKC never falls back to unsandboxed Python. The
-Compose file encodes that portable profile and additionally applies a one-core quota, 4 GiB memory
+`--no-python` explicitly; RKC never falls back to unsandboxed Python. Before
+scanning, RKC requires the private cgroup namespace root to prove the configured
+hard limits and lowest weights, then lowers and rechecks every process thread's
+scheduling priority. An unconstrained container therefore fails closed instead
+of treating container membership as a safety claim. The Compose file encodes
+that portable profile and additionally applies a one-core quota, 4 GiB memory
 reservation, 4.5 GiB hard memory limit, 256 MiB swap allowance, 128-process
 limit, minimum CPU/block-I/O weights, high OOM-kill preference, a read-only root
 filesystem, `no-new-privileges`, and dropped Linux capabilities. Scheduling
@@ -678,14 +696,17 @@ rebinding, and ZIP assembly.
 
 Repositories are treated as hostile input. The reference build avoids project
 code execution and redacts likely secrets from normalized exports by default.
-The only executable Python adapter is the digest-pinned built-in worker. On
-Linux it runs under hard cgroup limits with a cleared environment, network-I/O
-syscalls denied, one task, and whole-unit cancellation. Its host and worker both
-verify repository confinement, regular-file identity, exact size, and SHA-256
-for every inventoried input before parsing. It still runs as the invoking user
-and does not claim a mount/filesystem namespace. Third-party
-Python/native workers are disabled. Do not expose the local server as a
-multi-tenant internet service; full worker isolation remains a production gate.
+The only implemented executable Python adapter is the digest-pinned built-in
+worker. Public `scan`, `quickstart`, `open`, and workbench paths currently keep
+it disabled until the separately managed worker and parent process can prove
+one aggregate ceiling. Its Linux worker boundary still enforces hard cgroup
+limits, a cleared environment, network-I/O syscall denial, one task, and
+whole-unit cancellation, while both host and worker verify repository
+confinement, regular-file identity, exact size, and SHA-256 before parsing. It
+runs as the invoking user and does not claim a mount/filesystem namespace.
+Third-party Python/native workers are disabled. Do not expose the local server
+as a multi-tenant internet service; full worker isolation remains a production
+gate.
 
 ## License
 
