@@ -1,3 +1,6 @@
+// Package main contains the local Repository Knowledge Compiler CLI and its
+// command implementations.
+//
 // Command rkc is the local Repository Knowledge Compiler CLI. It intentionally
 // keeps deterministic analysis usable without a daemon, database server, model,
 // or network connection.

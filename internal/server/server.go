@@ -1,3 +1,5 @@
+// Package server serves an immutable RKC snapshot through the local read API
+// and responsive static web interface.
 package server
 
 import (

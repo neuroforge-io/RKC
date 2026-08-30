@@ -1,3 +1,5 @@
+// Package pipeline stages acquisition, parsing, graph construction, and
+// publication into a deterministic, restartable analysis plan.
 package pipeline
 
 import (

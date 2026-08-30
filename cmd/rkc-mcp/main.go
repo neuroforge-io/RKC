@@ -1,3 +1,5 @@
+// Package main contains the rkc-mcp JSON-RPC stdio adapter.
+//
 // Command rkc-mcp exposes one generated RKC snapshot over JSON-RPC stdio.
 package main
 

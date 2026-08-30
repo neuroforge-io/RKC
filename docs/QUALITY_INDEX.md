@@ -33,6 +33,11 @@ python3 scripts/quality_index.py \
   --python-report /path/to/coverage.json
 ```
 
+Add `--fail-on-gaps` in a release or repository policy job when the explicit
+evidence queue must be empty. The default remains non-blocking so that an
+arbitrary folder can be inventoried before its tests and documentation have
+been brought up to the selected policy.
+
 All arguments are passed as an array to the local process. The indexer never
 executes repository code, follows symlinks, or downloads a model. It skips
 standard dependency, build, cache, RKC-output, and virtual-environment trees,
@@ -44,12 +49,15 @@ files are replaced through same-directory temporary files and `fsync`.
 Each `files` record contains:
 
 - `tests`: a conservative filename/directory association. `associated` means
-  a candidate test file was found; `gap` means no candidate was found;
+  a candidate test file was found; an explicit source path/basename in a test
+  harness is also accepted, including cross-language harnesses such as Python
+  tests that exercise shell workflows. `gap` means no candidate was found;
   `test-file` identifies a test source that is excluded from production
   percentages.
-- `documentation`: nearby `doc.go`, a Python module docstring, or an exact
-  path/basename mention in admitted Markdown/reStructuredText is recorded as
-  `evidence`. This is a review signal, not a semantic documentation proof.
+- `documentation`: a Go package comment (in any non-test Go file in the
+  package), a Python module docstring, or an exact path/basename mention in
+  admitted Markdown/reStructuredText is recorded as `evidence`. This is a
+  review signal, not a semantic documentation proof.
 - `profile`: Go statement blocks and Python statements plus branches are
   reported when the corresponding profile is supplied. `missing` means a
   supplied profile omitted the file; `not-provided` means no profile was

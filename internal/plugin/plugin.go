@@ -1,3 +1,5 @@
+// Package plugin validates and executes the bounded plugin protocol used by
+// RKC's extractor workers.
 package plugin
 
 import (

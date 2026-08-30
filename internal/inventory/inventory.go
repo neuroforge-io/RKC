@@ -1,3 +1,5 @@
+// Package inventory walks repository inputs under explicit, symlink-safe
+// limits and emits the canonical artifact inventory.
 package inventory
 
 import (

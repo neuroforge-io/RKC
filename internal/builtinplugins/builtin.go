@@ -1,3 +1,5 @@
+// Package builtinplugins provides the built-in extractor assets shipped with
+// the RKC binary.
 package builtinplugins
 
 import (

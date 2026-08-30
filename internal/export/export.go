@@ -1,3 +1,5 @@
+// Package export writes deterministic human-, machine-, and NotebookLM-ready
+// products from an immutable RKC dataset.
 package export
 
 import (

@@ -1,3 +1,5 @@
+// Package rkcmodel defines the canonical, portable Repository Knowledge
+// Representation shared by analyzers, stores, exports, and clients.
 package rkcmodel
 
 import "time"
