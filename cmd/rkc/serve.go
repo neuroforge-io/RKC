@@ -38,6 +38,7 @@ func runServeWithContext(ctx context.Context, args []string) (resultErr error) {
 	readTimeout := fs.Duration("read-timeout", 15*time.Second, "HTTP read timeout")
 	writeTimeout := fs.Duration("write-timeout", 60*time.Second, "HTTP write timeout")
 	openBrowser := fs.Bool("open", false, "open the loopback atlas in the default browser after binding")
+	allowRemote := fs.Bool("allow-remote", false, "explicitly permit an unauthenticated non-loopback read-only listener")
 	workbenchEnabled := fs.Bool("workbench", false, "enable the token-authenticated loopback command workbench")
 	workspace := fs.String("workspace", ".", "workbench repository directory")
 	workbenchTimeout := fs.Duration("workbench-timeout", 30*time.Minute, "maximum duration of one workbench command")
@@ -47,11 +48,11 @@ func runServeWithContext(ctx context.Context, args []string) (resultErr error) {
 	if fs.NArg() != 0 {
 		return fmt.Errorf("serve does not accept positional arguments")
 	}
+	if err := validateServeAddress(*addr, *allowRemote, *workbenchEnabled); err != nil {
+		return err
+	}
 	var executable string
 	if *workbenchEnabled {
-		if !loopbackListenAddress(*addr) {
-			return errors.New("workbench requires an explicit localhost or loopback listen address")
-		}
 		if err := resourceguard.RequireCurrentProcessLowPriority(); err != nil {
 			return fmt.Errorf("workbench requires scripts/with-rkc-limits.sh: %w", err)
 		}
@@ -154,6 +155,17 @@ func loopbackListenAddress(address string) bool {
 	}
 	host = strings.Trim(host, "[]")
 	return strings.EqualFold(host, "localhost") || net.ParseIP(host).IsLoopback()
+}
+
+func validateServeAddress(address string, allowRemote, workbench bool) error {
+	loopback := loopbackListenAddress(address)
+	if workbench && !loopback {
+		return errors.New("workbench requires an explicit localhost or loopback listen address")
+	}
+	if _, _, err := net.SplitHostPort(address); err == nil && !loopback && !allowRemote {
+		return errors.New("non-loopback serving requires explicit --allow-remote acknowledgement")
+	}
+	return nil
 }
 
 type serveReadyReceipt struct {

@@ -62,6 +62,9 @@ No downstream component treats repository text as instructions.
   reports only a bounded reachability result and exit status;
 - model output must be structured and cite packet evidence;
 - generated HTML uses controlled templates and browser security headers;
+- API responses are non-cacheable and same-origin resource protected;
+- `serve` requires explicit `--allow-remote` acknowledgement before any
+  non-loopback bind; the command workbench cannot use that exception;
 - plugin artifacts and manifests are digest locked;
 - canonical output is validated before publication;
 - Docker reference deployment is read-only, drops capabilities, and applies

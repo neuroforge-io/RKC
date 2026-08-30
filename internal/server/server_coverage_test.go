@@ -90,6 +90,12 @@ func TestHandlerAllAPIRoutesAndSecurityHeaders(t *testing.T) {
 					t.Errorf("%s=%q want %q", header, got, want)
 				}
 			}
+			if got := response.Header().Get("Cache-Control"); got != "private, no-store" {
+				t.Errorf("Cache-Control=%q want private, no-store", got)
+			}
+			if got := response.Header().Get("Cross-Origin-Resource-Policy"); got != "same-origin" {
+				t.Errorf("Cross-Origin-Resource-Policy=%q want same-origin", got)
+			}
 			if response.Header().Get("Content-Security-Policy") == "" || response.Header().Get("Permissions-Policy") == "" {
 				t.Error("missing security policy headers")
 			}
@@ -226,7 +232,7 @@ func TestVerifiedStaticSiteIsCapturedAndCannotBeReplacedAfterLoad(t *testing.T) 
 		if !bytes.Equal(response.Body.Bytes(), original) {
 			t.Fatalf("%s served bytes outside the verified capture", url)
 		}
-		if response.Header().Get("ETag") == "" || response.Header().Get("X-Content-Type-Options") != "nosniff" {
+		if response.Header().Get("ETag") == "" || response.Header().Get("X-Content-Type-Options") != "nosniff" || response.Header().Get("Cross-Origin-Resource-Policy") != "same-origin" {
 			t.Fatalf("%s missing immutable identity or security headers: %v", url, response.Header())
 		}
 	}

@@ -106,6 +106,36 @@ func TestLoopbackListenAddressStrictlyRejectsRemoteAndMalformedHosts(t *testing.
 	}
 }
 
+func TestValidateServeAddressRequiresExplicitRemoteAcknowledgement(t *testing.T) {
+	if err := validateServeAddress("127.0.0.1:8787", false, false); err != nil {
+		t.Fatalf("loopback listener rejected: %v", err)
+	}
+	if err := validateServeAddress("0.0.0.0:8787", false, false); err == nil || !strings.Contains(err.Error(), "--allow-remote") {
+		t.Fatalf("remote listener without acknowledgement = %v", err)
+	}
+	if err := validateServeAddress("0.0.0.0:8787", true, false); err != nil {
+		t.Fatalf("explicit read-only remote listener rejected: %v", err)
+	}
+	if err := validateServeAddress("0.0.0.0:8787", true, true); err == nil || !strings.Contains(err.Error(), "loopback") {
+		t.Fatalf("remote workbench listener = %v", err)
+	}
+	if err := validateServeAddress("not-an-address", false, false); err != nil {
+		t.Fatalf("malformed address should be left to the listener for a precise error: %v", err)
+	}
+}
+
+func TestRunServeWiresRemoteAcknowledgementBeforeDatasetLoading(t *testing.T) {
+	missing := filepath.Join(t.TempDir(), "missing-atlas")
+	err := runServe([]string{"--addr", "0.0.0.0:0", "--dir", missing})
+	if err == nil || !strings.Contains(err.Error(), "--allow-remote") {
+		t.Fatalf("remote serve without acknowledgement = %v", err)
+	}
+	err = runServe([]string{"--allow-remote", "--addr", "0.0.0.0:0", "--dir", missing})
+	if err == nil || strings.Contains(err.Error(), "--allow-remote") {
+		t.Fatalf("explicit remote acknowledgement did not reach dataset validation: %v", err)
+	}
+}
+
 func TestRunServePublishesReadyServesAndShutsDownCleanly(t *testing.T) {
 	root := t.TempDir()
 	repository := filepath.Join(root, "repository")

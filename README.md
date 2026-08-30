@@ -547,8 +547,15 @@ docker compose run --rm rkc check \
   --coverage /output/atlas/coverage.json \
   --bundle /output/atlas/bundle.json
 docker compose run --rm -p 127.0.0.1:8787:8787 rkc \
-  serve --dir /output/atlas --addr 0.0.0.0:8787
+  serve --dir /output/atlas --addr 0.0.0.0:8787 --allow-remote
 ```
+
+`serve` otherwise fails closed on non-loopback addresses. The container example
+acknowledges its container-wide listener explicitly while publishing it only on
+the host loopback interface. `--allow-remote` exposes the read-only API without
+application authentication; use a firewall or authenticated reverse proxy when
+intentionally publishing it beyond one machine. The command workbench remains
+strictly loopback-only regardless of this flag.
 
 The named output and state volumes survive the one-shot scan container. Remove
 them only when their generated data is no longer needed (`docker compose down
