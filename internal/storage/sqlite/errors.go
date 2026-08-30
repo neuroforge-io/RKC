@@ -45,6 +45,8 @@ type Error struct {
 	Cause error
 }
 
+// Error renders the operation and optional path without discarding the stable
+// Kind classification or original Cause available through Unwrap.
 func (e *Error) Error() string {
 	if e == nil {
 		return "<nil>"

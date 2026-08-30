@@ -19,10 +19,14 @@ import (
 )
 
 const (
-	PluginID      = "rkc.typescript-syntax"
+	// PluginID is the stable producer identity attached to JS/TS syntax facts.
+	PluginID = "rkc.typescript-syntax"
+	// PluginVersion identifies the tokenizer and extraction semantics in use.
 	PluginVersion = "0.2.0"
 )
 
+// Options supplies the confined repository root, snapshot identity, and
+// digest-bound JavaScript or TypeScript files considered by Extract.
 type Options struct {
 	Root       string
 	SnapshotID string
@@ -57,6 +61,9 @@ type extractor struct {
 	projects    map[string]string
 }
 
+// Extract builds a deterministic syntax-only graph fragment for JavaScript and
+// TypeScript inputs. It never claims compiler resolution: uncertain relations
+// remain inferred or unresolved and per-file failures remain diagnostics.
 func Extract(options Options) (rkcmodel.Fragment, error) {
 	root, err := filepath.Abs(options.Root)
 	if err != nil {

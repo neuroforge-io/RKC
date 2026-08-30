@@ -383,6 +383,8 @@ func bindDatabasePath(path string, readOnly bool) (*pathBinding, error) {
 	return binding, nil
 }
 
+// Close releases the bound database file and parent-directory descriptors. It
+// is nil-safe and idempotent; the first descriptor close error is returned.
 func (b *pathBinding) Close() error {
 	if b == nil {
 		return nil

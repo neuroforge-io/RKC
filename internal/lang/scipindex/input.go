@@ -14,17 +14,25 @@ import (
 )
 
 const (
-	MaximumIndexBytes      = int64(512 << 20)
+	// MaximumIndexBytes bounds each SCIP file admitted for hashing and import.
+	MaximumIndexBytes = int64(512 << 20)
+	// MaximumTotalIndexBytes bounds the aggregate prepared SCIP input set.
 	MaximumTotalIndexBytes = int64(1 << 30)
-	MaximumIndexCount      = 64
+	// MaximumIndexCount bounds distinct SCIP files in one scan.
+	MaximumIndexCount = 64
 )
 
+// Input is an absolute, regular-file SCIP input bound to its exact size and
+// SHA-256 digest. Callers must revalidate it with VerifyInputs before import.
 type Input struct {
 	Path      string `json:"path"`
 	SHA256    string `json:"sha256"`
 	SizeBytes int64  `json:"size_bytes"`
 }
 
+// PrepareInputs canonicalizes, deduplicates, bounds, and hashes SCIP paths. It
+// returns path-sorted inputs and a stable aggregate digest over their content
+// digests and sizes; an empty path set returns an empty result and digest.
 func PrepareInputs(ctx context.Context, paths []string) ([]Input, string, error) {
 	if ctx == nil {
 		return nil, "", errors.New("SCIP input context is required")
@@ -82,6 +90,8 @@ func PrepareInputs(ctx context.Context, paths []string) ([]Input, string, error)
 	return inputs, hex.EncodeToString(hasher.Sum(nil)), nil
 }
 
+// VerifyInputs reopens and rehashes every prepared input, failing if path,
+// identity, size, or content changed between admission and extraction.
 func VerifyInputs(ctx context.Context, expected []Input) error {
 	paths := make([]string, 0, len(expected))
 	for _, input := range expected {
@@ -157,6 +167,8 @@ type contextReader struct {
 	reader io.Reader
 }
 
+// Read checks cancellation before delegating a hashing read, preventing a
+// canceled preparation pass from continuing through another input chunk.
 func (reader *contextReader) Read(data []byte) (int, error) {
 	if err := reader.ctx.Err(); err != nil {
 		return 0, err

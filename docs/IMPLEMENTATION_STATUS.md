@@ -211,14 +211,17 @@ production declaration by symbol and source coordinate without importing,
 building, or executing repository code. It deduplicates Go profile blocks,
 rejects inconsistent profile denominators and Python branch counters, and
 retains exact uncovered Go coordinates and Python line/branch arcs for direct
-test triage. The latest reviewed commit-bound index reports 100% test and
-file-documentation evidence under the documented heuristics, **206/206 public
-`pkg/*` exported Go declarations documented**, and **467/773 across all
-production Go code**; the remaining 306 command/internal/example declarations
-are an explicit queue, not a hidden 100% claim. Its fresh combined Go/Python
-profile covers **28,553/31,635 units (90.26%)**, leaving 3,082 exact uncovered
-units across 110 files. Fresh CI profiles remain authoritative for executable
-coverage percentages and residual test gaps.
+test triage. The reviewed `0d04bcdd386c494046f0e99297099dec2ee9736c`
+index reports 100% test and file-documentation evidence under the documented
+heuristics, **206/206 public `pkg/*` exported Go declarations documented**, and
+**467/773 across all production Go code**. Successor source closes that complete
+exact queue: the same local syntax parser now reports **773/773 attached
+declaration comments (100%)** across public, command, internal, and example Go
+code. This proves comment attachment, not prose correctness or semantic
+completeness. The reviewed fresh combined Go/Python profile covers
+**28,553/31,635 units (90.26%)**, leaving 3,082 exact uncovered units across 110
+files. Fresh CI profiles remain authoritative for executable coverage
+percentages and residual test gaps.
 
 `make safe-complete-package` runs that logged sequence inside the mandatory
 resource guard. Commit-bound release commands reject tracked or untracked source

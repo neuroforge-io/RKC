@@ -18,6 +18,9 @@ import (
 	"github.com/neuroforge-io/RKC/internal/resourceguard"
 )
 
+// ErrModelOutputTooLarge reports that bounded capture stopped accepting
+// llama.cpp output; ErrModelOutputInvalid reports that captured bytes did not
+// satisfy RKC's strict single-response protocol.
 var (
 	ErrModelOutputTooLarge = errors.New("model output exceeded configured limit")
 	ErrModelOutputInvalid  = errors.New("model output did not contain a valid response object")
@@ -57,6 +60,9 @@ type LlamaCPPConfig struct {
 	UnsafeDisableResourceGuard bool
 }
 
+// LlamaCPPProvider binds exact executable and GGUF inodes to a serialized,
+// resource-guarded implementation of Provider. It owns those descriptors and
+// must be closed when no further generation is required.
 type LlamaCPPProvider struct {
 	config         LlamaCPPConfig
 	descriptor     ModelDescriptor
@@ -66,6 +72,9 @@ type LlamaCPPProvider struct {
 	closed         bool
 }
 
+// NewLlamaCPPProvider validates resource and digest policy, opens stable handles
+// to the configured executable and model, and returns their immutable public
+// descriptor. Construction fails before any inference process is launched.
 func NewLlamaCPPProvider(config LlamaCPPConfig) (*LlamaCPPProvider, error) {
 	if strings.TrimSpace(config.Executable) == "" {
 		config.Executable = "llama-cli"
@@ -148,7 +157,12 @@ func NewLlamaCPPProvider(config LlamaCPPConfig) (*LlamaCPPProvider, error) {
 	return provider, nil
 }
 
+// Descriptor returns the digest-bound model/runtime identity established at
+// construction. The returned value contains no mutable provider state.
 func (provider *LlamaCPPProvider) Descriptor() ModelDescriptor { return provider.descriptor }
+
+// Supports reports whether the provider's prompt and response protocol covers
+// task. Unsupported tasks are rejected by Generate before process execution.
 func (provider *LlamaCPPProvider) Supports(task Task) bool {
 	switch task {
 	case TaskSymbolSummary, TaskModuleSummary, TaskExecutionExplanation, TaskGapAnalysis:
@@ -157,6 +171,9 @@ func (provider *LlamaCPPProvider) Supports(task Task) bool {
 		return false
 	}
 }
+
+// Close releases the executable and model descriptors held by the provider. It
+// is idempotent, accepts a nil receiver, and serializes with Generate.
 func (provider *LlamaCPPProvider) Close() error {
 	if provider == nil {
 		return nil
@@ -177,6 +194,10 @@ func (provider *LlamaCPPProvider) Close() error {
 	return errors.Join(failures...)
 }
 
+// Generate validates the request and memory estimate, re-verifies bound inputs,
+// invokes llama.cpp without a shell under the configured deadline and resource
+// guard, and accepts only a bounded protocol-valid response. Calls serialize
+// with one another and with Close.
 func (provider *LlamaCPPProvider) Generate(parent context.Context, request Request) (Response, error) {
 	if provider == nil {
 		return Response{}, errors.New("llama.cpp provider is nil")
@@ -467,6 +488,8 @@ type boundedBuffer struct {
 	err   error
 }
 
+// Write implements io.Writer while retaining at most the configured byte limit.
+// The first overflow is sticky and returned as ErrModelOutputTooLarge.
 func (buffer *boundedBuffer) Write(data []byte) (int, error) {
 	buffer.mu.Lock()
 	defer buffer.mu.Unlock()
@@ -485,11 +508,15 @@ func (buffer *boundedBuffer) Write(data []byte) (int, error) {
 	}
 	return buffer.data.Write(data)
 }
+
+// Bytes returns a concurrency-safe copy of the captured prefix.
 func (buffer *boundedBuffer) Bytes() []byte {
 	buffer.mu.Lock()
 	defer buffer.mu.Unlock()
 	return append([]byte(nil), buffer.data.Bytes()...)
 }
+
+// String returns the same captured prefix as Bytes interpreted as a string.
 func (buffer *boundedBuffer) String() string { return string(buffer.Bytes()) }
 
 func minInt(a, b int) int {

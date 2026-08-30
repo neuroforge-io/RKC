@@ -13,20 +13,29 @@ import (
 	"github.com/neuroforge-io/RKC/internal/search"
 )
 
+// Mode selects the ranking channels applied before optional bounded graph
+// expansion.
 type Mode string
 
+// ModeLexical, ModeSemantic, and ModeHybrid select lexical ranking, dense
+// ranking, or reciprocal-rank fusion of both channels respectively.
 const (
 	ModeLexical  Mode = "lexical"
 	ModeSemantic Mode = "semantic"
 	ModeHybrid   Mode = "hybrid"
 )
 
+// Options controls ranking mode and post-retrieval graph expansion. Graph hops
+// and nodes are capped internally; zero hops disables expansion.
 type Options struct {
 	Mode           Mode
 	GraphHops      int
 	GraphNodeLimit int
 }
 
+// Engine combines one canonical lexical corpus with optional snapshot-matched
+// vector, embedding, and graph projections. Semantic modes require both Vector
+// and Embedder; lexical retrieval remains available without them.
 type Engine struct {
 	Lexical  *search.Index
 	Vector   *search.VectorIndex
@@ -34,6 +43,9 @@ type Engine struct {
 	Graph    *graph.Index
 }
 
+// Search obtains a widened deterministic lexical candidate set, applies the
+// selected semantic fusion mode, then performs optional bounded graph expansion
+// before enforcing the caller's final result limit.
 func (engine *Engine) Search(ctx context.Context, query search.Query, options Options) (search.Response, error) {
 	if engine == nil || engine.Lexical == nil {
 		return search.Response{}, errors.New("lexical index is required")

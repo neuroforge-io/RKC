@@ -27,6 +27,9 @@ type readerRecordPageSpec[T any] struct {
 	identifier func(T) string
 }
 
+// ListSnapshots returns immutable snapshots in publication order, optionally
+// scoped to one repository. Its authenticated cursor is bound to that scope
+// and to the last publication timestamp and snapshot ID.
 func (d *Database) ListSnapshots(
 	ctx context.Context,
 	query rkcstore.SnapshotQuery,
@@ -176,6 +179,9 @@ func (d *Database) ListSnapshots(
 	})
 }
 
+// QueryNodes returns one bounded node page from an immutable snapshot. Kind,
+// language, artifact, and visibility filters are bound into the next cursor so
+// it cannot be replayed under a different query.
 func (d *Database) QueryNodes(
 	ctx context.Context,
 	query rkcstore.NodeQuery,
@@ -218,6 +224,8 @@ func (d *Database) QueryNodes(
 	return rkcstore.NodePage{Items: items, Next: next}, err
 }
 
+// QueryEdges returns one bounded edge page with normalized resolution and exact
+// endpoint filters. Pagination cursors are authenticated and query-bound.
 func (d *Database) QueryEdges(
 	ctx context.Context,
 	query rkcstore.EdgeQuery,
@@ -276,6 +284,8 @@ func (d *Database) QueryEdges(
 	return rkcstore.EdgePage{Items: items, Next: next}, err
 }
 
+// QueryDiagnostics returns one bounded diagnostic page filtered by severity,
+// code, and stage. Pagination cursors are authenticated and query-bound.
 func (d *Database) QueryDiagnostics(
 	ctx context.Context,
 	query rkcstore.DiagnosticQuery,

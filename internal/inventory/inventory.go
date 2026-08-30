@@ -22,6 +22,9 @@ import (
 	"github.com/neuroforge-io/RKC/internal/safeoutput"
 )
 
+// Options defines the repository root, explicit exclusions, and fail-closed
+// path/file/text/repository limits applied by Scan. Nonpositive limits disable
+// their corresponding cap except MaxTextBytes, which receives a safe default.
 type Options struct {
 	Root               string
 	MaxFileBytes       int64
@@ -31,12 +34,18 @@ type Options struct {
 	Excludes           []string
 }
 
+// Result contains the path-sorted artifact inventory, deterministically sorted
+// diagnostics, and a digest over each artifact's path, content identity, and
+// disposition.
 type Result struct {
 	Artifacts   []model.Artifact
 	Diagnostics []model.Diagnostic
 	Digest      string
 }
 
+// Scan walks Root without following symlinks or reading special files, records
+// explicit exclusions, rejects generated-output markers, and hashes admitted
+// regular files under the configured resource limits.
 func Scan(opts Options) (Result, error) {
 	root, err := filepath.Abs(opts.Root)
 	if err != nil {
@@ -324,6 +333,8 @@ func detectMediaType(path string) string {
 	return "application/octet-stream"
 }
 
+// DetectLanguage returns RKC's stable language identifier for a recognized
+// special basename or extension, or an empty string when no mapping is known.
 func DetectLanguage(path string) string {
 	name := strings.ToLower(filepath.Base(path))
 	ext := strings.ToLower(filepath.Ext(path))

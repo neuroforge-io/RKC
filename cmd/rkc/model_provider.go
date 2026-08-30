@@ -187,6 +187,8 @@ func openQualifiedGenerationProvider(request qualifiedGenerationRequest) (*quali
 	}, nil
 }
 
+// Close releases the verified generation provider and returns its cleanup
+// result. A nil session or an uninitialized provider is a safe no-op.
 func (session *qualifiedGenerationSession) Close() error {
 	if session == nil || session.Provider == nil {
 		return nil

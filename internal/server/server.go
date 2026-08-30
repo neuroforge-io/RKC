@@ -30,8 +30,14 @@ import (
 )
 
 const (
-	IntegrityVerified               = "verified"
+	// IntegrityVerified identifies an export whose ownership marker, manifest,
+	// canonical files, sizes, and digests have all been verified.
+	IntegrityVerified = "verified"
+	// IntegrityVerifiedLegacyUnmarked identifies a verified legacy export that
+	// predates the current ownership marker but retains its integrity manifest.
 	IntegrityVerifiedLegacyUnmarked = "verified_legacy_unmarked"
+	// IntegrityLegacyUnverified identifies the bounded compatibility layout that
+	// lacks a modern export manifest and therefore cannot claim verified integrity.
 	IntegrityLegacyUnverified       = "legacy_unverified"
 	exportManifestName              = "rkc-export-manifest.json"
 	maximumOwnershipMarkerFileSize  = 64 * 1024
@@ -55,6 +61,9 @@ type staticSiteAsset struct {
 	digest string
 }
 
+// Dataset is one immutable, integrity-classified atlas plus its derived lookup,
+// graph, search, and browser indexes. Maps and indexes are constructed by Load
+// and must be treated as read-only by concurrent handlers.
 type Dataset struct {
 	Root         string
 	Manifest     model.Snapshot
@@ -75,6 +84,9 @@ type Dataset struct {
 	staticSiteTrusted bool
 }
 
+// Load verifies and decodes an exported atlas, validates canonical bundle and
+// coverage bindings, and builds read-only indexes. Modern canonical layouts
+// without an export manifest fail closed; bounded legacy layouts are labeled.
 func Load(outputRoot string) (*Dataset, error) {
 	root, err := filepath.Abs(outputRoot)
 	if err != nil {
@@ -595,6 +607,8 @@ func loadLegacyBundleWithLimits(root string, limits legacyLoadLimits) (model.Bun
 	return bundle, nil
 }
 
+// Handler returns the read-only HTTP API and static atlas handler. It never
+// mounts the privileged workbench command surface.
 func (dataset *Dataset) Handler() http.Handler {
 	return dataset.HandlerWithWorkbench(nil)
 }
@@ -1211,6 +1225,8 @@ func securityHeaders(next http.Handler, noStoreOrigin bool) http.Handler {
 	})
 }
 
+// ErrDatasetNotFound reports that no generated atlas exists at the requested
+// output root or recognized parent layout.
 var ErrDatasetNotFound = errors.New("generated RKC dataset not found")
 
 func firstQuery(request *http.Request, names ...string) string {

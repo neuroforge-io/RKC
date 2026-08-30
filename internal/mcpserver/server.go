@@ -21,6 +21,7 @@ import (
 	"github.com/neuroforge-io/RKC/pkg/rkcmodel"
 )
 
+// ProtocolVersion is the MCP revision advertised during initialization.
 const ProtocolVersion = "2025-11-25"
 
 const (
@@ -34,11 +35,15 @@ const (
 	maximumMCPGraphNodes      = 5000
 )
 
+// Server exposes one immutable, already-validated dataset over newline-delimited
+// JSON-RPC. It holds no mutable canonical repository state.
 type Server struct {
 	dataset *server.Dataset
 	version string
 }
 
+// New constructs an MCP adapter for dataset and the advertised RKC version.
+// Serve rejects a nil dataset before processing any request.
 func New(dataset *server.Dataset, version string) *Server {
 	return &Server{dataset: dataset, version: version}
 }
@@ -70,6 +75,9 @@ type textContent struct {
 	Text string `json:"text"`
 }
 
+// Serve processes bounded JSON-RPC messages until EOF or cancellation. Invalid
+// calls receive protocol errors when they carry an ID; notifications never
+// receive responses, and oversized input or output fails closed.
 func (s *Server) Serve(ctx context.Context, input io.Reader, output io.Writer) error {
 	if ctx == nil {
 		return errors.New("MCP server context is required")

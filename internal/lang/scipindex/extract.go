@@ -21,7 +21,9 @@ import (
 )
 
 const (
-	PluginID      = "rkc.scip"
+	// PluginID is the stable producer identity attached to imported SCIP facts.
+	PluginID = "rkc.scip"
+	// PluginVersion identifies RKC's bounded SCIP import semantics.
 	PluginVersion = "1.0.0"
 
 	maximumDocuments   = 200_000
@@ -38,6 +40,8 @@ const (
 	roleTest       = int32(32)
 )
 
+// Options binds prepared SCIP inputs to the repository inventory used to
+// validate document paths, artifact identities, and source ranges.
 type Options struct {
 	Root      string
 	Inputs    []Input
@@ -76,6 +80,9 @@ type definitionContext struct {
 	hasEnclosing bool
 }
 
+// Extract imports digest-bound SCIP indexes as inert compiler evidence. It
+// enforces index and record limits, rejects changed inputs, and returns a
+// deterministically sorted fragment without invoking an indexer or toolchain.
 func Extract(ctx context.Context, options Options) (rkcmodel.Fragment, error) {
 	if ctx == nil {
 		return rkcmodel.Fragment{}, errors.New("SCIP extraction context is required")

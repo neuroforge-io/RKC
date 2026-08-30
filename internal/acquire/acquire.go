@@ -20,13 +20,19 @@ import (
 	"github.com/neuroforge-io/RKC/internal/sourceorigin"
 )
 
+// Kind identifies whether acquisition reused a caller-owned local directory or
+// materialized an isolated Git source.
 type Kind string
 
+// KindLocal and KindGit are the only acquisition kinds returned by Open.
 const (
 	KindLocal Kind = "local"
 	KindGit   Kind = "git"
 )
 
+// Options controls Git materialization, transport admission, resource bounds,
+// and temporary-tree ownership. Local-directory acquisition ignores Git-only
+// fields and never assumes cleanup ownership.
 type Options struct {
 	GitExecutable    string
 	Ref              string
@@ -39,6 +45,9 @@ type Options struct {
 	MaximumLogBytes  int64
 }
 
+// Result describes the acquired repository root and its canonical public
+// origin. Temporary reports whether Cleanup owns a materialized parent tree;
+// retained and local roots are never deleted by Result.
 type Result struct {
 	Kind             Kind   `json:"kind"`
 	Root             string `json:"root"`
@@ -49,6 +58,8 @@ type Result struct {
 	cleanup          func() error
 }
 
+// Cleanup removes an owned temporary Git materialization. It is a no-op for
+// local directories and for materializations explicitly retained by the caller.
 func (result Result) Cleanup() error {
 	if result.cleanup == nil {
 		return nil
@@ -56,6 +67,10 @@ func (result Result) Cleanup() error {
 	return result.cleanup()
 }
 
+// Open resolves a local directory in place or clones an admitted HTTPS/SSH Git
+// source (or an explicitly enabled file URL) without hooks, filters, prompting,
+// LFS smudging, or project execution. Failed temporary acquisitions are removed
+// unless KeepMaterialized is set.
 func Open(ctx context.Context, source string, options Options) (Result, error) {
 	if ctx == nil {
 		return Result{}, errors.New("repository acquisition context is required")
@@ -231,6 +246,8 @@ type limitedBuffer struct {
 	truncated bool
 }
 
+// Write drains the complete Git output stream while retaining only a bounded
+// prefix and recording whether later bytes were discarded.
 func (writer *limitedBuffer) Write(data []byte) (int, error) {
 	original := len(data)
 	remaining := writer.limit - writer.written
@@ -249,6 +266,8 @@ func (writer *limitedBuffer) Write(data []byte) (int, error) {
 	}
 	return original, nil
 }
+
+// String returns the retained diagnostic prefix.
 func (writer *limitedBuffer) String() string { return writer.buffer.String() }
 
 func validateRemoteSource(source string, allowFile bool) (*url.URL, bool, error) {

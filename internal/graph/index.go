@@ -10,8 +10,13 @@ import (
 	"github.com/neuroforge-io/RKC/pkg/rkcmodel"
 )
 
+// ErrNodeNotFound indicates that a requested traversal seed or endpoint is not
+// present in the immutable index.
 var ErrNodeNotFound = errors.New("graph node not found")
 
+// Index is a read-optimized projection of one immutable canonical graph.
+// Callers must not mutate its maps or adjacency slices after Build; concurrent
+// read-only operations are then safe.
 type Index struct {
 	Nodes    map[string]rkcmodel.Node
 	Edges    map[string]rkcmodel.Edge
@@ -19,6 +24,9 @@ type Index struct {
 	Incoming map[string][]rkcmodel.Edge
 }
 
+// Build creates deterministic incoming and outgoing adjacency lists from the
+// supplied canonical records. It assumes IDs and references were validated by
+// the bundle boundary and does not silently repair malformed graph data.
 func Build(nodes []rkcmodel.Node, edges []rkcmodel.Edge) *Index {
 	index := &Index{
 		Nodes:    make(map[string]rkcmodel.Node, len(nodes)),
@@ -42,14 +50,22 @@ func Build(nodes []rkcmodel.Node, edges []rkcmodel.Edge) *Index {
 	return index
 }
 
+// Direction selects which edge orientation a traversal may follow relative to
+// its current node.
 type Direction string
 
 const (
+	// DirectionOutgoing follows relationships from their From node to To node.
 	DirectionOutgoing Direction = "outgoing"
+	// DirectionIncoming follows relationships from their To node back to From.
 	DirectionIncoming Direction = "incoming"
-	DirectionBoth     Direction = "both"
+	// DirectionBoth permits deterministic traversal in either orientation.
+	DirectionBoth Direction = "both"
 )
 
+// TraverseOptions bounds graph work and filters relationships. Empty direction
+// defaults to both, non-positive depth/node limits receive safe defaults, and
+// unresolved relationships are excluded unless explicitly requested.
 type TraverseOptions struct {
 	Direction         Direction
 	EdgeKinds         map[string]struct{}
@@ -59,6 +75,9 @@ type TraverseOptions struct {
 	IncludeUnresolved bool
 }
 
+// Neighborhood is a bounded breadth-first projection around one seed. Depths
+// are shortest discovered distances; Truncated reports a node-limit cut rather
+// than pretending the returned subgraph is complete.
 type Neighborhood struct {
 	SeedID    string          `json:"seed_id"`
 	Nodes     []rkcmodel.Node `json:"nodes"`
@@ -67,6 +86,9 @@ type Neighborhood struct {
 	Truncated bool            `json:"truncated"`
 }
 
+// Neighborhood traverses accepted edges breadth-first from seedID and returns
+// deterministically ordered nodes and edges. A missing seed returns
+// ErrNodeNotFound without a partial result.
 func (index *Index) Neighborhood(seedID string, options TraverseOptions) (Neighborhood, error) {
 	if _, ok := index.Nodes[seedID]; !ok {
 		return Neighborhood{}, ErrNodeNotFound
@@ -99,6 +121,9 @@ func (index *Index) Neighborhood(seedID string, options TraverseOptions) (Neighb
 	return index.materializeNeighborhood(seedID, visited, edges, truncated), nil
 }
 
+// Path reports a bounded shortest-path search, including the inspected-node
+// count when no route is found. NodeIDs and EdgeIDs are ordered from source to
+// destination when Found is true.
 type Path struct {
 	Found   bool            `json:"found"`
 	FromID  string          `json:"from_id"`
@@ -111,6 +136,9 @@ type Path struct {
 	Visited int             `json:"visited"`
 }
 
+// ShortestPath performs deterministic breadth-first search under the supplied
+// filters and limits. Missing endpoints return ErrNodeNotFound; an unreachable
+// destination is a successful result with Found false.
 func (index *Index) ShortestPath(fromID, toID string, options TraverseOptions) (Path, error) {
 	if _, ok := index.Nodes[fromID]; !ok {
 		return Path{}, ErrNodeNotFound
@@ -174,6 +202,8 @@ func (index *Index) ShortestPath(fromID, toID string, options TraverseOptions) (
 	return result, nil
 }
 
+// ImpactResult contains the bounded dependency-impact subgraph without
+// repeating the seed among impacted nodes.
 type ImpactResult struct {
 	SeedID        string          `json:"seed_id"`
 	ImpactedNodes []rkcmodel.Node `json:"impacted_nodes"`
@@ -201,6 +231,8 @@ func (index *Index) Impact(seedID string, options TraverseOptions) (ImpactResult
 	return ImpactResult{SeedID: seedID, ImpactedNodes: impacted, ImpactEdges: neighborhood.Edges, DepthByID: neighborhood.DepthByID, Truncated: neighborhood.Truncated}, nil
 }
 
+// Component is one deterministically numbered strongly connected component.
+// Cyclic is true for multi-node components and accepted self-loops.
 type Component struct {
 	ID      int      `json:"id"`
 	NodeIDs []string `json:"node_ids"`

@@ -92,6 +92,9 @@ func prepareSQLiteBundle(ctx context.Context, path string, bundle rkcmodel.Bundl
 	}, nil
 }
 
+// Commit atomically promotes the validated staged snapshot. Repeated commits
+// and verified no-op publications succeed idempotently; a closed publication
+// cannot be committed.
 func (publication *sqlitePublication) Commit(ctx context.Context) error {
 	if publication == nil || publication.database == nil || publication.closed {
 		return errors.New("SQLite publication is closed")
@@ -107,6 +110,9 @@ func (publication *sqlitePublication) Commit(ctx context.Context) error {
 	return nil
 }
 
+// Close aborts any uncommitted non-no-op build before closing the database. It
+// is nil-safe and idempotent and joins abort and database-close failures so no
+// cleanup error is hidden.
 func (publication *sqlitePublication) Close(reason error) error {
 	if publication == nil || publication.closed {
 		return nil

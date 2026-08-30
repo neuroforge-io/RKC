@@ -100,6 +100,9 @@ type workbenchCommand = commandcatalog.Command
 
 var workbenchCommands = commandcatalog.Commands(commandcatalog.Context{})
 
+// NewWorkbench validates and binds the workspace and executable identities,
+// sanitizes the inherited environment, creates private bearer capabilities,
+// and returns a bounded, single-slot command runner.
 func NewWorkbench(config WorkbenchConfig) (*Workbench, error) {
 	workspace, err := filepath.Abs(config.Workspace)
 	if err != nil {
@@ -937,6 +940,8 @@ type boundedWorkbenchBuffer struct {
 	truncated bool
 }
 
+// Write accepts the caller's full byte count while retaining at most the
+// configured output limit. Bytes beyond that bound set the truncation flag.
 func (buffer *boundedWorkbenchBuffer) Write(value []byte) (int, error) {
 	buffer.mu.Lock()
 	defer buffer.mu.Unlock()
@@ -954,12 +959,14 @@ func (buffer *boundedWorkbenchBuffer) Write(value []byte) (int, error) {
 	return original, nil
 }
 
+// String returns a synchronized copy of the retained output prefix.
 func (buffer *boundedWorkbenchBuffer) String() string {
 	buffer.mu.Lock()
 	defer buffer.mu.Unlock()
 	return buffer.buffer.String()
 }
 
+// Truncated reports whether any accepted output bytes were discarded.
 func (buffer *boundedWorkbenchBuffer) Truncated() bool {
 	buffer.mu.Lock()
 	defer buffer.mu.Unlock()

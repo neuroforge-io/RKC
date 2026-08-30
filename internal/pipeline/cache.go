@@ -56,6 +56,9 @@ type stageFragmentPayload struct {
 	Ownership         stageOwnership    `json:"ownership"`
 }
 
+// StageCacheEntry is one inspected metadata pointer and its referenced CAS
+// payload. Valid is false when identity, digest, shape, or optional payload
+// verification fails; Issue then contains the non-authoritative diagnosis.
 type StageCacheEntry struct {
 	CacheKey      string    `json:"cache_key"`
 	StageID       string    `json:"stage_id"`
@@ -67,6 +70,9 @@ type StageCacheEntry struct {
 	Issue         string    `json:"issue,omitempty"`
 }
 
+// StageCacheReport summarizes cache pointer health, object reachability, and
+// byte accounting at one inspection instant. Healthy is true only when every
+// metadata entry validates; orphan objects are reported separately.
 type StageCacheReport struct {
 	Root           string            `json:"root"`
 	Healthy        bool              `json:"healthy"`
@@ -80,6 +86,9 @@ type StageCacheReport struct {
 	PayloadBytes   int64             `json:"payload_bytes"`
 }
 
+// StageCachePruneOptions selects entries by age or selects all entries. DryRun
+// computes the same deterministic selection without deleting metadata or CAS
+// objects; a zero Now uses the current UTC time.
 type StageCachePruneOptions struct {
 	OlderThan time.Duration
 	All       bool
@@ -87,6 +96,8 @@ type StageCachePruneOptions struct {
 	Now       time.Time
 }
 
+// StageCachePruneReport records the exact metadata and unreferenced objects
+// selected by Prune, their bytes, and the number of retained cache entries.
 type StageCachePruneReport struct {
 	Root             string `json:"root"`
 	DryRun           bool   `json:"dry_run"`
@@ -97,6 +108,9 @@ type StageCachePruneReport struct {
 	EntriesRemaining int    `json:"entries_remaining"`
 }
 
+// OpenStageCache resolves root and opens its separate metadata-pointer and CAS
+// stores. It creates required directories but does not trust or verify existing
+// entries until Load or Inspect examines them.
 func OpenStageCache(root string) (*StageCache, error) {
 	if strings.TrimSpace(root) == "" {
 		return nil, errors.New("stage cache root is required")
@@ -116,6 +130,7 @@ func OpenStageCache(root string) (*StageCache, error) {
 	return &StageCache{root: absolute, metadata: metadata, objects: objects}, nil
 }
 
+// Root returns the absolute cache root, or an empty string for a nil cache.
 func (cache *StageCache) Root() string {
 	if cache == nil {
 		return ""
@@ -123,6 +138,9 @@ func (cache *StageCache) Root() string {
 	return cache.root
 }
 
+// Load returns a cache pointer only when its key/stage metadata names a
+// normalized, present, digest-valid CAS object. Invalid or missing pointers are
+// deleted and reported as misses; storage failures remain errors.
 func (cache *StageCache) Load(
 	ctx context.Context,
 	key string,
@@ -203,6 +221,9 @@ func (cache *StageCache) probe(
 	return true, "", nil
 }
 
+// Store publishes metadata for an already-present immutable CAS payload. The
+// result must be bound to key and a nonempty stage, and Store clears transient
+// hit/do-not-cache flags before publication.
 func (cache *StageCache) Store(
 	ctx context.Context,
 	key string,
@@ -233,6 +254,8 @@ func (cache *StageCache) Store(
 	return cache.metadata.Store(ctx, key, result)
 }
 
+// Invalidate deletes only key's metadata pointer. The immutable payload remains
+// available for other references and later orphan pruning.
 func (cache *StageCache) Invalidate(ctx context.Context, key string) error {
 	if cache == nil {
 		return errors.New("stage cache is nil")
@@ -294,6 +317,9 @@ func (cache *StageCache) readPayload(digest string) (stageFragmentPayload, error
 	return payload, nil
 }
 
+// Inspect inventories every metadata pointer and CAS object. When verify is
+// true it also decodes and validates bounded payload contents; it never repairs
+// or deletes the cache.
 func (cache *StageCache) Inspect(ctx context.Context, verify bool) (StageCacheReport, error) {
 	if cache == nil {
 		return StageCacheReport{}, errors.New("stage cache is nil")
@@ -378,6 +404,9 @@ func (cache *StageCache) Inspect(ctx context.Context, verify bool) (StageCacheRe
 	return report, nil
 }
 
+// Prune removes selected metadata entries and then deletes only CAS objects not
+// referenced by retained entries. Selection requires All or a positive age;
+// DryRun returns identical accounting without mutation.
 func (cache *StageCache) Prune(
 	ctx context.Context,
 	options StageCachePruneOptions,

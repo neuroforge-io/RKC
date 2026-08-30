@@ -12,6 +12,8 @@ import (
 	"github.com/neuroforge-io/RKC/pkg/rkcmodel"
 )
 
+// StagePlan records one effective DAG stage, its cache identity, and the reason
+// it will execute, reuse a cache entry, or remain disabled.
 type StagePlan struct {
 	ID           string                    `json:"id"`
 	Version      string                    `json:"version"`
@@ -24,6 +26,8 @@ type StagePlan struct {
 	Reason       string                    `json:"reason"`
 }
 
+// ScanPlan is the read-only preview of a scan after source inventory,
+// normalization, SCIP admission, and cache probing have completed.
 type ScanPlan struct {
 	Root      string      `json:"root"`
 	CacheRoot string      `json:"cache_root,omitempty"`
@@ -31,6 +35,7 @@ type ScanPlan struct {
 	Summary   PlanSummary `json:"summary"`
 }
 
+// PlanSummary partitions every planned stage by effective disposition.
 type PlanSummary struct {
 	Stages   int `json:"stages"`
 	Execute  int `json:"execute"`

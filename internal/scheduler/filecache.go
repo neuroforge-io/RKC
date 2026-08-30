@@ -25,6 +25,8 @@ type FileCache struct {
 	rootIdentity os.FileInfo
 }
 
+// FileCacheEntry describes one validated cache pointer and its on-disk metadata.
+// Result payload objects remain in CAS and are not duplicated in this file.
 type FileCacheEntry struct {
 	Key          string    `json:"cache_key"`
 	Result       Result    `json:"result"`
@@ -32,6 +34,8 @@ type FileCacheEntry struct {
 	LastAccessed time.Time `json:"last_accessed"`
 }
 
+// OpenFileCache creates or opens root, rejects symlink traversal, and binds the
+// cache to the resulting directory identity for all subsequent operations.
 func OpenFileCache(root string) (*FileCache, error) {
 	absolute, err := filepath.Abs(root)
 	if err != nil {
@@ -53,6 +57,8 @@ func OpenFileCache(root string) (*FileCache, error) {
 	return &FileCache{Root: absolute, rootIdentity: identity}, nil
 }
 
+// Load verifies the root, immutable entry identity, size bound, and JSON before
+// returning a cached result. A missing key returns the zero result and false.
 func (cache *FileCache) Load(ctx context.Context, key string) (Result, bool, error) {
 	if err := ctx.Err(); err != nil {
 		return Result{}, false, err
@@ -98,6 +104,8 @@ func (cache *FileCache) Load(ctx context.Context, key string) (Result, bool, err
 	return result, true, nil
 }
 
+// Store durably installs one immutable metadata entry. Repeating the same bytes
+// is idempotent; an existing key with different bytes is a conflict.
 func (cache *FileCache) Store(ctx context.Context, key string, result Result) error {
 	if err := ctx.Err(); err != nil {
 		return err
@@ -312,6 +320,8 @@ func (cache *FileCache) Delete(ctx context.Context, key string) error {
 	return syncStableCacheDirectory(shard, shardIdentity)
 }
 
+// Invalidate removes the exact metadata entry for key and is idempotent when
+// the entry is already absent. Referenced CAS objects are not deleted.
 func (cache *FileCache) Invalidate(ctx context.Context, key string) error {
 	return cache.Delete(ctx, key)
 }

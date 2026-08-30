@@ -15,8 +15,13 @@ import (
 	"unicode/utf8"
 )
 
+// VectorIndexVersion is the persisted vector-index schema accepted by
+// LoadVectorIndex and emitted by BuildVectorIndex.
 const VectorIndexVersion = "1"
 
+// EmbeddingDescriptor binds vectors to the provider, model digest, and fixed
+// dimensionality that produced them. A zero Dimensions value is permitted only
+// while an index is being built and inferred from its first vector.
 type EmbeddingDescriptor struct {
 	Provider   string `json:"provider"`
 	Model      string `json:"model"`
@@ -24,17 +29,25 @@ type EmbeddingDescriptor struct {
 	Dimensions int    `json:"dimensions,omitempty"`
 }
 
+// EmbeddingProvider supplies a stable descriptor and order-preserving vector
+// batches. Implementations must return exactly one finite vector per input or
+// report an error.
 type EmbeddingProvider interface {
 	Descriptor() EmbeddingDescriptor
 	Embed(context.Context, []string) ([][]float32, error)
 }
 
+// VectorRecord binds one normalized embedding to its lexical document and to
+// the SHA-256 of the exact bounded text embedded for that document.
 type VectorRecord struct {
 	DocumentID    string    `json:"document_id"`
 	ContentSHA256 string    `json:"content_sha256"`
 	Values        []float32 `json:"values"`
 }
 
+// VectorIndex is a deterministic dense-search projection over the same
+// documents as a lexical Index. Vectors are stored in document-ID order by the
+// builder and interpreted using Descriptor.
 type VectorIndex struct {
 	Version    string              `json:"version"`
 	Descriptor EmbeddingDescriptor `json:"descriptor"`
@@ -42,11 +55,17 @@ type VectorIndex struct {
 	Vectors    []VectorRecord      `json:"vectors"`
 }
 
+// VectorBuildOptions bounds provider batch size and the UTF-8-safe document
+// prefix included in each embedding request. Nonpositive values select safe
+// defaults and oversized batches are capped.
 type VectorBuildOptions struct {
 	BatchSize        int
 	MaximumTextBytes int
 }
 
+// BuildVectorIndex embeds lexical documents in deterministic ID order,
+// normalizes every vector, enforces one consistent dimension, and records the
+// digest of each exact input. It returns no partial index on provider failure.
 func BuildVectorIndex(ctx context.Context, lexical *Index, provider EmbeddingProvider, options VectorBuildOptions) (*VectorIndex, error) {
 	if lexical == nil || provider == nil {
 		return nil, errors.New("lexical index and embedding provider are required")
@@ -101,6 +120,9 @@ func BuildVectorIndex(ctx context.Context, lexical *Index, provider EmbeddingPro
 	return result, nil
 }
 
+// Search normalizes a copy of queryVector, applies the lexical query's exact
+// filters, and returns bounded cosine-ranked hits with deterministic ID ties.
+// Stored records with missing documents or wrong dimensions are skipped.
 func (index *VectorIndex) Search(query Query, queryVector []float32) (Response, error) {
 	if index == nil || index.Version != VectorIndexVersion {
 		return Response{}, errors.New("unsupported or missing vector index")
@@ -193,6 +215,9 @@ func Fuse(query string, lexical, semantic Response, limit int) Response {
 	return Response{Query: query, Hits: hits, Truncated: truncated, Mode: "hybrid-rrf", IndexVersion: IndexVersion + "+vector-" + VectorIndexVersion}
 }
 
+// Save writes a supported index through a synced sibling temporary file and
+// renames it over path. It does not establish a parent-directory durability
+// barrier or authenticate the destination for untrusted consumers.
 func (index *VectorIndex) Save(path string) error {
 	if index == nil || index.Version != VectorIndexVersion {
 		return errors.New("cannot save invalid vector index")
@@ -232,6 +257,9 @@ func (index *VectorIndex) Save(path string) error {
 	return nil
 }
 
+// LoadVectorIndex decodes path and validates schema, provider identity,
+// dimensions, unique document references, and finite normalized stored vectors.
+// Callers remain responsible for binding the index to the intended snapshot.
 func LoadVectorIndex(path string) (*VectorIndex, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {

@@ -9,14 +9,24 @@ import (
 	"github.com/neuroforge-io/RKC/pkg/rkcmodel"
 )
 
+// Severity expresses the compatibility risk inferred from a logical node
+// change; it is evidence for review prioritization, not a universal semantic-
+// versioning verdict.
 type Severity string
 
 const (
-	SeverityInfo     Severity = "info"
-	SeverityRisk     Severity = "risk"
+	// SeverityInfo marks additions or changes with no detected public-risk rule.
+	SeverityInfo Severity = "info"
+	// SeverityRisk marks logical-name or implementation-semantic changes that
+	// warrant review but are not proven public breakages.
+	SeverityRisk Severity = "risk"
+	// SeverityBreaking marks removal or incompatible modification of a public
+	// surface under RKC's conservative rules.
 	SeverityBreaking Severity = "breaking"
 )
 
+// ArtifactChange records an added, removed, or modified repository artifact;
+// Fields names the canonical properties that differ for modifications.
 type ArtifactChange struct {
 	Kind   string             `json:"kind"`
 	Before *rkcmodel.Artifact `json:"before,omitempty"`
@@ -24,6 +34,8 @@ type ArtifactChange struct {
 	Fields []string           `json:"fields,omitempty"`
 }
 
+// NodeChange compares one logical graph entity across snapshots and retains the
+// conservative severity plus human-readable classification reasons.
 type NodeChange struct {
 	Kind       string         `json:"kind"`
 	Severity   Severity       `json:"severity"`
@@ -34,6 +46,8 @@ type NodeChange struct {
 	Reasons    []string       `json:"reasons,omitempty"`
 }
 
+// EdgeChange records a relationship addition, removal, or modification keyed
+// by its kind and endpoints rather than snapshot-specific edge IDs.
 type EdgeChange struct {
 	Kind   string         `json:"kind"`
 	Before *rkcmodel.Edge `json:"before,omitempty"`
@@ -41,6 +55,8 @@ type EdgeChange struct {
 	Fields []string       `json:"fields,omitempty"`
 }
 
+// Summary contains exact counts derived from the report's change slices. Risk
+// and breaking counts apply to node changes classified by this package.
 type Summary struct {
 	ArtifactsAdded    int `json:"artifacts_added"`
 	ArtifactsRemoved  int `json:"artifacts_removed"`
@@ -55,6 +71,8 @@ type Summary struct {
 	RiskChanges       int `json:"risk_changes"`
 }
 
+// Report is the deterministic semantic comparison between two immutable
+// snapshots, with detailed changes and a summary computed from those details.
 type Report struct {
 	SchemaVersion string           `json:"schema_version"`
 	FromSnapshot  string           `json:"from_snapshot"`
@@ -65,6 +83,9 @@ type Report struct {
 	Edges         []EdgeChange     `json:"edges"`
 }
 
+// Compare matches artifacts by path, nodes by their most stable logical key,
+// and edges by kind/endpoints. Results are deterministically ordered and input
+// bundles are not mutated.
 func Compare(before, after rkcmodel.Bundle) Report {
 	report := Report{SchemaVersion: "1", FromSnapshot: before.Snapshot.ID, ToSnapshot: after.Snapshot.ID}
 	report.Artifacts = compareArtifacts(before.Artifacts, after.Artifacts)

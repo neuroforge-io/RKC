@@ -70,6 +70,10 @@ type LlamaCPPEmbedder struct {
 	priorityCheck func() error
 }
 
+// NewLlamaCPPEmbedder validates bounds and expected digests, opens stable
+// executable/model handles, and returns a serialized provider without running
+// inference. Production construction also requires the active low-priority
+// resource envelope.
 func NewLlamaCPPEmbedder(config LlamaCPPEmbeddingConfig) (*LlamaCPPEmbedder, error) {
 	var priorityCheck func() error
 	if !config.UnsafeDisableResourceGuard {
@@ -208,6 +212,8 @@ func normalizeLlamaCPPEmbeddingConfig(config LlamaCPPEmbeddingConfig) (LlamaCPPE
 	return config, nil
 }
 
+// Descriptor returns the digest-bound provider/model identity and the accepted
+// vector dimension. It returns the zero descriptor for a nil or closed embedder.
 func (embedder *LlamaCPPEmbedder) Descriptor() EmbeddingDescriptor {
 	if embedder == nil {
 		return EmbeddingDescriptor{}
@@ -225,6 +231,9 @@ func (embedder *LlamaCPPEmbedder) Descriptor() EmbeddingDescriptor {
 	}
 }
 
+// Embed validates a bounded batch of NUL-free UTF-8 inputs, serializes native
+// executions, re-verifies bound files before and after use, and returns vectors
+// in input order. Any failed input rejects the complete batch.
 func (embedder *LlamaCPPEmbedder) Embed(parent context.Context, texts []string) ([][]float32, error) {
 	if embedder == nil {
 		return nil, errors.New("llama.cpp embedder is not configured")
@@ -768,6 +777,8 @@ type embeddingBoundedBuffer struct {
 	err   error
 }
 
+// Write implements io.Writer with a sticky errEmbeddingOutputTooLarge result
+// once the configured captured-output limit is exhausted.
 func (buffer *embeddingBoundedBuffer) Write(data []byte) (int, error) {
 	buffer.mu.Lock()
 	defer buffer.mu.Unlock()
@@ -787,12 +798,14 @@ func (buffer *embeddingBoundedBuffer) Write(data []byte) (int, error) {
 	return buffer.data.Write(data)
 }
 
+// Bytes returns a concurrency-safe copy of the captured output prefix.
 func (buffer *embeddingBoundedBuffer) Bytes() []byte {
 	buffer.mu.Lock()
 	defer buffer.mu.Unlock()
 	return append([]byte(nil), buffer.data.Bytes()...)
 }
 
+// String returns the captured output prefix as text.
 func (buffer *embeddingBoundedBuffer) String() string { return string(buffer.Bytes()) }
 
 func minimum(left, right int) int {

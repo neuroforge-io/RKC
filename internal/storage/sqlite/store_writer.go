@@ -206,38 +206,49 @@ func (d *Database) BeginBuild(ctx context.Context, options rkcstore.BuildOptions
 	return buildID, nil
 }
 
+// PutArtifacts stages immutable canonical artifact records for an open build.
+// Reusing an ID with different canonical bytes is a conflict.
 func (d *Database) PutArtifacts(ctx context.Context, build rkcstore.BuildID, values []rkcmodel.Artifact) error {
 	return writerPutBatch(d, ctx, "put artifacts", build, "artifact", values, func(value rkcmodel.Artifact) string { return value.ID })
 }
 
+// PutNodes stages immutable canonical graph nodes for an open build.
 func (d *Database) PutNodes(ctx context.Context, build rkcstore.BuildID, values []rkcmodel.Node) error {
 	return writerPutBatch(d, ctx, "put nodes", build, "node", values, func(value rkcmodel.Node) string { return value.ID })
 }
 
+// PutEdges stages immutable canonical graph edges for an open build.
 func (d *Database) PutEdges(ctx context.Context, build rkcstore.BuildID, values []rkcmodel.Edge) error {
 	return writerPutBatch(d, ctx, "put edges", build, "edge", values, func(value rkcmodel.Edge) string { return value.ID })
 }
 
+// PutEvidence stages immutable canonical provenance records for an open build.
 func (d *Database) PutEvidence(ctx context.Context, build rkcstore.BuildID, values []rkcmodel.Evidence) error {
 	return writerPutBatch(d, ctx, "put evidence", build, "evidence", values, func(value rkcmodel.Evidence) string { return value.ID })
 }
 
+// PutDiagnostics stages immutable canonical diagnostics for an open build.
 func (d *Database) PutDiagnostics(ctx context.Context, build rkcstore.BuildID, values []rkcmodel.Diagnostic) error {
 	return writerPutBatch(d, ctx, "put diagnostics", build, "diagnostic", values, func(value rkcmodel.Diagnostic) string { return value.ID })
 }
 
+// PutConflicts stages immutable canonical conflict records for an open build.
 func (d *Database) PutConflicts(ctx context.Context, build rkcstore.BuildID, values []rkcmodel.Conflict) error {
 	return writerPutBatch(d, ctx, "put conflicts", build, "conflict", values, func(value rkcmodel.Conflict) string { return value.ID })
 }
 
+// PutDocuments stages immutable generated-document records and their sections
+// for an open build while preserving canonical section order.
 func (d *Database) PutDocuments(ctx context.Context, build rkcstore.BuildID, values []rkcmodel.Document) error {
 	return writerPutBatch(d, ctx, "put documents", build, "document", values, func(value rkcmodel.Document) string { return value.ID })
 }
 
+// PutClaims stages immutable, evidence-linked claim records for an open build.
 func (d *Database) PutClaims(ctx context.Context, build rkcstore.BuildID, values []rkcmodel.Claim) error {
 	return writerPutBatch(d, ctx, "put claims", build, "claim", values, func(value rkcmodel.Claim) string { return value.ID })
 }
 
+// PutPaths stages immutable execution-path records for an open build.
 func (d *Database) PutPaths(ctx context.Context, build rkcstore.BuildID, values []rkcmodel.ExecutionPath) error {
 	return writerPutBatch(d, ctx, "put paths", build, "execution_path", values, func(value rkcmodel.ExecutionPath) string { return value.ID })
 }

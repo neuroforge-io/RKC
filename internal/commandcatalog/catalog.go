@@ -14,9 +14,12 @@ type Context struct {
 type Mode string
 
 const (
-	ModeRead   Mode = "read"
+	// ModeRead marks workflows that consume existing state without publishing it.
+	ModeRead Mode = "read"
+	// ModeWrites marks workflows that may publish local RKC state or artifacts.
 	ModeWrites Mode = "writes"
-	ModeModel  Mode = "model"
+	// ModeModel marks workflows that may invoke an explicitly qualified model.
+	ModeModel Mode = "model"
 )
 
 // Command is one guided workflow exposed by the browser command center.

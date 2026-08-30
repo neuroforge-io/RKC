@@ -21,11 +21,15 @@ import (
 	"github.com/neuroforge-io/RKC/pkg/rkcmodel"
 )
 
+// PluginID and PluginVersion form the stable producer identity attached to
+// diagnostics and evidence emitted by this syntax extractor.
 const (
 	PluginID      = "rkc.go-ast"
 	PluginVersion = "0.2.0"
 )
 
+// Options binds extraction to one repository root and snapshot plus an
+// inventory-verified file set. Non-Go references are ignored deterministically.
 type Options struct {
 	Root       string
 	SnapshotID string
@@ -42,6 +46,10 @@ type extractor struct {
 	seenNodes  map[string]struct{}
 }
 
+// Extract parses admitted Go files in path order and returns deterministic
+// declaration, import, call-candidate, evidence, and diagnostic records. It
+// never loads packages or executes repository code, so semantic targets remain
+// explicitly unresolved until a stronger adapter supplies proof.
 func Extract(options Options) (rkcmodel.Fragment, error) {
 	root, err := filepath.Abs(options.Root)
 	if err != nil {

@@ -32,6 +32,11 @@ import (
 	"github.com/neuroforge-io/RKC/pkg/rkcmodel"
 )
 
+// Options is the complete deterministic scan contract: inventory limits,
+// analyzer admission, digest-pinned plugin isolation, provenance digests,
+// verified stage caching, scheduler resources, durable journaling, and optional
+// lifecycle observation. Disable flags remove only their named analyzers; core
+// inventory, normalization, validation, and coverage always remain live.
 type Options struct {
 	Root               string
 	MaxFileBytes       int64

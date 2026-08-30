@@ -198,6 +198,8 @@ func OpenFileJournal(root, runID string) (*FileJournal, error) {
 	return journal, nil
 }
 
+// Path returns the absolute bound journal pathname, or an empty string for a
+// nil journal. The path is informational and does not confer file authority.
 func (journal *FileJournal) Path() string {
 	if journal == nil {
 		return ""
@@ -205,6 +207,8 @@ func (journal *FileJournal) Path() string {
 	return journal.path
 }
 
+// RunID returns the validated run identity, or an empty string for a nil
+// journal.
 func (journal *FileJournal) RunID() string {
 	if journal == nil {
 		return ""
@@ -322,6 +326,8 @@ func (journal *FileJournal) Append(ctx context.Context, record JournalRecord) er
 	return nil
 }
 
+// Close serializes with Append, closes the journal once, and joins any earlier
+// durable-write failure with the close error. Repeated calls are idempotent.
 func (journal *FileJournal) Close() error {
 	if journal == nil {
 		return nil

@@ -41,6 +41,8 @@ type answerSemanticSession struct {
 	closeErr  error
 }
 
+// Close releases the per-answer embedding provider exactly once and returns
+// the same cleanup result to every caller. Nil sessions are safe no-ops.
 func (session *answerSemanticSession) Close() error {
 	if session == nil {
 		return nil

@@ -234,6 +234,8 @@ func (d *Database) Current(
 	})
 }
 
+// Artifact returns the exact canonical artifact record from snapshotID. Both
+// identifiers are validated and stored bytes are revalidated before return.
 func (d *Database) Artifact(
 	ctx context.Context,
 	snapshotID rkcstore.SnapshotID,
@@ -255,6 +257,8 @@ func (d *Database) Artifact(
 	)
 }
 
+// Node returns the exact canonical node record from snapshotID after identifier
+// validation and stored-record integrity checks.
 func (d *Database) Node(
 	ctx context.Context,
 	snapshotID rkcstore.SnapshotID,
@@ -276,6 +280,8 @@ func (d *Database) Node(
 	)
 }
 
+// Evidence returns the exact canonical evidence record from snapshotID after
+// identifier validation and stored-record integrity checks.
 func (d *Database) Evidence(
 	ctx context.Context,
 	snapshotID rkcstore.SnapshotID,

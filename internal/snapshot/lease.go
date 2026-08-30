@@ -91,6 +91,9 @@ func (lease *transactionLease) validate(path string) error {
 	return nil
 }
 
+// Close releases the advisory transaction lock and underlying descriptor. It is
+// idempotent for nil, absent, or already-closed leases; it does not remove the
+// lease path, whose exact-identity cleanup belongs to transaction publication.
 func (lease *transactionLease) Close() error {
 	if lease == nil || lease.file == nil {
 		return nil

@@ -18,10 +18,14 @@ import (
 )
 
 const (
-	PluginID      = "rkc.json-schema"
+	// PluginID is the stable producer identity attached to JSON Schema facts.
+	PluginID = "rkc.json-schema"
+	// PluginVersion identifies the extraction semantics used by this adapter.
 	PluginVersion = "0.2.0"
 )
 
+// Options supplies the materialized repository root and digest-bound candidate
+// files inspected by Extract. Extract reads only through sourcepath confinement.
 type Options struct {
 	Root  string
 	Files []pluginapi.FileRef
@@ -34,6 +38,9 @@ type collector struct {
 	file     pluginapi.FileRef
 }
 
+// Extract deterministically projects recognized JSON Schema documents into a
+// sorted graph fragment. Non-schema JSON is ignored; schema-like malformed
+// inputs produce diagnostics rather than guessed facts.
 func Extract(options Options) (rkcmodel.Fragment, error) {
 	fragment := rkcmodel.Fragment{}
 	files := append([]pluginapi.FileRef(nil), options.Files...)

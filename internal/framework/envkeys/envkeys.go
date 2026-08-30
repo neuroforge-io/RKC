@@ -17,18 +17,26 @@ import (
 )
 
 const (
-	PluginID      = "rkc.envkeys"
+	// PluginID is the stable producer identity attached to every extracted
+	// environment-contract fact.
+	PluginID = "rkc.envkeys"
+	// PluginVersion identifies the extractor semantics recorded in evidence.
 	PluginVersion = "0.2.0"
 )
 
 var keyPattern = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
 var secretWords = []string{"SECRET", "TOKEN", "PASSWORD", "PASSWD", "PRIVATE_KEY", "API_KEY", "CREDENTIAL"}
 
+// Options supplies the trusted repository root and admitted regular-file
+// references to inspect; Extract never discovers additional paths itself.
 type Options struct {
 	Root  string
 	Files []pluginapi.FileRef
 }
 
+// Extract parses deterministic dotenv-style assignments into evidence-backed
+// environment-variable nodes. Secret-like defaults are replaced with a marker,
+// unreadable files become diagnostics, and no process environment is consulted.
 func Extract(options Options) (rkcmodel.Fragment, error) {
 	fragment := rkcmodel.Fragment{}
 	files := append([]pluginapi.FileRef(nil), options.Files...)
@@ -95,6 +103,9 @@ func Extract(options Options) (rkcmodel.Fragment, error) {
 	return fragment, nil
 }
 
+// IsCandidate reports whether a basename follows RKC's closed set of dotenv
+// and environment-template naming conventions; directory names do not affect
+// the decision.
 func IsCandidate(path string) bool {
 	base := strings.ToLower(filepath.Base(path))
 	if base == ".env" {

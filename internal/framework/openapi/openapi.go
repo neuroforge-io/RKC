@@ -18,12 +18,16 @@ import (
 )
 
 const (
-	PluginID      = "rkc.openapi"
+	// PluginID is the stable producer identity attached to OpenAPI facts.
+	PluginID = "rkc.openapi"
+	// PluginVersion identifies the JSON/YAML extraction semantics in use.
 	PluginVersion = "0.3.0"
 )
 
 var operations = []string{"get", "put", "post", "delete", "options", "head", "patch", "trace"}
 
+// Options supplies the confined repository root and digest-bound candidate
+// documents. Extract recognizes OpenAPI/Swagger content rather than filenames.
 type Options struct {
 	Root  string
 	Files []pluginapi.FileRef

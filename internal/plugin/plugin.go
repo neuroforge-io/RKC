@@ -442,6 +442,8 @@ type commandLauncher interface {
 
 type execCommandLauncher struct{}
 
+// Start launches spec directly and returns a handle that supports bounded
+// termination and reaping; it performs no shell expansion.
 func (execCommandLauncher) Start(spec commandSpec) (runningCommand, error) {
 	command := exec.Command(spec.path, spec.arguments...)
 	command.Env, command.Stdin, command.Stdout, command.Stderr = spec.environment, spec.stdin, spec.stdout, spec.stderr
@@ -451,6 +453,7 @@ func (execCommandLauncher) Start(spec commandSpec) (runningCommand, error) {
 	return &execRunningCommand{command: command}, nil
 }
 
+// Run executes spec directly with context cancellation and waits for completion.
 func (execCommandLauncher) Run(ctx context.Context, spec commandSpec) error {
 	command := exec.CommandContext(ctx, spec.path, spec.arguments...)
 	command.Env, command.Stdin, command.Stdout, command.Stderr = spec.environment, spec.stdin, spec.stdout, spec.stderr
@@ -462,10 +465,15 @@ type execRunningCommand struct {
 	command *exec.Cmd
 }
 
+// Wait reaps the launched command and returns its process result.
 func (command *execRunningCommand) Wait() error { return command.command.Wait() }
+
+// Signal forwards signal to the exact launched process.
 func (command *execRunningCommand) Signal(signal os.Signal) error {
 	return command.command.Process.Signal(signal)
 }
+
+// Kill requests unconditional termination of the exact launched process.
 func (command *execRunningCommand) Kill() error { return command.command.Process.Kill() }
 
 type systemdPythonRunner struct {
@@ -477,6 +485,9 @@ type systemdPythonRunner struct {
 
 var pluginUnitCounter atomic.Uint64
 
+// Run executes the built-in Python worker in a transient, resource-bounded
+// systemd unit and proves termination plus unit cleanup before returning. It
+// fails closed when the required Linux isolation controls are unavailable.
 func (runner systemdPythonRunner) Run(ctx context.Context, spec pythonRunSpec, payload []byte, stdout, stderr io.Writer) error {
 	if runtime.GOOS != "linux" {
 		return errors.New("the built-in Python adapter is disabled on this platform because its Linux isolation policy is unavailable")
@@ -672,6 +683,9 @@ func newLimitedBuffer(configured, fallback int64) *limitedBuffer {
 	}
 	return &limitedBuffer{limit: configured}
 }
+
+// Write consumes the complete input while retaining only the configured prefix,
+// allowing subprocess pipes to drain without unbounded memory growth.
 func (b *limitedBuffer) Write(p []byte) (int, error) {
 	b.written += int64(len(p))
 	remaining := b.limit - int64(b.buffer.Len())
@@ -687,7 +701,15 @@ func (b *limitedBuffer) Write(p []byte) (int, error) {
 	}
 	return len(p), nil
 }
-func (b *limitedBuffer) Bytes() []byte   { return b.buffer.Bytes() }
-func (b *limitedBuffer) String() string  { return b.buffer.String() }
+
+// Bytes returns the retained output prefix; callers must treat it as read-only.
+func (b *limitedBuffer) Bytes() []byte { return b.buffer.Bytes() }
+
+// String returns the retained output prefix as text.
+func (b *limitedBuffer) String() string { return b.buffer.String() }
+
+// Truncated reports whether Write discarded bytes beyond the configured limit.
 func (b *limitedBuffer) Truncated() bool { return b.truncated }
-func (b *limitedBuffer) Limit() int64    { return b.limit }
+
+// Limit returns the maximum number of bytes retained by the buffer.
+func (b *limitedBuffer) Limit() int64 { return b.limit }

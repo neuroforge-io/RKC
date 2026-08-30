@@ -17,7 +17,12 @@ import (
 
 type stringList []string
 
+// String renders repeated flag values in their accepted comma-separated form.
+// The flag package calls it with a non-nil receiver.
 func (values *stringList) String() string { return strings.Join(*values, ",") }
+
+// Set trims and appends one repeated flag value, preserving user order and
+// rejecting empty entries instead of silently changing command intent.
 func (values *stringList) Set(value string) error {
 	value = strings.TrimSpace(value)
 	if value == "" {

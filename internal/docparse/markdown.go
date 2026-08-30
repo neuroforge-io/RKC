@@ -16,7 +16,11 @@ import (
 )
 
 const (
-	PluginID      = "rkc.markdown"
+	// PluginID is the stable producer identity attached to Markdown-derived
+	// nodes, edges, documents, and evidence.
+	PluginID = "rkc.markdown"
+	// PluginVersion identifies the heading, anchor, and link extraction
+	// semantics recorded in generated evidence.
 	PluginVersion = "0.2.0"
 )
 
@@ -25,6 +29,9 @@ var (
 	link       = regexp.MustCompile(`!?\[[^\]]*\]\(([^)]+)\)`)
 )
 
+// Options supplies the trusted root, immutable snapshot identity, admitted
+// Markdown files, and path-to-artifact map used to resolve local links. Extract
+// does not discover or follow arbitrary filesystem paths.
 type Options struct {
 	Root       string
 	SnapshotID string

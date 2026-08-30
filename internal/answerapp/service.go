@@ -29,6 +29,9 @@ const (
 	maximumRepairBytes    = 512
 )
 
+// ErrInvalidRequest classifies caller-controlled question, filter, limit, task,
+// and deadline validation failures. Retrieval, provider, and cancellation
+// failures retain their own error identities.
 var ErrInvalidRequest = errors.New("invalid answer request")
 
 // Request contains only caller-controlled retrieval filters and bounded model

@@ -14,15 +14,22 @@ import (
 )
 
 const (
-	PluginID      = "rkc.secret-scan"
+	// PluginID is the stable producer identity attached to secret findings.
+	PluginID = "rkc.secret-scan"
+	// PluginVersion identifies the detector and redaction semantics in use.
 	PluginVersion = "0.2.0"
 )
 
+// Options supplies the confined repository root and digest-bound files whose
+// contents are examined. Finding values are never retained in the fragment.
 type Options struct {
 	Root  string
 	Files []pluginapi.FileRef
 }
 
+// Extract emits deterministic, review-oriented secret findings containing
+// locations, kinds, and value-independent fingerprints. Read failures become
+// diagnostics, and no matched credential literal is copied into graph records.
 func Extract(options Options) (rkcmodel.Fragment, error) {
 	files := append([]pluginapi.FileRef(nil), options.Files...)
 	sort.Slice(files, func(i, j int) bool { return files[i].Path < files[j].Path })

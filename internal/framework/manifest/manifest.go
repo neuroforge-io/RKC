@@ -21,11 +21,15 @@ import (
 )
 
 const (
-	PluginID                 = "rkc.manifest"
+	// PluginID is the stable producer identity attached to manifest facts.
+	PluginID = "rkc.manifest"
+	// PluginVersion identifies the extraction semantics used by this adapter.
 	PluginVersion            = "0.2.0"
 	maxDockerInstructionSize = 4 * 1024 * 1024
 )
 
+// Options supplies the materialized repository root and digest-bound manifest
+// candidates. Extract recognizes only its explicit, inert manifest formats.
 type Options struct {
 	Root  string
 	Files []pluginapi.FileRef
@@ -37,6 +41,9 @@ type collector struct {
 	seenEdge map[string]struct{}
 }
 
+// Extract deterministically parses supported package, module, dependency, and
+// container manifests without executing scripts or repository build logic.
+// Read or parse failures are retained as diagnostics in the sorted fragment.
 func Extract(options Options) (rkcmodel.Fragment, error) {
 	collector := collector{seenNode: map[string]struct{}{}, seenEdge: map[string]struct{}{}}
 	files := append([]pluginapi.FileRef(nil), options.Files...)
