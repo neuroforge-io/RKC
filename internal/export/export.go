@@ -1262,9 +1262,11 @@ footer { display: flex; justify-content: space-between; gap: 16px; padding: 12px
 const siteJS = `'use strict';
 const commandCatalog=__RKC_COMMAND_CATALOG__;
 const state={bundle:null,coverage:null,nodes:new Map(),artifacts:new Map(),evidence:new Map(),outgoing:new Map(),incoming:new Map(),selected:null,view:'overview',results:[],workbench:null,commandName:'quickstart',api:false,facets:null,listTruncated:false,diagnosticsTruncated:false,searchTimer:null};
+const maximumGraphNeighbors=32,maximumGraphNodesShown=16;
 const $=id=>document.getElementById(id);
 const esc=value=>String(value??'').replace(/[&<>"']/g,ch=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch]));
 const label=node=>node?.qualified_name||node?.name||node?.id||'unknown';
+const compactGraphLabel=node=>{const value=label(node),parts=value.split(/[/.]/).filter(Boolean),leaf=parts[parts.length-1]||value,parent=parts[parts.length-2]||'';return truncate(parent&&leaf.length<10?parent+'.'+leaf:leaf,14)};
 const number=value=>new Intl.NumberFormat().format(value||0);
 
 async function boot(){
@@ -1541,7 +1543,7 @@ async function renderGraph(seedID){
   if(state.api){
     $('content').innerHTML='<div class="loading" role="status">Loading bounded graph neighbourhood…</div>';
     try{
-      const neighborhood=await fetchJSON('/api/v1/graph/neighborhood?node_id='+encodeURIComponent(seedID)+'&max_depth=1&max_nodes=33&include_unresolved=true');
+      const neighborhood=await fetchJSON('/api/v1/graph/neighborhood?node_id='+encodeURIComponent(seedID)+'&max_depth=1&max_nodes='+(maximumGraphNeighbors+1)+'&include_unresolved=true');
       for(const node of neighborhood.nodes||[])state.nodes.set(node.id,node);
       for(const edge of neighborhood.edges||[]){pushUnique(state.outgoing,edge.from,edge);pushUnique(state.incoming,edge.to,edge)}
     }catch(error){$('content').innerHTML='<div class="card empty-state" role="alert"><h2>Graph query failed</h2><p>'+esc(error?.message||error)+'</p></div>';return}
@@ -1551,14 +1553,15 @@ async function renderGraph(seedID){
 function pushUnique(map,key,value){if(!map.has(key))map.set(key,[]);if(!map.get(key).some(item=>item.id===value.id))map.get(key).push(value)}
 function renderGraphFromState(seedID){
   const seed=state.nodes.get(seedID);if(!seed){renderSelectionPrompt('graph');return}
-  const neighborEdges=[...(state.outgoing.get(seedID)||[]),...(state.incoming.get(seedID)||[])],uniqueEdges=[...new Map(neighborEdges.map(edge=>[edge.id,edge])).values()].slice(0,80),neighborIDs=[...new Set(uniqueEdges.flatMap(edge=>[edge.from,edge.to]).filter(id=>id!==seedID&&state.nodes.has(id)))].slice(0,32);
-  const width=1000,height=520,cx=500,cy=260,radius=Math.min(210,80+neighborIDs.length*5),positions=new Map([[seedID,{x:cx,y:cy}]]);
-  neighborIDs.forEach((id,index)=>{const angle=-Math.PI/2+(index/Math.max(1,neighborIDs.length))*Math.PI*2;positions.set(id,{x:cx+Math.cos(angle)*radius,y:cy+Math.sin(angle)*radius})});
+  const neighborEdges=[...(state.outgoing.get(seedID)||[]),...(state.incoming.get(seedID)||[])],uniqueEdges=[...new Map(neighborEdges.map(edge=>[edge.id,edge])).values()].slice(0,80),neighborIDs=[...new Set(uniqueEdges.flatMap(edge=>[edge.from,edge.to]).filter(id=>id!==seedID&&state.nodes.has(id)))].slice(0,maximumGraphNeighbors),visualNeighborIDs=neighborIDs.slice(0,maximumGraphNodesShown);
+  const width=1000,height=520,cx=500,cy=260,radius=Math.min(210,80+visualNeighborIDs.length*8),positions=new Map([[seedID,{x:cx,y:cy}]]);
+  visualNeighborIDs.forEach((id,index)=>{const angle=-Math.PI/2+(index/Math.max(1,visualNeighborIDs.length))*Math.PI*2;positions.set(id,{x:cx+Math.cos(angle)*radius,y:cy+Math.sin(angle)*radius})});
   const visibleEdges=uniqueEdges.filter(edge=>positions.has(edge.from)&&positions.has(edge.to));
   const edgeSVG=visibleEdges.map(edge=>{const from=positions.get(edge.from),to=positions.get(edge.to);return '<line class="graph-edge '+(edge.resolution==='unresolved'?'unresolved':'')+'" x1="'+from.x+'" y1="'+from.y+'" x2="'+to.x+'" y2="'+to.y+'"><title>'+esc(edge.kind+' · '+edge.resolution)+'</title></line>'}).join('');
-  const nodeSVG=[seedID,...neighborIDs].map(id=>{const node=state.nodes.get(id),position=positions.get(id),text=truncate(label(node),25);return '<g class="graph-node '+(id===seedID?'seed':'')+'" role="button" tabindex="0" aria-label="'+esc(label(node)+', '+node.kind)+'" data-node="'+esc(id)+'" transform="translate('+position.x+' '+position.y+')"><circle r="'+(id===seedID?28:20)+'"></circle><text text-anchor="middle" y="'+(id===seedID?44:35)+'">'+esc(text)+'</text><title>'+esc(label(node)+' · '+node.kind)+'</title></g>'}).join('');
+  const nodeSVG=[seedID,...visualNeighborIDs].map(id=>{const node=state.nodes.get(id),position=positions.get(id),text=compactGraphLabel(node);return '<g class="graph-node '+(id===seedID?'seed':'')+'" role="button" tabindex="0" aria-label="'+esc(label(node)+', '+node.kind)+'" data-node="'+esc(id)+'" transform="translate('+position.x+' '+position.y+')"><circle r="'+(id===seedID?28:20)+'"></circle><text text-anchor="middle" y="'+(id===seedID?44:35)+'">'+esc(text)+'</text><title>'+esc(label(node)+' · '+node.kind)+'</title></g>'}).join('');
   const accessible=neighborIDs.length?'<div class="graph-alternative"><h3>Neighbouring entities</h3><p class="muted">Keyboard and screen-reader alternative to the diagram.</p>'+neighborIDs.map(id=>'<button type="button" class="link-button" data-node="'+esc(id)+'">'+esc(label(state.nodes.get(id)))+'</button><br>').join('')+'</div>':'<p class="muted graph-alternative">No immediate relationships were recorded for this entity.</p>';
-  $('content').innerHTML='<div class="card"><span class="kind">Immediate evidence graph</span><h2>'+esc(label(seed))+'</h2><div class="legend"><span class="badge">'+neighborIDs.length+' neighbouring nodes</span><span class="badge">'+visibleEdges.length+' relationships</span><span class="badge">dashed = unresolved</span></div><div class="graph-shell"><svg viewBox="0 0 '+width+' '+height+'" role="group" aria-label="Immediate graph neighbourhood. Use Tab to reach each node.">'+edgeSVG+nodeSVG+'</svg></div><p class="muted">This bounded neighbourhood stays readable by design. Choose a node to move the graph centre.</p>'+accessible+'</div>';
+  const diagramLimit=visualNeighborIDs.length<neighborIDs.length?'<span class="badge">'+visualNeighborIDs.length+' shown in diagram</span>':'';
+  $('content').innerHTML='<div class="card"><span class="kind">Immediate evidence graph</span><h2>'+esc(label(seed))+'</h2><div class="legend"><span class="badge">'+neighborIDs.length+' neighbouring nodes</span><span class="badge">'+visibleEdges.length+' visual relationships</span>'+diagramLimit+'<span class="badge">dashed = unresolved</span></div><div class="graph-shell"><svg viewBox="0 0 '+width+' '+height+'" role="group" aria-label="Immediate graph neighbourhood. Use Tab to reach each node.">'+edgeSVG+nodeSVG+'</svg></div><p class="muted">The diagram limits visible nodes for legibility. Choose a node to move the centre; the complete bounded immediate-neighbour list remains below.</p>'+accessible+'</div>';
   for(const element of $('content').querySelectorAll('[data-node]')){
     element.addEventListener('click',()=>selectNode(element.dataset.node,'graph'));
     element.addEventListener('keydown',event=>{if(event.key==='Enter'||event.key===' '){event.preventDefault();selectNode(element.dataset.node,'graph')}});
