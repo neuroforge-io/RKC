@@ -23,34 +23,60 @@ import (
 )
 
 const (
-	storeMarkerName        = ".rkc-snapshot-store.json"
-	buildingMarkerName     = ".rkc-snapshot-building.json"
-	buildingLeaseName      = ".rkc-snapshot-lease"
-	deleteQuarantinePrefix = ".rkc-delete-"
-	ownershipSchema        = "1.0"
-	ownershipProducer      = "rkc"
-	storeMarkerKind        = "snapshot-store"
-	buildingMarkerKind     = "snapshot-building"
-	ownershipMarkerMax     = 4 * 1024
-	buildingRecordMaxSize  = 64 * 1024
-	currentFileMaxSize     = 1024
-	maximumBundleSize      = 256 * 1024 * 1024
-	maximumCoverageSize    = 16 * 1024 * 1024
+	storeMarkerName         = ".rkc-snapshot-store.json"
+	buildingMarkerName      = ".rkc-snapshot-building.json"
+	buildingLeaseName       = ".rkc-snapshot-lease"
+	buildingDirectoryPrefix = ".rkc-build-"
+	deleteQuarantinePrefix  = ".rkc-delete-"
+	ownershipSchema         = "1.0"
+	ownershipProducer       = "rkc"
+	storeMarkerKind         = "snapshot-store"
+	buildingMarkerKind      = "snapshot-building"
+	ownershipMarkerMax      = 4 * 1024
+	buildingRecordMaxSize   = 64 * 1024
+	currentFileMaxSize      = 1024
+	maximumBundleSize       = 256 * 1024 * 1024
+	maximumCoverageSize     = 16 * 1024 * 1024
 )
 
 var (
-	ErrAlreadyCommitted  = errors.New("snapshot transaction already committed")
+	// ErrAlreadyCommitted reports a repeated Commit after the transaction reached
+	// its publication point.
+	ErrAlreadyCommitted = errors.New("snapshot transaction already committed")
+	// ErrTransactionClosed reports an operation attempted after a transaction was
+	// aborted or reached its publication point.
 	ErrTransactionClosed = errors.New("snapshot transaction is closed")
-	ErrSnapshotNotFound  = errors.New("snapshot not found")
-	ErrSnapshotExists    = errors.New("snapshot already exists")
-	ErrStoreUnowned      = errors.New("snapshot store directory is not owned by RKC")
-	ErrBuildingUnowned   = errors.New("snapshot building directory is not owned by RKC")
+	// ErrSnapshotNotFound reports a missing published snapshot or absent CURRENT
+	// selection.
+	ErrSnapshotNotFound = errors.New("snapshot not found")
+	// ErrSnapshotExists reports that Begin cannot reserve an ID already present in
+	// the published snapshot namespace.
+	ErrSnapshotExists = errors.New("snapshot already exists")
+	// ErrStoreUnowned reports that the store marker, directory identity, or owned
+	// layout no longer proves RKC authority over the root.
+	ErrStoreUnowned = errors.New("snapshot store directory is not owned by RKC")
+	// ErrBuildingUnowned reports that a transaction's marker, record, directory
+	// identity, or expected state no longer authorizes mutation or cleanup.
+	ErrBuildingUnowned = errors.New("snapshot building directory is not owned by RKC")
+	// ErrSnapshotPublished reports a finalization failure after rename published
+	// the snapshot. Callers must treat the transaction as closed and inspect the
+	// published snapshot rather than aborting it.
 	ErrSnapshotPublished = errors.New("snapshot was published but finalization failed")
-	ErrCurrentUpdate     = errors.New("snapshot was committed but CURRENT was not updated")
-	ErrPublicationRace   = errors.New("snapshot publication identity could not be proven")
-	ErrTransactionLive   = errors.New("snapshot transaction is still live")
+	// ErrCurrentUpdate reports that the snapshot was published but CURRENT could
+	// not be updated. SetCurrent is the explicit repair path.
+	ErrCurrentUpdate = errors.New("snapshot was committed but CURRENT was not updated")
+	// ErrPublicationRace reports that exact directory or lease identity could not
+	// be proven after publication. The transaction is closed and no automatic
+	// recursive cleanup is attempted.
+	ErrPublicationRace = errors.New("snapshot publication identity could not be proven")
+	// ErrTransactionLive reports that an advisory transaction lease is still held.
+	// Recover treats it as a live transaction and skips cleanup.
+	ErrTransactionLive = errors.New("snapshot transaction is still live")
 )
 
+// Store is an owned, crash-safe snapshot repository backed by an immutable
+// content-addressed store. Its methods revalidate marker and directory identity
+// so replacement or redirection fails closed.
 type Store struct {
 	root              string
 	cas               *cas.Store
@@ -71,6 +97,8 @@ type ownershipMarker struct {
 	DirectoryName string `json:"directory_name,omitempty"`
 }
 
+// Record is the durable snapshot metadata that binds one snapshot ID to its
+// canonical bundle and optional derived coverage objects in the CAS.
 type Record struct {
 	SnapshotID     string            `json:"snapshot_id"`
 	Status         string            `json:"status"`
@@ -83,6 +111,9 @@ type Record struct {
 	Metadata       map[string]string `json:"metadata,omitempty"`
 }
 
+// Transaction owns one leased building directory and follows a single
+// begin-write-commit-or-abort lifecycle. It is not safe for concurrent use;
+// after rename publishes it, the transaction is closed and cannot be aborted.
 type Transaction struct {
 	store            *Store
 	record           Record
@@ -96,6 +127,9 @@ type Transaction struct {
 	committed        bool
 }
 
+// Open creates a new owned store only when root is absent or empty, or opens an
+// existing store with the exact RKC ownership marker. It binds and validates the
+// building, snapshots, and object directory identities before returning.
 func Open(root string) (*Store, error) {
 	absolute, err := safeoutput.ResolveTarget(root, "")
 	if err != nil {
@@ -127,9 +161,17 @@ func Open(root string) (*Store, error) {
 	return store, nil
 }
 
-func (store *Store) Root() string    { return store.root }
+// Root returns the resolved store root bound by Open.
+func (store *Store) Root() string { return store.root }
+
+// CAS returns the underlying content-addressed object store. Administrative
+// deletion of an object still referenced by a Record causes subsequent Load
+// calls to fail integrity validation.
 func (store *Store) CAS() *cas.Store { return store.cas }
 
+// Begin starts a leased building transaction bound to snapshotID and copies
+// metadata into its Record. The caller must eventually call Commit or Abort; an
+// already-published ID returns ErrSnapshotExists.
 func (store *Store) Begin(snapshotID string, metadata map[string]string) (*Transaction, error) {
 	if !validSnapshotID(snapshotID) {
 		return nil, fmt.Errorf("invalid snapshot id %q", snapshotID)
@@ -145,7 +187,11 @@ func (store *Store) Begin(snapshotID string, metadata map[string]string) (*Trans
 	} else if !errors.Is(err, fs.ErrNotExist) {
 		return nil, err
 	}
-	temp, err := os.MkdirTemp(filepath.Join(store.root, "building"), snapshotID+"-")
+	// Snapshot IDs may use the full accepted 255-byte contract. Keep the
+	// implementation-only temporary name short so MkdirTemp's random suffix does
+	// not make a valid ID exceed the filesystem's per-component name limit. The
+	// complete ID remains bound in both the marker and the building record.
+	temp, err := os.MkdirTemp(filepath.Join(store.root, "building"), buildingDirectoryPrefix)
 	if err != nil {
 		return nil, fmt.Errorf("begin snapshot: %w", err)
 	}
@@ -185,12 +231,33 @@ func (store *Store) Begin(snapshotID string, metadata map[string]string) (*Trans
 		_ = transaction.closeLease()
 		return nil, err
 	}
-	if _, err := validateBuildingDirectory(temp, identity, marker, "building"); err != nil {
+	if err := transaction.completeBeginValidation(); err != nil {
 		return nil, err
 	}
 	return transaction, nil
 }
 
+// completeBeginValidation performs the final admission check after all
+// transaction metadata is durable. If the directory cannot be proven, Begin
+// cannot return the transaction to its caller, so its advisory lease must be
+// released. The suspect directory is deliberately retained for fail-closed
+// recovery or operator inspection.
+func (transaction *Transaction) completeBeginValidation() error {
+	if _, err := validateBuildingDirectory(
+		transaction.dir,
+		transaction.identity,
+		transaction.marker,
+		"building",
+	); err != nil {
+		transaction.closed = true
+		return errors.Join(err, transaction.closeLease())
+	}
+	return nil
+}
+
+// WriteBundle canonicalizes and validates bundle, stores it in the CAS, and
+// binds it to the transaction. Rewriting the bundle invalidates any previously
+// written coverage because coverage is an exact derivation of this object.
 func (transaction *Transaction) WriteBundle(bundle rkcmodel.Bundle) error {
 	if err := transaction.ensureOpen(); err != nil {
 		return err
@@ -227,6 +294,9 @@ func (transaction *Transaction) WriteBundle(bundle rkcmodel.Bundle) error {
 	return transaction.writeRecord()
 }
 
+// WriteCoverage stores coverage only when it exactly matches the derivation of
+// the transaction's current validated bundle. Coverage is optional; Load derives
+// it from the bundle when no coverage object was committed.
 func (transaction *Transaction) WriteCoverage(coverage rkcmodel.Coverage) error {
 	if err := transaction.ensureOpen(); err != nil {
 		return err
@@ -256,6 +326,12 @@ func (transaction *Transaction) WriteCoverage(coverage rkcmodel.Coverage) error 
 	return transaction.writeRecord()
 }
 
+// Commit verifies all referenced CAS objects and publishes the transaction by
+// renaming its building directory into the snapshot namespace. Rename is the
+// publication point: errors wrapping ErrPublicationRace, ErrSnapshotPublished,
+// or ErrCurrentUpdate may be returned after the snapshot exists, and the closed
+// transaction must not be aborted. ErrCurrentUpdate can be repaired with
+// Store.SetCurrent.
 func (transaction *Transaction) Commit() error {
 	if transaction.committed {
 		return ErrAlreadyCommitted
@@ -351,6 +427,9 @@ func (transaction *Transaction) Commit() error {
 	return nil
 }
 
+// Abort records reason and removes only the exact marked, leased building
+// directory owned by this transaction. It is a no-op after the transaction is
+// closed and never removes a snapshot that reached the publication point.
 func (transaction *Transaction) Abort(reason string) error {
 	if transaction.closed {
 		return nil
@@ -411,6 +490,9 @@ func (transaction *Transaction) writeRecord() error {
 	return writeAtomic(filepath.Join(transaction.dir, "snapshot.json"), data, 0o644)
 }
 
+// CurrentID returns the syntactically valid snapshot ID selected by CURRENT. It
+// does not prove that the named snapshot exists or that its payload is valid;
+// use LoadCurrent for that verification.
 func (store *Store) CurrentID() (string, error) {
 	if err := store.validateRoot(); err != nil {
 		return "", err
@@ -458,6 +540,8 @@ func (store *Store) writeCurrent(snapshotID string) error {
 	return store.validateRoot()
 }
 
+// LoadCurrent resolves CURRENT and fully validates the selected snapshot through
+// Load.
 func (store *Store) LoadCurrent() (rkcmodel.Bundle, rkcmodel.Coverage, Record, error) {
 	id, err := store.CurrentID()
 	if err != nil {
@@ -466,6 +550,10 @@ func (store *Store) LoadCurrent() (rkcmodel.Bundle, rkcmodel.Coverage, Record, e
 	return store.Load(id)
 }
 
+// Load verifies a committed record, stable snapshot identity, CAS digests,
+// canonical bundle encoding, snapshot ID binding, and exact derived coverage.
+// When no coverage object is recorded, it returns coverage derived from the
+// verified bundle.
 func (store *Store) Load(snapshotID string) (rkcmodel.Bundle, rkcmodel.Coverage, Record, error) {
 	if !validSnapshotID(snapshotID) {
 		return rkcmodel.Bundle{}, rkcmodel.Coverage{}, Record{}, fmt.Errorf("invalid snapshot id %q", snapshotID)
@@ -543,6 +631,9 @@ func (store *Store) Load(snapshotID string) (rkcmodel.Bundle, rkcmodel.Coverage,
 	return bundle, coverage, record, nil
 }
 
+// List returns valid committed records ordered by newest commit time and then
+// snapshot ID. It validates record and directory identity but does not read or
+// hash the referenced CAS payloads; use Load to prove payload integrity.
 func (store *Store) List() ([]Record, error) {
 	if err := store.validateSnapshotsRoot(); err != nil {
 		return nil, err
@@ -589,6 +680,9 @@ func (store *Store) List() ([]Record, error) {
 // A zero maxAge means "any age", never "ignore liveness": live transactions
 // are always skipped because their advisory lease cannot be acquired.
 func (store *Store) Recover(maxAge time.Duration) ([]string, error) {
+	if maxAge < 0 {
+		return nil, errors.New("snapshot recovery age must not be negative")
+	}
 	if err := store.validateBuildingRoot(); err != nil {
 		return nil, err
 	}

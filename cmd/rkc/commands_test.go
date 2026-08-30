@@ -705,6 +705,20 @@ func TestSnapshotCommandsLifecycle(t *testing.T) {
 	}
 }
 
+func TestSnapshotsRecoverRejectsNegativeAgeBeforeCreatingState(t *testing.T) {
+	state := filepath.Join(t.TempDir(), "must-not-exist")
+	err := runSnapshotsRecover([]string{
+		"--state-dir", state,
+		"--older-than=-1s",
+	})
+	if err == nil || !strings.Contains(err.Error(), "--older-than must not be negative") {
+		t.Fatalf("snapshots recover with negative age = %v, want rejection", err)
+	}
+	if _, statErr := os.Lstat(state); !errors.Is(statErr, os.ErrNotExist) {
+		t.Fatalf("invalid recovery created state at %s: %v", state, statErr)
+	}
+}
+
 func TestCheckCommandAndManifestVerification(t *testing.T) {
 	_, output, _ := makeScannedFixture(t)
 	text, err := captureStdout(t, func() error {

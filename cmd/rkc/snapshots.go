@@ -262,6 +262,9 @@ func runSnapshotsRecover(args []string) error {
 		}
 		return snapshotsRecoverSQLite(context.Background(), *databasePath, *jsonOutput)
 	}
+	if *olderThan < 0 {
+		return errors.New("--older-than must not be negative")
+	}
 	store, err := snapshot.Open(*stateDir)
 	if err != nil {
 		return err

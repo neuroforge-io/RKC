@@ -145,6 +145,73 @@ func TestBeginRejectsUnsafeIDsAndClonesMetadata(t *testing.T) {
 	}
 }
 
+func TestBeginSupportsMaximumLengthSnapshotID(t *testing.T) {
+	store := openTestStore(t)
+	id := strings.Repeat("x", 255)
+	transaction, err := store.Begin(id, nil)
+	if err != nil {
+		t.Fatalf("Begin(maximum-length ID) = %v", err)
+	}
+	if transaction.record.SnapshotID != id || transaction.marker.SnapshotID != id {
+		t.Fatalf(
+			"maximum-length ID binding was truncated: record=%q marker=%q",
+			transaction.record.SnapshotID,
+			transaction.marker.SnapshotID,
+		)
+	}
+	if len(filepath.Base(transaction.dir)) >= len(id) {
+		t.Fatalf("temporary directory name was derived from the full snapshot ID: %q", filepath.Base(transaction.dir))
+	}
+	if err := transaction.Abort("test complete"); err != nil {
+		t.Fatal(err)
+	}
+	entries, err := os.ReadDir(filepath.Join(store.Root(), "building"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 0 {
+		t.Fatalf("maximum-length transaction left building entries: %v", entries)
+	}
+}
+
+func TestBeginAdmissionFailureReleasesLeaseForRecovery(t *testing.T) {
+	store := openTestStore(t)
+	transaction, err := store.Begin("failed-admission", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	directoryName := filepath.Base(transaction.dir)
+	originalLease := transaction.lease
+	if originalLease == nil || originalLease.file == nil {
+		t.Fatal("Begin returned a transaction without a live lease")
+	}
+
+	// Simulate the exact final-admission failure path without mutating the
+	// filesystem. The durable marker remains valid so recovery can prove that the
+	// retained directory belongs to RKC after the unreachable lease is released.
+	transaction.marker.DirectoryName = "different-directory"
+	err = transaction.completeBeginValidation()
+	if !errors.Is(err, ErrBuildingUnowned) {
+		t.Fatalf("completeBeginValidation(tampered marker) = %v, want ErrBuildingUnowned", err)
+	}
+	if !transaction.closed || transaction.lease != nil || originalLease.file != nil {
+		t.Fatalf(
+			"failed admission retained a live lease: closed=%t lease=%v original-file=%v",
+			transaction.closed,
+			transaction.lease,
+			originalLease.file,
+		)
+	}
+
+	removed, err := store.Recover(0)
+	if err != nil {
+		t.Fatalf("Recover(after failed admission) = %v", err)
+	}
+	if !reflect.DeepEqual(removed, []string{directoryName}) {
+		t.Fatalf("Recover(after failed admission) = %v, want %q", removed, directoryName)
+	}
+}
+
 func TestBeginDoesNotRecursivelyCleanIncompleteOwnedBuild(t *testing.T) {
 	store := openTestStore(t)
 	_, err := store.Begin("oversized-record", map[string]string{"oversized": strings.Repeat("x", buildingRecordMaxSize)})
@@ -693,6 +760,34 @@ func TestRecoverRemovesOnlyExpiredBuildsInStableOrder(t *testing.T) {
 	}
 	if !reflect.DeepEqual(removed, []string{filepath.Base(fresh.dir)}) {
 		t.Fatalf("Recover(0) after lease release = %v", removed)
+	}
+}
+
+func TestRecoverRejectsNegativeAgeWithoutRemovingAbandonedBuild(t *testing.T) {
+	store := openTestStore(t)
+	transaction, err := store.Begin("negative-age", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	directoryName := filepath.Base(transaction.dir)
+	if err := transaction.closeLease(); err != nil {
+		t.Fatal(err)
+	}
+
+	removed, err := store.Recover(-time.Second)
+	if err == nil || !strings.Contains(err.Error(), "must not be negative") {
+		t.Fatalf("Recover(negative age) = %v, %v; want rejection", removed, err)
+	}
+	if _, err := os.Lstat(transaction.dir); err != nil {
+		t.Fatalf("negative-age recovery changed abandoned build: %v", err)
+	}
+
+	removed, err = store.Recover(0)
+	if err != nil {
+		t.Fatalf("Recover(0) cleanup = %v", err)
+	}
+	if !reflect.DeepEqual(removed, []string{directoryName}) {
+		t.Fatalf("Recover(0) cleanup = %v, want %q", removed, directoryName)
 	}
 }
 
