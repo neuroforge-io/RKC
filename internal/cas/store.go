@@ -23,8 +23,8 @@ var (
 	// ErrDigestMismatch reports that a stable object's complete contents do not
 	// hash to its addressed digest.
 	ErrDigestMismatch = errors.New("object content does not match digest")
-// ErrObjectTooLarge reports that a bounded read observed a stable size or byte
-// stream beyond the caller's limit; no oversized payload is returned.
+	// ErrObjectTooLarge reports that a bounded read observed a stable size or byte
+	// stream beyond the caller's limit; no oversized payload is returned.
 	ErrObjectTooLarge = errors.New("CAS object exceeds read limit")
 	// ErrStoreChanged reports that a directory bound by Open was replaced,
 	// redirected, or otherwise ceased to be the same regular directory.
