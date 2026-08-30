@@ -20,8 +20,14 @@ import (
 	"github.com/neuroforge-io/RKC/pkg/rkcmodel"
 )
 
+// ManifestVersion is the manifest schema accepted by Validate and the lockfile
+// schema emitted by BuildLock.
 const ManifestVersion = "1.0"
 
+// Manifest is a plugin's declarative identity, runtime, capability request,
+// input/output contract, limits, determinism claim, and distribution metadata.
+// A valid manifest describes requested authority; it does not grant capabilities
+// or execute the plugin.
 type Manifest struct {
 	SchemaURI     string       `json:"$schema,omitempty"`
 	SchemaVersion string       `json:"schema_version"`
@@ -35,6 +41,9 @@ type Manifest struct {
 	Distribution  Distribution `json:"distribution,omitempty"`
 }
 
+// Identity names and versions a plugin and records its declared API and license.
+// Validate requires every field through License and restricts ID to the portable
+// lowercase identifier grammar.
 type Identity struct {
 	ID          string `json:"id"`
 	Name        string `json:"name"`
@@ -45,6 +54,9 @@ type Identity struct {
 	Homepage    string `json:"homepage,omitempty"`
 }
 
+// Runtime identifies the requested host kind, canonical plugin-relative
+// entrypoint, protocol, and optional artifact digest. Digest presence is policy
+// controlled; this record does not verify the artifact.
 type Runtime struct {
 	Kind       string `json:"kind"`
 	Entrypoint string `json:"entrypoint"`
@@ -52,6 +64,9 @@ type Runtime struct {
 	SHA256     string `json:"sha256,omitempty"`
 }
 
+// Permissions declares capabilities requested by a plugin. These values are not
+// grants: Validate applies only its Policy gates and the execution host must
+// enforce every admitted capability.
 type Permissions struct {
 	FilesystemRead  []string `json:"filesystem_read,omitempty"`
 	FilesystemWrite []string `json:"filesystem_write,omitempty"`
@@ -62,6 +77,9 @@ type Permissions struct {
 	Random          bool     `json:"random"`
 }
 
+// Inputs declares exact selection metadata for languages, media types, globs,
+// prerequisites, and capabilities. The declarations do not prove that a plugin
+// can process a selected input.
 type Inputs struct {
 	Languages    []string `json:"languages,omitempty"`
 	MediaTypes   []string `json:"media_types,omitempty"`
@@ -70,6 +88,9 @@ type Inputs struct {
 	Capabilities []string `json:"capabilities,omitempty"`
 }
 
+// Outputs declares the graph and diagnostic kinds a plugin may emit. Validate
+// checks graph kinds against the RKC schema, but downstream fragment validation
+// remains authoritative for actual output.
 type Outputs struct {
 	NodeKinds       []string `json:"node_kinds,omitempty"`
 	EdgeKinds       []string `json:"edge_kinds,omitempty"`
@@ -77,6 +98,9 @@ type Outputs struct {
 	DiagnosticCodes []string `json:"diagnostic_codes,omitempty"`
 }
 
+// Limits declares requested execution ceilings. Validate checks minimums and
+// configured policy maxima; the execution host is responsible for enforcing
+// them at runtime.
 type Limits struct {
 	TimeoutSeconds int   `json:"timeout_seconds"`
 	MemoryMiB      int64 `json:"memory_mib"`
@@ -86,11 +110,17 @@ type Limits struct {
 	Processes      int   `json:"processes,omitempty"`
 }
 
+// Determinism records a plugin's declared reproducibility level and cache inputs.
+// It is metadata for selection and caching, not evidence that execution is
+// deterministic.
 type Determinism struct {
 	Level       string   `json:"level"`
 	CacheInputs []string `json:"cache_inputs,omitempty"`
 }
 
+// Distribution records source, artifact, and signing provenance claimed by a
+// plugin. Validate can require a nonempty Signature, but it does not perform
+// cryptographic signature, certificate, or transparency-log verification.
 type Distribution struct {
 	SourceURL           string `json:"source_url,omitempty"`
 	ArtifactURL         string `json:"artifact_url,omitempty"`
@@ -99,11 +129,15 @@ type Distribution struct {
 	RekorEntry          string `json:"rekor_entry,omitempty"`
 }
 
+// Lockfile records a versioned, reproducibly ordered plugin selection. Use
+// LoadLock and VerifyLock before treating its records as valid bindings.
 type Lockfile struct {
 	SchemaVersion string         `json:"schema_version"`
 	Plugins       []LockedPlugin `json:"plugins"`
 }
 
+// LockedPlugin binds an ID and version to normalized manifest and optional
+// runtime-artifact digests plus selection provenance.
 type LockedPlugin struct {
 	ID             string `json:"id"`
 	Version        string `json:"version"`
@@ -113,6 +147,10 @@ type LockedPlugin struct {
 	Source         string `json:"source,omitempty"`
 }
 
+// Policy constrains manifest admission. Its zero value permits every recognized
+// runtime, requires neither digest nor signature, and sets no policy maximum for
+// memory or timeout, while denying requested network and process-spawn
+// capabilities.
 type Policy struct {
 	AllowedRuntimes   map[string]struct{}
 	AllowNetwork      bool
@@ -123,6 +161,10 @@ type Policy struct {
 	RequireSignature  bool
 }
 
+// LoadManifest reads one JSON value with unknown fields rejected, normalizes its
+// list fields, and validates it with the zero-value Policy. In particular, that
+// denies network and process-spawn requests but does not require a digest or
+// signature.
 func LoadManifest(path string) (Manifest, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -147,6 +189,9 @@ func LoadManifest(path string) (Manifest, error) {
 	return manifest, nil
 }
 
+// Normalize mutates manifest by trimming, deduplicating, and sorting its input,
+// output, permission, and cache-input lists. It does not normalize scalar fields
+// or validate the result; manifest must be non-nil.
 func Normalize(manifest *Manifest) {
 	manifest.Inputs.Languages = uniqueSorted(manifest.Inputs.Languages)
 	manifest.Inputs.MediaTypes = uniqueSorted(manifest.Inputs.MediaTypes)
@@ -165,6 +210,10 @@ func Normalize(manifest *Manifest) {
 	manifest.Determinism.CacheInputs = uniqueSorted(manifest.Determinism.CacheInputs)
 }
 
+// Validate checks manifest schema, required identity/runtime fields, portable
+// entrypoint syntax, known output kinds, core declared limits, determinism level,
+// and the supplied Policy. It neither normalizes the manifest nor verifies
+// runtime bytes or distribution signatures.
 func Validate(manifest Manifest, policy Policy) error {
 	var failures []string
 	if manifest.SchemaVersion != ManifestVersion {
@@ -260,6 +309,8 @@ func Validate(manifest Manifest, policy Policy) error {
 	return nil
 }
 
+// ManifestDigest returns the lowercase SHA-256 of the manifest's normalized JSON
+// representation. It does not validate the manifest or hash the runtime artifact.
 func ManifestDigest(manifest Manifest) string {
 	Normalize(&manifest)
 	data, _ := json.Marshal(manifest)
@@ -267,6 +318,8 @@ func ManifestDigest(manifest Manifest) string {
 	return hex.EncodeToString(sum[:])
 }
 
+// BuildLock converts manifests into digest bindings sorted by plugin ID and
+// version. It does not validate inputs or remove duplicate identities.
 func BuildLock(manifests []Manifest) Lockfile {
 	plugins := make([]LockedPlugin, 0, len(manifests))
 	for _, manifest := range manifests {
@@ -281,6 +334,9 @@ func BuildLock(manifests []Manifest) Lockfile {
 	return Lockfile{SchemaVersion: ManifestVersion, Plugins: plugins}
 }
 
+// LockDigest returns the lowercase SHA-256 of JSON after sorting a copy of the
+// lock's plugin records by ID and version. It does not validate schema, digest
+// fields, or duplicate records.
 func LockDigest(lock Lockfile) string {
 	lock.Plugins = append([]LockedPlugin(nil), lock.Plugins...)
 	sort.Slice(lock.Plugins, func(i, j int) bool {
@@ -294,6 +350,9 @@ func LockDigest(lock Lockfile) string {
 	return hex.EncodeToString(sum[:])
 }
 
+// Select returns manifests whose declared language and capability exactly match
+// nonempty filters, sorted by plugin ID. It performs no validation or policy
+// admission, and empty filters impose no restriction.
 func Select(manifests []Manifest, language, capability string) []Manifest {
 	var output []Manifest
 	for _, manifest := range manifests {

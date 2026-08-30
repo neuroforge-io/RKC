@@ -13,6 +13,10 @@ import (
 	"strings"
 )
 
+// ErrModelArtifactIntegrity is wrapped when a model or runtime artifact lacks a
+// canonical expected digest or fails pathname, inode, size, mode, content,
+// executable-bit, or GGUF-format verification. Providers check bound artifacts
+// before and after inference and must fail closed on this sentinel.
 var ErrModelArtifactIntegrity = errors.New("model runtime artifact integrity check failed")
 
 const ggufMagic = "GGUF"

@@ -12,6 +12,10 @@ import (
 	"strings"
 )
 
+// Finding describes one heuristic match without retaining the matched value.
+// Byte offsets are half-open, lines are one-based, columns are zero-based, and
+// Fingerprint hashes only the finding kind and offsets within the supplied byte
+// slice, not credential material.
 type Finding struct {
 	Kind        string  `json:"kind"`
 	Confidence  float64 `json:"confidence"`
@@ -50,6 +54,10 @@ var placeholderValues = map[string]struct{}{
 	"development": {}, "password": {}, "secret": {}, "test-only": {}, "localhost": {},
 }
 
+// Scan returns deterministic, non-overlapping heuristic findings ordered by byte
+// position. It suppresses recognized placeholders and references. Findings are
+// review evidence, not proof that a credential is live, and an empty result is
+// not proof that input contains no secret.
 func Scan(data []byte) []Finding {
 	var findings []Finding
 	for _, detector := range detectors {
@@ -182,6 +190,9 @@ findParameterClose:
 	return false
 }
 
+// IsSecretName reports whether a case-insensitive name, after treating dots and
+// hyphens as underscores, contains a credential-related marker. It is a naming
+// heuristic and does not inspect a value.
 func IsSecretName(name string) bool {
 	name = strings.ToUpper(strings.ReplaceAll(strings.ReplaceAll(name, "-", "_"), ".", "_"))
 	for _, marker := range []string{"PASSWORD", "PASSWD", "SECRET", "TOKEN", "API_KEY", "PRIVATE_KEY", "CREDENTIAL", "CLIENT_SECRET"} {
@@ -192,8 +203,14 @@ func IsSecretName(name string) bool {
 	return false
 }
 
+// IsPlaceholder reports whether value matches the scanner's suppression
+// heuristic for examples, templates, replacement markers, or repeated dummy
+// bytes. A true result is not an authorization to publish the value.
 func IsPlaceholder(value string) bool { return isPlaceholder(value) }
 
+// Redact returns a byte-for-byte-length copy with each valid finding range
+// replaced by asterisks except for CR, LF, and tab bytes, which preserve source
+// layout. It merges overlaps, clamps out-of-range offsets, and never mutates data.
 func Redact(data []byte, findings []Finding) []byte {
 	output := append([]byte(nil), data...)
 	for _, finding := range mergeFindings(append([]Finding(nil), findings...)) {

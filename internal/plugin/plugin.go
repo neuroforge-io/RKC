@@ -24,11 +24,21 @@ import (
 )
 
 const (
+	// MaximumMemoryMiB is the largest memory ceiling RunPython admits for the
+	// built-in adapter.
 	MaximumMemoryMiB = int64(2048)
-	MaximumSwapMiB   = int64(512)
+	// MaximumSwapMiB is the largest swap ceiling RunPython admits; the configured
+	// value must also be no greater than the memory ceiling.
+	MaximumSwapMiB = int64(512)
+	// MaximumProcesses is the exact task ceiling required while process spawning
+	// is denied.
 	MaximumProcesses = 1
 )
 
+// FileRef is a caller-validated wire reference to one requested source file.
+// RunPython transports its path and digest claims but does not itself confine,
+// open, or verify the referenced file; callers must supply inventory-admitted
+// references and validate the resulting fragment.
 type FileRef struct {
 	ID       string `json:"id"`
 	Path     string `json:"path"`
@@ -36,6 +46,10 @@ type FileRef struct {
 	SHA256   string `json:"sha256"`
 }
 
+// Request is the JSON request sent to the built-in adapter. Root becomes the
+// isolated worker's working directory and must already be admitted by the
+// caller. An empty Files slice makes RunPython return an empty fragment before
+// validating execution options.
 type Request struct {
 	SchemaVersion string    `json:"schema_version"`
 	SnapshotID    string    `json:"snapshot_id"`
@@ -43,6 +57,9 @@ type Request struct {
 	Files         []FileRef `json:"files"`
 }
 
+// PythonOptions configures the digest-pinned built-in Python adapter. Nonempty
+// work is admitted only when sandboxing, network denial, and process-spawn denial
+// are all required and the resource ceilings satisfy RunPython's bounds.
 type PythonOptions struct {
 	Interpreter          string
 	Script               string
@@ -60,6 +77,11 @@ type PythonOptions struct {
 	runner               pythonRunner
 }
 
+// RunPython executes a nonempty request through the built-in, digest-verified
+// adapter under a timeout and bounded stdout/stderr. The production runner is a
+// fail-closed Linux systemd sandbox with no shell, network, or child-process
+// allowance. It accepts exactly one strict JSON Fragment; decoding success does
+// not replace downstream semantic and provenance validation.
 func RunPython(ctx context.Context, request Request, opts PythonOptions) (model.Fragment, error) {
 	if len(request.Files) == 0 {
 		return model.Fragment{}, nil

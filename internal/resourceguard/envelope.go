@@ -10,6 +10,9 @@ import (
 	"strings"
 )
 
+// ErrLowPriorityEnvelope is wrapped when RKC cannot prove that the current
+// process is inside the exact low-priority cgroup and scheduler envelope.
+// Callers must treat it as failed admission before expensive work, not a warning.
 var ErrLowPriorityEnvelope = errors.New("current process is outside the RKC low-priority envelope")
 
 const (
