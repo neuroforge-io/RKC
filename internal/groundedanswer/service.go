@@ -22,6 +22,8 @@ import (
 	"github.com/neuroforge-io/RKC/pkg/rkcmodel"
 )
 
+// ProtocolVersion identifies the strict request/result and model-response
+// contract enforced by this package.
 const ProtocolVersion = "rkc-grounded-answer/v1"
 
 const (
@@ -51,25 +53,51 @@ const (
 	maximumStableIdentifierBytes   = 512
 )
 
+// Grounded-answer errors are stable sentinels for request, canonical-data,
+// provider, and model-protocol failures. Evidence shortfalls are represented
+// as successful abstentions instead of these operational errors.
 var (
-	ErrInvalidRequest       = errors.New("invalid grounded-answer request")
-	ErrInvalidBundle        = errors.New("invalid canonical bundle")
-	ErrInvalidProvider      = errors.New("invalid model provider")
-	ErrModelProtocol        = errors.New("grounded-answer model protocol violation")
+	// ErrInvalidRequest indicates malformed input or a violated service bound.
+	ErrInvalidRequest = errors.New("invalid grounded-answer request")
+	// ErrInvalidBundle indicates that canonical evidence cannot be safely
+	// resolved because the bundle is malformed or internally inconsistent.
+	ErrInvalidBundle = errors.New("invalid canonical bundle")
+	// ErrInvalidProvider indicates a missing, typed-nil, mutable, or otherwise
+	// unusable model provider.
+	ErrInvalidProvider = errors.New("invalid model provider")
+	// ErrModelProtocol indicates that provider output violated the bound
+	// request identity, model identity, usage, or response schema.
+	ErrModelProtocol = errors.New("grounded-answer model protocol violation")
+	// ErrUnsupportedModelTask indicates that the request selected a task the
+	// bound provider cannot perform.
 	ErrUnsupportedModelTask = errors.New("grounded-answer model task is unsupported")
 )
 
+// Status distinguishes a citation-validated answer from an auditable
+// abstention; there is no partially accepted success state.
 type Status string
 
+// Result statuses form the complete serialized outcome vocabulary.
 const (
-	StatusAnswered  Status = "answered"
+	// StatusAnswered means at least one claim survived complete grounding and
+	// citation validation.
+	StatusAnswered Status = "answered"
+	// StatusAbstained means the service safely declined to publish a claim.
 	StatusAbstained Status = "abstained"
 )
 
+// Abstention codes explain why no answer could be safely published while
+// keeping that outcome distinct from provider or protocol failure.
 const (
+	// AbstentionInsufficientEvidence means the selected canonical context did
+	// not meet the configured minimum evidence count.
 	AbstentionInsufficientEvidence = "insufficient_evidence"
-	AbstentionContextBudget        = "context_budget_exceeded"
-	AbstentionNoValidClaims        = "no_valid_grounded_claims"
+	// AbstentionContextBudget means evidence existed but could not fit within
+	// the configured bounded context.
+	AbstentionContextBudget = "context_budget_exceeded"
+	// AbstentionNoValidClaims means model output contained no claim that passed
+	// the complete grounding validator.
+	AbstentionNoValidClaims = "no_valid_grounded_claims"
 )
 
 // Options are hard service-side bounds. Provider token, memory, and process
@@ -90,6 +118,9 @@ type Options struct {
 	AllowInference          bool
 }
 
+// Request combines a user question with ranked retrieval and the exact
+// canonical bundle used to re-resolve every candidate. Deadline is propagated
+// to the provider and VerificationPass identifies bounded repair attempts.
 type Request struct {
 	Question         string
 	Retrieval        search.Response
@@ -109,6 +140,8 @@ type Citation struct {
 	Source     *rkcmodel.SourceRange `json:"source,omitempty"`
 }
 
+// Claim is one atomic accepted statement. Every claim carries canonical node,
+// evidence, and rendered citation identifiers that survived validation.
 type Claim struct {
 	ID          string   `json:"id"`
 	Text        string   `json:"text"`
@@ -119,6 +152,8 @@ type Claim struct {
 	CitationIDs []string `json:"citation_ids"`
 }
 
+// Abstention is a non-error result explaining which evidence requirement could
+// not be met and the observed versus required evidence counts.
 type Abstention struct {
 	Code              string `json:"code"`
 	Reason            string `json:"reason"`
@@ -126,6 +161,8 @@ type Abstention struct {
 	RequiredEvidence  int    `json:"required_evidence"`
 }
 
+// RetrievalProvenance records the query/index context and ranked hit IDs that
+// supplied candidates; it is audit data, never authority for a claim by itself.
 type RetrievalProvenance struct {
 	Query        string   `json:"query,omitempty"`
 	Mode         string   `json:"mode,omitempty"`
@@ -133,6 +170,9 @@ type RetrievalProvenance struct {
 	HitIDs       []string `json:"hit_ids,omitempty"`
 }
 
+// Provenance binds the answer to its immutable snapshot, canonical bundle,
+// evidence packet, prompt, retrieval selection, provider descriptor, and usage.
+// Digests let a reviewer detect substitution without retaining hidden context.
 type Provenance struct {
 	SnapshotID       string                       `json:"snapshot_id"`
 	BundleDigest     string                       `json:"bundle_digest"`
@@ -175,6 +215,8 @@ type Truncation struct {
 	ModelUnresolved      bool `json:"model_unresolved_questions"`
 }
 
+// Audit retains model material rejected by validators without promoting it to
+// answer truth. Unresolved questions remain explicitly untrusted.
 type Audit struct {
 	RejectedClaims               []modelruntime.RejectedClaim `json:"rejected_claims,omitempty"`
 	SummaryRejectedReasons       []string                     `json:"summary_rejected_reasons,omitempty"`
@@ -198,6 +240,8 @@ type VerificationPass struct {
 	Usage               modelruntime.Usage `json:"usage,omitempty"`
 }
 
+// Verification summarizes every independently validated attempt and aggregates
+// provider usage across the initial response and any bounded repair passes.
 type Verification struct {
 	State       string             `json:"state"`
 	Passes      []VerificationPass `json:"passes"`
@@ -205,6 +249,9 @@ type Verification struct {
 	RepairLimit int                `json:"repair_limit"`
 }
 
+// Result is the complete publishable protocol response. Answered results carry
+// validated claims and citations; abstained results carry Abstention, and both
+// retain provenance, truncation, audit, and verification evidence.
 type Result struct {
 	ProtocolVersion string       `json:"protocol_version"`
 	RequestID       string       `json:"request_id"`
@@ -219,12 +266,17 @@ type Result struct {
 	Verification    Verification `json:"verification"`
 }
 
+// Service binds one immutable provider descriptor to normalized server-side
+// bounds. It rejects a provider whose descriptor changes after construction.
 type Service struct {
 	provider   modelruntime.Provider
 	descriptor modelruntime.ModelDescriptor
 	options    Options
 }
 
+// New validates the provider identity and normalizes all zero-valued bounds to
+// safe defaults. Invalid or typed-nil providers and out-of-policy limits fail
+// before a Service is returned.
 func New(provider modelruntime.Provider, options Options) (*Service, error) {
 	if nilInterface(provider) {
 		return nil, fmt.Errorf("%w: provider is required", ErrInvalidProvider)
@@ -283,6 +335,8 @@ func (service *Service) MaximumRepairPasses() int {
 	return service.options.MaximumRepairPasses
 }
 
+// MaximumRetrievalHits returns the normalized candidate limit used by the
+// orchestration layer; a nil service reports zero rather than panicking.
 func (service *Service) MaximumRetrievalHits() int {
 	if service == nil {
 		return 0

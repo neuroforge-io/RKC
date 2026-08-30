@@ -22,6 +22,10 @@ const (
 	modelMaximumRSSMiB         = int64(4608)
 )
 
+// Configuration is the versioned, user-supplied policy for one RKC run. It is
+// normalized and validated before any repository work begins; its component
+// digests deliberately separate canonical-analysis inputs from local runtime
+// and publication choices.
 type Configuration struct {
 	SchemaURI     string              `json:"$schema,omitempty"`
 	SchemaVersion string              `json:"schema_version"`
@@ -38,12 +42,18 @@ type Configuration struct {
 	QualityGates  QualityGatesConfig  `json:"quality_gates"`
 }
 
+// WorkspaceConfig controls durable path disclosure and the default atlas
+// destination. PrivacyMode determines which repository identity and source
+// locations may survive publication.
 type WorkspaceConfig struct {
 	Name        string `json:"name,omitempty"`
 	PrivacyMode string `json:"privacy_mode"`
 	Output      string `json:"output"`
 }
 
+// InventoryConfig places hard bounds on repository admission and records the
+// exact relative paths excluded from traversal. Exclusions are paths and
+// descendants, never glob or gitignore expressions.
 type InventoryConfig struct {
 	MaxFileBytes              int64    `json:"max_file_bytes"`
 	MaxTextBytes              int64    `json:"max_text_bytes"`
@@ -55,6 +65,9 @@ type InventoryConfig struct {
 	ClassifyGeneratedFiles    bool     `json:"classify_generated_files"`
 }
 
+// AnalysisConfig selects evidence tiers and failure behavior for the canonical
+// analysis pipeline. Incremental execution is an optimization and must not
+// change the resulting snapshot identity.
 type AnalysisConfig struct {
 	Tiers                   []string `json:"tiers"`
 	FailClosedOnPluginError bool     `json:"fail_closed_on_plugin_error"`
@@ -62,10 +75,15 @@ type AnalysisConfig struct {
 	RuntimeEvidence         bool     `json:"runtime_evidence"`
 }
 
+// AnalyzerToggleConfig enables or disables one built-in deterministic
+// analyzer without granting it additional filesystem or process authority.
 type AnalyzerToggleConfig struct {
 	Enabled bool `json:"enabled"`
 }
 
+// PythonASTConfig identifies the fail-closed built-in Python worker and its
+// deadline. Validation permits only the bundled script; runtime isolation is
+// enforced separately before the worker may execute.
 type PythonASTConfig struct {
 	Enabled        bool   `json:"enabled"`
 	Interpreter    string `json:"interpreter"`
@@ -73,6 +91,9 @@ type PythonASTConfig struct {
 	TimeoutSeconds int    `json:"timeout_seconds,omitempty"`
 }
 
+// PluginsConfig defines analyzer discovery plus the maximum time, memory,
+// output, and process budget available to plugin execution. Network access and
+// child-process spawning remain unsupported even if requested.
 type PluginsConfig struct {
 	Enabled             bool                 `json:"enabled"`
 	Directories         []string             `json:"directories"`
@@ -90,6 +111,8 @@ type PluginsConfig struct {
 	TypeScriptSyntax    AnalyzerToggleConfig `json:"typescript_syntax"`
 }
 
+// FrameworksConfig selects deterministic extractors for documentation,
+// schemas, API descriptions, manifests, and environment templates.
 type FrameworksConfig struct {
 	Enabled          bool `json:"enabled"`
 	Markdown         bool `json:"markdown"`
@@ -99,11 +122,16 @@ type FrameworksConfig struct {
 	EnvironmentFiles bool `json:"environment_files"`
 }
 
+// SecurityConfig controls secret-pattern detection and redaction of normalized
+// exports. It does not weaken the independent workspace privacy mode.
 type SecurityConfig struct {
 	DetectSecrets bool `json:"detect_secrets"`
 	RedactExports bool `json:"redact_exports"`
 }
 
+// DocumentationConfig governs derived prose: templates remain reproducible,
+// and generated claims may be required to cite known canonical evidence and
+// symbols before publication.
 type DocumentationConfig struct {
 	DeterministicTemplates        bool `json:"deterministic_templates"`
 	ModelSynthesis                bool `json:"model_synthesis"`
@@ -111,6 +139,9 @@ type DocumentationConfig struct {
 	RejectUnknownSymbolReferences bool `json:"reject_unknown_symbol_references"`
 }
 
+// ModelConfig describes an optional, qualification-gated local generation
+// provider. Disabled is the safe default; context, output, and RSS values are
+// policy ceilings rather than evidence that a model is suitable.
 type ModelConfig struct {
 	Provider            string  `json:"provider"`
 	ModelName           string  `json:"model,omitempty"`
@@ -122,6 +153,9 @@ type ModelConfig struct {
 	LegacyPeakMemoryMiB int64   `json:"peak_memory_limit_mb,omitempty"`
 }
 
+// SearchConfig selects lexical, embedding, and bounded graph-expansion modes.
+// Unsupported embedding configurations are rejected during validation rather
+// than silently degrading to another search contract.
 type SearchConfig struct {
 	Enabled            bool   `json:"enabled"`
 	Lexical            bool   `json:"lexical"`
@@ -130,6 +164,9 @@ type SearchConfig struct {
 	GraphExpansionHops int    `json:"graph_expansion_hops"`
 }
 
+// ExportsConfig selects deterministic presentation products and their size or
+// storage bounds. Deprecated pointer fields are accepted only so normalization
+// can translate version 0.1 configurations explicitly.
 type ExportsConfig struct {
 	NormalizedSources bool   `json:"normalized_sources"`
 	JSONLGraph        bool   `json:"jsonl_graph"`
@@ -147,6 +184,9 @@ type ExportsConfig struct {
 	MCP        *bool `json:"mcp,omitempty"`
 }
 
+// QualityGatesConfig defines the minimum evidence ratios and maximum defect
+// counts required before publication succeeds. Negative MaxUnresolvedEdges
+// means that particular count is not capped.
 type QualityGatesConfig struct {
 	MinInventoryAccounting   float64 `json:"min_inventory_accounting"`
 	MinSymbolEvidence        float64 `json:"min_symbol_evidence"`
@@ -270,6 +310,9 @@ func (cfg *Configuration) normalize() {
 	cfg.Plugins.Directories = uniqueSortedStrings(cfg.Plugins.Directories)
 }
 
+// Validate rejects unsupported, unsafe, or internally inconsistent policy. It
+// returns every independently detected failure in deterministic lexical order
+// so callers receive one stable remediation set.
 func (cfg Configuration) Validate() error {
 	var failures []string
 	if cfg.SchemaVersion != configurationSchemaVersion {
@@ -361,6 +404,8 @@ func (cfg Configuration) Validate() error {
 	return nil
 }
 
+// PluginTimeout returns the effective Python-worker deadline, preferring its
+// explicit override over the general plugin timeout.
 func (cfg Configuration) PluginTimeout() time.Duration {
 	seconds := cfg.Plugins.TimeoutSeconds
 	if cfg.Plugins.PythonAST.TimeoutSeconds > 0 {
@@ -369,6 +414,9 @@ func (cfg Configuration) PluginTimeout() time.Duration {
 	return time.Duration(seconds) * time.Second
 }
 
+// Digest returns the canonical scan-identity digest after normalization. It
+// excludes output locations, cache-only incremental policy, and derived model
+// settings so operational choices cannot change repository truth.
 func (cfg Configuration) Digest() string {
 	normalized := cfg
 	normalized.normalize()
@@ -384,6 +432,9 @@ func (cfg Configuration) Digest() string {
 	normalized.Documentation.ModelSynthesis = false
 	return digestJSON(normalized)
 }
+
+// PolicyDigest binds inventory admission, security, and quality-gate policy for
+// receipts that must distinguish those controls from analyzer configuration.
 func (cfg Configuration) PolicyDigest() string {
 	return digestJSON(struct {
 		Inventory InventoryConfig    `json:"inventory"`
@@ -391,6 +442,9 @@ func (cfg Configuration) PolicyDigest() string {
 		Quality   QualityGatesConfig `json:"quality_gates"`
 	}{cfg.Inventory, cfg.Security, cfg.QualityGates})
 }
+
+// PluginDigest binds plugin limits, analyzer toggles, and framework extractors
+// for cache invalidation without incorporating unrelated workspace settings.
 func (cfg Configuration) PluginDigest() string {
 	return digestJSON(struct {
 		Plugins    PluginsConfig    `json:"plugins"`

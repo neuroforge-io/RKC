@@ -17,22 +17,36 @@ import (
 	"time"
 )
 
+// Scheduler validation and admission errors are stable sentinels so callers
+// can classify malformed DAGs and impossible resource requests without
+// matching diagnostic text.
 var (
-	ErrDuplicateStage    = errors.New("duplicate stage")
+	// ErrDuplicateStage indicates that two declarations use the same stage ID.
+	ErrDuplicateStage = errors.New("duplicate stage")
+	// ErrMissingDependency indicates that a stage names no declared dependency.
 	ErrMissingDependency = errors.New("missing stage dependency")
-	ErrDependencyCycle   = errors.New("stage dependency cycle")
-	ErrResourceBudget    = errors.New("stage resource request exceeds scheduler budget")
+	// ErrDependencyCycle indicates that the declared graph is not acyclic.
+	ErrDependencyCycle = errors.New("stage dependency cycle")
+	// ErrResourceBudget indicates that no valid batch can admit a stage within
+	// the configured aggregate budget.
+	ErrResourceBudget = errors.New("stage resource request exceeds scheduler budget")
 	// ErrCacheRejected tells Execute that a cache pointer was structurally
 	// valid but its stage payload could not be restored. Execute invalidates
 	// the pointer when supported and safely recomputes the stage.
 	ErrCacheRejected = errors.New("cached stage result rejected")
 )
 
+// Inputs is the immutable-by-contract view supplied to a stage. Results contain
+// completed dependency outputs; Values contains run-scoped services installed
+// by the scheduler owner.
 type Inputs struct {
 	Results map[string]Result
 	Values  map[string]any
 }
 
+// Result is the cacheable output envelope of one stage. DoNotCache is an
+// execution-only decision and is intentionally excluded from serialized cache
+// records.
 type Result struct {
 	StageID      string         `json:"stage_id"`
 	CacheKey     string         `json:"cache_key,omitempty"`
@@ -42,6 +56,9 @@ type Result struct {
 	Metadata     map[string]any `json:"metadata,omitempty"`
 }
 
+// Stage declares one deterministic DAG unit, including all inputs that affect
+// its cache key, its restore/run callbacks, dependencies, and admission cost.
+// Run must honor context cancellation and may read only completed Inputs.
 type Stage struct {
 	ID                      string
 	Version                 string
@@ -56,6 +73,9 @@ type Stage struct {
 	Run                     func(context.Context, Inputs) (Result, error)
 }
 
+// ResourceRequest is the conservative peak capacity a stage asks the scheduler
+// to reserve while it runs. A zero field consumes no modeled capacity for that
+// dimension; IOClass is advisory metadata validated against a closed vocabulary.
 type ResourceRequest struct {
 	MemoryMiB int64  `json:"memory_mib"`
 	CPU       int    `json:"cpu"`
@@ -64,6 +84,9 @@ type ResourceRequest struct {
 	IOClass   string `json:"io_class,omitempty"`
 }
 
+// ResourceBudget caps aggregate capacity admitted in one concurrent batch. A
+// zero field leaves that dimension unbounded by this scheduler, not by any
+// outer operating-system resource guard.
 type ResourceBudget struct {
 	MemoryMiB int64 `json:"memory_mib"`
 	CPU       int   `json:"cpu"`
@@ -71,6 +94,9 @@ type ResourceBudget struct {
 	OpenFiles int   `json:"open_files"`
 }
 
+// Event records one observable stage transition. Error is populated only for a
+// failed transition, and callbacks receive transitions serially even when
+// stages execute concurrently.
 type Event struct {
 	StageID   string        `json:"stage_id"`
 	State     string        `json:"state"`
@@ -79,12 +105,16 @@ type Event struct {
 	Error     string        `json:"error,omitempty"`
 }
 
+// Report is the deterministic terminal view of a run: results are keyed by
+// stage ID and events are sorted independently of goroutine completion order.
 type Report struct {
 	Results  map[string]Result `json:"results"`
 	Events   []Event           `json:"events"`
 	Duration time.Duration     `json:"duration"`
 }
 
+// JournalStage is the immutable execution-plan projection committed to the
+// journal before stage work begins.
 type JournalStage struct {
 	ID           string          `json:"id"`
 	Version      string          `json:"version"`
@@ -92,25 +122,43 @@ type JournalStage struct {
 	Resources    ResourceRequest `json:"resources"`
 }
 
+// JournalKind distinguishes whole-run lifecycle records from records for an
+// individual stage attempt.
 type JournalKind string
 
+// Journal kinds form a closed, serialized vocabulary used by strict replay.
 const (
-	JournalKindRun   JournalKind = "run"
+	// JournalKindRun records a transition for the complete scheduler run.
+	JournalKindRun JournalKind = "run"
+	// JournalKindStage records a transition for one stage attempt.
 	JournalKindStage JournalKind = "stage"
 )
 
+// JournalState is the durable lifecycle state recorded for a run or stage.
 type JournalState string
 
+// Journal states distinguish scheduling, execution, cache restoration, and
+// every terminal outcome so recovery never has to infer completion.
 const (
-	JournalStatePlanned   JournalState = "planned"
-	JournalStateQueued    JournalState = "queued"
-	JournalStateRunning   JournalState = "running"
-	JournalStateCached    JournalState = "cached"
+	// JournalStatePlanned means work is part of the validated immutable plan.
+	JournalStatePlanned JournalState = "planned"
+	// JournalStateQueued means work is eligible but has not begun execution.
+	JournalStateQueued JournalState = "queued"
+	// JournalStateRunning means execution has started and is not terminal.
+	JournalStateRunning JournalState = "running"
+	// JournalStateCached means a verified cached result satisfied the stage.
+	JournalStateCached JournalState = "cached"
+	// JournalStateSucceeded means work completed without an error.
 	JournalStateSucceeded JournalState = "succeeded"
-	JournalStateFailed    JournalState = "failed"
+	// JournalStateFailed means work reached a non-cancellation error.
+	JournalStateFailed JournalState = "failed"
+	// JournalStateCancelled means context cancellation or deadline ended work.
 	JournalStateCancelled JournalState = "cancelled"
 )
 
+// JournalRecord is one hash-chainable lifecycle fact. Sequence, plan digest,
+// previous-record digest, and record digest are validated by the journal
+// implementation before a record is accepted or replayed.
 type JournalRecord struct {
 	SchemaVersion        string          `json:"schema_version"`
 	RunID                string          `json:"run_id"`
@@ -132,20 +180,29 @@ type JournalRecord struct {
 	Error                string          `json:"error,omitempty"`
 }
 
+// Journal appends lifecycle records for exactly one RunID. Implementations are
+// responsible for durable ordering and must reject records for another run.
 type Journal interface {
 	RunID() string
 	Append(context.Context, JournalRecord) error
 }
 
+// Cache stores stage results by deterministic CacheKey. Load must distinguish a
+// verified miss from an operational error; Store must not publish partial data.
 type Cache interface {
 	Load(context.Context, string) (Result, bool, error)
 	Store(context.Context, string, Result) error
 }
 
+// CacheInvalidator removes a structurally valid cache pointer whose payload a
+// stage rejected during Restore, allowing a safe recomputation.
 type CacheInvalidator interface {
 	Invalidate(context.Context, string) error
 }
 
+// Options binds concurrency, aggregate admission, cache, journal, and callback
+// policy for one Execute call. Workers defaults to one; Values are forwarded to
+// stages and must be treated as run-scoped dependencies.
 type Options struct {
 	Workers int
 	Budget  ResourceBudget
@@ -160,6 +217,10 @@ type Options struct {
 	OnEvent                func(Event)
 }
 
+// Execute validates and deterministically schedules all stages, honoring
+// dependencies, cancellation, worker count, and aggregate resource admission.
+// It stops after the first failed batch and records a terminal journal outcome
+// unless the caller explicitly owns deferred completion.
 func Execute(ctx context.Context, stages []Stage, options Options) (Report, error) {
 	started := time.Now()
 	if ctx == nil {
@@ -462,6 +523,9 @@ func executeStage(ctx context.Context, stage Stage, prior map[string]Result, opt
 	return result, nil
 }
 
+// CacheKey hashes the stage identity, version, sorted input digests, and
+// JSON-encoded configuration into a stable content key. Callers must include
+// every behavior-affecting input; argument order among input digests is ignored.
 func CacheKey(stageID, version string, inputDigests []string, configuration any) (string, error) {
 	digests := append([]string(nil), inputDigests...)
 	sort.Strings(digests)
