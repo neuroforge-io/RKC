@@ -124,7 +124,7 @@ func TestCheckRejectsIdentitySchemaAndJournalDrift(t *testing.T) {
 		{
 			"unexpected row",
 			`INSERT INTO schema_migrations(version, name, target_schema_version, sha256, applied_at)
-			 VALUES (5, 'unexpected', '0.5.0', '` + strings.Repeat("a", 64) + `', '2026-01-01T00:00:00Z')`,
+			 VALUES (6, 'unexpected', '0.6.0', '` + strings.Repeat("a", 64) + `', '2026-01-01T00:00:00Z')`,
 		},
 	}
 	for _, fixture := range journalCases {

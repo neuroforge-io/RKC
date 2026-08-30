@@ -15,10 +15,15 @@ func (store *MemoryStore) Snapshot(ctx context.Context, id SnapshotID) (rkcmodel
 	}
 	store.mu.RLock()
 	snapshot, ok := store.snapshots[id]
-	store.mu.RUnlock()
 	if !ok {
+		store.mu.RUnlock()
 		return rkcmodel.Snapshot{}, storeError(CodeSnapshotNotFound, operation, "", id, "", nil)
 	}
+	if err := store.validateStoredRepositoryAffinityLocked(operation, id, "", snapshot); err != nil {
+		store.mu.RUnlock()
+		return rkcmodel.Snapshot{}, err
+	}
+	store.mu.RUnlock()
 	return cloneJSON(snapshot.bundle.Snapshot)
 }
 
@@ -29,10 +34,15 @@ func (store *MemoryStore) Bundle(ctx context.Context, id SnapshotID) (rkcmodel.B
 	}
 	store.mu.RLock()
 	snapshot, ok := store.snapshots[id]
-	store.mu.RUnlock()
 	if !ok {
+		store.mu.RUnlock()
 		return rkcmodel.Bundle{}, storeError(CodeSnapshotNotFound, operation, "", id, "", nil)
 	}
+	if err := store.validateStoredRepositoryAffinityLocked(operation, id, "", snapshot); err != nil {
+		store.mu.RUnlock()
+		return rkcmodel.Bundle{}, err
+	}
+	store.mu.RUnlock()
 	return cloneJSON(snapshot.bundle)
 }
 
@@ -48,10 +58,15 @@ func (store *MemoryStore) Current(ctx context.Context, repositoryID RepositoryID
 		return rkcmodel.Snapshot{}, storeError(CodeSnapshotNotFound, operation, "", "", "repository_id", nil)
 	}
 	snapshot, ok := store.snapshots[id]
-	store.mu.RUnlock()
 	if !ok {
+		store.mu.RUnlock()
 		return rkcmodel.Snapshot{}, storeError(CodeSnapshotNotFound, operation, "", id, "current", nil)
 	}
+	if err := store.validateStoredRepositoryAffinityLocked(operation, id, repositoryID, snapshot); err != nil {
+		store.mu.RUnlock()
+		return rkcmodel.Snapshot{}, err
+	}
+	store.mu.RUnlock()
 	return cloneJSON(snapshot.bundle.Snapshot)
 }
 
@@ -77,8 +92,12 @@ func (store *MemoryStore) ListSnapshots(ctx context.Context, query SnapshotQuery
 
 	store.mu.RLock()
 	values := make([]rkcmodel.Snapshot, 0, len(store.snapshots))
-	for _, stored := range store.snapshots {
+	for id, stored := range store.snapshots {
 		if query.RepositoryID == "" || RepositoryID(stored.bundle.Snapshot.RepositoryID) == query.RepositoryID {
+			if err := store.validateStoredRepositoryAffinityLocked(operation, id, query.RepositoryID, stored); err != nil {
+				store.mu.RUnlock()
+				return SnapshotPage{}, err
+			}
 			values = append(values, stored.bundle.Snapshot)
 		}
 	}
@@ -117,6 +136,10 @@ func (store *MemoryStore) Artifact(ctx context.Context, snapshotID SnapshotID, a
 		store.mu.RUnlock()
 		return rkcmodel.Artifact{}, storeError(CodeSnapshotNotFound, operation, "", snapshotID, "", nil)
 	}
+	if err := store.validateStoredRepositoryAffinityLocked(operation, snapshotID, "", snapshot); err != nil {
+		store.mu.RUnlock()
+		return rkcmodel.Artifact{}, err
+	}
 	var value rkcmodel.Artifact
 	found := false
 	for _, candidate := range snapshot.bundle.Artifacts {
@@ -143,6 +166,10 @@ func (store *MemoryStore) Node(ctx context.Context, snapshotID SnapshotID, nodeI
 		store.mu.RUnlock()
 		return rkcmodel.Node{}, storeError(CodeSnapshotNotFound, operation, "", snapshotID, "", nil)
 	}
+	if err := store.validateStoredRepositoryAffinityLocked(operation, snapshotID, "", snapshot); err != nil {
+		store.mu.RUnlock()
+		return rkcmodel.Node{}, err
+	}
 	var value rkcmodel.Node
 	found := false
 	for _, candidate := range snapshot.bundle.Nodes {
@@ -168,6 +195,10 @@ func (store *MemoryStore) Evidence(ctx context.Context, snapshotID SnapshotID, e
 	if !ok {
 		store.mu.RUnlock()
 		return rkcmodel.Evidence{}, storeError(CodeSnapshotNotFound, operation, "", snapshotID, "", nil)
+	}
+	if err := store.validateStoredRepositoryAffinityLocked(operation, snapshotID, "", snapshot); err != nil {
+		store.mu.RUnlock()
+		return rkcmodel.Evidence{}, err
 	}
 	var value rkcmodel.Evidence
 	found := false
@@ -263,10 +294,15 @@ func (store *MemoryStore) Coverage(ctx context.Context, snapshotID SnapshotID) (
 	}
 	store.mu.RLock()
 	snapshot, ok := store.snapshots[snapshotID]
-	store.mu.RUnlock()
 	if !ok {
+		store.mu.RUnlock()
 		return rkcmodel.Coverage{}, storeError(CodeSnapshotNotFound, operation, "", snapshotID, "", nil)
 	}
+	if err := store.validateStoredRepositoryAffinityLocked(operation, snapshotID, "", snapshot); err != nil {
+		store.mu.RUnlock()
+		return rkcmodel.Coverage{}, err
+	}
+	store.mu.RUnlock()
 	return cloneJSON(snapshot.coverage)
 }
 
@@ -280,10 +316,15 @@ func (store *MemoryStore) querySnapshot(ctx context.Context, operation string, s
 	}
 	store.mu.RLock()
 	snapshot, ok := store.snapshots[snapshotID]
-	store.mu.RUnlock()
 	if !ok {
+		store.mu.RUnlock()
 		return 0, nil, storeError(CodeSnapshotNotFound, operation, "", snapshotID, "", nil)
 	}
+	if err := store.validateStoredRepositoryAffinityLocked(operation, snapshotID, "", snapshot); err != nil {
+		store.mu.RUnlock()
+		return 0, nil, err
+	}
+	store.mu.RUnlock()
 	return limit, snapshot, nil
 }
 

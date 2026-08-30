@@ -15,14 +15,16 @@ import (
 	"strings"
 	"time"
 
+	"github.com/neuroforge-io/RKC/internal/sourceorigin"
+	"github.com/neuroforge-io/RKC/pkg/rkcmodel"
 	sqliteassets "github.com/neuroforge-io/RKC/storage/sqlite"
 )
 
 const (
-	embeddedManifestSHA256 = "102a6cae08c2b81dff1556ce791cf1396fd9f02dbaf29d71c59e17a67e61d435"
+	embeddedManifestSHA256 = "1015fc01a1002875062e7468c137d4d573772542abcc461ac4995786b4dacd73"
 	manifestPath           = "migrations/manifest.json"
-	currentDatabaseVersion = 4
-	currentSchemaVersion   = "0.4.0"
+	currentDatabaseVersion = 5
+	currentSchemaVersion   = "0.5.0"
 	applicationID          = 0x524B4344
 )
 
@@ -283,6 +285,16 @@ func applyMigration(ctx context.Context, database *sql.DB, path string, item mig
 	if item.Version == 3 {
 		if err := checkV2UpgradeEligibility(ctx, connection); err != nil {
 			return operationError("check v0.2 upgrade eligibility", path, classifyMigrationError(err), err)
+		}
+	}
+	if item.Version == 5 {
+		if err := checkV4RepositoryAffinityEligibility(ctx, connection); err != nil {
+			return operationError(
+				"check v0.4 repository affinity upgrade eligibility",
+				path,
+				classifyMigrationError(err),
+				err,
+			)
 		}
 	}
 	if _, err := connection.ExecContext(ctx, item.Body); err != nil {
@@ -572,4 +584,124 @@ func checkV2UpgradeEligibility(ctx context.Context, executor queryExecutor) erro
 		)
 	}
 	return nil
+}
+
+// checkV4RepositoryAffinityEligibility prevents migration 5 from retaining a
+// credential-bearing/noncanonical origin or provenance that disagrees with its
+// public opaque RepositoryID. Errors never contain stored provenance text.
+func checkV4RepositoryAffinityEligibility(ctx context.Context, executor queryExecutor) error {
+	version, err := readSchemaVersion(ctx, executor)
+	if err != nil {
+		return err
+	}
+	if version != 4 {
+		return operationError(
+			"check v0.4 repository affinity upgrade eligibility",
+			"",
+			ErrIncompatibleSchema,
+			fmt.Errorf("schema version is %d, want 4", version),
+		)
+	}
+
+	repositories, err := executor.QueryContext(
+		ctx,
+		`SELECT repository_id, canonical_origin
+		 FROM repositories
+		 WHERE canonical_origin IS NOT NULL`,
+	)
+	if err != nil {
+		return err
+	}
+	for repositories.Next() {
+		var repositoryID, legacyValue string
+		if err := repositories.Scan(&repositoryID, &legacyValue); err != nil {
+			_ = repositories.Close()
+			return err
+		}
+		if legacyValue != "" && legacyValue != repositoryID &&
+			(!sourceorigin.IsCanonical(legacyValue) ||
+				rkcmodel.StableID("repository", legacyValue) != repositoryID) {
+			_ = repositories.Close()
+			return repositoryAffinityBackfillRequired()
+		}
+	}
+	if err := repositories.Err(); err != nil {
+		_ = repositories.Close()
+		return err
+	}
+	if err := repositories.Close(); err != nil {
+		return err
+	}
+
+	snapshots, err := executor.QueryContext(
+		ctx,
+		`SELECT snapshot_id, repository_id, schema_version,
+		        canonical_snapshot_json
+		 FROM canonical_snapshots
+		 ORDER BY snapshot_id`,
+	)
+	if err != nil {
+		return err
+	}
+	defer snapshots.Close()
+	for snapshots.Next() {
+		var rowID, repositoryID, schemaVersion, payload string
+		if err := snapshots.Scan(
+			&rowID,
+			&repositoryID,
+			&schemaVersion,
+			&payload,
+		); err != nil {
+			return err
+		}
+		if len(payload) > readerMaxObjectJSONBytes {
+			return repositoryAffinityBackfillRequired()
+		}
+		snapshot, err := readerDecodeObject[rkcmodel.Snapshot](
+			"check v0.4 repository affinity upgrade eligibility",
+			"",
+			"canonical_snapshot_json",
+			payload,
+			readerMaxObjectJSONBytes,
+		)
+		if err != nil {
+			return repositoryAffinityBackfillRequired()
+		}
+		if snapshot.ID != rowID || snapshot.RepositoryID != repositoryID ||
+			snapshot.SchemaVersion != schemaVersion || snapshot.Status != "committed" {
+			return repositoryAffinityBackfillRequired()
+		}
+		validationBundle := rkcmodel.Bundle{Snapshot: snapshot}
+		if snapshot.Git.Origin != "" {
+			validationBundle.Nodes = []rkcmodel.Node{{
+				ID:            snapshot.RepositoryID,
+				LogicalID:     snapshot.RepositoryID,
+				Kind:          "repository",
+				Name:          "Repository",
+				QualifiedName: snapshot.Git.Origin,
+				Attributes:    map[string]any{"git_origin": snapshot.Git.Origin},
+			}}
+		}
+		if report := rkcmodel.ValidateBundle(
+			validationBundle,
+			rkcmodel.ValidationOptions{StrictVocabulary: true},
+		); report.HasErrors() {
+			return repositoryAffinityBackfillRequired()
+		}
+		if snapshot.Git.Origin != "" &&
+			(!sourceorigin.IsCanonical(snapshot.Git.Origin) ||
+				rkcmodel.StableID("repository", snapshot.Git.Origin) != snapshot.RepositoryID) {
+			return repositoryAffinityBackfillRequired()
+		}
+	}
+	return snapshots.Err()
+}
+
+func repositoryAffinityBackfillRequired() error {
+	return operationError(
+		"check v0.4 repository affinity upgrade eligibility",
+		"",
+		ErrBackfillRequired,
+		errors.New("stored repository provenance requires an explicit affinity backfill"),
+	)
 }

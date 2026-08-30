@@ -157,9 +157,11 @@ func readerTestSeedSnapshot(t *testing.T, database *Database, bundle rkcmodel.Bu
 	defer transaction.Rollback()
 	now := bundle.Snapshot.CreatedAt.UTC().Format(time.RFC3339Nano)
 	if _, err := transaction.Exec(
-		`INSERT INTO repositories(repository_id, display_name, created_at, metadata_json)
-		 VALUES (?, ?, ?, '{}')
+		`INSERT INTO repositories(
+		   repository_id, repository_affinity, display_name, created_at, metadata_json
+		 ) VALUES (?, ?, ?, ?, '{}')
 		 ON CONFLICT(repository_id) DO NOTHING`,
+		bundle.Snapshot.RepositoryID,
 		bundle.Snapshot.RepositoryID,
 		bundle.Snapshot.RepositoryID,
 		now,

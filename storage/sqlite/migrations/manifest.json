@@ -1,6 +1,6 @@
 {
   "schema_version": "1.0",
-  "database_schema_version": "0.4.0",
+  "database_schema_version": "0.5.0",
   "migrations": [
     {
       "version": 1,
@@ -28,6 +28,13 @@
       "name": "publication_compare_and_swap",
       "target_schema_version": "0.4.0",
       "sha256": "c75e1bc04038c3385acd15fc370c0a866929d33102885a72b305a1a28d9635fc",
+      "minimum_rkc": "0.3.0-reference"
+    },
+    {
+      "version": 5,
+      "name": "repository_affinity",
+      "target_schema_version": "0.5.0",
+      "sha256": "cdcb55ab759aaaa5c9970e4ff0fa328fa0c82f79737be9c6e761e8edb80023c8",
       "minimum_rkc": "0.3.0-reference"
     }
   ]

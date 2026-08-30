@@ -57,14 +57,15 @@ type memorySnapshot struct {
 // the same transaction and cursor rules required of durable implementations,
 // making it suitable for contract tests without weakening production semantics.
 type MemoryStore struct {
-	mu               sync.RWMutex
-	secret           [32]byte
-	options          MemoryOptions
-	builds           map[BuildID]*memoryBuild
-	snapshots        map[SnapshotID]*memorySnapshot
-	current          map[RepositoryID]SnapshotID
-	openBuilds       int
-	closedBuildOrder []BuildID
+	mu                 sync.RWMutex
+	secret             [32]byte
+	options            MemoryOptions
+	builds             map[BuildID]*memoryBuild
+	snapshots          map[SnapshotID]*memorySnapshot
+	current            map[RepositoryID]SnapshotID
+	repositoryAffinity map[RepositoryID]RepositoryID
+	openBuilds         int
+	closedBuildOrder   []BuildID
 }
 
 var _ Store = (*MemoryStore)(nil)
@@ -85,7 +86,7 @@ func NewMemoryStoreWithOptions(options MemoryOptions) (*MemoryStore, error) {
 	store := &MemoryStore{
 		options: options,
 		builds:  make(map[BuildID]*memoryBuild), snapshots: make(map[SnapshotID]*memorySnapshot),
-		current: make(map[RepositoryID]SnapshotID),
+		current: make(map[RepositoryID]SnapshotID), repositoryAffinity: make(map[RepositoryID]RepositoryID),
 	}
 	if _, err := rand.Read(store.secret[:]); err != nil {
 		return nil, fmt.Errorf("initialize memory-store cursor key: %w", err)
@@ -406,10 +407,18 @@ func (store *MemoryStore) Commit(ctx context.Context, buildID BuildID, snapshot 
 	if !result.CoveragePresent || !result.CoverageConsistent {
 		return storeError(CodeCoverageMismatch, operation, buildID, snapshotID, "coverage", nil)
 	}
+	repositoryID := RepositoryID(clonedSnapshot.RepositoryID)
+	affinity, affinityBound := store.repositoryAffinity[build.options.RepositoryID]
+	if affinityBound && affinity != repositoryID {
+		return conflict(operation, buildID, snapshotID, "repository identity does not match its established affinity")
+	}
 	canonical := canonicalStoredBundle(bundle)
 	coverage, cloneErr := cloneJSON(result.ExpectedCoverage)
 	if cloneErr != nil {
 		return fmt.Errorf("clone validated coverage: %w", cloneErr)
+	}
+	if !affinityBound {
+		store.repositoryAffinity[build.options.RepositoryID] = repositoryID
 	}
 	store.snapshots[snapshotID] = &memorySnapshot{bundle: canonical, coverage: coverage}
 	store.current[build.options.RepositoryID] = snapshotID
@@ -587,6 +596,29 @@ func canonicalStoredBundle(bundle rkcmodel.Bundle) rkcmodel.Bundle {
 	// discarding operational Snapshot fields.
 	rkcmodel.SortBundle(&bundle)
 	return bundle
+}
+
+// validateStoredRepositoryAffinityLocked defends readers against an internally
+// inconsistent snapshot. The caller must hold store.mu for reading or writing.
+// Error details deliberately never include repository provenance.
+func (store *MemoryStore) validateStoredRepositoryAffinityLocked(
+	operation string,
+	snapshotID SnapshotID,
+	expectedRepository RepositoryID,
+	snapshot *memorySnapshot,
+) error {
+	if snapshot == nil {
+		return storeError(CodeValidation, operation, "", snapshotID, "repository_id", errors.New("stored snapshot is unavailable"))
+	}
+	repositoryID := RepositoryID(snapshot.bundle.Snapshot.RepositoryID)
+	if expectedRepository != "" && repositoryID != expectedRepository {
+		return storeError(CodeValidation, operation, "", snapshotID, "repository_id", errors.New("stored snapshot repository affinity is inconsistent"))
+	}
+	affinity, bound := store.repositoryAffinity[repositoryID]
+	if !bound || affinity != repositoryID {
+		return storeError(CodeValidation, operation, "", snapshotID, "repository_id", errors.New("stored snapshot repository affinity is inconsistent"))
+	}
+	return nil
 }
 
 func cloneCoveragePointer(value *rkcmodel.Coverage) *rkcmodel.Coverage {

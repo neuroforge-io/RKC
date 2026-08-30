@@ -64,28 +64,31 @@ func (d *Database) ListSnapshots(
 			return rkcstore.SnapshotPage{}, err
 		}
 
-		statement := `SELECT snapshot_id, repository_id, schema_version,
-		                     published_at,
-		                     length(CAST(canonical_snapshot_json AS BLOB)),
+		statement := `SELECT snapshot.snapshot_id, snapshot.repository_id,
+		                     snapshot.schema_version, repository.repository_affinity,
+		                     snapshot.published_at,
+		                     length(CAST(snapshot.canonical_snapshot_json AS BLOB)),
 		                     CASE
-		                       WHEN length(CAST(canonical_snapshot_json AS BLOB)) <= ?
-		                       THEN canonical_snapshot_json
+		                       WHEN length(CAST(snapshot.canonical_snapshot_json AS BLOB)) <= ?
+		                       THEN snapshot.canonical_snapshot_json
 		                     END
-		              FROM canonical_snapshots
+		              FROM canonical_snapshots AS snapshot
+		              JOIN repositories AS repository
+		                ON repository.repository_id = snapshot.repository_id
 		              WHERE 1 = 1`
 		arguments := []any{readerMaxObjectJSONBytes}
 		if query.RepositoryID != "" {
-			statement += " AND repository_id = ?"
+			statement += " AND snapshot.repository_id = ?"
 			arguments = append(arguments, query.RepositoryID)
 		}
 		if cursor.ID != "" {
 			statement += ` AND (
-			  published_at < ?
-			  OR (published_at = ? AND snapshot_id > ?)
+			  snapshot.published_at < ?
+			  OR (snapshot.published_at = ? AND snapshot.snapshot_id > ?)
 			)`
 			arguments = append(arguments, cursor.Primary, cursor.Primary, cursor.ID)
 		}
-		statement += " ORDER BY published_at DESC, snapshot_id ASC LIMIT ?"
+		statement += " ORDER BY snapshot.published_at DESC, snapshot.snapshot_id ASC LIMIT ?"
 		arguments = append(arguments, limit+1)
 		rows, err := connection.QueryContext(ctx, statement, arguments...)
 		if err != nil {
@@ -99,12 +102,14 @@ func (d *Database) ListSnapshots(
 		hasMore := false
 		for rows.Next() {
 			var rowID, repositoryID, schemaVersion, publishedAt string
+			var repositoryAffinity sql.NullString
 			var size int64
 			var payload sql.NullString
 			if err := rows.Scan(
 				&rowID,
 				&repositoryID,
 				&schemaVersion,
+				&repositoryAffinity,
 				&publishedAt,
 				&size,
 				&payload,
@@ -142,6 +147,7 @@ func (d *Database) ListSnapshots(
 				rowID,
 				repositoryID,
 				schemaVersion,
+				repositoryAffinity,
 				payload.String,
 			)
 			if err != nil {
@@ -336,12 +342,13 @@ func readerQueryRecordPageImpl[T any](
 	limit int,
 ) ([]T, rkcstore.Cursor, error) {
 	result, err := readerWithConnection(database, ctx, spec.operation, func(connection *sql.Conn) (readerPageResult[T], error) {
-		exists, err := readerSnapshotExists(ctx, connection, spec.snapshotID)
-		if err != nil {
-			return readerPageResult[T]{}, readerStorageError(spec.operation, spec.snapshotID, "database", err)
-		}
-		if !exists {
-			return readerPageResult[T]{}, readerSnapshotNotFound(spec.operation, spec.snapshotID, "")
+		if err := readerRequireSnapshotRepositoryAffinity(
+			ctx,
+			connection,
+			spec.operation,
+			spec.snapshotID,
+		); err != nil {
+			return readerPageResult[T]{}, err
 		}
 		key, err := readerCursorKey(ctx, connection, spec.operation, !database.options.ReadOnly)
 		if err != nil {
@@ -468,20 +475,6 @@ func readerQueryRecordPageImpl[T any](
 		return nil, "", err
 	}
 	return result.items, result.next, nil
-}
-
-func readerSnapshotExists(
-	ctx context.Context,
-	connection *sql.Conn,
-	snapshotID rkcstore.SnapshotID,
-) (bool, error) {
-	var exists int
-	err := connection.QueryRowContext(
-		ctx,
-		"SELECT EXISTS(SELECT 1 FROM canonical_snapshots WHERE snapshot_id = ?)",
-		snapshotID,
-	).Scan(&exists)
-	return exists != 0, err
 }
 
 func readerRecordCursorExists[T any](

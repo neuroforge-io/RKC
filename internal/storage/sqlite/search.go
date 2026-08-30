@@ -60,18 +60,19 @@ func (d *Database) SearchFTS(
 			rkcstore.CodeInvalidQuery, operation, snapshotID, "filters", err,
 		)
 	}
-	if len(terms) == 0 {
-		return search.Response{
-			Query: query.Text, Mode: "sqlite-fts5-bm25", IndexVersion: "sqlite-fts5-1",
-		}, nil
-	}
 	return readerWithConnection(d, ctx, operation, func(connection *sql.Conn) (search.Response, error) {
-		exists, err := readerSnapshotExists(ctx, connection, snapshotID)
-		if err != nil {
-			return search.Response{}, readerStorageError(operation, snapshotID, "database", err)
+		if err := readerRequireSnapshotRepositoryAffinity(
+			ctx,
+			connection,
+			operation,
+			snapshotID,
+		); err != nil {
+			return search.Response{}, err
 		}
-		if !exists {
-			return search.Response{}, readerSnapshotNotFound(operation, snapshotID, "")
+		if len(terms) == 0 {
+			return search.Response{
+				Query: query.Text, Mode: "sqlite-fts5-bm25", IndexVersion: "sqlite-fts5-1",
+			}, nil
 		}
 		statement, arguments := ftsStatement(snapshotID, match, filters, limit)
 		rows, err := connection.QueryContext(ctx, statement, arguments...)

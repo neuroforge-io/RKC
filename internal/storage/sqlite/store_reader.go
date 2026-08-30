@@ -58,26 +58,30 @@ func (d *Database) Bundle(
 	return readerWithConnection(d, ctx, operation, func(connection *sql.Conn) (rkcmodel.Bundle, error) {
 		row := connection.QueryRowContext(
 			ctx,
-			`SELECT snapshot_id, repository_id, schema_version,
-			        length(CAST(canonical_snapshot_json AS BLOB)),
+			`SELECT snapshot.snapshot_id, snapshot.repository_id,
+			        snapshot.schema_version, repository.repository_affinity,
+			        length(CAST(snapshot.canonical_snapshot_json AS BLOB)),
 			        CASE
-			          WHEN length(CAST(canonical_snapshot_json AS BLOB)) <= ?
-			          THEN canonical_snapshot_json
+			          WHEN length(CAST(snapshot.canonical_snapshot_json AS BLOB)) <= ?
+			          THEN snapshot.canonical_snapshot_json
 			        END,
-			        length(CAST(canonical_bundle_json AS BLOB)),
+			        length(CAST(snapshot.canonical_bundle_json AS BLOB)),
 			        CASE
-			          WHEN length(CAST(canonical_bundle_json AS BLOB)) <= ?
-			          THEN canonical_bundle_json
+			          WHEN length(CAST(snapshot.canonical_bundle_json AS BLOB)) <= ?
+			          THEN snapshot.canonical_bundle_json
 			        END,
-			        canonical_digest
-			 FROM canonical_snapshots
-			 WHERE snapshot_id = ?`,
+			        snapshot.canonical_digest
+			 FROM canonical_snapshots AS snapshot
+			 JOIN repositories AS repository
+			   ON repository.repository_id = snapshot.repository_id
+			 WHERE snapshot.snapshot_id = ?`,
 			readerMaxObjectJSONBytes,
 			readerMaxBundleJSONBytes,
 			id,
 		)
 		var (
 			rowID, repositoryID, schemaVersion string
+			repositoryAffinity                 sql.NullString
 			snapshotSize, bundleSize           int64
 			snapshotJSON, bundleJSON           sql.NullString
 			canonicalDigest                    string
@@ -86,6 +90,7 @@ func (d *Database) Bundle(
 			&rowID,
 			&repositoryID,
 			&schemaVersion,
+			&repositoryAffinity,
 			&snapshotSize,
 			&snapshotJSON,
 			&bundleSize,
@@ -129,6 +134,7 @@ func (d *Database) Bundle(
 			rowID,
 			repositoryID,
 			schemaVersion,
+			repositoryAffinity,
 			snapshotJSON.String,
 		)
 		if err != nil {
@@ -145,7 +151,8 @@ func (d *Database) Bundle(
 			return rkcmodel.Bundle{}, err
 		}
 		if bundle.Snapshot.ID != rowID || bundle.Snapshot.RepositoryID != repositoryID ||
-			bundle.Snapshot.SchemaVersion != schemaVersion || bundle.Snapshot.Status != "committed" {
+			bundle.Snapshot.SchemaVersion != schemaVersion || bundle.Snapshot.Status != "committed" ||
+			!repositoryAffinity.Valid || bundle.Snapshot.RepositoryID != repositoryAffinity.String {
 			return rkcmodel.Bundle{}, readerStoredDataError(
 				operation,
 				id,
@@ -193,7 +200,7 @@ func (d *Database) Current(
 		row := connection.QueryRowContext(
 			ctx,
 			`SELECT snapshot.snapshot_id, snapshot.repository_id,
-			        snapshot.schema_version,
+			        snapshot.schema_version, repository.repository_affinity,
 			        length(CAST(snapshot.canonical_snapshot_json AS BLOB)),
 			        CASE
 			          WHEN length(CAST(snapshot.canonical_snapshot_json AS BLOB)) <= ?
@@ -300,6 +307,14 @@ func (d *Database) Coverage(
 		return rkcmodel.Coverage{}, err
 	}
 	return readerWithConnection(d, ctx, operation, func(connection *sql.Conn) (rkcmodel.Coverage, error) {
+		if err := readerRequireSnapshotRepositoryAffinity(
+			ctx,
+			connection,
+			operation,
+			snapshotID,
+		); err != nil {
+			return rkcmodel.Coverage{}, err
+		}
 		rows, err := connection.QueryContext(
 			ctx,
 			`SELECT record.record_id,
@@ -416,14 +431,17 @@ func readerSnapshotByID(
 ) (rkcmodel.Snapshot, error) {
 	row := connection.QueryRowContext(
 		ctx,
-		`SELECT snapshot_id, repository_id, schema_version,
-		        length(CAST(canonical_snapshot_json AS BLOB)),
+		`SELECT snapshot.snapshot_id, snapshot.repository_id,
+		        snapshot.schema_version, repository.repository_affinity,
+		        length(CAST(snapshot.canonical_snapshot_json AS BLOB)),
 		        CASE
-		          WHEN length(CAST(canonical_snapshot_json AS BLOB)) <= ?
-		          THEN canonical_snapshot_json
+		          WHEN length(CAST(snapshot.canonical_snapshot_json AS BLOB)) <= ?
+		          THEN snapshot.canonical_snapshot_json
 		        END
-		 FROM canonical_snapshots
-		 WHERE snapshot_id = ?`,
+		 FROM canonical_snapshots AS snapshot
+		 JOIN repositories AS repository
+		   ON repository.repository_id = snapshot.repository_id
+		 WHERE snapshot.snapshot_id = ?`,
 		readerMaxObjectJSONBytes,
 		id,
 	)
@@ -443,9 +461,17 @@ func readerSnapshotFromRow(
 	row *sql.Row,
 ) (rkcmodel.Snapshot, error) {
 	var rowID, repositoryID, schemaVersion string
+	var repositoryAffinity sql.NullString
 	var size int64
 	var payload sql.NullString
-	if err := row.Scan(&rowID, &repositoryID, &schemaVersion, &size, &payload); err != nil {
+	if err := row.Scan(
+		&rowID,
+		&repositoryID,
+		&schemaVersion,
+		&repositoryAffinity,
+		&size,
+		&payload,
+	); err != nil {
 		return rkcmodel.Snapshot{}, err
 	}
 	if size > readerMaxObjectJSONBytes || !payload.Valid {
@@ -462,6 +488,7 @@ func readerSnapshotFromRow(
 		rowID,
 		repositoryID,
 		schemaVersion,
+		repositoryAffinity,
 		payload.String,
 	)
 }
@@ -472,6 +499,7 @@ func readerDecodeSnapshot(
 	rowID string,
 	repositoryID string,
 	schemaVersion string,
+	repositoryAffinity sql.NullString,
 	payload string,
 ) (rkcmodel.Snapshot, error) {
 	snapshot, err := readerDecodeObject[rkcmodel.Snapshot](
@@ -491,6 +519,15 @@ func readerDecodeSnapshot(
 			requestedID,
 			"canonical_snapshot_json",
 			"snapshot identity does not match its row",
+			nil,
+		)
+	}
+	if !repositoryAffinity.Valid || snapshot.RepositoryID != repositoryAffinity.String {
+		return rkcmodel.Snapshot{}, readerStoredDataError(
+			operation,
+			requestedID,
+			"repository_affinity",
+			"snapshot identity does not match repository affinity",
 			nil,
 		)
 	}
@@ -518,6 +555,14 @@ func readerReadPointRecord[T any](
 ) (T, error) {
 	return readerWithConnection(database, ctx, operation, func(connection *sql.Conn) (T, error) {
 		var zero T
+		if err := readerRequireSnapshotRepositoryAffinity(
+			ctx,
+			connection,
+			operation,
+			snapshotID,
+		); err != nil {
+			return zero, err
+		}
 		row := connection.QueryRowContext(
 			ctx,
 			`SELECT record.record_id,
@@ -597,6 +642,44 @@ func readerReadPointRecord[T any](
 		}
 		return value, nil
 	})
+}
+
+// readerRequireSnapshotRepositoryAffinity protects every record/query surface,
+// including callers that do not first load the snapshot envelope. It compares
+// only fixed typed fields and never includes stored provenance in an error.
+func readerRequireSnapshotRepositoryAffinity(
+	ctx context.Context,
+	connection *sql.Conn,
+	operation string,
+	snapshotID rkcstore.SnapshotID,
+) error {
+	row := connection.QueryRowContext(
+		ctx,
+		`SELECT repository.repository_affinity, snapshot.repository_id
+		 FROM canonical_snapshots AS snapshot
+		 JOIN repositories AS repository
+		   ON repository.repository_id = snapshot.repository_id
+		 WHERE snapshot.snapshot_id = ?`,
+		snapshotID,
+	)
+	var repositoryAffinity sql.NullString
+	var snapshotRepository string
+	if err := row.Scan(&repositoryAffinity, &snapshotRepository); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return readerSnapshotNotFound(operation, snapshotID, "")
+		}
+		return readerStorageError(operation, snapshotID, "database", err)
+	}
+	if !repositoryAffinity.Valid || repositoryAffinity.String != snapshotRepository {
+		return readerStoredDataError(
+			operation,
+			snapshotID,
+			"repository_affinity",
+			"snapshot identity does not match repository affinity",
+			nil,
+		)
+	}
+	return nil
 }
 
 func readerWithConnection[T any](

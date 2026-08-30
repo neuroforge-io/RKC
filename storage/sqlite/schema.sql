@@ -12,12 +12,12 @@ CREATE TABLE IF NOT EXISTS schema_meta (
 ) STRICT;
 
 INSERT INTO schema_meta(key, value)
-VALUES ('schema_version', '0.4.0')
+VALUES ('schema_version', '0.5.0')
 ON CONFLICT(key) DO UPDATE SET value = excluded.value;
 
 CREATE TABLE IF NOT EXISTS repositories (
     repository_id TEXT PRIMARY KEY,
-    canonical_origin TEXT,
+    repository_affinity TEXT,
     display_name TEXT NOT NULL,
     created_at TEXT NOT NULL,
     metadata_json TEXT NOT NULL DEFAULT '{}'
@@ -500,6 +500,13 @@ VALUES
     '0.4.0',
     'c75e1bc04038c3385acd15fc370c0a866929d33102885a72b305a1a28d9635fc',
     '2026-07-22T00:00:00Z'
+  ),
+  (
+    5,
+    'repository_affinity',
+    '0.5.0',
+    'cdcb55ab759aaaa5c9970e4ff0fa328fa0c82f79737be9c6e761e8edb80023c8',
+    '2026-08-30T00:00:00Z'
   );
 
 CREATE TABLE IF NOT EXISTS builds (
@@ -936,6 +943,30 @@ WHEN NEW.current_snapshot_id IS NOT NULL
  )
 BEGIN
   SELECT RAISE(ABORT, 'current snapshot changed since the owning build started');
+END;
+
+CREATE TRIGGER IF NOT EXISTS repositories_affinity_immutable_guard
+BEFORE UPDATE OF repository_affinity ON repositories
+WHEN OLD.repository_affinity IS NOT NULL
+ AND NEW.repository_affinity IS NOT OLD.repository_affinity
+BEGIN
+  SELECT RAISE(ABORT, 'repository affinity is immutable after binding');
+END;
+
+CREATE TRIGGER IF NOT EXISTS repositories_current_snapshot_affinity_required_guard
+BEFORE UPDATE OF current_snapshot_id, repository_affinity ON repositories
+WHEN NEW.current_snapshot_id IS NOT NULL
+ AND NEW.repository_affinity IS NULL
+BEGIN
+  SELECT RAISE(ABORT, 'published repository requires a bound affinity');
+END;
+
+CREATE TRIGGER IF NOT EXISTS repositories_current_snapshot_affinity_guard
+BEFORE UPDATE OF current_snapshot_id, repository_affinity ON repositories
+WHEN NEW.current_snapshot_id IS NOT NULL
+ AND NEW.repository_affinity <> NEW.repository_id
+BEGIN
+  SELECT RAISE(ABORT, 'published repository affinity differs from its identity');
 END;
 
 COMMIT;

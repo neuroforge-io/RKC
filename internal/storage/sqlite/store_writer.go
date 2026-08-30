@@ -301,7 +301,8 @@ func (d *Database) Validate(ctx context.Context, buildID rkcstore.BuildID) (rkcs
 
 // Commit validates and publishes in one immediate transaction. Canonical rows,
 // normalized relational rows, and FTS rows become visible together or not at
-// all; the build and repository updates are guarded by the migration-v4 CAS.
+// all; the build, repository, and repository-affinity updates are guarded by the
+// migration-v5 CAS and affinity invariants.
 func (d *Database) Commit(ctx context.Context, buildID rkcstore.BuildID, snapshot rkcmodel.Snapshot) error {
 	const operation = "commit build"
 	if err := writerCheckContext(ctx, operation); err != nil {
@@ -335,12 +336,13 @@ func (d *Database) Commit(ctx context.Context, buildID rkcstore.BuildID, snapsho
 			return err
 		}
 
-		var current sql.NullString
+		var current, repositoryAffinity sql.NullString
 		if err := transaction.QueryRowContext(
 			ctx,
-			"SELECT current_snapshot_id FROM repositories WHERE repository_id = ?",
+			`SELECT current_snapshot_id, repository_affinity
+			 FROM repositories WHERE repository_id = ?`,
 			build.repositoryID,
-		).Scan(&current); err != nil {
+		).Scan(&current, &repositoryAffinity); err != nil {
 			return writerDatabaseError(operation, "repository_id", buildID, snapshotID, err)
 		}
 		if rkcstore.SnapshotID(writerNullString(current)) != build.baseCurrent {
@@ -372,6 +374,14 @@ func (d *Database) Commit(ctx context.Context, buildID rkcstore.BuildID, snapsho
 		if !validation.CoveragePresent || !validation.CoverageConsistent {
 			return writerOperationError(rkcstore.CodeCoverageMismatch, operation, buildID, snapshotID, "coverage", nil)
 		}
+		if repositoryAffinity.Valid && repositoryAffinity.String != snapshot.RepositoryID {
+			return writerConflict(
+				operation,
+				buildID,
+				snapshotID,
+				"repository affinity does not match snapshot identity",
+			)
+		}
 
 		canonicalBundle := rkcmodel.CanonicalBundle(bundle)
 		canonicalBundleJSON, err := json.Marshal(canonicalBundle)
@@ -400,6 +410,37 @@ func (d *Database) Commit(ctx context.Context, buildID rkcstore.BuildID, snapsho
 		)
 		if err != nil {
 			return err
+		}
+
+		// The validated snapshot identity is authoritative. RepositoryID remains
+		// stable when privacy policy removes public origin provenance, and reveals
+		// no additional information because it is already part of the bundle.
+		result, err := transaction.ExecContext(
+			ctx,
+			`UPDATE repositories
+			 SET repository_affinity = ?
+			 WHERE repository_id = ?
+			   AND current_snapshot_id IS ?
+			   AND (repository_affinity IS NULL OR repository_affinity = ?)`,
+			snapshot.RepositoryID,
+			build.repositoryID,
+			writerNullableString(string(build.baseCurrent)),
+			snapshot.RepositoryID,
+		)
+		if err != nil {
+			return writerDatabaseError(operation, "repository_affinity", buildID, snapshotID, err)
+		}
+		affected, err := result.RowsAffected()
+		if err != nil {
+			return writerDatabaseError(operation, "repository_affinity", buildID, snapshotID, err)
+		}
+		if affected != 1 {
+			return writerConflict(
+				operation,
+				buildID,
+				snapshotID,
+				"repository affinity binding compare-and-swap failed",
+			)
 		}
 
 		now := writerTimestamp(time.Now())
@@ -454,7 +495,7 @@ func (d *Database) Commit(ctx context.Context, buildID rkcstore.BuildID, snapsho
 			return writerDatabaseError(operation, "staging", buildID, snapshotID, err)
 		}
 
-		result, err := transaction.ExecContext(
+		result, err = transaction.ExecContext(
 			ctx,
 			`UPDATE builds
 			 SET state = 'committed', committed_snapshot_id = ?,
@@ -485,19 +526,23 @@ func (d *Database) Commit(ctx context.Context, buildID rkcstore.BuildID, snapsho
 		result, err = transaction.ExecContext(
 			ctx,
 			`UPDATE repositories SET current_snapshot_id = ?
-			 WHERE repository_id = ? AND current_snapshot_id IS ?`,
+			 WHERE repository_id = ?
+			   AND current_snapshot_id IS ?
+			   AND repository_affinity = ?`,
 			snapshotID,
 			build.repositoryID,
 			writerNullableString(string(build.baseCurrent)),
+			snapshot.RepositoryID,
 		)
 		if err != nil {
-			return writerConflict(operation, buildID, snapshotID, "repository publish compare-and-swap failed: "+err.Error())
+			return writerConflict(operation, buildID, snapshotID, "repository publication compare-and-swap failed")
 		}
-		if affected, err := result.RowsAffected(); err != nil || affected != 1 {
-			if err == nil {
-				err = fmt.Errorf("updated %d repositories, want 1", affected)
-			}
-			return writerConflict(operation, buildID, snapshotID, "repository publish compare-and-swap failed: "+err.Error())
+		affected, err = result.RowsAffected()
+		if err != nil {
+			return writerDatabaseError(operation, "repository_id", buildID, snapshotID, err)
+		}
+		if affected != 1 {
+			return writerConflict(operation, buildID, snapshotID, "repository publication compare-and-swap failed")
 		}
 		return nil
 	})
