@@ -5,7 +5,7 @@ PYTHON ?= $(if $(wildcard .venv/bin/python),.venv/bin/python,python3)
 MODEL_RUNTIME ?=
 MODEL_QUALIFICATION_OUTPUT ?=
 
-.PHONY: all build safe-build install-check format-check vet test python-env-check python-test coverage safe-coverage test-race go-mod-verify contracts docs-check licenses model-lock-check model-runtime-portable model-runtime-native model-fetch-generation model-fetch-embedding model-qualify plugins smoke reproducibility smoke-api smoke-mcp smoke-git benchmark verify safe-verify safe-test safe-test-race release-verify safe-release-verify self-catalogue demo release-binaries assemble-complete-package complete-package safe-complete-package clean package
+.PHONY: all build safe-build install-check format-check vet test python-env-check python-test coverage safe-coverage test-race go-mod-verify contracts docs-check licenses quality-index safe-quality-index model-lock-check model-runtime-portable model-runtime-native model-fetch-generation model-fetch-embedding model-qualify plugins smoke reproducibility smoke-api smoke-mcp smoke-git benchmark verify safe-verify safe-test safe-test-race release-verify safe-release-verify self-catalogue demo release-binaries assemble-complete-package complete-package safe-complete-package clean package
 
 all: verify build
 
@@ -64,6 +64,14 @@ contracts:
 docs-check:
 	$(PYTHON) scripts/validate-docs.py
 
+
+quality-index:
+	$(PYTHON) scripts/quality_index.py --root . --output .rkc-quality
+
+safe-quality-index:
+	sh scripts/with-rkc-limits.sh $(MAKE) quality-index
+
+
 licenses:
 	$(PYTHON) scripts/validate-licenses.py
 
@@ -111,7 +119,7 @@ smoke-git: build
 benchmark: build
 	sh scripts/benchmark-reference.sh
 
-verify: go-mod-verify python-env-check format-check vet coverage contracts docs-check licenses model-lock-check build install-check plugins smoke reproducibility smoke-api smoke-mcp smoke-git
+verify: go-mod-verify python-env-check format-check vet coverage contracts docs-check quality-index licenses model-lock-check build install-check plugins smoke reproducibility smoke-api smoke-mcp smoke-git
 
 safe-verify:
 	sh scripts/with-rkc-limits.sh $(MAKE) verify

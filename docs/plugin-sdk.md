@@ -49,7 +49,7 @@ limits, determinism, and distribution metadata.
     "name": "Example Python analyzer",
     "version": "1.2.0",
     "api_version": "1.0",
-    "license": "Apache-2.0"
+    "license": "MIT"
   },
   "runtime": {
     "kind": "wasm-wasi",

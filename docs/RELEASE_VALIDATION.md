@@ -29,7 +29,8 @@ cryptographic build provenance remains a planned release gate.
 | coverage gate | `make coverage` | all Go tests plus Python line/branch tests, inventory, and policy floors |
 | contracts | `make contracts` | schemas, examples, OpenAPI parity, WIT, SQLite |
 | docs | `make docs-check` | local links and code fences |
-| licenses | `make licenses` | Apache and third-party notice boundaries using the version-checked validation interpreter |
+| quality index | `make quality-index` | deterministic source/test/documentation/profile/delta inventory; triage evidence, not a replacement for measured coverage gates |
+| licenses | `make licenses` | MIT attribution and third-party notice boundaries using the version-checked validation interpreter |
 | model lock | `make model-lock-check` | optional runtime/model identities, hashes, licenses, and null-default policy |
 | build | `make build` | CGO-disabled `rkc` and `rkc-mcp` |
 | plugins | `make plugins` | manifest and lock digest verification |
@@ -64,6 +65,13 @@ subprocess patch writes parallel data for Python children. The gate also tracks
 each test, validator, and child command's exit status independently, so a failed
 subprocess cannot be hidden by a passing percentage.
 
+For maintainers, `make quality-index` complements the numeric gate with a
+deterministic file-level inventory. It records SHA-256/source metadata,
+conservative test and documentation associations, optional Go/Python profile
+entries, and Git deltas in `.rkc-quality/index.json` plus a reviewable Markdown
+summary. It intentionally reports explicit gaps instead of promoting heuristic
+associations to a 100% claim; see [`QUALITY_INDEX.md`](QUALITY_INDEX.md).
+
 Each run retains raw Go data, the deduplicated Go profile, Coverage.py JSON, and
 `summary.json` in a unique directory below `.rkc-coverage/`. Local shared-host
 validation should use `make safe-coverage`; the fail-closed resource guard gives
@@ -92,7 +100,7 @@ The offline validator:
 
 ## License validation
 
-The dependency-aware license validator fails closed when required Apache or
+The dependency-aware license validator fails closed when the required MIT
 third-party notices are missing, altered into an unrecognized form, or replaced
 by links. It checks the implemented OpenAPI and official plugin metadata,
 requires `go.mod`, `go.sum`, `third_party/go-modules.lock.json`, and every

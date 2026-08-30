@@ -92,7 +92,8 @@ func dispatch(args []string) error {
 }
 
 func printUsage() {
-	fmt.Print(`Repository Knowledge Compiler
+	fmt.Print(`NeuroForgeIO · Repository Knowledge Compiler
+MIT-licensed open source with attribution; see LICENSE and NOTICE.
 
 Usage:
   rkc <command> [options]

@@ -1,5 +1,10 @@
 # Compiler-grade semantic adapters
 
+This RKC documentation is MIT-licensed by NeuroForgeIO and RKC contributors.
+The Apache-2.0 reference below describes the external SCIP protocol; it does
+not relicense RKC or an analyzed repository. See
+[`BRANDING_AND_ATTRIBUTION.md`](BRANDING_AND_ATTRIBUTION.md).
+
 RKC imports [SCIP](https://github.com/scip-code/scip), the Apache-2.0,
 language-neutral code-intelligence protocol. A compiler or language server
 produces an `index.scip`; RKC validates and compiles that inert index into the

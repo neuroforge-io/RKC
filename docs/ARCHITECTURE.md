@@ -1,5 +1,10 @@
 # Architecture
 
+RKC-owned architecture and documentation are released by NeuroForgeIO and RKC
+contributors under the MIT License. External dependencies, model assets, and
+analyzed repositories retain their own licenses; see
+[`BRANDING_AND_ATTRIBUTION.md`](BRANDING_AND_ATTRIBUTION.md).
+
 ## System purpose
 
 RKC is a compiler pipeline for repository knowledge. It creates one immutable,
@@ -194,9 +199,10 @@ evidence, prompt instructions, or canonical graph input; every repair pass
 starts from a newly bounded packet and repeats the complete validator.
 
 Semantic and hybrid query modes use a vector index outside the verified atlas.
-They are fail-closed: the model lock, GGUF digest, Apache-2.0 qualification
-state, `llama.cpp` executable, and native-build receipt must identify the same
-approved embedding binding. Lexical retrieval remains the default. The
+They are fail-closed: the model lock, GGUF digest, external model-license
+qualification state, `llama.cpp` executable, and native-build receipt must
+identify the same approved embedding binding. Lexical retrieval remains the
+default. The
 committed lock intentionally names no generation or embedding default because
 its current lightweight candidates have not passed the qualification gate.
 

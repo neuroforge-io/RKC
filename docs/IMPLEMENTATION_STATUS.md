@@ -68,6 +68,7 @@ The labels below mean:
 | graph paths, impact, SCCs | Implemented | bounded in-memory graph operations |
 | semantic diff | Implemented | conservative logical/signature comparison |
 | guarded self-catalogue | Implemented | immutable commit-tree blob staging; recursive-output/model-weight exclusion; atomic complete publication and deterministic receipts |
+| quality and delta index | Implemented | dependency-free deterministic source/documentation inventory with SHA-256 metadata, conservative test/documentation associations, optional Go/Python profile mapping, and Git change triage; percentages are explicit evidence signals rather than semantic 100% claims |
 | embeddings | Implemented, model-gated | Exact asset/runtime qualification binding, vector receipt generation, CLI integration, and strict retrieval scoring are complete. The Qwen3 embedding candidate passed its isolated gate, but the required generation/embedding pair did not, so no default is selected |
 
 ## Model subsystem
@@ -135,6 +136,10 @@ The labels below mean:
 16. constrained remote-Git acquisition test;
 17. Go race detector;
 18. self-analysis benchmark.
+
+The normal `make verify` target and CI additionally run
+`make quality-index`, which emits the file-level test, documentation,
+profiling, and Git-delta evidence described in [`QUALITY_INDEX.md`](QUALITY_INDEX.md).
 
 `make safe-complete-package` runs that logged sequence inside the mandatory
 resource guard. Commit-bound release commands reject tracked or untracked source

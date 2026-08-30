@@ -4,7 +4,7 @@
 **Working abbreviation:** RKC  
 **Document status:** Build specification  
 **Reference schema version:** `0.1.0`  
-**Target core license:** Apache-2.0  
+**Target core license:** MIT with attribution
 **Baseline date:** 2026-07-21
 
 ---
@@ -2833,7 +2833,8 @@ RKC must not imply that generated exports change the source repository's license
 
 Recommended:
 
-- Apache-2.0 for core, CLI, daemon, UI, schemas, and official SDKs;
+- MIT for core, CLI, daemon, UI, schemas, official SDKs, and official plugins,
+  with attribution to NeuroForgeIO and RKC contributors;
 - DCO for contributions;
 - separate model and third-party plugin licenses;
 - `THIRD_PARTY_NOTICES` generated for distributions;
@@ -4195,7 +4196,7 @@ Create ADRs for:
 10. no mandatory graph database;
 11. structured claim output;
 12. content-addressed object storage;
-13. Apache-2.0 and DCO;
+13. MIT attribution and DCO;
 14. telemetry privacy defaults;
 15. NotebookLM limits as configurable profiles.
 

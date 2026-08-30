@@ -1,5 +1,9 @@
 # Local model runtime
 
+This RKC document is released under the NeuroForgeIO project MIT License.
+Model weights, llama.cpp, and other external inputs retain their own terms;
+see [`BRANDING_AND_ATTRIBUTION.md`](BRANDING_AND_ATTRIBUTION.md).
+
 The model subsystem is optional and derived. It improves readability; it does not
 determine inventory completeness, symbol existence, signatures, APIs, call
 resolution, or quality denominators.

@@ -3,8 +3,8 @@ info:
   title: Repository Knowledge Compiler Local API
   version: 0.3.0-reference
   license:
-    name: Apache-2.0
-    identifier: Apache-2.0
+    name: MIT
+    identifier: MIT
   description: |
     Local API implemented by `rkc serve`. It exposes one exported RKC dataset.
     The optional workbench routes exist only when a user explicitly enables the

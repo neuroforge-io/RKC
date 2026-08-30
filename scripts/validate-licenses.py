@@ -350,25 +350,30 @@ def validate_root_documents() -> None:
     """Validate the project license, notice, and third-party terms."""
     documents = {relative: read_regular(relative) for relative in REQUIRED_FILES}
     require_markers(
-        "Apache-2.0 license text",
+        "MIT license text",
         documents[Path("LICENSE")],
         (
-            "Apache License",
-            "Version 2.0, January 2004",
-            "END OF TERMS AND CONDITIONS",
+            "MIT License",
+            "Permission is hereby granted",
+            "THE SOFTWARE IS PROVIDED",
         ),
     )
     require_markers(
         "RKC NOTICE",
         documents[Path("NOTICE")],
-        ("Repository Knowledge Compiler (RKC)", "Copyright 2026 RKC contributors"),
+        (
+            "Repository Knowledge Compiler (RKC)",
+            "Copyright (c) 2026 NeuroForgeIO and RKC contributors",
+        ),
     )
     require_markers(
         "third-party inventory",
         documents[Path("THIRD_PARTY_NOTICES.md")],
         (
             "RKC-owned source code",
-            "Apache-2.0",
+            "MIT License",
+            "NeuroForgeIO",
+            "commercial products",
             "Go runtime and standard library",
             "BSD-3-Clause",
             "LICENSES/Go.txt",
@@ -420,7 +425,7 @@ def validate_declared_metadata() -> None:
     require_markers(
         "implemented OpenAPI license metadata",
         openapi,
-        ("license:", "name: Apache-2.0", "identifier: Apache-2.0"),
+        ("license:", "name: MIT", "identifier: MIT"),
     )
 
     plugin_failures: list[str] = []
@@ -435,10 +440,10 @@ def validate_declared_metadata() -> None:
             if (
                 isinstance(plugin_id, str)
                 and plugin_id.startswith("rkc.")
-                and expression != "Apache-2.0"
+                and expression != "MIT"
             ):
                 plugin_failures.append(
-                    f"{plugin_id}: official RKC plugin is not Apache-2.0"
+                    f"{plugin_id}: official RKC plugin is not MIT"
                 )
         except (KeyError, OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
             plugin_failures.append(f"{path.relative_to(ROOT)}: {exc}")

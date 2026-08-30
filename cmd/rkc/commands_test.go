@@ -22,7 +22,7 @@ import (
 func TestRunDispatchAndUsage(t *testing.T) {
 	for _, args := range [][]string{nil, {"help"}, {"--help"}, {"-h"}} {
 		output, err := captureStdout(t, func() error { return run(args) })
-		if err != nil || !strings.Contains(output, "Repository Knowledge Compiler") {
+		if err != nil || !strings.Contains(output, "NeuroForgeIO") || !strings.Contains(output, "Repository Knowledge Compiler") || !strings.Contains(output, "MIT") {
 			t.Fatalf("run(%v): output=%q err=%v", args, output, err)
 		}
 	}

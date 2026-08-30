@@ -1,8 +1,8 @@
 # Contributing
 
-RKC accepts contributions under Apache-2.0 using a Developer Certificate of
-Origin sign-off. The project values reproducible facts, explicit uncertainty,
-and small interfaces over clever coupling.
+RKC accepts contributions under the MIT License with attribution, using a
+Developer Certificate of Origin sign-off. The project values reproducible
+facts, explicit uncertainty, and small interfaces over clever coupling.
 
 ## Before opening a change
 

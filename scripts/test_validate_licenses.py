@@ -55,11 +55,13 @@ class LicenseValidationTests(unittest.TestCase):
     def root_fixture(self) -> None:
         self.write(
             "LICENSE",
-            "Apache License\nVersion 2.0, January 2004\nEND OF TERMS AND CONDITIONS\n",
+            "MIT License\nPermission is hereby granted\n"
+            "THE SOFTWARE IS PROVIDED\n",
         )
         self.write(
             "NOTICE",
-            "Repository Knowledge Compiler (RKC)\nCopyright 2026 RKC contributors\n",
+            "Repository Knowledge Compiler (RKC)\n"
+            "Copyright (c) 2026 NeuroForgeIO and RKC contributors\n",
         )
         self.write(
             "LICENSES/Go.txt",
@@ -72,7 +74,7 @@ class LicenseValidationTests(unittest.TestCase):
         )
         self.write(
             "THIRD_PARTY_NOTICES.md",
-            "RKC-owned source code Apache-2.0\n"
+            "RKC-owned source code MIT License NeuroForgeIO commercial products\n"
             "Go runtime and standard library BSD-3-Clause LICENSES/Go.txt\n"
             "modernc.org/sqlite v1.54.0 modernc.org/libc v1.74.1\n"
             "gopkg.in/yaml.v3 v3.0.1\n"
@@ -310,11 +312,11 @@ class LicenseValidationTests(unittest.TestCase):
     def test_declared_metadata_happy_and_invalid_paths(self) -> None:
         self.write(
             "api/openapi.yaml",
-            "license:\n  name: Apache-2.0\n  identifier: Apache-2.0\n",
+            "license:\n  name: MIT\n  identifier: MIT\n",
         )
         self.write(
             "plugins/official/plugin.json",
-            json.dumps({"plugin": {"id": "rkc.official", "license": "Apache-2.0"}}),
+            json.dumps({"plugin": {"id": "rkc.official", "license": "MIT"}}),
         )
         self.write(
             "plugins/external/plugin.json",

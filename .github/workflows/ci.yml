@@ -77,6 +77,17 @@ jobs:
         env:
           RKC_RESOURCE_GUARD_MODE: service
         run: make self-catalogue
+      - name: Build deterministic quality gap index
+        env:
+          RKC_RESOURCE_GUARD_MODE: service
+        run: sh scripts/with-rkc-limits.sh make quality-index
+      - name: Upload quality gap index
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: rkc-quality-index-${{ github.sha }}
+          path: .rkc-quality
+          if-no-files-found: error
+          include-hidden-files: true
       - name: Docker build
         run: docker build -t rkc:ci .
       - name: Docker runtime smoke (explicit portable no-Python profile)

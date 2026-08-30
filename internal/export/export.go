@@ -550,6 +550,7 @@ func notebookUploadGuide(bundle model.Bundle, sources []notebookSource, totalByt
 	var b strings.Builder
 	b.WriteString("# Upload this RKC atlas to an LLM notebook\n\n")
 	b.WriteString("This directory is a deterministic, citation-oriented Markdown export of one RKC snapshot. It is suitable for NotebookLM and other notebook or agent systems that accept Markdown sources.\n\n")
+	b.WriteString("RKC is developed by NeuroForgeIO and RKC contributors under the MIT License. This export preserves the analyzed repository's own license and attribution; it does not relicense repository or third-party content.\n\n")
 	fmt.Fprintf(&b, "- Snapshot: `%s`\n- Markdown sources: %d\n- Total source bytes: %d\n- Largest source: %d bytes\n- Packing target: %d bytes (a target, not a hard truncation)\n\n", markdownText(bundle.Snapshot.ID), len(sources), totalBytes, maxBytes, target)
 	b.WriteString(untrustedRepositoryDataNotice + "\n\n")
 	b.WriteString("## Recommended upload order\n\n")
@@ -1002,14 +1003,14 @@ const siteHTML = `<!doctype html>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <meta name="color-scheme" content="dark light">
-<title>Repository atlas</title>
+<title>RKC · Repository atlas</title>
 <link rel="stylesheet" href="./styles.css">
 </head>
 <body>
 <a class="skip-link" href="#content">Skip to atlas content</a>
 <header>
   <div>
-    <span class="eyebrow">Repository Knowledge Compiler</span>
+    <span class="eyebrow">NeuroForgeIO · Repository Knowledge Compiler</span>
     <h1 id="title">Repository atlas</h1>
     <p class="header-intro">Explore the symbols, relationships, diagnostics, and evidence captured in this snapshot.</p>
   </div>
@@ -1048,7 +1049,7 @@ const siteHTML = `<!doctype html>
     <div class="loading" role="status" aria-live="polite">Loading repository data…</div>
   </section>
 </main>
-<footer><span id="snapshot"></span><span>Evidence-backed atlas · bounded local workbench when explicitly enabled.</span></footer>
+<footer><span id="snapshot"></span><span>Evidence-backed atlas · NeuroForgeIO / RKC · MIT · bounded local workbench when explicitly enabled.</span></footer>
 <noscript><div class="noscript">This atlas needs JavaScript to load its local snapshot data.</div></noscript>
 <script src="./app.js" defer></script>
 </body>

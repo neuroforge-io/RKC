@@ -103,7 +103,7 @@ func TestWriteAllProducesCompleteDeterministicRedactedExport(t *testing.T) {
 			t.Fatalf("invalid NotebookLM manifest: %+v", notebookManifest)
 		}
 		guide, err := os.ReadFile(filepath.Join(output, "notebooklm", "UPLOAD.md"))
-		if err != nil || !bytes.Contains(guide, []byte("Recommended upload order")) || !bytes.Contains(guide, []byte(markdownText(bundle.Snapshot.ID))) {
+		if err != nil || !bytes.Contains(guide, []byte("Recommended upload order")) || !bytes.Contains(guide, []byte(markdownText(bundle.Snapshot.ID))) || !bytes.Contains(guide, []byte("NeuroForgeIO")) || !bytes.Contains(guide, []byte("MIT License")) {
 			t.Fatalf("invalid NotebookLM upload guide: %q (error %v)", guide, err)
 		}
 	}
@@ -201,6 +201,9 @@ func TestNormalizedSourcesRejectTraversalSymlinksAndTOCTOU(t *testing.T) {
 
 func TestExportFormattingAndIntegrationHelpers(t *testing.T) {
 	t.Parallel()
+	if !strings.Contains(siteHTML, "NeuroForgeIO") || !strings.Contains(siteHTML, "MIT") {
+		t.Fatal("static atlas is missing NeuroForgeIO/MIT attribution")
+	}
 	bundle := exportFixture(t.TempDir(), "x.go", []byte("x"))
 	coverage := model.BuildCoverage(bundle)
 	if overview := repositoryOverview(bundle, coverage); !strings.Contains(overview, "Repository atlas") || !strings.Contains(overview, "Provenance") {

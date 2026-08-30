@@ -1,8 +1,10 @@
 # Third-party notices
 
 RKC-owned source code, schemas, documentation, and built-in plugins are licensed
-under Apache-2.0 as stated in [`LICENSE`](LICENSE). Third-party components retain
-their original licenses; inclusion here does not relicense them as Apache-2.0.
+under the MIT License as stated in [`LICENSE`](LICENSE). Retain that license,
+this notice, and attribution to NeuroForgeIO and the RKC contributors in
+commercial products and derivative works. Third-party components retain their
+original licenses; inclusion here does not relicense them as MIT.
 
 ## Components linked into RKC executables
 

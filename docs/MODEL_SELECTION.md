@@ -1,5 +1,9 @@
 # Local model selection
 
+This RKC document is part of the NeuroForgeIO-owned MIT-licensed project. Any
+Apache-2.0 or other license named below belongs to an external model asset and
+does not change RKC's license; see [`BRANDING_AND_ATTRIBUTION.md`](BRANDING_AND_ATTRIBUTION.md).
+
 RKC treats model selection as a measured operating-point decision, not a model
 card popularity contest. The non-negotiable local envelope is one CPU core,
 4 GiB `memory.high`, 4.5 GiB `memory.max`, 256 MiB swap, and one model role

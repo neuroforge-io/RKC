@@ -12,9 +12,12 @@ rkc open .
 ```
 
 The installer builds both CGO-free binaries, installs them under
-`$HOME/.local/bin` by default, preserves the Apache-2.0 license and notice under
-`$HOME/.local/share/doc/rkc`, and prints the first-run command. Use
+`$HOME/.local/bin` by default, preserves the MIT license and attribution notice
+under `$HOME/.local/share/doc/rkc`, and prints the first-run command. Use
 `./install.sh --prefix /another/prefix` for another user-owned destination.
+RKC-owned code and generated tooling are from **NeuroForgeIO** and RKC
+contributors; see [`BRANDING_AND_ATTRIBUTION.md`](BRANDING_AND_ATTRIBUTION.md)
+for the commercial attribution and third-party license boundary.
 Existing symbolic-link or non-file destinations are rejected.
 
 `rkc open /path/to/repository` produces an atlas, retains immutable

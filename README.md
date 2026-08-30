@@ -4,7 +4,7 @@
 invent the map.**
 
 [![CI](https://github.com/neuroforge-io/RKC/actions/workflows/ci.yml/badge.svg)](https://github.com/neuroforge-io/RKC/actions/workflows/ci.yml)
-[![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
+[![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
 RKC compiles a local directory or Git repository into an immutable,
 evidence-backed atlas. Search symbols and signatures, follow compiler-resolved
@@ -44,8 +44,9 @@ The governing rule is deliberately unromantic:
 - **Hostile-repository posture.** Normal scans do not execute repository code.
   Inputs, outputs, caches, journals, snapshots, and optional models have
   explicit containment and resource contracts.
-- **Portable and commercially usable.** RKC-owned code is Apache-2.0, builds
-  CGO-free binaries, and retains deterministic SPDX evidence.
+- **Portable and commercially usable.** RKC-owned code is MIT-licensed with
+  simple attribution, builds CGO-free binaries, and retains deterministic SPDX
+  evidence. Third-party components remain separately attributed.
 
 ## Implemented now
 
@@ -109,7 +110,7 @@ generation is an explicit, separately authorized build step; RKC then imports
 the resulting `index.scip` as inert, digest-bound data. See
 [`docs/SCIP_SEMANTIC_ADAPTERS.md`](docs/SCIP_SEMANTIC_ADAPTERS.md).
 
-No tested Apache-2.0 generation model currently meets every RKC quality,
+No tested permissively licensed generation model currently meets every RKC quality,
 prompt-injection, exact-32K, latency, and 4.5 GiB gate on the protected one-core
 CPU profile. RKC therefore ships no weak or misleading default. Deterministic
 retrieval and GraphRAG remain complete, while model-backed commands fail closed.
@@ -141,6 +142,10 @@ boundaries are maintained in
 - [`docs/OPERATIONS.md`](docs/OPERATIONS.md): deployment and operational practice.
 - [`docs/RELEASE_VALIDATION.md`](docs/RELEASE_VALIDATION.md): exact verification
   performed by the package builder.
+- [`docs/QUALITY_INDEX.md`](docs/QUALITY_INDEX.md): deterministic test,
+  documentation, profiling, and change-delta inventory for maintainers.
+- [`docs/BRANDING_AND_ATTRIBUTION.md`](docs/BRANDING_AND_ATTRIBUTION.md):
+  NeuroForgeIO identity, MIT terms, commercial use, and third-party boundaries.
 - [`docs/implementation-plan.md`](docs/implementation-plan.md): original complete
   product specification, retained and extended.
 - [`docs/backlog.md`](docs/backlog.md): stable engineering issue catalogue.
@@ -161,6 +166,11 @@ available. Press Ctrl-C in the terminal to stop it. Use `open --no-browser` on
 headless hosts; the URL is still printed. The command accepts any local folder,
 not only Git worktrees, and places the atlas in `<folder>/.rkc` while retaining
 immutable snapshots in `<folder>/.rkc-state`.
+
+Maintainers can pair the atlas with a deterministic quality/change report:
+`make quality-index` writes `.rkc-quality/index.json` and `index.md`, including
+source hashes, test and documentation evidence, optional Go/Python profile
+coverage, and Git deltas.
 
 The dependency-light profile does not need a model, daemon, database server, or
 Python sandbox. `quickstart` remains the equivalent headless compile-and-check
@@ -598,8 +608,10 @@ multi-tenant internet service; full worker isolation remains a production gate.
 
 ## License
 
-RKC-owned work is Apache-2.0 and may be used in commercial products and
-derivative works subject to the license's notice and attribution requirements;
-retain [`LICENSE`](LICENSE) and [`NOTICE`](NOTICE) as required by Section 4.
+RKC-owned work is MIT-licensed and may be used in commercial products and
+derivative works. Redistributors should retain [`LICENSE`](LICENSE) and
+[`NOTICE`](NOTICE) and credit NeuroForgeIO and the RKC contributors. Third-party
+and model terms remain separate and are listed in
+[`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md).
 Third-party compilers, parsers, language servers, grammars, plugins, and model
 weights retain their own licenses and are not bundled by this project.
