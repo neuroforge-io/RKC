@@ -17,8 +17,13 @@ import (
 	"github.com/neuroforge-io/RKC/pkg/rkcmodel"
 )
 
+// IndexVersion is the persisted schema version emitted by Build and accepted by
+// Load. It does not authenticate index contents.
 const IndexVersion = "1"
 
+// Document is one searchable node, artifact, or parsed document. Build indexes
+// ID, Title, QualifiedName, Signature, Path, Kind, Language, and Body with fixed
+// field boosts; Metadata is persisted but is not tokenized or scored.
 type Document struct {
 	ID            string            `json:"id"`
 	ObjectType    string            `json:"object_type"`
@@ -32,6 +37,8 @@ type Document struct {
 	Metadata      map[string]string `json:"metadata,omitempty"`
 }
 
+// Posting records a document's total count for one term, the highest boost of
+// any field containing it, and the sorted set of matching field names.
 type Posting struct {
 	DocumentID string   `json:"document_id"`
 	TermCount  int      `json:"term_count"`
@@ -39,6 +46,9 @@ type Posting struct {
 	Fields     []string `json:"fields,omitempty"`
 }
 
+// Index is the deterministic derived lexical index persisted by Save. Its maps
+// are exported for serialization and inspection; mutating them can violate
+// search invariants, and Load does not repair or fully validate them.
 type Index struct {
 	Version        string               `json:"version"`
 	Documents      map[string]Document  `json:"documents"`
@@ -48,6 +58,10 @@ type Index struct {
 	DocumentCount  int                  `json:"document_count"`
 }
 
+// Query combines lexical text with exact kind, language, object-type, and path
+// prefix filters. Inline kind:, lang:/language:, type:, and path: filters fill
+// only absent explicit filters. A nonpositive Limit defaults to 50 and values
+// above 1000 are capped at 1000.
 type Query struct {
 	Text        string
 	Kinds       map[string]struct{}
@@ -57,6 +71,8 @@ type Query struct {
 	Limit       int
 }
 
+// Hit records one deterministically ranked document, its score rounded to six
+// decimal places, and sorted scoring reasons and matched terms.
 type Hit struct {
 	Document Document `json:"document"`
 	Score    float64  `json:"score"`
@@ -64,6 +80,9 @@ type Hit struct {
 	Terms    []string `json:"terms"`
 }
 
+// Response returns the original query text, bounded hits, whether additional
+// matching candidates were truncated, and the ranking mode and index version
+// used for the result.
 type Response struct {
 	Query        string `json:"query"`
 	Hits         []Hit  `json:"hits"`
@@ -84,6 +103,10 @@ type termFields struct {
 	fields map[string]struct{}
 }
 
+// BuildFromBundle derives search documents from bundle nodes, artifacts, and
+// parsed documents. Node bodies include only string docstring, summary,
+// description, and purpose attributes; document bodies include headings and
+// plain text. Edges, evidence, claims, and other attributes are not indexed.
 func BuildFromBundle(bundle rkcmodel.Bundle) *Index {
 	documents := make([]Document, 0, safePreallocationCapacity(
 		len(bundle.Nodes), len(bundle.Artifacts), len(bundle.Documents),
@@ -148,6 +171,10 @@ func safePreallocationCapacity(lengths ...int) int {
 	return total
 }
 
+// Build constructs a deterministic lexical index. When IDs repeat, the last
+// document in input order wins, including an empty ID. It sorts document IDs,
+// posting lists, and field names, and indexes only the fields documented on
+// Document.
 func Build(documents []Document) *Index {
 	documentsByID := make(map[string]Document, len(documents))
 	for _, document := range documents {
@@ -224,6 +251,10 @@ func buildDocument(document Document) builderDoc {
 	return built
 }
 
+// Search applies explicit and inline filters to documents matching at least one
+// lexical term. A filter-only or empty lexical query returns no hits. Ranking is
+// BM25 multiplied by fixed field boosts, plus deterministic exact and prefix
+// bonuses; ties use QualifiedName then ID.
 func (index *Index) Search(query Query) Response {
 	text, parsed := parseQuery(query.Text)
 	query = applyParsedFilters(query, parsed)
@@ -336,6 +367,10 @@ func applyParsedFilters(query Query, parsed parsedQuery) Query {
 	return query
 }
 
+// Save serializes index, syncs a sibling temporary file, and renames it to path.
+// It does not validate index invariants, use safe-output ownership checks, or sync
+// the parent directory after rename, so it is not a complete crash-durability
+// barrier. Existing-target replacement behavior is platform-dependent.
 func (index *Index) Save(path string) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return err
@@ -372,6 +407,10 @@ func (index *Index) Save(path string) error {
 	return nil
 }
 
+// Load reads the entire file without a size bound, accepts unknown JSON fields,
+// and checks only IndexVersion. It does not validate map presence, counts,
+// postings, document references, numeric values, or provenance, so it is not a
+// trust boundary for attacker-controlled or otherwise unverified index files.
 func Load(path string) (*Index, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
