@@ -10,8 +10,10 @@ release sequence or the static/syntax contracts in
 
 | Workflow | Purpose and safe boundary |
 | --- | --- |
+| [`install.sh`](../install.sh) | Installs the host-built CGO-free commands and the complete license/attribution inventory into a user-owned prefix, rejecting unsafe destinations. |
 | [`scripts/benchmark-reference.sh`](../scripts/benchmark-reference.sh) | Runs the bounded reference scan and publishes only benchmark receipts under `dist/benchmark`. |
 | [`scripts/build-release-binaries.sh`](../scripts/build-release-binaries.sh) | Rebuilds Linux `amd64` and `arm64` binaries from an immutable, clean commit and records source identity. |
+| [`scripts/check-portable-builds.sh`](../scripts/check-portable-builds.sh) | Compiles CGO-free `rkc` and `rkc-mcp` for Linux, macOS, and Windows `amd64`/`arm64` targets in a private temporary directory without publishing artifacts. |
 | [`scripts/generate-demo.sh`](../scripts/generate-demo.sh) | Generates the small checked-in demo outputs from an immutable source tree. |
 | [`scripts/reproducibility.sh`](../scripts/reproducibility.sh) | Scans the examples twice and compares canonical bundle, coverage, and digest outputs. |
 | [`scripts/reproducible-complete-package.sh`](../scripts/reproducible-complete-package.sh) | Assembles the complete distributable twice from independent immutable checkouts and requires byte identity. |

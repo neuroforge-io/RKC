@@ -17,16 +17,8 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
-SHELL_WORKFLOWS = (
-    "scripts/benchmark-reference.sh",
-    "scripts/reproducibility.sh",
-    "scripts/self-catalogue.sh",
-    "scripts/smoke-api.sh",
-    "scripts/smoke-git-acquisition.sh",
-    "scripts/smoke-mcp.sh",
-    "scripts/smoke-reference.sh",
-    "scripts/verify-resource-guard.sh",
-    "scripts/with-rkc-limits.sh",
+SHELL_WORKFLOWS = ("install.sh",) + tuple(
+    path.relative_to(ROOT).as_posix() for path in sorted((ROOT / "scripts").glob("*.sh"))
 )
 
 

@@ -98,6 +98,7 @@ install_file "$ROOT/bin/rkc" "$BIN_DIRECTORY/rkc" 0755
 install_file "$ROOT/bin/rkc-mcp" "$BIN_DIRECTORY/rkc-mcp" 0755
 install_file "$ROOT/LICENSE" "$DOC_DIRECTORY/LICENSE" 0644
 install_file "$ROOT/NOTICE" "$DOC_DIRECTORY/NOTICE" 0644
+install_file "$ROOT/THIRD_PARTY_NOTICES.md" "$DOC_DIRECTORY/THIRD_PARTY_NOTICES.md" 0644
 install_file "$ROOT/models/models.lock.json" "$DATA_DIRECTORY/models/models.lock.json" 0644
 install_file \
 	"$ROOT/models/qualification/rkc-local-model-v1.json" \

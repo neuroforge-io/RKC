@@ -246,6 +246,12 @@ make safe-verify
 make safe-test-race
 ```
 
+To verify that both CGO-free commands compile for the maintained Linux, macOS,
+and Windows `amd64`/`arm64` targets without publishing artifacts, run
+`make portable-build`. The reference distribution currently publishes Linux
+binaries and keeps native packaging/install smoke for the other targets as a
+separate release gate.
+
 The full logged release sequence is:
 
 ```sh

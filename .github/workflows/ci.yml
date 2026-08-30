@@ -66,6 +66,10 @@ jobs:
         run: |
           sh scripts/with-rkc-limits.sh go test -p=1 ./...
           sh scripts/with-rkc-limits.sh make build
+      - name: Verify portable Go target builds
+        env:
+          RKC_RESOURCE_GUARD_MODE: service
+        run: sh scripts/with-rkc-limits.sh make portable-build
       - name: Run full release verification and assemble the complete package
         env:
           # Release binaries remain explicitly CGO-free; the release proof also

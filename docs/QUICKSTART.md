@@ -13,7 +13,8 @@ rkc open .
 
 The installer builds both CGO-free binaries, installs them under
 `$HOME/.local/bin` by default, preserves the MIT license and attribution notice
-under `$HOME/.local/share/doc/rkc`, and prints the first-run command. Use
+under `$HOME/.local/share/doc/rkc` (including the complete third-party notice),
+and prints the first-run command. Use
 `./install.sh --prefix /another/prefix` for another user-owned destination.
 RKC-owned code and generated tooling are from **NeuroForgeIO** and RKC
 contributors; see [`BRANDING_AND_ATTRIBUTION.md`](BRANDING_AND_ATTRIBUTION.md)
@@ -86,6 +87,13 @@ make build
 
 On a supported Linux user-systemd host, `make safe-build` provides the same
 binary build under RKC's deliberately subordinate resource envelope.
+
+To verify the CGO-free commands compile for the maintained desktop/server
+targets without publishing anything, run `make portable-build`. This checks
+Linux, macOS, and Windows on `amd64` and `arm64`; the temporary binaries are
+removed after the check. The complete reproducible package currently publishes
+Linux `amd64`/`arm64` artifacts, while the portable source build contract keeps
+the command layer ready for native packaging on the other targets.
 
 ## 5. Generate configuration
 

@@ -35,6 +35,7 @@ The labels below mean:
 | SQLite runtime writer/query layer | Implemented | Transactional staging/publication, OS writer leases, recovery, digest-verified canonical reads, exact coverage binding, authenticated pagination, projections, and CLI/HTTP/MCP integration |
 | Pipeline DAG and cache library | Implemented | All 16 canonical scan stages route through the deterministic DAG with bounded resource admission; owner-only hash-chained command journals and ownership-bound verified CAS payloads provide selective keys plus `plan`/inspect/verify/prune UX. Retries, additional derived-output stages, and SQLite journal projection are future extensions, not hidden fallbacks |
 | Clean/incremental equivalence | Implemented | Cold, warm, reversed-input, and localized-change paths are differentially checked against clean canonical output; the release benchmark and guarded RKC self-catalogue exercise repository-scale determinism |
+| Portable command builds | Implemented | `make portable-build` compiles both CGO-free commands for Linux, macOS, and Windows `amd64`/`arm64` targets in a private temporary workspace; the reproducible reference package still publishes Linux binaries only until native packaging and install smoke gates are added for the other targets |
 
 ## Analysis
 
