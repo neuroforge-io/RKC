@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/neuroforge-io/RKC/internal/framework/openapi"
 	"github.com/neuroforge-io/RKC/pkg/pluginapi"
 	"github.com/neuroforge-io/RKC/pkg/rkcmodel"
 )
