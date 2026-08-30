@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import io
 import json
 import os
@@ -740,12 +741,17 @@ class QualityIndexTests(unittest.TestCase):
         self.assertIn("MIT License", markdown)
         self.assertIn("requested, but are not additional", markdown)
         self.assertNotIn("with attribution", markdown)
+        self.assertIn("`MANIFEST.json` is the deterministic publication receipt", markdown)
         self.assertIn("Production source files in evidence denominator", markdown)
         self.assertIn("Inventory accounting | 100.0%", markdown)
-        json_path, markdown_path = index.write_index(built, output)
+        json_path, markdown_path, receipt_path = index.write_index(built, output)
         self.assertTrue(json_path.is_file())
         self.assertTrue(markdown_path.is_file())
-        self.assertEqual(json.loads(json_path.read_text(encoding="utf-8"))["schema_version"], "1.1.0")
+        self.assertTrue(receipt_path.is_file())
+        self.assertEqual(
+            json.loads(json_path.read_text(encoding="utf-8"))["schema_version"],
+            "1.1.0",
+        )
         self.assertEqual(index.main(["--root", str(self.root), "--output", str(output)]), 0)
         with mock.patch("sys.stderr", new=io.StringIO()) as errors:
             self.assertEqual(index.main(["--root", str(self.root / "missing")]), 1)
@@ -759,6 +765,129 @@ class QualityIndexTests(unittest.TestCase):
             parent_link.symlink_to(self.root, target_is_directory=True)
             with self.assertRaisesRegex(index.QualityIndexError, "real directory ancestors"):
                 index.write_index(built, parent_link / "nested-output")
+
+    def test_quality_artifact_receipt_is_deterministic_and_non_circular(self) -> None:
+        self.write(
+            "tools/worker.py",
+            '"""A documented worker."""\nprint("ready")\n',
+        )
+        self.write("tools/test_worker.py", "def test_worker():\n    pass\n")
+        output = self.root / "quality"
+        built = index.build_index(self.root, output=output)
+
+        with self.assertRaisesRegex(index.QualityIndexError, "inventory"):
+            index._quality_artifact_receipt(built, {"index.json": b"{}\n"})
+        incomplete_provenance = dict(built)
+        incomplete_provenance.pop("source")
+        with self.assertRaisesRegex(index.QualityIndexError, "provenance"):
+            index._quality_artifact_receipt(
+                incomplete_provenance,
+                {"index.json": b"{}\n", "index.md": b"# report\n"},
+            )
+
+        replacements: list[str] = []
+        replace = os.replace
+
+        def observe(
+            source: str | os.PathLike[str], target: str | os.PathLike[str]
+        ) -> None:
+            replacements.append(Path(target).name)
+            replace(source, target)
+
+        with mock.patch.object(index.os, "replace", side_effect=observe):
+            json_path, markdown_path, receipt_path = index.write_index(built, output)
+        self.assertEqual(
+            replacements,
+            ["index.json", "index.md", index.QUALITY_RECEIPT_NAME],
+        )
+
+        receipt_bytes = receipt_path.read_bytes()
+        receipt = json.loads(receipt_bytes)
+        self.assertEqual(receipt["schema_version"], "1.0.0")
+        self.assertEqual(receipt["artifact"], "rkc-quality-index")
+        self.assertEqual(receipt["generated_by"], built["generated_by"])
+        self.assertEqual(receipt["source"], built["source"])
+        self.assertEqual(receipt["source"]["root"], ".")
+        self.assertNotIn(str(self.root), receipt_bytes.decode("utf-8"))
+
+        integrity = receipt["integrity"]
+        self.assertEqual(integrity["algorithm"], "sha256")
+        self.assertEqual(
+            [member["path"] for member in integrity["files"]],
+            ["index.json", "index.md"],
+        )
+        self.assertNotIn(
+            index.QUALITY_RECEIPT_NAME,
+            {member["path"] for member in integrity["files"]},
+        )
+        self.assertFalse(integrity["receipt_included_in_files"])
+        for member in integrity["files"]:
+            content = (output / member["path"]).read_bytes()
+            self.assertEqual(member["size_bytes"], len(content))
+            self.assertEqual(member["sha256"], hashlib.sha256(content).hexdigest())
+        canonical_inventory = json.dumps(
+            integrity["files"],
+            ensure_ascii=False,
+            separators=(",", ":"),
+            sort_keys=True,
+        ).encode("utf-8")
+        self.assertEqual(
+            integrity["inventory_sha256"],
+            hashlib.sha256(canonical_inventory).hexdigest(),
+        )
+
+        original_json = json_path.read_bytes()
+        original_markdown = markdown_path.read_bytes()
+        index.write_index(built, output)
+        self.assertEqual(receipt_path.read_bytes(), receipt_bytes)
+        self.assertEqual(json_path.read_bytes(), original_json)
+        self.assertEqual(markdown_path.read_bytes(), original_markdown)
+
+        staging = self.root / "failed-staging"
+        staging.mkdir()
+        with mock.patch.object(
+            index.os, "fsync", side_effect=OSError("simulated sync failure")
+        ):
+            with self.assertRaisesRegex(OSError, "sync failure"):
+                index._stage_output_member(staging, "index.json", b"{}\n")
+        self.assertEqual(list(staging.iterdir()), [])
+        with mock.patch.object(index.os, "O_DIRECTORY", None, create=True):
+            index._fsync_output_directory(output)
+
+    def test_receipt_remains_fail_closed_when_payload_publication_fails(self) -> None:
+        self.write("worker.py", '"""Worker."""\nprint("before")\n')
+        output = self.root / "quality"
+        original = index.build_index(self.root, output=output)
+        _, _, receipt_path = index.write_index(original, output)
+        previous_receipt_bytes = receipt_path.read_bytes()
+        previous_receipt = json.loads(previous_receipt_bytes)
+
+        changed = json.loads(json.dumps(original))
+        changed["summary"]["open_gaps"] += 1
+        replace = os.replace
+
+        def fail_second_member(
+            source: str | os.PathLike[str], target: str | os.PathLike[str]
+        ) -> None:
+            if Path(target).name == "index.md":
+                raise OSError("simulated publication interruption")
+            replace(source, target)
+
+        with mock.patch.object(index.os, "replace", side_effect=fail_second_member):
+            with self.assertRaisesRegex(OSError, "publication interruption"):
+                index.write_index(changed, output)
+
+        self.assertEqual(receipt_path.read_bytes(), previous_receipt_bytes)
+        recorded = {
+            member["path"]: member for member in previous_receipt["integrity"]["files"]
+        }
+        self.assertNotEqual(
+            hashlib.sha256((output / "index.json").read_bytes()).hexdigest(),
+            recorded["index.json"]["sha256"],
+        )
+        self.assertFalse(
+            [path.name for path in output.iterdir() if path.name.startswith(".")]
+        )
 
     def test_complete_inventory_separates_quality_scope(self) -> None:
         self.write("pkg/main.go", "package pkg\nfunc Main() {}\n")

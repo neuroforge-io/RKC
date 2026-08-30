@@ -28,10 +28,31 @@ From any checkout or arbitrary local folder:
 make quality-index
 ```
 
-The default output is `.rkc-quality/index.json` and `.rkc-quality/index.md`.
+The default output is `.rkc-quality/index.json`, `.rkc-quality/index.md`, and
+`.rkc-quality/MANIFEST.json`. The manifest is the deterministic artifact
+receipt: schema `1.0.0` records the generator, index schema, NeuroForgeIO/MIT
+identity, relative source provenance, and exact byte count and SHA-256 for both
+payload files. Its `inventory_sha256` hashes the compact, sorted-key UTF-8 JSON
+encoding of the `integrity.files` array. The manifest deliberately excludes
+itself from that array, with the non-circular policy recorded in the receipt.
+
+All three members are first written as binary UTF-8 to same-directory private
+temporary files and synced. RKC atomically replaces the two payload members,
+syncs the directory where the platform supports it, and atomically replaces
+`MANIFEST.json` last as the publication commit marker. After an interrupted
+update, an older receipt therefore either still describes a byte-identical
+complete payload or fails its member hashes; it cannot attest a mixed new
+payload. Consumers must validate the receipt and both members before trusting
+the artifact. The receipt is an integrity/provenance record, not a digital
+signature, so releases must still bind it through the project's trusted
+release provenance.
+
 The generated directory is ignored by Git and excluded automatically if the
-indexed folder contains it. For a folder without a Makefile, run the portable
-script directly:
+indexed folder contains it. Receipt paths are fixed relative basenames and
+source root is recorded as `.`, so indexing an arbitrary non-Git folder does
+not put its local absolute path in the receipt. Git provenance is explicit
+`unavailable` when no commit can be proven. For a folder without a Makefile,
+run the portable script directly:
 
 On a shared development host, use `make safe-quality-index` so the scan runs
 inside RKC's fail-closed one-core, low-priority resource envelope and yields to

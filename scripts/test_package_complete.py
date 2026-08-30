@@ -12,7 +12,9 @@ import sys
 import tempfile
 import unittest
 import zipfile
+from collections.abc import Callable
 from pathlib import Path, PurePosixPath
+from typing import Any
 from unittest import mock
 
 
@@ -162,7 +164,15 @@ class CompletePackageTests(unittest.TestCase):
         self.assertEqual(
             PACKAGE.safe_relative_path("a/b.txt", "fixture"), PurePosixPath("a/b.txt")
         )
-        for value in ("", "/abs", "../escape", "a/../b", "a\\b", "a\x01b"):
+        for value in (
+            "",
+            "/abs",
+            "../escape",
+            "a/../b",
+            "a//b",
+            "a\\b",
+            "a\x01b",
+        ):
             with self.subTest(value=value), self.assertRaises(PACKAGE.PackageError):
                 PACKAGE.safe_relative_path(value, "fixture")
         self.assertTrue(PACKAGE.prohibited_name(PurePosixPath("MODEL.safetensors")))
@@ -191,6 +201,9 @@ class CompletePackageTests(unittest.TestCase):
             (tree_entry("120000", "link"), "symlinks"),
             (tree_entry("160000", "module", "commit"), "submodules"),
             (tree_entry("100600", "mode"), "unsupported"),
+            (b"100644 blob " + b"f" * 39 + b"\tshort-id\0", "object ID"),
+            (b"100644 blob " + b"g" * 40 + b"\tbad-id\0", "object ID"),
+            (b"100644 blob " + b"\xff" * 40 + b"\tnon-ascii-id\0", "object ID"),
             (tree_entry("100644", "dist/output"), "generated"),
             (tree_entry("100644", "same") * 2, "duplicate"),
             (b"malformed\0", "unportable"),
@@ -909,6 +922,138 @@ class CompletePackageTests(unittest.TestCase):
         ):
             PACKAGE.validate_release_evidence(evidence, benchmark, self.identity)
 
+    def test_release_evidence_rejects_malformed_or_unbounded_receipts(self) -> None:
+        def fixture(label: str) -> tuple[Path, Path]:
+            root = PACKAGE.ROOT / label
+            return (
+                self.write_release_evidence(root / "validation"),
+                self.write_benchmark_evidence(root / "benchmark"),
+            )
+
+        def mutate_json(
+            path: Path, mutation: Callable[[dict[str, Any]], None]
+        ) -> None:
+            document = json.loads(path.read_text(encoding="utf-8"))
+            mutation(document)
+            path.write_text(
+                json.dumps(document, indent=2, sort_keys=True) + "\n",
+                encoding="utf-8",
+            )
+
+        evidence, benchmark = fixture("unexpected-directory")
+        (evidence / "stale").mkdir()
+        with self.assertRaisesRegex(PACKAGE.PackageError, "directory inventory"):
+            PACKAGE.validate_release_evidence(evidence, benchmark, self.identity)
+
+        evidence, benchmark = fixture("oversized-validation")
+        with mock.patch.object(
+            PACKAGE, "MAX_ARTIFACT_FILE_BYTES", 1
+        ), mock.patch.object(
+            PACKAGE, "MAX_ARTIFACT_TOTAL_BYTES", 1024 * 1024
+        ), self.assertRaisesRegex(
+            PACKAGE.PackageError, "validation evidence file is too large"
+        ):
+            PACKAGE.validate_release_evidence(evidence, benchmark, self.identity)
+
+        evidence, benchmark = fixture("total-validation")
+        with mock.patch.object(
+            PACKAGE, "MAX_ARTIFACT_FILE_BYTES", 1024 * 1024
+        ), mock.patch.object(
+            PACKAGE, "MAX_ARTIFACT_TOTAL_BYTES", 1
+        ), self.assertRaisesRegex(
+            PACKAGE.PackageError, "validation evidence exceeds"
+        ):
+            PACKAGE.validate_release_evidence(evidence, benchmark, self.identity)
+
+        summary_mutations = (
+            (
+                "summary-keys",
+                lambda value: value.__setitem__("unexpected", True),
+                "keys drifted",
+            ),
+            (
+                "summary-status",
+                lambda value: value.__setitem__("ok", False),
+                "not a successful",
+            ),
+            (
+                "summary-elapsed",
+                lambda value: value.__setitem__("elapsed_seconds", True),
+                "elapsed_seconds",
+            ),
+            (
+                "summary-steps",
+                lambda value: value.__setitem__("steps", []),
+                "step inventory",
+            ),
+            (
+                "step-keys",
+                lambda value: value["steps"][0].__setitem__("unexpected", True),
+                "step record drifted",
+            ),
+            (
+                "step-policy",
+                lambda value: value["steps"][0].__setitem__("status", "failed"),
+                "failed policy",
+            ),
+        )
+        for label, mutation, marker in summary_mutations:
+            with self.subTest(label=label):
+                evidence, benchmark = fixture(label)
+                mutate_json(evidence / "summary.json", mutation)
+                with self.assertRaisesRegex(PACKAGE.PackageError, marker):
+                    PACKAGE.validate_release_evidence(
+                        evidence, benchmark, self.identity
+                    )
+
+        evidence, benchmark = fixture("steps-non-utf8")
+        (evidence / "steps.tsv").write_bytes(b"\xff")
+        with self.assertRaisesRegex(PACKAGE.PackageError, "steps.tsv is not UTF-8"):
+            PACKAGE.validate_release_evidence(evidence, benchmark, self.identity)
+
+        evidence, benchmark = fixture("steps-drift")
+        (evidence / "steps.tsv").write_text("drifted\n", encoding="utf-8")
+        with self.assertRaisesRegex(PACKAGE.PackageError, "differs from summary"):
+            PACKAGE.validate_release_evidence(evidence, benchmark, self.identity)
+
+        evidence, benchmark = fixture("oversized-benchmark")
+        validation_max = max(
+            path.stat().st_size
+            for _relative, path in PACKAGE.tree_files(evidence, "validation")
+        )
+        (benchmark / "scan.stdout").write_bytes(b"x" * (validation_max + 1))
+        with mock.patch.object(
+            PACKAGE, "MAX_ARTIFACT_FILE_BYTES", validation_max
+        ), mock.patch.object(
+            PACKAGE, "MAX_ARTIFACT_TOTAL_BYTES", 1024 * 1024
+        ), self.assertRaisesRegex(
+            PACKAGE.PackageError, "benchmark evidence contains an oversized"
+        ):
+            PACKAGE.validate_release_evidence(evidence, benchmark, self.identity)
+
+        evidence, benchmark = fixture("total-benchmark")
+        validation_total = sum(
+            path.stat().st_size
+            for _relative, path in PACKAGE.tree_files(evidence, "validation")
+        )
+        (benchmark / "scan.stdout").write_bytes(b"x" * validation_total)
+        with mock.patch.object(
+            PACKAGE, "MAX_ARTIFACT_FILE_BYTES", validation_total
+        ), mock.patch.object(
+            PACKAGE, "MAX_ARTIFACT_TOTAL_BYTES", validation_total
+        ), self.assertRaisesRegex(
+            PACKAGE.PackageError, "benchmark evidence exceeds"
+        ):
+            PACKAGE.validate_release_evidence(evidence, benchmark, self.identity)
+
+        evidence, benchmark = fixture("benchmark-schema")
+        mutate_json(
+            benchmark / "result.json",
+            lambda value: value.__setitem__("schema_version", "2.0"),
+        )
+        with self.assertRaisesRegex(PACKAGE.PackageError, "not schema 1.0"):
+            PACKAGE.validate_release_evidence(evidence, benchmark, self.identity)
+
     def test_go_module_lock_closes_nested_license_inventory(self) -> None:
         for name in PACKAGE.TOP_LEVEL_LICENSE_FILES:
             self.write(name, (name + "\n").encode())
@@ -939,6 +1084,154 @@ class CompletePackageTests(unittest.TestCase):
             encoding="utf-8",
         )
         with self.assertRaisesRegex(PACKAGE.PackageError, "duplicate JSON key"):
+            PACKAGE.validate_go_module_lock(PACKAGE.ROOT)
+
+    def test_go_module_lock_rejects_ambiguous_supply_chain_records(self) -> None:
+        for name in PACKAGE.TOP_LEVEL_LICENSE_FILES:
+            self.write(name, (name + "\n").encode())
+        self.write("LICENSES/Go.txt", b"Go terms\n")
+        module_license = self.write(
+            "LICENSES/go-modules/modernc.org/sqlite@v1.54.0/LICENSE",
+            b"SQLite terms\n",
+        )
+        module_lock = self.write_module_lock(PACKAGE.ROOT)
+        canonical = json.loads(module_lock.read_text(encoding="utf-8"))
+
+        def reject(
+            label: str,
+            marker: str,
+            mutation: Callable[[dict[str, Any]], None],
+        ) -> None:
+            document = json.loads(json.dumps(canonical))
+            mutation(document)
+            module_lock.write_text(
+                json.dumps(document, indent=2, sort_keys=True) + "\n",
+                encoding="utf-8",
+            )
+            with self.subTest(label=label), self.assertRaisesRegex(
+                PACKAGE.PackageError, marker
+            ):
+                PACKAGE.validate_go_module_lock(PACKAGE.ROOT)
+
+        mutations = (
+            (
+                "go-metadata",
+                "directive/toolchain",
+                lambda value: value.__setitem__("go", {}),
+            ),
+            (
+                "requirements-empty",
+                "no root requirements",
+                lambda value: value.__setitem__("root_requirements", []),
+            ),
+            (
+                "requirement-shape",
+                "invalid root requirement",
+                lambda value: value["root_requirements"][0].__setitem__(
+                    "unexpected", True
+                ),
+            ),
+            (
+                "modules-empty",
+                "no resolved modules",
+                lambda value: value.__setitem__("modules", []),
+            ),
+            (
+                "module-shape",
+                "non-object module",
+                lambda value: value.__setitem__("modules", [None]),
+            ),
+            (
+                "module-record",
+                "invalid module record",
+                lambda value: value["modules"][0].__setitem__("direct", "yes"),
+            ),
+            (
+                "duplicate-module",
+                "duplicate module",
+                lambda value: value["modules"].append(dict(value["modules"][0])),
+            ),
+            (
+                "notice-path",
+                "invalid notice path",
+                lambda value: value["modules"][0].__setitem__("notice_path", ""),
+            ),
+            (
+                "licenses-empty",
+                "no audited license",
+                lambda value: value["modules"][0].__setitem__("licenses", []),
+            ),
+            (
+                "license-record",
+                "invalid license record",
+                lambda value: value["modules"][0].__setitem__("licenses", [{}]),
+            ),
+            (
+                "license-path-type",
+                "invalid license path",
+                lambda value: value["modules"][0]["licenses"][0].__setitem__(
+                    "path", None
+                ),
+            ),
+            (
+                "license-scope",
+                "unscoped license path",
+                lambda value: value["modules"][0]["licenses"][0].__setitem__(
+                    "path", "NOTICE"
+                ),
+            ),
+            (
+                "license-digest",
+                "invalid license digest",
+                lambda value: value["modules"][0]["licenses"][0].__setitem__(
+                    "sha256", "invalid"
+                ),
+            ),
+            (
+                "direct-roots",
+                "direct modules differ",
+                lambda value: value["modules"][0].__setitem__("direct", False),
+            ),
+        )
+        for label, marker, mutation in mutations:
+            reject(label, marker, mutation)
+
+        def add_conflicting_license(value: dict[str, Any]) -> None:
+            record = dict(value["modules"][0]["licenses"][0])
+            record["sha256"] = "f" * 64
+            value["modules"][0]["licenses"].append(record)
+
+        reject(
+            "conflicting-license", "conflicting license digest", add_conflicting_license
+        )
+
+        module_lock.write_text(
+            json.dumps(canonical, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+        )
+        module_license.unlink()
+        with self.assertRaisesRegex(
+            PACKAGE.PackageError, "license is missing or unsafe"
+        ):
+            PACKAGE.validate_go_module_lock(PACKAGE.ROOT)
+
+        module_license.write_bytes(b"SQLite terms\n")
+        notice = PACKAGE.ROOT / "THIRD_PARTY_NOTICES.md"
+        notice_content = notice.read_bytes()
+        notice.unlink()
+        with self.assertRaisesRegex(
+            PACKAGE.PackageError, "notice is missing or unsafe"
+        ):
+            PACKAGE.validate_go_module_lock(PACKAGE.ROOT)
+        notice.write_bytes(notice_content)
+
+        module_lock.write_bytes(b"\xff")
+        with self.assertRaisesRegex(PACKAGE.PackageError, "not valid UTF-8 JSON"):
+            PACKAGE.validate_go_module_lock(PACKAGE.ROOT)
+        module_lock.unlink()
+        with self.assertRaisesRegex(PACKAGE.PackageError, "lock is missing"):
+            PACKAGE.validate_go_module_lock(PACKAGE.ROOT)
+        module_lock.mkdir()
+        with self.assertRaisesRegex(PACKAGE.PackageError, "must be a regular file"):
             PACKAGE.validate_go_module_lock(PACKAGE.ROOT)
 
     def test_license_readme_manifest_and_zip_are_deterministic(self) -> None:

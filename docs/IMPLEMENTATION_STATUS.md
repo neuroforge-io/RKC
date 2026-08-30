@@ -12,9 +12,60 @@ The labels below mean:
 - **planned**: architecture and work order exist, code does not yet satisfy the
   production exit gate.
 
-## 2026-08-30 commit-bound acceptance evidence
+## Latest commit-bound acceptance evidence (2026-08-30)
 
-The latest manually reviewed complete evidence checkpoint is commit
+The latest independently reviewed evidence checkpoint is signed commit
+`bb5de8250df99c7ee1c2ce91633c136818e5adcc`, tree
+`3fdd5a26e3a5d1e0f2adc59bde84cf995be6390e`. Its [main-branch CI
+run](https://github.com/neuroforge-io/RKC/actions/runs/33311156962) and
+[CodeQL run](https://github.com/neuroforge-io/RKC/actions/runs/33311156881)
+both passed. The CI run exercised the guarded release verifier, two
+cache-isolated reproducibility builds, Linux runtime packages, portable target
+compilation, Docker build/runtime smoke, fresh Go/Python profiles, the quality
+index, and the non-recursive RKC self-catalogue.
+
+- Both complete-package builds produced the identical 53,789,045-byte archive
+  with SHA-256
+  `5c1532dd9e6baaddf3a226a4ddf572629ef6f6a07a2c44700fc245f5d55d5aab`.
+  Independent post-download review verified all 522 ZIP entries, 521 checksum
+  records, 520 manifest records, 519 SPDX file records, 23 outer evidence
+  files, and all 18 successful validation stages.
+- The fresh quality index accounts for all 409 tracked files: 164 production
+  source files, 144 test files, 38 documentation files, and 63 other admitted
+  regular files. Conservative file-level test and documentation evidence is
+  present for all 164 production files, every one of the 775 exported Go
+  declarations has an attached comment, and all 132 applicable Go/Python files
+  have a profile. Those are evidence/applicability measures, not claims of
+  semantic completeness. Actual executable statement/branch coverage is
+  **29,247/32,438 units (90.16%)**, leaving 3,191 units across 112 exact gap
+  records. Go coverage is 21,377/23,748 (90.02%); Python line-plus-branch
+  coverage is 7,862/8,684 (90.53%).
+- The self-catalogue selected all 409 regular tracked commit-tree blobs and no
+  generated output. It contains 7,318 canonical records, plus two declared
+  operational receipts; all 7,322 outer checksum records and every canonical
+  manifest record were independently rehashed successfully. The generated
+  knowledge base contains 10,375 nodes, 6,864 symbols, 31,487 relationships,
+  deterministic Markdown and browser assets, a persisted lexical index, and
+  14 NotebookLM sources totalling 39,923,874 bytes with a largest source of
+  3,999,986 bytes.
+- Independent privacy review found no personal developer paths, maintainer
+  credentials, private keys, active session tokens, recursive RKC output,
+  model weights, or private ERAIS artifacts. GitHub secret scanning and push
+  protection are enabled, and secret, code-scanning, and Dependabot alert
+  inventories were empty at review time. These are strong scanner and manual
+  review results, not a claim that pattern matching is complete DLP.
+- The self-run deliberately used no compiler-generated SCIP index and no
+  model. Consequently it records zero semantic parses, resolves
+  9,922/31,487 relationships (31.51%), and finds repository-source
+  documentation for 1,037/4,111 public symbols (25.23%). Generation and
+  embedding defaults remain null because the required pair gate did not pass.
+  Browser/assistive-technology acceptance, large-atlas sharding, native
+  non-Linux packages, aggregate Python/model ceilings, signed provenance, and
+  the remaining executable coverage queue remain explicit 1.0 gates.
+
+## Earlier 2026-08-30 commit-bound acceptance evidence
+
+That earlier manually reviewed complete evidence checkpoint is commit
 `0d04bcdd386c494046f0e99297099dec2ee9736c`, tree
 `cd7d1be961ab7835ad2d641961409d731cb9280b`. Its [main-branch CI
 run](https://github.com/neuroforge-io/RKC/actions/runs/33303846351) passed the
@@ -74,7 +125,7 @@ profiles, quality index, and every artifact upload.
 | HTTP listener confidentiality | Implemented | Loopback is the fail-closed default; non-loopback read-only serving requires explicit `--allow-remote`, the workbench requires an ephemeral loopback origin, API responses use `private, no-store`, and every workbench-origin response is non-cacheable plus same-origin resource protected |
 | Workbench containment | Implemented for the allowlisted command profile | One guarded server scope, single-job admission, per-command process groups, deadline/cancel TERM-to-KILL cleanup proof, and rejection of nested servers or model/Python commands that may create separately managed units prevent supported work from escaping. Unprovable cleanup fails visibly and blocks a success claim; nested managed runtimes remain disabled until an aggregate session ceiling is proved |
 | Model default | Intentionally unset after complete qualification | Qwen3.5 4B Q4_0 improved to 4/6 generation cases with no unsupported claim or canary leakage, but over-abstained on the hostile-input case, timed out at exact 32K, and exceeded the strict process-RSS gate despite a safe 4.156 GB cgroup peak. Granite 4 H 1B and Qwen3.5 0.8B each passed only 2/6; Gemma 4 E2B and Qwen3.5 2B were also rejected. The paired Qwen3 embedding role passed all gates, but pair-level promotion correctly remained disabled |
-| Release verification | Passed remotely and enforced on every `main` push | Main-branch CI run `33303846351` passed on commit `0d04bcdd386c494046f0e99297099dec2ee9736c`: Go/Python coverage gates, race, portability, contracts, licenses, smokes, benchmark, Docker runtime, and artifact publication were green. Two cache-isolated builds produced the identical 53,468,068-byte archive with SHA-256 `3b4dbd6cb96004c5722d87f2ab5853f9eb4bc5f9a334c9e1d6a26853de973eab`. The commit/tree-bound self-catalogue then republished atlas, graph, lexical search, deterministic docs, browser assets, NotebookLM packs, manifest, and 7,991 verified checksums without recursive output or model ingestion |
+| Release verification | Passed remotely and enforced on every `main` push | Main-branch CI run `33311156962` and CodeQL run `33311156881` passed on signed commit `bb5de8250df99c7ee1c2ce91633c136818e5adcc`. Two cache-isolated builds produced the identical 53,789,045-byte archive with SHA-256 `5c1532dd9e6baaddf3a226a4ddf572629ef6f6a07a2c44700fc245f5d55d5aab`; all 521 checksum records, 520 manifest records, 519 SPDX file records, 23 outer evidence files, and 18 release-validation stages were independently verified. The commit/tree-bound self-catalogue republished atlas, graph, lexical search, deterministic docs, browser assets, 14 NotebookLM sources, and 7,322 verified outer checksum records without recursive output, model execution, or model-weight ingestion |
 
 ## Core
 

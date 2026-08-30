@@ -205,6 +205,71 @@ func TestRunLoadsCommittedSQLiteSnapshotByIDAndRepository(t *testing.T) {
 	}
 }
 
+func TestLoadMCPDatasetRejectsUnavailableSelectorsWithoutServing(t *testing.T) {
+	ctx := context.Background()
+	if _, err := loadMCPDataset(ctx, ".", "", "snapshot-mcp", "", false); err == nil ||
+		err.Error() != "--snapshot and --repository require --database" {
+		t.Fatalf("snapshot without database = %v", err)
+	}
+	if _, err := loadMCPDataset(ctx, ".", " database.sqlite ", "snapshot-mcp", "", false); err == nil ||
+		err.Error() != "SQLite database path has surrounding whitespace" {
+		t.Fatalf("whitespace database path = %v", err)
+	}
+
+	root := t.TempDir()
+	missingDatabase := filepath.Join(root, "missing.sqlite")
+	if _, err := loadMCPDataset(ctx, ".", missingDatabase, "snapshot-mcp", "", false); err == nil ||
+		!errors.Is(err, sqlitestore.ErrOpenFailed) {
+		t.Fatalf("missing read-only database = %v, want ErrOpenFailed", err)
+	}
+
+	databasePath := filepath.Join(root, "empty.sqlite")
+	database, err := sqlitestore.Open(ctx, sqlitestore.Options{Path: databasePath})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := database.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := loadMCPDataset(ctx, ".", databasePath, "", "missing-repository", false); err == nil ||
+		!errors.Is(err, rkcstore.ErrSnapshotNotFound) || !strings.Contains(err.Error(), "current snapshot") {
+		t.Fatalf("missing current repository snapshot = %v", err)
+	}
+	if _, err := loadMCPDataset(ctx, ".", databasePath, "missing-snapshot", "", false); err == nil ||
+		!errors.Is(err, rkcstore.ErrSnapshotNotFound) || !strings.Contains(err.Error(), "load store bundle") {
+		t.Fatalf("missing selected snapshot = %v", err)
+	}
+}
+
+func TestLoadMCPDatasetReportsRelativeDatabaseResolutionFailure(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows does not permit removing the process working directory")
+	}
+	original, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	dead := filepath.Join(t.TempDir(), "deleted-working-directory")
+	if err := os.Mkdir(dead, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(dead); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := os.Chdir(original); err != nil {
+			t.Errorf("restore working directory: %v", err)
+		}
+	})
+	if err := os.Remove(dead); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := loadMCPDataset(context.Background(), ".", "relative.sqlite", "snapshot-mcp", "", false); err == nil {
+		t.Fatal("relative database unexpectedly resolved from a deleted working directory")
+	}
+}
+
 func TestMainDelegatesItsExitCode(t *testing.T) {
 	previousArgs := os.Args
 	previousExit := exitProcess

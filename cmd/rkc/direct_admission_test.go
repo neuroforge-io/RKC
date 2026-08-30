@@ -311,6 +311,19 @@ func TestProtectedDirectLocalHonorsCancellationBeforeInspectionOrWork(t *testing
 	}
 }
 
+func TestProtectedDirectWrapperHonorsCancellationBeforeResourceInspection(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	localCalls := 0
+	err := runProtectedDirectLocal(ctx, "scan", []string{"--no-python", "."}, func(context.Context, []string) error {
+		localCalls++
+		return nil
+	})
+	if !errors.Is(err, context.Canceled) || localCalls != 0 {
+		t.Fatalf("cancelled protected wrapper = %v, local calls=%d", err, localCalls)
+	}
+}
+
 func TestDirectAdmissionJoinsReuseAndLaunchFailuresWithoutLocalFallback(t *testing.T) {
 	reuseFailure := errors.New("reuse failure")
 	launchFailure := errors.New("launch failure")
@@ -456,6 +469,10 @@ func TestLaunchGuardedDirectReportsFailuresAndMapsCleanCancellation(t *testing.T
 		err.Error() != "protected direct launch cannot execute a help request" {
 		t.Fatalf("protected help launch = %v", err)
 	}
+	if err := launchGuardedDirect(context.Background(), "scan", []string{"--help"}); err == nil ||
+		err.Error() != "protected direct launch cannot execute a help request" {
+		t.Fatalf("default protected help launch = %v", err)
+	}
 	if err := launchGuardedDirectUsing(context.Background(), "scan", []string{"--unknown"}, base(nil)); err == nil ||
 		err.Error() != "flag provided but not defined: -unknown" {
 		t.Fatalf("invalid protected launch flag = %v", err)
@@ -538,6 +555,9 @@ func TestDirectAdmissionArgumentSafetyIsGrammarAware(t *testing.T) {
 	if _, err := validateDirectCommandAdmission("scan", []string{"--out"}); err == nil ||
 		err.Error() != "flag needs an argument: -out" {
 		t.Fatalf("missing scan flag value = %v", err)
+	}
+	if help, err := validateDirectCommandAdmission("scan", []string{"--force=not-a-boolean", "--no-python", "."}); help || err != nil {
+		t.Fatalf("ordinary invalid boolean must remain for the command parser: help=%t error=%v", help, err)
 	}
 
 	for _, args := range [][]string{nil, {"."}, {"--python=false", "."}, {"--python=true", "--python=false", "."}} {

@@ -24,11 +24,14 @@ from pathlib import Path
 from typing import Any, Mapping, Sequence
 
 
-SCRIPT_VERSION = "1.3.1"
+SCRIPT_VERSION = "1.4.0"
 PROJECT = "RKC"
 PUBLISHER = "NeuroForgeIO"
 LICENSE = "MIT"
 DEFAULT_OUTPUT_NAME = ".rkc-quality"
+QUALITY_ARTIFACT_SCHEMA_VERSION = "1.0.0"
+QUALITY_RECEIPT_NAME = "MANIFEST.json"
+QUALITY_PAYLOAD_NAMES = ("index.json", "index.md")
 
 SOURCE_LANGUAGES = {
     ".go": "go",
@@ -1688,6 +1691,8 @@ def render_markdown(index: Mapping[str, Any]) -> str:
             "",
             "The JSON file beside this document contains SHA-256, byte, line, analyzer-applicability, and Git-tracking metadata for every admitted regular file. Re-run `make quality-index` after edits; pass `--base <ref>`, `--go-profile <path>`, `--go-report <path>`, or `--python-report <path>` for a bounded delta or profile view.",
             "",
+            "`MANIFEST.json` is the deterministic publication receipt. It binds the exact bytes of `index.json` and `index.md` and is atomically committed after both payload files; validate its SHA-256 records before consuming this artifact.",
+            "",
             f"RKC-owned code and this report are released under the [MIT License](../LICENSE). The license requires copies or substantial portions to retain its copyright and permission notice. Crediting **{PUBLISHER} / RKC contributors** and retaining NOTICE are requested, but are not additional license conditions.",
             "",
         ]
@@ -1725,30 +1730,135 @@ def _safe_output_directory(path: Path) -> Path:
     return path.resolve()
 
 
-def write_index(index: Mapping[str, Any], output: Path) -> tuple[Path, Path]:
+def _quality_artifact_receipt(
+    index: Mapping[str, Any], members: Mapping[str, bytes]
+) -> dict[str, Any]:
+    """Bind the exact quality payload without attempting a circular self-hash."""
+    if set(members) != set(QUALITY_PAYLOAD_NAMES):
+        raise QualityIndexError("quality artifact payload inventory is incomplete")
+    required = {
+        "schema_version",
+        "generated_by",
+        "project",
+        "publisher",
+        "license",
+        "source",
+    }
+    if not required.issubset(index):
+        raise QualityIndexError("quality index provenance is incomplete")
+    files = [
+        {
+            "path": name,
+            "size_bytes": len(members[name]),
+            "sha256": hashlib.sha256(members[name]).hexdigest(),
+        }
+        for name in QUALITY_PAYLOAD_NAMES
+    ]
+    canonical_inventory = json.dumps(
+        files, ensure_ascii=False, separators=(",", ":"), sort_keys=True
+    ).encode("utf-8")
+    return {
+        "schema_version": QUALITY_ARTIFACT_SCHEMA_VERSION,
+        "artifact": "rkc-quality-index",
+        "generated_by": index["generated_by"],
+        "project": index["project"],
+        "publisher": index["publisher"],
+        "license": index["license"],
+        "source": index["source"],
+        "quality_index_schema_version": index["schema_version"],
+        "integrity": {
+            "algorithm": "sha256",
+            "files": files,
+            "inventory_sha256": hashlib.sha256(canonical_inventory).hexdigest(),
+            "publication_commit_marker": QUALITY_RECEIPT_NAME,
+            "receipt_included_in_files": False,
+            "receipt_exclusion_reason": (
+                "The receipt is excluded from its file inventory to avoid a "
+                "self-referential checksum."
+            ),
+        },
+    }
+
+
+def _stage_output_member(destination: Path, name: str, content: bytes) -> Path:
+    """Durably stage one fixed-name member beside its final destination."""
+    fd, raw = tempfile.mkstemp(prefix=f".{name}.", dir=destination)
+    path = Path(raw)
+    try:
+        with os.fdopen(fd, "wb") as handle:
+            written = handle.write(content)
+            if written != len(content):
+                raise OSError(f"short write while staging {name}")
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.chmod(path, 0o644)
+        return path
+    except BaseException:
+        try:
+            path.unlink()
+        except FileNotFoundError:
+            pass
+        raise
+
+
+def _fsync_output_directory(destination: Path) -> None:
+    """Persist directory entries where the host exposes POSIX directory sync."""
+    directory_flag = getattr(os, "O_DIRECTORY", None)
+    if directory_flag is None:
+        return
+    descriptor = os.open(destination, os.O_RDONLY | directory_flag)
+    try:
+        os.fsync(descriptor)
+    finally:
+        os.close(descriptor)
+
+
+def write_index(index: Mapping[str, Any], output: Path) -> tuple[Path, Path, Path]:
+    """Publish a receipt-bound quality artifact, committing the receipt last."""
     destination = _safe_output_directory(output)
-    payload = json.dumps(index, indent=2, sort_keys=True) + "\n"
-    markdown = render_markdown(index)
+    members = {
+        "index.json": (json.dumps(index, indent=2, sort_keys=True) + "\n").encode(
+            "utf-8"
+        ),
+        "index.md": render_markdown(index).encode("utf-8"),
+    }
+    receipt = _quality_artifact_receipt(index, members)
+    receipt_bytes = (json.dumps(receipt, indent=2, sort_keys=True) + "\n").encode(
+        "utf-8"
+    )
     temporary: list[Path] = []
     try:
-        for name, content in (("index.json", payload), ("index.md", markdown)):
-            fd, raw = tempfile.mkstemp(prefix=f".{name}.", dir=destination)
-            temporary_path = Path(raw)
-            temporary.append(temporary_path)
-            with os.fdopen(fd, "w", encoding="utf-8") as handle:
-                handle.write(content)
-                handle.flush()
-                os.fsync(handle.fileno())
-            os.chmod(temporary_path, 0o644)
-            os.replace(temporary_path, destination / name)
-            temporary.remove(temporary_path)
+        staged: dict[str, Path] = {}
+        for name, content in (
+            ("index.json", members["index.json"]),
+            ("index.md", members["index.md"]),
+            (QUALITY_RECEIPT_NAME, receipt_bytes),
+        ):
+            staged[name] = _stage_output_member(destination, name, content)
+            temporary.append(staged[name])
+        for name in QUALITY_PAYLOAD_NAMES:
+            os.replace(staged[name], destination / name)
+            temporary.remove(staged[name])
+        _fsync_output_directory(destination)
+        # MANIFEST.json is the commit marker.  A crash before this replacement
+        # leaves no apparently valid new receipt: an older receipt will fail a
+        # member hash, unless the complete payload is byte-identical.
+        os.replace(
+            staged[QUALITY_RECEIPT_NAME], destination / QUALITY_RECEIPT_NAME
+        )
+        temporary.remove(staged[QUALITY_RECEIPT_NAME])
+        _fsync_output_directory(destination)
     finally:
         for path in temporary:
             try:
                 path.unlink()
             except FileNotFoundError:
                 pass
-    return destination / "index.json", destination / "index.md"
+    return (
+        destination / "index.json",
+        destination / "index.md",
+        destination / QUALITY_RECEIPT_NAME,
+    )
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -1784,12 +1894,19 @@ def main(argv: Sequence[str] | None = None) -> int:
             go_report=arguments.go_report,
             python_report=arguments.python_report,
         )
-        json_path, markdown_path = write_index(index, output)
+        json_path, markdown_path, receipt_path = write_index(index, output)
     except (QualityIndexError, OSError, ValueError) as exc:
         print(f"quality index failed closed: {exc}", file=sys.stderr)
         return 1
     profile_errors = index.get("profile_errors", [])
-    result = {"ok": not profile_errors and not (arguments.fail_on_gaps and index["gaps"]), "json": str(json_path), "markdown": str(markdown_path), "summary": index["summary"]}
+    result = {
+        "ok": not profile_errors
+        and not (arguments.fail_on_gaps and index["gaps"]),
+        "json": str(json_path),
+        "markdown": str(markdown_path),
+        "receipt": str(receipt_path),
+        "summary": index["summary"],
+    }
     print(json.dumps(result, sort_keys=True))
     if profile_errors:
         print(

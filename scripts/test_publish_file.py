@@ -68,6 +68,8 @@ class PublishFileTests(unittest.TestCase):
         source.write_bytes(b"new")
         with self.assertRaises(PUBLISHER.PublishError):
             PUBLISHER.publish(source, root / "outside.txt", 0o644)
+        with self.assertRaisesRegex(PUBLISHER.PublishError, "must name a file"):
+            PUBLISHER.publish(source, root / "dist", 0o644)
 
     def test_destination_identity_distinguishes_absent_regular_and_directory(self) -> None:
         directory = PUBLISHER.ROOT / "dist" / "logs"
@@ -111,6 +113,70 @@ class PublishFileTests(unittest.TestCase):
                 PUBLISHER.ROOT / "dist" / "missing" / "result",
                 0o644,
             )
+
+    def test_publish_rejects_source_and_destination_races(self) -> None:
+        root = PUBLISHER.ROOT
+        source = root / "source-race"
+        destination = root / "dist" / "logs" / "result-race"
+        source.write_bytes(b"initial")
+
+        open_parent = PUBLISHER.open_destination_parent
+
+        def mutate_source(*arguments: object, **keywords: object) -> tuple[int, str]:
+            source.write_bytes(b"replacement with a different identity")
+            return open_parent(*arguments, **keywords)
+
+        with mock.patch.object(
+            PUBLISHER, "open_destination_parent", side_effect=mutate_source
+        ), self.assertRaisesRegex(PUBLISHER.PublishError, "source changed"):
+            PUBLISHER.publish(source, destination, 0o644)
+        self.assertFalse(destination.exists())
+        self.assertEqual(list(destination.parent.glob(".rkc-publish-*.tmp")), [])
+
+        source.write_bytes(b"stable")
+        original = (101, 202, 3, 4)
+        changed = (101, 202, 4, 5)
+        with mock.patch.object(
+            PUBLISHER, "destination_identity", side_effect=(original, changed)
+        ), self.assertRaisesRegex(PUBLISHER.PublishError, "destination changed"):
+            PUBLISHER.publish(source, destination, 0o644)
+        self.assertFalse(destination.exists())
+        self.assertEqual(list(destination.parent.glob(".rkc-publish-*.tmp")), [])
+
+    def test_publish_rejects_growth_and_exhausted_exclusive_names(self) -> None:
+        root = PUBLISHER.ROOT
+        source = root / "source-growth"
+        destination = root / "dist" / "logs" / "result-growth"
+        source.write_bytes(b"abc")
+        open_parent = PUBLISHER.open_destination_parent
+
+        def grow_source(*arguments: object, **keywords: object) -> tuple[int, str]:
+            source.write_bytes(b"abcdef")
+            return open_parent(*arguments, **keywords)
+
+        with mock.patch.object(PUBLISHER, "MAXIMUM_BYTES", 3), mock.patch.object(
+            PUBLISHER, "open_destination_parent", side_effect=grow_source
+        ), self.assertRaisesRegex(PUBLISHER.PublishError, "grew beyond"):
+            PUBLISHER.publish(source, destination, 0o644)
+        self.assertFalse(destination.exists())
+        self.assertEqual(list(destination.parent.glob(".rkc-publish-*.tmp")), [])
+
+        source.write_bytes(b"stable")
+        occupied = destination.parent / ".rkc-publish-collision.tmp"
+        occupied.write_bytes(b"do not replace")
+        with mock.patch.object(
+            PUBLISHER.secrets, "token_hex", return_value="collision"
+        ), self.assertRaisesRegex(
+            PUBLISHER.PublishError, "exclusive publication inode"
+        ):
+            PUBLISHER.publish(source, destination, 0o644)
+        self.assertEqual(occupied.read_bytes(), b"do not replace")
+        self.assertFalse(destination.exists())
+
+        with mock.patch.object(
+            PUBLISHER, "MAXIMUM_BYTES", len(source.read_bytes()) - 1
+        ), self.assertRaisesRegex(PUBLISHER.PublishError, "bounded regular"):
+            PUBLISHER.publish(source, destination, 0o644)
 
     def test_main_reports_failure_and_success(self) -> None:
         arguments = [
