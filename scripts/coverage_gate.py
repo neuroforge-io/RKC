@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import argparse
 import collections
+import hashlib
 import json
 import os
 import re
@@ -613,15 +614,23 @@ def _coverage_command(
 
 
 def _extractor_request(root: Path) -> str:
+    sample_root = (root / "examples" / "sample-python").resolve()
+
+    def file_ref(artifact_id: str, path: str) -> dict[str, Any]:
+        data = (sample_root / path).read_bytes()
+        return {
+            "id": artifact_id,
+            "path": path,
+            "language": "python",
+            "sha256": hashlib.sha256(data).hexdigest(),
+            "size_bytes": len(data),
+        }
+
     request = {
-        "root": str((root / "examples" / "sample-python").resolve()),
+        "root": str(sample_root),
         "files": [
-            {"id": "rkc:artifact:auth", "path": "auth.py", "language": "python"},
-            {
-                "id": "rkc:artifact:test-auth",
-                "path": "test_auth.py",
-                "language": "python",
-            },
+            file_ref("rkc:artifact:auth", "auth.py"),
+            file_ref("rkc:artifact:test-auth", "test_auth.py"),
         ],
     }
     return json.dumps(request, sort_keys=True)

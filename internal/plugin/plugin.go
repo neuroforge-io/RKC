@@ -13,6 +13,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	pathpkg "path"
 	"path/filepath"
 	"runtime"
 	"strconv"
@@ -35,21 +36,21 @@ const (
 	MaximumProcesses = 1
 )
 
-// FileRef is a caller-validated wire reference to one requested source file.
-// RunPython transports its path and digest claims but does not itself confine,
-// open, or verify the referenced file; callers must supply inventory-admitted
-// references and validate the resulting fragment.
+// FileRef is an inventory-bound wire reference to one requested source file.
+// RunPython admits it only after root confinement and exact size, identity, and
+// SHA-256 verification; the built-in worker repeats content verification before
+// parsing the path it reopens.
 type FileRef struct {
-	ID       string `json:"id"`
-	Path     string `json:"path"`
-	Language string `json:"language"`
-	SHA256   string `json:"sha256"`
+	ID        string `json:"id"`
+	Path      string `json:"path"`
+	Language  string `json:"language"`
+	SHA256    string `json:"sha256"`
+	SizeBytes int64  `json:"size_bytes"`
 }
 
 // Request is the JSON request sent to the built-in adapter. Root becomes the
-// isolated worker's working directory and must already be admitted by the
-// caller. An empty Files slice makes RunPython return an empty fragment before
-// validating execution options.
+// isolated worker's working directory. An empty Files slice makes RunPython
+// return an empty fragment before validating the root or execution options.
 type Request struct {
 	SchemaVersion string    `json:"schema_version"`
 	SnapshotID    string    `json:"snapshot_id"`
@@ -78,10 +79,11 @@ type PythonOptions struct {
 }
 
 // RunPython executes a nonempty request through the built-in, digest-verified
-// adapter under a timeout and bounded stdout/stderr. The production runner is a
-// fail-closed Linux systemd sandbox with no shell, network, or child-process
-// allowance. It accepts exactly one strict JSON Fragment; decoding success does
-// not replace downstream semantic and provenance validation.
+// adapter under a timeout and bounded stdout/stderr. Every requested source is
+// confined beneath Root and verified against its exact inventory identity before
+// launch. The production runner is a fail-closed Linux systemd sandbox with no
+// shell, network, or child-process allowance. It accepts exactly one strict JSON
+// Fragment; decoding success does not replace downstream semantic validation.
 func RunPython(ctx context.Context, request Request, opts PythonOptions) (model.Fragment, error) {
 	if len(request.Files) == 0 {
 		return model.Fragment{}, nil
@@ -114,13 +116,24 @@ func RunPython(ctx context.Context, request Request, opts PythonOptions) (model.
 	if err != nil {
 		return model.Fragment{}, err
 	}
+	pluginCtx, cancel := context.WithTimeout(ctx, opts.Timeout)
+	defer cancel()
+	if pluginCtx.Err() != nil {
+		return model.Fragment{}, pythonPluginContextError(ctx, pluginCtx, opts.Timeout)
+	}
+	root, err := validatePythonFileRefs(pluginCtx, request)
+	if err != nil {
+		if pluginCtx.Err() != nil {
+			return model.Fragment{}, pythonPluginContextError(ctx, pluginCtx, opts.Timeout)
+		}
+		return model.Fragment{}, fmt.Errorf("validate python plugin file references: %w", err)
+	}
+	request.Root = root
 	payload, err := json.Marshal(request)
 	if err != nil {
 		return model.Fragment{}, fmt.Errorf("encode plugin request: %w", err)
 	}
 
-	pluginCtx, cancel := context.WithTimeout(ctx, opts.Timeout)
-	defer cancel()
 	stdout := newLimitedBuffer(opts.MaxOutputBytes, 64*1024*1024)
 	stderr := newLimitedBuffer(opts.MaxStderrBytes, 2*1024*1024)
 	runner := opts.runner
@@ -130,10 +143,7 @@ func RunPython(ctx context.Context, request Request, opts PythonOptions) (model.
 	spec := pythonRunSpec{Interpreter: opts.Interpreter, Script: absScript, Root: request.Root, MemoryLimitMiB: opts.MemoryLimitMiB, SwapLimitMiB: opts.SwapLimitMiB, ProcessLimit: opts.ProcessLimit}
 	if err := runner.Run(pluginCtx, spec, payload, stdout, stderr); err != nil {
 		if pluginCtx.Err() != nil {
-			if errors.Is(pluginCtx.Err(), context.DeadlineExceeded) && ctx.Err() == nil {
-				return model.Fragment{}, fmt.Errorf("python plugin timed out after %s", opts.Timeout)
-			}
-			return model.Fragment{}, fmt.Errorf("python plugin cancelled: %w", pluginCtx.Err())
+			return model.Fragment{}, pythonPluginContextError(ctx, pluginCtx, opts.Timeout)
 		}
 		return model.Fragment{}, fmt.Errorf("python plugin failed: %w: %s", err, stderr.String())
 	}
@@ -156,6 +166,245 @@ func RunPython(ctx context.Context, request Request, opts PythonOptions) (model.
 		return model.Fragment{}, fmt.Errorf("decode python plugin response: %w; stderr=%s", err, stderr.String())
 	}
 	return fragment, nil
+}
+
+// pythonPluginContextError preserves the distinction between the plugin's own
+// wall-time ceiling and cancellation inherited from its caller.
+func pythonPluginContextError(parent, plugin context.Context, timeout time.Duration) error {
+	if errors.Is(plugin.Err(), context.DeadlineExceeded) && parent.Err() == nil {
+		return fmt.Errorf("python plugin timed out after %s", timeout)
+	}
+	return fmt.Errorf("python plugin cancelled: %w", plugin.Err())
+}
+
+// validatePythonFileRefs binds every requested path to one stable, real root
+// and returns the absolute root value sent to the worker.
+func validatePythonFileRefs(ctx context.Context, request Request) (string, error) {
+	if request.Root == "" {
+		return "", errors.New("request root is empty")
+	}
+	absoluteRoot, err := filepath.Abs(request.Root)
+	if err != nil {
+		return "", fmt.Errorf("resolve request root: %w", err)
+	}
+	pathRootInfo, err := os.Lstat(absoluteRoot)
+	if err != nil {
+		return "", fmt.Errorf("inspect request root: %w", err)
+	}
+	if pathRootInfo.Mode()&os.ModeSymlink != 0 || !pathRootInfo.IsDir() {
+		return "", errors.New("request root must be a real directory, not a symlink")
+	}
+	root, err := os.OpenRoot(absoluteRoot)
+	if err != nil {
+		return "", fmt.Errorf("open request root: %w", err)
+	}
+	defer root.Close()
+	openedRootInfo, err := root.Stat(".")
+	if err != nil || !openedRootInfo.IsDir() || !os.SameFile(pathRootInfo, openedRootInfo) {
+		return "", errors.New("request root identity changed while opening")
+	}
+	for _, file := range request.Files {
+		if err := validatePythonFileRef(ctx, root, file); err != nil {
+			return "", fmt.Errorf("file %q: %w", file.Path, err)
+		}
+	}
+	finalRootInfo, err := os.Lstat(absoluteRoot)
+	if err != nil || finalRootInfo.Mode()&os.ModeSymlink != 0 || !finalRootInfo.IsDir() || !os.SameFile(openedRootInfo, finalRootInfo) {
+		return "", errors.New("request root identity changed during validation")
+	}
+	return absoluteRoot, nil
+}
+
+// validatePythonFileRef proves confinement, regular-file identity, exact size,
+// content digest, and post-read path stability for one inventory record.
+func validatePythonFileRef(ctx context.Context, root *os.Root, file FileRef) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if file.SizeBytes < 0 {
+		return errors.New("inventoried size must be nonnegative")
+	}
+	expectedDigest, err := canonicalPythonFileDigest(file.SHA256)
+	if err != nil {
+		return err
+	}
+	nativePath, err := canonicalPythonFilePath(file.Path)
+	if err != nil {
+		return err
+	}
+	pathInfo, err := lstatPythonFilePath(root, file.Path)
+	if err != nil {
+		return err
+	}
+	if !pathInfo.Mode().IsRegular() {
+		return errors.New("path is not a regular file")
+	}
+	source, err := root.Open(nativePath)
+	if err != nil {
+		return fmt.Errorf("open file beneath request root: %w", err)
+	}
+	defer source.Close()
+	openedInfo, err := source.Stat()
+	if err != nil {
+		return fmt.Errorf("stat opened file: %w", err)
+	}
+	if !openedInfo.Mode().IsRegular() || !os.SameFile(pathInfo, openedInfo) {
+		return errors.New("file identity changed while opening")
+	}
+	if openedInfo.Size() != file.SizeBytes {
+		return errors.New("file size does not match inventory")
+	}
+	readResult, err := readPythonFileBounded(ctx, source, file.SizeBytes)
+	if err != nil {
+		return err
+	}
+	if !bytes.Equal(readResult.digest[:], expectedDigest[:]) {
+		return errors.New("file content does not match its inventoried SHA-256")
+	}
+	finalInfo := readResult.finalInfo
+	if !finalInfo.Mode().IsRegular() || !os.SameFile(openedInfo, finalInfo) || finalInfo.Size() != openedInfo.Size() || !finalInfo.ModTime().Equal(openedInfo.ModTime()) {
+		return errors.New("file identity changed while reading")
+	}
+	finalPathInfo, err := lstatPythonFilePath(root, file.Path)
+	if err != nil {
+		return fmt.Errorf("reinspect file path: %w", err)
+	}
+	if !finalPathInfo.Mode().IsRegular() || !os.SameFile(openedInfo, finalPathInfo) {
+		return errors.New("file path identity changed while reading")
+	}
+	return nil
+}
+
+// canonicalPythonFileDigest accepts only the canonical wire spelling of a
+// SHA-256 so equivalent or malformed identities cannot enter the worker request.
+func canonicalPythonFileDigest(value string) ([sha256.Size]byte, error) {
+	var digest [sha256.Size]byte
+	if len(value) != hex.EncodedLen(sha256.Size) || value != strings.ToLower(value) {
+		return digest, errors.New("SHA-256 must be 64 lowercase hexadecimal characters")
+	}
+	decoded, err := hex.DecodeString(value)
+	if err != nil || len(decoded) != sha256.Size {
+		return digest, errors.New("SHA-256 must be 64 lowercase hexadecimal characters")
+	}
+	copy(digest[:], decoded)
+	return digest, nil
+}
+
+// canonicalPythonFilePath converts one canonical slash-relative wire path to
+// the current platform without accepting traversal, backslashes, or volumes.
+func canonicalPythonFilePath(value string) (string, error) {
+	if value == "" || strings.Contains(value, "\\") || strings.ContainsRune(value, 0) || pathpkg.IsAbs(value) || pathpkg.Clean(value) != value || value == "." {
+		return "", errors.New("path must be canonical, slash-separated, and repository-relative")
+	}
+	for _, component := range strings.Split(value, "/") {
+		if component == "" || component == "." || component == ".." {
+			return "", errors.New("path must be canonical, slash-separated, and repository-relative")
+		}
+	}
+	native := filepath.FromSlash(value)
+	if filepath.IsAbs(native) || filepath.VolumeName(native) != "" {
+		return "", errors.New("path must be canonical, slash-separated, and repository-relative")
+	}
+	return native, nil
+}
+
+// lstatPythonFilePath walks every already-canonical path component without
+// following a symlink and returns the final component's identity.
+func lstatPythonFilePath(root *os.Root, canonicalPath string) (os.FileInfo, error) {
+	components := strings.Split(canonicalPath, "/")
+	var info os.FileInfo
+	for index := range components {
+		prefix := filepath.FromSlash(strings.Join(components[:index+1], "/"))
+		current, err := root.Lstat(prefix)
+		if err != nil {
+			return nil, fmt.Errorf("inspect path component: %w", err)
+		}
+		if current.Mode()&os.ModeSymlink != 0 {
+			return nil, errors.New("path contains a symlink")
+		}
+		if index < len(components)-1 && !current.IsDir() {
+			return nil, errors.New("path contains a non-directory component")
+		}
+		info = current
+	}
+	if info == nil {
+		return nil, errors.New("path has no file component")
+	}
+	return info, nil
+}
+
+// pythonFileReadCloser is the minimum close-interruptible regular-file surface
+// needed by the bounded admission reader and its blocking-I/O test double.
+type pythonFileReadCloser interface {
+	io.Reader
+	io.Closer
+	Stat() (os.FileInfo, error)
+}
+
+// pythonFileReadResult carries the digest and final identity observed by one
+// complete exact-length admission read.
+type pythonFileReadResult struct {
+	digest    [sha256.Size]byte
+	finalInfo os.FileInfo
+}
+
+// pythonFileReadSlots bounds rare kernel-backed reads that remain unwinding
+// after Close so concurrent scan timeouts cannot grow process state without limit.
+var pythonFileReadSlots = make(chan struct{}, 4)
+
+// readPythonFileBounded hashes exactly size bytes, proves EOF, and returns at
+// the caller's deadline even when a remote or FUSE read is slow to unwind.
+func readPythonFileBounded(ctx context.Context, source pythonFileReadCloser, size int64) (pythonFileReadResult, error) {
+	if err := ctx.Err(); err != nil {
+		_ = source.Close()
+		return pythonFileReadResult{}, err
+	}
+	select {
+	case pythonFileReadSlots <- struct{}{}:
+	case <-ctx.Done():
+		_ = source.Close()
+		return pythonFileReadResult{}, ctx.Err()
+	}
+	type outcome struct {
+		result pythonFileReadResult
+		err    error
+	}
+	completed := make(chan outcome, 1)
+	go func() {
+		defer func() { <-pythonFileReadSlots }()
+		hash := sha256.New()
+		written, err := io.CopyN(hash, source, size)
+		if err != nil {
+			completed <- outcome{err: fmt.Errorf("read exact inventoried file size after %d bytes: %w", written, err)}
+			return
+		}
+		var extra [1]byte
+		if count, extraErr := io.ReadFull(source, extra[:]); count != 0 {
+			completed <- outcome{err: errors.New("file grew beyond its inventoried size")}
+			return
+		} else if !errors.Is(extraErr, io.EOF) {
+			completed <- outcome{err: fmt.Errorf("prove end of inventoried file: %w", extraErr)}
+			return
+		}
+		finalInfo, err := source.Stat()
+		if err != nil {
+			completed <- outcome{err: fmt.Errorf("restat opened file: %w", err)}
+			return
+		}
+		var digest [sha256.Size]byte
+		copy(digest[:], hash.Sum(nil))
+		completed <- outcome{result: pythonFileReadResult{digest: digest, finalInfo: finalInfo}}
+	}()
+	select {
+	case value := <-completed:
+		return value.result, value.err
+	case <-ctx.Done():
+		// Close is concurrency-safe for os.File and requests interruption of a
+		// remote/FUSE read. The caller does not wait for a slow kernel unwind, and
+		// the global slot bound prevents repeated timeouts from growing unbounded.
+		_ = source.Close()
+		return pythonFileReadResult{}, ctx.Err()
+	}
 }
 
 type pythonRunSpec struct {

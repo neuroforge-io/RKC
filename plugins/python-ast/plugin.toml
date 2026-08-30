@@ -1,7 +1,7 @@
 [plugin]
 id = "rkc.python-ast"
 name = "RKC Python AST extractor"
-version = "0.2.0"
+version = "0.2.1"
 api_version = "1.0"
 license = "MIT"
 description = "Reference Python syntax extractor using the standard-library ast module."
@@ -38,4 +38,4 @@ max_parallelism = 1
 
 [determinism]
 level = "toolchain-dependent"
-cache_inputs = ["artifact.sha256", "python.version", "plugin.sha256", "schema.version"]
+cache_inputs = ["artifact.sha256", "artifact.size_bytes", "python.version", "plugin.sha256", "schema.version"]

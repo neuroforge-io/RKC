@@ -180,7 +180,7 @@ func scanSequential(ctx context.Context, opts Options) (rkcmodel.Bundle, rkcmode
 			if len(pythonFiles) > 0 {
 				legacy := make([]plugin.FileRef, 0, len(pythonFiles))
 				for _, file := range pythonFiles {
-					legacy = append(legacy, plugin.FileRef{ID: file.ArtifactID, Path: file.Path, Language: file.Language, SHA256: file.SHA256})
+					legacy = append(legacy, plugin.FileRef{ID: file.ArtifactID, Path: file.Path, Language: file.Language, SHA256: file.SHA256, SizeBytes: file.SizeBytes})
 				}
 				fragment, runErr := plugin.RunPython(ctx, plugin.Request{SchemaVersion: rkcmodel.SchemaVersion, SnapshotID: snapshotID, Root: root, Files: legacy}, plugin.PythonOptions{
 					Interpreter: opts.PythonInterpreter, Script: opts.PythonPlugin, Timeout: opts.PluginTimeout,

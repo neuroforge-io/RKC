@@ -115,7 +115,10 @@ identity and manifest checks remain fail closed.
 
 The digest-pinned built-in Python AST worker still runs as the invoking OS user.
 On Linux its cgroup, environment, network-syscall, task-count, and cancellation
-limits are enforced fail closed, but it does not yet have a mount/filesystem
+limits are enforced fail closed. Before launch, the host confines every worker
+input beneath the admitted repository root and verifies its exact regular-file
+identity, byte count, and SHA-256; the worker repeats those checks before parsing
+and emits no partial fragment on failure. It does not yet have a mount/filesystem
 namespace. External Python/native workers are disabled. The ordinary read-only
 local HTTP server has no application authentication and is intended for
 loopback use; the explicit workbench adds the one-time bootstrap and same-origin

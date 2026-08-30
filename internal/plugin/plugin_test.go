@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"io"
 	"os"
@@ -21,6 +22,8 @@ type fakePythonRunner struct {
 	err            error
 	waitForContext bool
 	spec           pythonRunSpec
+	payload        []byte
+	calls          int
 }
 
 type fakeRunningCommand struct {
@@ -30,6 +33,25 @@ type fakeRunningCommand struct {
 	killStops   bool
 	signalErr   error
 	killErr     error
+}
+
+type blockingPythonFile struct {
+	closed chan struct{}
+	once   sync.Once
+}
+
+func (file *blockingPythonFile) Read([]byte) (int, error) {
+	<-file.closed
+	return 0, os.ErrClosed
+}
+
+func (file *blockingPythonFile) Close() error {
+	file.once.Do(func() { close(file.closed) })
+	return nil
+}
+
+func (file *blockingPythonFile) Stat() (os.FileInfo, error) {
+	return nil, errors.New("unexpected stat")
 }
 
 func (command *fakeRunningCommand) Wait() error { <-command.done; return nil }
@@ -64,8 +86,10 @@ func (launcher *fakeCommandLauncher) Run(_ context.Context, spec commandSpec) er
 	return nil
 }
 
-func (runner *fakePythonRunner) Run(ctx context.Context, spec pythonRunSpec, _ []byte, stdout, stderr io.Writer) error {
+func (runner *fakePythonRunner) Run(ctx context.Context, spec pythonRunSpec, payload []byte, stdout, stderr io.Writer) error {
+	runner.calls++
 	runner.spec = spec
+	runner.payload = append([]byte(nil), payload...)
 	if runner.waitForContext {
 		<-ctx.Done()
 		return ctx.Err()
@@ -91,12 +115,21 @@ func sandboxedOptions(t *testing.T, script string, runner pythonRunner) PythonOp
 	}
 }
 
-func nonEmptyRequest(root string) Request {
+func nonEmptyRequest(t *testing.T, root string) Request {
+	t.Helper()
+	data := []byte("def sample():\n    return True\n")
+	if err := os.WriteFile(filepath.Join(root, "sample.py"), data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	digest := sha256.Sum256(data)
 	return Request{
 		SchemaVersion: "1.0",
 		SnapshotID:    "snapshot",
 		Root:          root,
-		Files:         []FileRef{{ID: "artifact", Path: "sample.py", Language: "python", SHA256: strings.Repeat("a", 64)}},
+		Files: []FileRef{{
+			ID: "artifact", Path: "sample.py", Language: "python",
+			SHA256: hex.EncodeToString(digest[:]), SizeBytes: int64(len(data)),
+		}},
 	}
 }
 
@@ -120,7 +153,7 @@ func TestRunPythonEmptyRequestIsNoOp(t *testing.T) {
 }
 
 func TestRunPythonRequiresScriptForNonEmptyRequest(t *testing.T) {
-	if _, err := RunPython(context.Background(), nonEmptyRequest(t.TempDir()), PythonOptions{}); err == nil || !strings.Contains(err.Error(), "script is required") {
+	if _, err := RunPython(context.Background(), nonEmptyRequest(t, t.TempDir()), PythonOptions{}); err == nil || !strings.Contains(err.Error(), "script is required") {
 		t.Fatalf("RunPython(no script) = %v", err)
 	}
 }
@@ -130,7 +163,8 @@ func TestRunPythonSuccessAndExactLimits(t *testing.T) {
 	runner := &fakePythonRunner{stdout: `{"nodes":[{"id":"node-1","kind":"function","name":"Example"}]}`, stderr: "note"}
 	opts := sandboxedOptions(t, script, runner)
 	opts.MaxStderrBytes = 4
-	fragment, err := RunPython(context.Background(), nonEmptyRequest(t.TempDir()), opts)
+	request := nonEmptyRequest(t, t.TempDir())
+	fragment, err := RunPython(context.Background(), request, opts)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -139,6 +173,149 @@ func TestRunPythonSuccessAndExactLimits(t *testing.T) {
 	}
 	if runner.spec.MemoryLimitMiB != 256 || runner.spec.SwapLimitMiB != 32 || runner.spec.ProcessLimit != 1 {
 		t.Fatalf("runner did not receive resource policy: %+v", runner.spec)
+	}
+	if runner.calls != 1 || !filepath.IsAbs(runner.spec.Root) {
+		t.Fatalf("runner admission = calls %d root %q", runner.calls, runner.spec.Root)
+	}
+	var payload Request
+	if err := json.Unmarshal(runner.payload, &payload); err != nil {
+		t.Fatal(err)
+	}
+	if len(payload.Files) != 1 || payload.Files[0].SizeBytes != request.Files[0].SizeBytes || payload.Files[0].SHA256 != request.Files[0].SHA256 {
+		t.Fatalf("runner payload lost file identity: %+v", payload.Files)
+	}
+}
+
+func TestRunPythonRejectsUnsafeFileRefsBeforeRunner(t *testing.T) {
+	tests := []struct {
+		name string
+		edit func(*testing.T, string, *Request)
+		want string
+	}{
+		{name: "backslash", edit: func(_ *testing.T, _ string, request *Request) {
+			request.Files[0].Path = "..\\outside.py"
+		}, want: "canonical, slash-separated"},
+		{name: "traversal", edit: func(_ *testing.T, _ string, request *Request) {
+			request.Files[0].Path = "../outside.py"
+		}, want: "canonical, slash-separated"},
+		{name: "noncanonical", edit: func(_ *testing.T, _ string, request *Request) {
+			request.Files[0].Path = "pkg/../sample.py"
+		}, want: "canonical, slash-separated"},
+		{name: "absolute", edit: func(_ *testing.T, root string, request *Request) {
+			request.Files[0].Path = filepath.Join(root, "sample.py")
+		}, want: "canonical, slash-separated"},
+		{name: "root symlink", edit: func(t *testing.T, root string, request *Request) {
+			link := filepath.Join(filepath.Dir(root), "root-link")
+			if err := os.Symlink(root, link); err != nil {
+				t.Skipf("symlinks unavailable: %v", err)
+			}
+			request.Root = link
+		}, want: "root must be a real directory"},
+		{name: "negative size", edit: func(_ *testing.T, _ string, request *Request) {
+			request.Files[0].SizeBytes = -1
+		}, want: "size must be nonnegative"},
+		{name: "maximum size does not wrap", edit: func(_ *testing.T, _ string, request *Request) {
+			request.Files[0].SizeBytes = int64(^uint64(0) >> 1)
+		}, want: "size does not match inventory"},
+		{name: "noncanonical digest", edit: func(_ *testing.T, _ string, request *Request) {
+			request.Files[0].SHA256 = strings.Repeat("A", 64)
+		}, want: "64 lowercase hexadecimal"},
+		{name: "changed content", edit: func(t *testing.T, root string, _ *Request) {
+			data, err := os.ReadFile(filepath.Join(root, "sample.py"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			for index := range data {
+				data[index] = 'x'
+			}
+			if err := os.WriteFile(filepath.Join(root, "sample.py"), data, 0o600); err != nil {
+				t.Fatal(err)
+			}
+		}, want: "content does not match"},
+		{name: "directory", edit: func(t *testing.T, root string, request *Request) {
+			if err := os.Mkdir(filepath.Join(root, "directory"), 0o700); err != nil {
+				t.Fatal(err)
+			}
+			request.Files[0].Path = "directory"
+		}, want: "not a regular file"},
+		{name: "missing", edit: func(_ *testing.T, _ string, request *Request) {
+			request.Files[0].Path = "missing.py"
+		}, want: "inspect path component"},
+		{name: "final symlink", edit: func(t *testing.T, root string, _ *Request) {
+			if err := os.Rename(filepath.Join(root, "sample.py"), filepath.Join(root, "target.py")); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Symlink("target.py", filepath.Join(root, "sample.py")); err != nil {
+				t.Skipf("symlinks unavailable: %v", err)
+			}
+		}, want: "contains a symlink"},
+		{name: "intermediate symlink", edit: func(t *testing.T, root string, request *Request) {
+			realDirectory := filepath.Join(root, "real")
+			if err := os.Mkdir(realDirectory, 0o700); err != nil {
+				t.Fatal(err)
+			}
+			data, err := os.ReadFile(filepath.Join(root, "sample.py"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(realDirectory, "sample.py"), data, 0o600); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Symlink("real", filepath.Join(root, "linked")); err != nil {
+				t.Skipf("symlinks unavailable: %v", err)
+			}
+			request.Files[0].Path = "linked/sample.py"
+		}, want: "contains a symlink"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			root := t.TempDir()
+			request := nonEmptyRequest(t, root)
+			test.edit(t, root, &request)
+			runner := &fakePythonRunner{stdout: "{}"}
+			options := sandboxedOptions(t, shellPlugin(t, "# inert fixture"), runner)
+			_, err := RunPython(context.Background(), request, options)
+			if err == nil || !strings.Contains(err.Error(), test.want) {
+				t.Fatalf("RunPython() error = %v, want %q", err, test.want)
+			}
+			if runner.calls != 0 {
+				t.Fatalf("unsafe file reference started runner %d time(s)", runner.calls)
+			}
+		})
+	}
+}
+
+func TestRunPythonAcceptsExactEmptyFile(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "empty.py")
+	if err := os.WriteFile(path, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	digest := sha256.Sum256(nil)
+	request := Request{Root: root, Files: []FileRef{{
+		ID: "empty", Path: "empty.py", Language: "python",
+		SHA256: hex.EncodeToString(digest[:]), SizeBytes: 0,
+	}}}
+	runner := &fakePythonRunner{stdout: "{}"}
+	if _, err := RunPython(context.Background(), request, sandboxedOptions(t, shellPlugin(t, "# inert fixture"), runner)); err != nil {
+		t.Fatal(err)
+	}
+	if runner.calls != 1 {
+		t.Fatalf("empty file runner calls = %d", runner.calls)
+	}
+}
+
+func TestPythonFileReadDeadlineClosesBlockingSource(t *testing.T) {
+	source := &blockingPythonFile{closed: make(chan struct{})}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond)
+	defer cancel()
+	if _, err := readPythonFileBounded(ctx, source, 1); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("readPythonFileBounded() error = %v", err)
+	}
+	select {
+	case <-source.closed:
+	default:
+		t.Fatal("blocking source was not closed at its deadline")
 	}
 }
 
@@ -163,7 +340,7 @@ func TestRunPythonRejectsUntrustedOrWeakenedPolicy(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			options := base
 			test.edit(&options)
-			if _, err := RunPython(context.Background(), nonEmptyRequest(t.TempDir()), options); err == nil || !strings.Contains(err.Error(), test.want) {
+			if _, err := RunPython(context.Background(), nonEmptyRequest(t, t.TempDir()), options); err == nil || !strings.Contains(err.Error(), test.want) {
 				t.Fatalf("RunPython() error = %v, want %q", err, test.want)
 			}
 		})
@@ -243,12 +420,12 @@ func TestSystemdPythonRunnerSurfacesUnreapedFailedKill(t *testing.T) {
 
 func TestRunPythonReportsProcessFailureAndStderr(t *testing.T) {
 	script := shellPlugin(t, "# inert fixture")
-	_, err := RunPython(context.Background(), nonEmptyRequest(t.TempDir()), sandboxedOptions(t, script, &fakePythonRunner{stderr: "specific plugin failure", err: errors.New("exit status 7")}))
+	_, err := RunPython(context.Background(), nonEmptyRequest(t, t.TempDir()), sandboxedOptions(t, script, &fakePythonRunner{stderr: "specific plugin failure", err: errors.New("exit status 7")}))
 	if err == nil || !strings.Contains(err.Error(), "python plugin failed") || !strings.Contains(err.Error(), "specific plugin failure") {
 		t.Fatalf("RunPython(failed process) = %v", err)
 	}
 
-	_, err = RunPython(context.Background(), nonEmptyRequest(t.TempDir()), sandboxedOptions(t, script, &fakePythonRunner{err: errors.New("missing interpreter")}))
+	_, err = RunPython(context.Background(), nonEmptyRequest(t, t.TempDir()), sandboxedOptions(t, script, &fakePythonRunner{err: errors.New("missing interpreter")}))
 	if err == nil || !strings.Contains(err.Error(), "python plugin failed") {
 		t.Fatalf("RunPython(missing interpreter) = %v", err)
 	}
@@ -259,7 +436,7 @@ func TestRunPythonTimeoutAndParentCancellation(t *testing.T) {
 	started := time.Now()
 	opts := sandboxedOptions(t, script, &fakePythonRunner{waitForContext: true})
 	opts.Timeout = 25 * time.Millisecond
-	_, err := RunPython(context.Background(), nonEmptyRequest(t.TempDir()), opts)
+	_, err := RunPython(context.Background(), nonEmptyRequest(t, t.TempDir()), opts)
 	if err == nil || !strings.Contains(err.Error(), "timed out after 25ms") {
 		t.Fatalf("RunPython(timeout) = %v", err)
 	}
@@ -269,7 +446,7 @@ func TestRunPythonTimeoutAndParentCancellation(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	_, err = RunPython(ctx, nonEmptyRequest(t.TempDir()), sandboxedOptions(t, script, &fakePythonRunner{waitForContext: true}))
+	_, err = RunPython(ctx, nonEmptyRequest(t, t.TempDir()), sandboxedOptions(t, script, &fakePythonRunner{waitForContext: true}))
 	if err == nil || !strings.Contains(err.Error(), "cancelled") {
 		t.Fatalf("RunPython(cancelled parent) = %v", err)
 	}
@@ -279,21 +456,21 @@ func TestRunPythonEnforcesOutputAndStderrLimits(t *testing.T) {
 	stdoutScript := shellPlugin(t, "# inert fixture")
 	opts := sandboxedOptions(t, stdoutScript, &fakePythonRunner{stdout: "12345"})
 	opts.MaxOutputBytes = 4
-	if _, err := RunPython(context.Background(), nonEmptyRequest(t.TempDir()), opts); err == nil || !strings.Contains(err.Error(), "output exceeded 4 bytes") {
+	if _, err := RunPython(context.Background(), nonEmptyRequest(t, t.TempDir()), opts); err == nil || !strings.Contains(err.Error(), "output exceeded 4 bytes") {
 		t.Fatalf("RunPython(stdout limit) = %v", err)
 	}
 
 	stderrScript := shellPlugin(t, "# inert fixture 2")
 	opts = sandboxedOptions(t, stderrScript, &fakePythonRunner{stdout: "{}", stderr: "12345"})
 	opts.MaxOutputBytes, opts.MaxStderrBytes = 2, 4
-	if _, err := RunPython(context.Background(), nonEmptyRequest(t.TempDir()), opts); err == nil || !strings.Contains(err.Error(), "stderr exceeded 4 bytes") {
+	if _, err := RunPython(context.Background(), nonEmptyRequest(t, t.TempDir()), opts); err == nil || !strings.Contains(err.Error(), "stderr exceeded 4 bytes") {
 		t.Fatalf("RunPython(stderr limit) = %v", err)
 	}
 }
 
 func TestRunPythonRejectsInvalidJSON(t *testing.T) {
 	script := shellPlugin(t, "# inert fixture")
-	if _, err := RunPython(context.Background(), nonEmptyRequest(t.TempDir()), sandboxedOptions(t, script, &fakePythonRunner{stdout: "not-json", stderr: "decoder context"})); err == nil || !strings.Contains(err.Error(), "decode python plugin response") || !strings.Contains(err.Error(), "decoder context") {
+	if _, err := RunPython(context.Background(), nonEmptyRequest(t, t.TempDir()), sandboxedOptions(t, script, &fakePythonRunner{stdout: "not-json", stderr: "decoder context"})); err == nil || !strings.Contains(err.Error(), "decode python plugin response") || !strings.Contains(err.Error(), "decoder context") {
 		t.Fatalf("RunPython(invalid JSON) = %v", err)
 	}
 }
@@ -321,7 +498,7 @@ func TestRunPythonHonorsAlreadyExpiredDeadline(t *testing.T) {
 	script := shellPlugin(t, `printf '{}'`)
 	ctx, cancel := context.WithDeadline(context.Background(), time.Now().Add(-time.Second))
 	defer cancel()
-	_, err := RunPython(ctx, nonEmptyRequest(t.TempDir()), sandboxedOptions(t, script, &fakePythonRunner{waitForContext: true}))
+	_, err := RunPython(ctx, nonEmptyRequest(t, t.TempDir()), sandboxedOptions(t, script, &fakePythonRunner{waitForContext: true}))
 	if err == nil {
 		t.Fatal("RunPython(expired context) succeeded")
 	}

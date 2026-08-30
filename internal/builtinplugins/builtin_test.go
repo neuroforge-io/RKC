@@ -79,3 +79,13 @@ func TestMaterializedExtractorMatchesPublishedDigest(t *testing.T) {
 		t.Fatalf("materialized digest = %s, published digest = %s", got, PythonSHA256())
 	}
 }
+
+func TestEmbeddedExtractorMatchesPublishedWorker(t *testing.T) {
+	published, err := os.ReadFile(filepath.Join("..", "..", "plugins", "python-ast", "extractor.py"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(published) != string(pythonExtractor) {
+		t.Fatal("embedded and published Python extractors differ")
+	}
+}

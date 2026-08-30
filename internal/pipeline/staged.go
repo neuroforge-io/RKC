@@ -488,7 +488,8 @@ func (state *stagedScanState) runPythonSyntax(ctx context.Context) (scheduler.Re
 	legacy := make([]plugin.FileRef, 0, len(files))
 	for _, file := range files {
 		legacy = append(legacy, plugin.FileRef{
-			ID: file.ArtifactID, Path: file.Path, Language: file.Language, SHA256: file.SHA256,
+			ID: file.ArtifactID, Path: file.Path, Language: file.Language,
+			SHA256: file.SHA256, SizeBytes: file.SizeBytes,
 		})
 	}
 	fragment, runErr := plugin.RunPython(ctx, plugin.Request{

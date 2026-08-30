@@ -675,8 +675,10 @@ Repositories are treated as hostile input. The reference build avoids project
 code execution and redacts likely secrets from normalized exports by default.
 The only executable Python adapter is the digest-pinned built-in worker. On
 Linux it runs under hard cgroup limits with a cleared environment, network-I/O
-syscalls denied, one task, and whole-unit cancellation; it still runs as the
-invoking user and does not claim a mount/filesystem namespace. Third-party
+syscalls denied, one task, and whole-unit cancellation. Its host and worker both
+verify repository confinement, regular-file identity, exact size, and SHA-256
+for every inventoried input before parsing. It still runs as the invoking user
+and does not claim a mount/filesystem namespace. Third-party
 Python/native workers are disabled. Do not expose the local server as a
 multi-tenant internet service; full worker isolation remains a production gate.
 
