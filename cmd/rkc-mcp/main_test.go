@@ -217,6 +217,9 @@ func TestLoadMCPDatasetRejectsUnavailableSelectorsWithoutServing(t *testing.T) {
 	}
 
 	root := t.TempDir()
+	if err := os.Chmod(root, 0o700); err != nil {
+		t.Fatal(err)
+	}
 	missingDatabase := filepath.Join(root, "missing.sqlite")
 	if _, err := loadMCPDataset(ctx, ".", missingDatabase, "snapshot-mcp", "", false); err == nil ||
 		!errors.Is(err, sqlitestore.ErrOpenFailed) {
