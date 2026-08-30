@@ -114,6 +114,35 @@ func TestBuildIsDeterministicAndPreservesBoostedFieldTraces(t *testing.T) {
 	}
 }
 
+func TestBuildDeduplicatesDocumentIDsConsistently(t *testing.T) {
+	t.Parallel()
+
+	winner := Document{ID: "shared", ObjectType: "artifact", Title: "winner", Body: "current term"}
+	index := Build([]Document{
+		{ID: "shared", ObjectType: "node", Title: "superseded", Body: "stale term"},
+		winner,
+	})
+	want := Build([]Document{winner})
+
+	gotJSON, err := json.Marshal(index)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantJSON, err := json.Marshal(want)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(gotJSON) != string(wantJSON) {
+		t.Fatalf("duplicate-ID index is inconsistent:\n got %s\nwant %s", gotJSON, wantJSON)
+	}
+	if index.DocumentCount != len(index.Documents) || index.DocumentCount != len(index.DocumentLength) {
+		t.Fatalf("document accounting count=%d documents=%d lengths=%d", index.DocumentCount, len(index.Documents), len(index.DocumentLength))
+	}
+	if len(index.Postings["stale"]) != 0 || len(index.Postings["current"]) != 1 {
+		t.Fatalf("duplicate-ID postings = %+v", index.Postings)
+	}
+}
+
 func TestSearchRanksExactMatchesAndReturnsDeterministicReasons(t *testing.T) {
 	t.Parallel()
 

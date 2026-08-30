@@ -149,12 +149,23 @@ func safePreallocationCapacity(lengths ...int) int {
 }
 
 func Build(documents []Document) *Index {
+	documentsByID := make(map[string]Document, len(documents))
+	for _, document := range documents {
+		documentsByID[document.ID] = document
+	}
+	documentIDs := make([]string, 0, len(documentsByID))
+	for id := range documentsByID {
+		documentIDs = append(documentIDs, id)
+	}
+	sort.Strings(documentIDs)
+
 	index := &Index{
 		Version: IndexVersion, Documents: map[string]Document{}, Postings: map[string][]Posting{},
-		DocumentLength: map[string]int{}, DocumentCount: len(documents),
+		DocumentLength: map[string]int{}, DocumentCount: len(documentIDs),
 	}
 	var totalLength int
-	for _, document := range documents {
+	for _, id := range documentIDs {
+		document := documentsByID[id]
 		built := buildDocument(document)
 		index.Documents[document.ID] = document
 		index.DocumentLength[document.ID] = built.length
@@ -170,8 +181,8 @@ func Build(documents []Document) *Index {
 			})
 		}
 	}
-	if len(documents) > 0 {
-		index.AverageLength = float64(totalLength) / float64(len(documents))
+	if index.DocumentCount > 0 {
+		index.AverageLength = float64(totalLength) / float64(index.DocumentCount)
 	}
 	for term := range index.Postings {
 		sort.Slice(index.Postings[term], func(i, j int) bool { return index.Postings[term][i].DocumentID < index.Postings[term][j].DocumentID })
