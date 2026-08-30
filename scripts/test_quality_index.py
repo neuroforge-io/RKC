@@ -41,6 +41,9 @@ class QualityIndexTests(unittest.TestCase):
         self.assertTrue(index._is_test_path("src/api_test.go"))
         self.assertFalse(index._is_test_path("src/api.go"))
         self.assertTrue(index._is_excluded("dist/file.go", None))
+        self.assertTrue(index._is_excluded(".coverage", None))
+        self.assertTrue(index._is_excluded("server.test", None))
+        self.assertTrue(index._is_excluded("coverage.out", None))
         self.assertTrue(index._is_excluded("reports/index.json", "reports"))
         self.assertFalse(index._is_excluded("src/main.go", "reports"))
         self.assertEqual(index._ratio(1, 2), 50.0)
@@ -577,6 +580,9 @@ class QualityIndexTests(unittest.TestCase):
             index._parse_git_changes("R100\0old.go\0")
         identity = index._git_identity(self.root)
         self.assertEqual(identity["status"], "unavailable")
+        self.assertEqual(
+            index._git_tracked_paths(self.root, identity)["status"], "unavailable"
+        )
 
         self.run_git("init", "-q", "-b", "main")
         self.run_git("config", "user.email", "rkc-quality@example.invalid")
@@ -597,12 +603,14 @@ class QualityIndexTests(unittest.TestCase):
         ).stdout.strip()
         root_delta = index._git_changes(self.root, empty_tree, identity)
         self.assertEqual(root_delta["status"], "available")
-        self.assertEqual(root_delta["scope"], f"{empty_tree}..HEAD")
+        self.assertEqual(root_delta["scope"], f"{empty_tree}..{root_commit}")
         self.assertEqual(
             root_delta["items"], [{"status": "A", "path": "src/main.go"}]
         )
         root_index = index.build_index(self.root, base=empty_tree)
         self.assertEqual(root_index["deltas"], root_delta)
+        self.assertEqual(root_index["git_inventory"]["paths"], ["src/main.go"])
+        self.assertEqual(root_index["summary"]["tracked_admitted_files"], 1)
         self.assertTrue(root_index["gaps"])
         self.assertTrue(
             all(gap["priority"] == "high" for gap in root_index["gaps"])
@@ -615,11 +623,12 @@ class QualityIndexTests(unittest.TestCase):
         self.assertEqual([item["path"] for item in delta["items"]], ["new.py", "src/main.go"])
         self.run_git("add", "new.py", "src/main.go")
         self.run_git("commit", "-q", "-m", "second")
-        committed_delta = index._git_changes(
-            self.root, root_commit, index._git_identity(self.root)
-        )
+        second_identity = index._git_identity(self.root)
+        committed_delta = index._git_changes(self.root, root_commit, second_identity)
         self.assertEqual(committed_delta["status"], "available")
-        self.assertEqual(committed_delta["scope"], f"{root_commit}..HEAD")
+        self.assertEqual(
+            committed_delta["scope"], f"{root_commit}..{second_identity['commit']}"
+        )
         self.assertEqual(
             committed_delta["items"],
             [
@@ -701,6 +710,11 @@ class QualityIndexTests(unittest.TestCase):
         self.assertEqual(built["summary"]["profiling_file_percent"], 100.0)
         self.assertEqual(built["summary"]["profile_uncovered_units"], 0)
         self.assertEqual(built["summary"]["profiling_zero_executable_files"], 1)
+        self.assertEqual(built["summary"]["inventory_accounting_percent"], 100.0)
+        self.assertEqual(
+            built["summary"]["inventory_accounted_files"],
+            built["summary"]["admitted_regular_files"],
+        )
         self.assertEqual(
             next(record for record in built["files"] if record["path"] == "src/types.go")[
                 "profile"
@@ -717,10 +731,14 @@ class QualityIndexTests(unittest.TestCase):
         markdown = index.render_markdown(built)
         self.assertIn("RKC quality index", markdown)
         self.assertIn("MIT License", markdown)
+        self.assertIn("requested, but are not additional", markdown)
+        self.assertNotIn("with attribution", markdown)
+        self.assertIn("Production source files in evidence denominator", markdown)
+        self.assertIn("Inventory accounting | 100.0%", markdown)
         json_path, markdown_path = index.write_index(built, output)
         self.assertTrue(json_path.is_file())
         self.assertTrue(markdown_path.is_file())
-        self.assertEqual(json.loads(json_path.read_text(encoding="utf-8"))["schema_version"], "1.0.0")
+        self.assertEqual(json.loads(json_path.read_text(encoding="utf-8"))["schema_version"], "1.1.0")
         self.assertEqual(index.main(["--root", str(self.root), "--output", str(output)]), 0)
         with mock.patch("sys.stderr", new=io.StringIO()) as errors:
             self.assertEqual(index.main(["--root", str(self.root / "missing")]), 1)
@@ -734,6 +752,52 @@ class QualityIndexTests(unittest.TestCase):
             parent_link.symlink_to(self.root, target_is_directory=True)
             with self.assertRaisesRegex(index.QualityIndexError, "real directory ancestors"):
                 index.write_index(built, parent_link / "nested-output")
+
+    def test_complete_inventory_separates_quality_scope(self) -> None:
+        self.write("pkg/main.go", "package pkg\nfunc Main() {}\n")
+        self.write("pkg/main_test.go", "package pkg\nfunc TestMain() {}\n")
+        self.write("docs/guide.md", "`pkg/main.go` is documented.\n")
+        for relative in (
+            "Makefile",
+            ".github/workflows/ci.yml",
+            "schema/config.json",
+            "migrations/001.sql",
+        ):
+            self.write(relative)
+
+        built = index.build_index(self.root)
+        source = {record["path"] for record in built["files"]}
+        documentation = {record["path"] for record in built["documentation"]}
+        other = {record["path"] for record in built["other_files"]}
+        self.assertFalse(source & documentation or source & other or documentation & other)
+        self.assertEqual(
+            source | documentation | other,
+            {
+                "pkg/main.go",
+                "pkg/main_test.go",
+                "docs/guide.md",
+                "Makefile",
+                ".github/workflows/ci.yml",
+                "schema/config.json",
+                "migrations/001.sql",
+            },
+        )
+        self.assertEqual(built["summary"]["admitted_regular_files"], 7)
+        self.assertEqual(built["summary"]["analyzable_source_files"], 2)
+        self.assertEqual(built["summary"]["production_source_files"], 1)
+        self.assertEqual(built["summary"]["test_source_files"], 1)
+        self.assertEqual(built["summary"]["documentation_files"], 1)
+        self.assertEqual(built["summary"]["other_regular_files"], 4)
+        self.assertEqual(built["summary"]["inventory_accounting_percent"], 100.0)
+        self.assertEqual(built["summary"]["test_evidence_percent"], 100.0)
+        self.assertEqual(built["summary"]["documentation_evidence_percent"], 100.0)
+        self.assertTrue(
+            all(
+                record["analysis"]["status"] == "not-applicable"
+                and record["git_status"] == "unavailable"
+                for record in built["other_files"]
+            )
+        )
 
     def test_main_can_fail_closed_when_strict_gap_mode_is_requested(self) -> None:
         self.write("src/main.go", "package src\nfunc Main() {}\n")

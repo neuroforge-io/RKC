@@ -45,8 +45,10 @@ every Python test discovery run, while the guarded CI workflow supplies the
 runtime evidence for operations that create release or temporary artifacts.
 
 RKC-owned documentation and workflows are MIT-licensed by NeuroForgeIO and RKC
-contributors. Retain [`NOTICE`](../NOTICE) and review
-[`THIRD_PARTY_NOTICES.md`](../THIRD_PARTY_NOTICES.md) when redistributing.
+contributors. NeuroForgeIO requests that redistributions retain
+[`NOTICE`](../NOTICE); review
+[`THIRD_PARTY_NOTICES.md`](../THIRD_PARTY_NOTICES.md) for applicable third-party
+obligations.
 
 ---
 _RKC is stewarded by **NeuroForgeIO** and released under the **MIT License**.

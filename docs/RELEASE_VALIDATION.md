@@ -29,8 +29,8 @@ cryptographic build provenance remains a planned release gate.
 | coverage gate | `make coverage` | all Go tests plus Python line/branch tests, inventory, and policy floors |
 | contracts | `make contracts` | schemas, examples, OpenAPI parity, WIT, SQLite |
 | docs | `make docs-check` | local links and code fences |
-| quality index | `make quality-index` | deterministic source/test/documentation/profile/delta inventory; triage evidence, not a replacement for measured coverage gates |
-| licenses | `make licenses` | MIT attribution and third-party notice boundaries using the version-checked validation interpreter |
+| quality index | `make quality-index` | deterministic all-regular-file accounting plus explicit source/test/documentation/profile/delta denominators; triage evidence, not a replacement for measured coverage gates |
+| licenses | `make licenses` | MIT notice, requested-credit, and third-party obligation boundaries using the version-checked validation interpreter |
 | model lock | `make model-lock-check` | optional runtime/model identities, hashes, licenses, and null-default policy |
 | build | `make build` | CGO-disabled `rkc` and `rkc-mcp` |
 | plugins | `make plugins` | manifest and lock digest verification |

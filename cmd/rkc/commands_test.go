@@ -23,7 +23,7 @@ import (
 func TestRunDispatchAndUsage(t *testing.T) {
 	for _, args := range [][]string{nil, {"help"}, {"--help"}, {"-h"}} {
 		output, err := captureStdout(t, func() error { return run(args) })
-		if err != nil || !strings.Contains(output, "NeuroForgeIO") || !strings.Contains(output, "Repository Knowledge Compiler") || !strings.Contains(output, "MIT") {
+		if err != nil || !strings.Contains(output, "NeuroForgeIO") || !strings.Contains(output, "Repository Knowledge Compiler") || !strings.Contains(output, "MIT") || !strings.Contains(output, "Copies or substantial portions must retain") || !strings.Contains(output, "requested; neither is an additional license condition") || strings.Contains(output, "with attribution") {
 			t.Fatalf("run(%v): output=%q err=%v", args, output, err)
 		}
 	}

@@ -103,7 +103,9 @@ func printUsage() {
 
 func printUsageTo(output io.Writer) error {
 	_, err := fmt.Fprint(output, `NeuroForgeIO · Repository Knowledge Compiler
-MIT-licensed open source with attribution; see LICENSE and NOTICE.
+MIT-licensed open source. Copies or substantial portions must retain the
+copyright and permission notice. NeuroForgeIO credit and NOTICE retention are
+requested; neither is an additional license condition.
 
 Usage:
   rkc <command> [options]

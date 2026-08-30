@@ -39,6 +39,53 @@ _RKC is stewarded by **NeuroForgeIO** and released under the **MIT License**.
 Redistributions must retain the copyright and permission notices required by
 that license. Attribution to NeuroForgeIO is requested, but is not an additional
 license condition._"""
+ATTRIBUTION_LANGUAGE_FILES = (
+    Path("NOTICE"),
+    Path("cmd/rkc/main.go"),
+    Path("scripts/package-complete.py"),
+    Path("scripts/quality_index.py"),
+)
+AMBIGUOUS_ATTRIBUTION_PATTERNS = (
+    re.compile(
+        r"\bMIT(?:[- ]licensed(?:\s+open source|\s+work)?| License)?"
+        r"\s+with(?:\s+[a-z-]+){0,3}\s+attribution\b",
+        re.IGNORECASE,
+    ),
+    # Uppercase NOTICE refers to the first-party notice file; ordinary MIT
+    # "permission notice" language is deliberately not matched.
+    re.compile(r"(?i:\bretain\b)[^.!?\n]{0,120}\bNOTICE\b"),
+)
+FIRST_PARTY_ATTRIBUTION_PATTERNS = (
+    re.compile(
+        r"\b(?:credit(?:ed|ing)?|attribut(?:e|ed|ing|ion)|"
+        r"acknowledg(?:e|ed|ing|ement)|display(?:ed|ing)?|"
+        r"nam(?:e|ed|ing)|mention(?:ed|ing)?)\b[^.!?\n]{0,160}?"
+        r"\b(?:NeuroForgeIO|RKC contributors?)\b",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"\b(?:NeuroForgeIO|RKC contributors?)\b[^.!?\n]{0,160}?"
+        r"\b(?:credit(?:ed|ing)?|attribut(?:e|ed|ing|ion)|"
+        r"acknowledg(?:e|ed|ing|ement)|display(?:ed|ing)?|"
+        r"nam(?:e|ed|ing)|mention(?:ed|ing)?)\b",
+        re.IGNORECASE,
+    ),
+)
+SAFE_ATTRIBUTION_QUALIFIER = re.compile(
+    r"\brequest(?:s|ed|ing)?\b|"
+    r"\b(?:optional|voluntary|appreciated|discretionary)\b|"
+    r"\b(?:not|never)\b[^.!?\n]{0,80}"
+    r"\b(?:required|mandatory|obligatory|compulsory|condition|restriction|"
+    r"requirement|obligation|necessary|have\s+to|need\s+to)\b|"
+    r"\bno\b[^.!?\n]{0,80}"
+    r"\b(?:must|shall|required|requirement|condition|restriction|obligation)\b|"
+    r"\bwithout\b[^.!?\n]{0,80}\b(?:requiring|mandating|obliging)\b",
+    re.IGNORECASE,
+)
+ATTRIBUTION_CLAUSE_BOUNDARY = re.compile(
+    r";|,\s*(?:but|while|however|yet)\b|\b(?:but|while|however|yet)\b",
+    re.IGNORECASE,
+)
 PROHIBITED_TRACKED_SUFFIXES = frozenset(
     {
         ".a",
@@ -300,6 +347,96 @@ def validate_markdown_attribution() -> None:
         failures.append("no first-party Markdown files found")
     record(
         "first-party Markdown attribution",
+        not failures,
+        "; ".join(failures[:20]),
+    )
+
+
+def validate_attribution_language() -> None:
+    """Reject wording that makes requested first-party credit sound mandatory."""
+    failures: list[str] = []
+    relative_paths = set(ATTRIBUTION_LANGUAGE_FILES)
+    relative_paths.update(
+        path.relative_to(ROOT)
+        for path in ROOT.rglob("*.md")
+        if markdown_attribution_required(path.relative_to(ROOT))
+    )
+    for relative in sorted(relative_paths):
+        path = ROOT / relative
+        try:
+            info = os.lstat(path)
+            if stat.S_ISLNK(info.st_mode) or not stat.S_ISREG(info.st_mode):
+                failures.append(f"{relative}: must be a regular file")
+                continue
+            if info.st_size > 8 * 1024 * 1024:
+                failures.append(f"{relative}: exceeds 8388608 bytes")
+                continue
+            value = path.read_text(encoding="utf-8")
+        except (FileNotFoundError, OSError, UnicodeDecodeError) as exc:
+            failures.append(f"{relative}: cannot read UTF-8 text: {exc}")
+            continue
+        rejected = False
+        patterns = tuple(
+            (pattern, value) for pattern in AMBIGUOUS_ATTRIBUTION_PATTERNS
+        )
+        if relative.suffix == ".md" or relative in {
+            Path("NOTICE"),
+            Path("cmd/rkc/main.go"),
+        }:
+            prose = value
+            if relative.suffix == ".md":
+                prose = re.sub(
+                    r"(?m)^[ \t]{0,3}#{1,6}[^\r\n]*",
+                    lambda heading: " " * len(heading.group(0)),
+                    prose,
+                )
+            patterns += tuple(
+                (pattern, prose) for pattern in FIRST_PARTY_ATTRIBUTION_PATTERNS
+            )
+        for pattern, scan_value in patterns:
+            for match in pattern.finditer(scan_value):
+                sentence_start = max(
+                    scan_value.rfind(".", 0, match.start()),
+                    scan_value.rfind("!", 0, match.start()),
+                    scan_value.rfind("?", 0, match.start()),
+                )
+                sentence_ends = tuple(
+                    position
+                    for position in (
+                        scan_value.find(".", match.end()),
+                        scan_value.find("!", match.end()),
+                        scan_value.find("?", match.end()),
+                    )
+                    if position >= 0
+                )
+                sentence_end = (
+                    min(sentence_ends) + 1 if sentence_ends else len(scan_value)
+                )
+                sentence = scan_value[sentence_start + 1 : sentence_end]
+                match_start = match.start() - sentence_start - 1
+                match_end = match.end() - sentence_start - 1
+                clause_start = 0
+                clause_end = len(sentence)
+                for boundary in ATTRIBUTION_CLAUSE_BOUNDARY.finditer(sentence):
+                    if boundary.end() <= match_start:
+                        clause_start = boundary.end()
+                    elif boundary.start() >= match_end:
+                        clause_end = boundary.start()
+                        break
+                if SAFE_ATTRIBUTION_QUALIFIER.search(
+                    sentence[clause_start:clause_end]
+                ):
+                    continue
+                line = value.count("\n", 0, match.start()) + 1
+                failures.append(
+                    f"{relative}:{line}: mandatory-sounding first-party attribution"
+                )
+                rejected = True
+                break
+            if rejected:
+                break
+    record(
+        "first-party attribution semantics",
         not failures,
         "; ".join(failures[:20]),
     )
@@ -880,6 +1017,7 @@ def main() -> int:
     """Run all checks and print one machine-readable report."""
     validate_root_documents()
     validate_markdown_attribution()
+    validate_attribution_language()
     validate_declared_metadata()
     validate_dependency_boundary()
     validate_tracked_artifacts()

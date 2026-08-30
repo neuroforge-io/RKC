@@ -4,7 +4,9 @@
 **Working abbreviation:** RKC  
 **Document status:** Build specification  
 **Reference schema version:** `0.1.0`  
-**Target core license:** MIT with attribution
+**Target core license:** MIT; copyright and permission notice retention is
+required by that license, while NeuroForgeIO credit is requested and is not an
+additional license condition
 **Baseline date:** 2026-07-21
 
 ---
@@ -2833,8 +2835,10 @@ RKC must not imply that generated exports change the source repository's license
 
 Recommended:
 
-- MIT for core, CLI, daemon, UI, schemas, official SDKs, and official plugins,
-  with attribution to NeuroForgeIO and RKC contributors;
+- MIT for core, CLI, daemon, UI, schemas, official SDKs, and official plugins;
+  the license-required copyright and permission notice is retained, while
+  NeuroForgeIO and RKC contributor credit is requested and is not an additional
+  license condition;
 - DCO for contributions;
 - separate model and third-party plugin licenses;
 - `THIRD_PARTY_NOTICES` generated for distributions;
@@ -4196,7 +4200,7 @@ Create ADRs for:
 10. no mandatory graph database;
 11. structured claim output;
 12. content-addressed object storage;
-13. MIT attribution and DCO;
+13. MIT license-notice clarity, requested credit, and DCO;
 14. telemetry privacy defaults;
 15. NotebookLM limits as configurable profiles.
 

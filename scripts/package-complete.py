@@ -1123,8 +1123,11 @@ make build
 
 ## Licensing
 
-RKC-owned work is MIT-licensed with attribution; see `LICENSE`, `NOTICE`, and
-`source/docs/BRANDING_AND_ATTRIBUTION.md`.
+RKC-owned work is MIT-licensed; see `LICENSE`, `NOTICE`, and
+`source/docs/BRANDING_AND_ATTRIBUTION.md`. The license requires copies or
+substantial portions to retain its copyright and permission notice.
+NeuroForgeIO credit and NOTICE retention are requested, but are not additional
+license conditions.
 Linked third-party components retain their original terms; see
 `THIRD_PARTY_NOTICES.md` and
 `LICENSES/`. The exact audited Go module graph is retained at
@@ -1138,8 +1141,7 @@ is promoted until its grounded quality and resource gates pass, and team
 tenancy, third-party worker isolation, release signatures, and provenance
 remain separately governed scopes. `SBOM.spdx.json` is the complete
 distribution SBOM for this archive. RKC is developed by NeuroForgeIO and RKC
-contributors under the MIT License; retain `LICENSE` and `NOTICE` when
-redistributing.
+contributors under the MIT License.
 """
     with (stage / "README-FIRST.md").open("x", encoding="utf-8") as handle:
         handle.write(content)

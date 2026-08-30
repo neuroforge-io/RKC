@@ -1,8 +1,11 @@
 # Contributing
 
-RKC accepts contributions under the MIT License with attribution, using a
-Developer Certificate of Origin sign-off. The project values reproducible
-facts, explicit uncertainty, and small interfaces over clever coupling.
+RKC accepts contributions under the MIT License using a Developer Certificate
+of Origin sign-off. The license requires retention of its copyright and
+permission notice in copies or substantial portions. NeuroForgeIO credit is
+requested, but is not an additional license condition. The project values
+reproducible facts, explicit uncertainty, and small interfaces over clever
+coupling.
 
 ## Before opening a change
 

@@ -384,6 +384,85 @@ class LicenseValidationTests(unittest.TestCase):
         self.assertFalse(LICENSES.CHECKS[-1]["ok"])
         self.assertIn("cannot read UTF-8 text", LICENSES.CHECKS[-1]["detail"])
 
+    def test_attribution_language_rejects_extra_mandatory_credit(self) -> None:
+        surface = Path("surface.md")
+        with mock.patch.object(
+            LICENSES, "ATTRIBUTION_LANGUAGE_FILES", (surface,)
+        ):
+            for wording in (
+                "MIT requires retention of its copyright and permission notice. "
+                "NeuroForgeIO credit is requested, not an additional condition.\n",
+                "NeuroForgeIO requests that redistributions retain NOTICE and "
+                "credit RKC contributors.\n",
+                "NOTICE retention and NeuroForgeIO credit are requested; neither "
+                "is a license condition.\n",
+                "Users are not required to credit NeuroForgeIO.\n",
+                "No user must credit NeuroForgeIO.\n",
+                "RKC is MIT-licensed with optional attribution.\n",
+                "Attribution to NeuroForgeIO is voluntary.\n",
+                "Users do not have to credit NeuroForgeIO.\n",
+                "Users do not need to credit NeuroForgeIO.\n",
+                "Users are not required to retain NOTICE.\n",
+                "No user must retain NOTICE.\n",
+                "RKC is MIT-licensed with attribution, which is not required.\n",
+                "Crediting NeuroForgeIO is not necessary.\n",
+                "Acknowledging NeuroForgeIO is entirely discretionary.\n",
+            ):
+                self.write(str(surface), wording)
+                LICENSES.validate_attribution_language()
+                self.assertTrue(LICENSES.CHECKS[-1]["ok"], wording)
+
+            for wording in (
+                "MIT-licensed open source with attribution.\n",
+                "RKC is MIT-licensed with simple attribution.\n",
+                "Retain NOTICE when redistributing.\n",
+                "Retain NOTICE and credit NeuroForgeIO in redistributions.\n",
+                "Users must provide attribution to NeuroForgeIO.\n",
+                "Attribution to NeuroForgeIO is mandatory.\n",
+                "NeuroForgeIO credit is required.\n",
+                "The MIT license requires NeuroForgeIO credit.\n",
+                "Commercial use is permitted provided that users credit "
+                "NeuroForgeIO.\n",
+                "Redistributors need to credit NeuroForgeIO.\n",
+                "Redistributors have to credit NeuroForgeIO.\n",
+                "Attribution to NeuroForgeIO is obligatory.\n",
+                "Users are obliged to credit NeuroForgeIO.\n",
+                "Users are obligated to credit NeuroForgeIO.\n",
+                "Commercial use requires crediting NeuroForgeIO.\n",
+                "Users must acknowledge NeuroForgeIO.\n",
+                "Attribution to NeuroForgeIO is compulsory.\n",
+                "NeuroForgeIO credit is a prerequisite.\n",
+                "Use is prohibited unless NeuroForgeIO is credited.\n",
+                "Commercial use is allowed only if you credit NeuroForgeIO.\n",
+                "Commercial products must display the NeuroForgeIO name.\n",
+                "Redistribution is permitted only after naming NeuroForgeIO.\n",
+                "Users are obliged to mention NeuroForgeIO.\n",
+                "NeuroForgeIO credit is requested. Retain NOTICE and credit "
+                "NeuroForgeIO.\n",
+                "Attribution to NeuroForgeIO is requested, but users must credit "
+                "NeuroForgeIO.\n",
+            ):
+                self.write(str(surface), wording)
+                LICENSES.validate_attribution_language()
+                self.assertFalse(LICENSES.CHECKS[-1]["ok"], wording)
+
+    def test_attribution_language_scans_first_party_markdown_only(self) -> None:
+        with mock.patch.object(LICENSES, "ATTRIBUTION_LANGUAGE_FILES", ()):
+            self.write(
+                "THIRD_PARTY_NOTICES.md",
+                "Upstream users must retain NOTICE and provide attribution.\n",
+            )
+            LICENSES.validate_attribution_language()
+            self.assertTrue(LICENSES.CHECKS[-1]["ok"])
+
+            self.write(
+                "docs/public.md",
+                "RKC is MIT-licensed with simple attribution.\n",
+            )
+            LICENSES.validate_attribution_language()
+            self.assertFalse(LICENSES.CHECKS[-1]["ok"])
+            self.assertIn("docs/public.md:1", LICENSES.CHECKS[-1]["detail"])
+
     def test_declared_metadata_happy_and_invalid_paths(self) -> None:
         self.write(
             "api/openapi.yaml",
@@ -847,6 +926,8 @@ class LicenseValidationTests(unittest.TestCase):
         ), mock.patch.object(
             LICENSES, "validate_markdown_attribution", good_check
         ), mock.patch.object(
+            LICENSES, "validate_attribution_language", good_check
+        ), mock.patch.object(
             LICENSES, "validate_declared_metadata", good_check
         ), mock.patch.object(
             LICENSES, "validate_dependency_boundary", good_check
@@ -866,6 +947,8 @@ class LicenseValidationTests(unittest.TestCase):
             side_effect=lambda: LICENSES.record("fixture", False, "bad"),
         ), mock.patch.object(
             LICENSES, "validate_markdown_attribution"
+        ), mock.patch.object(
+            LICENSES, "validate_attribution_language"
         ), mock.patch.object(LICENSES, "validate_declared_metadata"), mock.patch.object(
             LICENSES, "validate_dependency_boundary"
         ), mock.patch.object(

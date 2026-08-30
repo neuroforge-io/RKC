@@ -24,7 +24,7 @@ from pathlib import Path
 from typing import Any, Mapping, Sequence
 
 
-SCRIPT_VERSION = "1.2.0"
+SCRIPT_VERSION = "1.3.0"
 PROJECT = "RKC"
 PUBLISHER = "NeuroForgeIO"
 LICENSE = "MIT"
@@ -74,6 +74,7 @@ EXCLUDED_COMPONENTS = frozenset(
         ".mypy_cache",
         ".ruff_cache",
         ".cache",
+        ".coverage",
         ".rkc",
         ".rkc-state",
         ".rkc-coverage",
@@ -84,6 +85,7 @@ EXCLUDED_COMPONENTS = frozenset(
         "htmlcov",
     }
 )
+EXCLUDED_FILE_NAMES = frozenset({"coverage.out", "coverage.xml"})
 GENERATED_MARKERS = (
     "code generated",
     "do not edit",
@@ -506,6 +508,8 @@ def _is_excluded(relative: str, output_relative: str | None) -> bool:
     parts = Path(relative).parts
     if any(part in EXCLUDED_COMPONENTS or part.startswith(".rkc-") for part in parts):
         return True
+    if Path(relative).name in EXCLUDED_FILE_NAMES or Path(relative).suffix == ".test":
+        return True
     if output_relative and (
         relative == output_relative or relative.startswith(output_relative + "/")
     ):
@@ -786,6 +790,29 @@ def _git_identity(root: Path) -> dict[str, Any]:
     }
 
 
+def _git_tracked_paths(
+    root: Path, identity: Mapping[str, Any]
+) -> dict[str, Any]:
+    """Return the exact tracked-path universe without requiring Git."""
+    if identity.get("status") != "available":
+        return {
+            "status": "unavailable",
+            "reason": identity.get("reason", "Git unavailable"),
+            "paths": [],
+        }
+    result = _run_git(root, ["ls-files", "--cached", "-z", "--", "."])
+    if result.returncode != 0:
+        return {
+            "status": "unavailable",
+            "reason": (result.stderr or "git ls-files failed").strip()[:240],
+            "paths": [],
+        }
+    return {
+        "status": "available",
+        "paths": sorted(path for path in result.stdout.split("\0") if path),
+    }
+
+
 def _parse_git_changes(text: str) -> list[dict[str, str]]:
     tokens = text.split("\0")
     changes: list[dict[str, str]] = []
@@ -816,8 +843,9 @@ def _git_changes(root: Path, base: str | None, identity: Mapping[str, Any]) -> d
     if identity.get("status") != "available":
         return {"status": "unavailable", "reason": identity.get("reason", "Git unavailable"), "items": []}
     if base:
-        arguments = ["diff", "--name-status", "-z", "--find-renames", base, "HEAD", "--"]
-        scope = f"{base}..HEAD"
+        end = str(identity["commit"])
+        arguments = ["diff", "--name-status", "-z", "--find-renames", base, end, "--"]
+        scope = f"{base}..{end}"
     else:
         arguments = ["diff", "--name-status", "-z", "--find-renames", "HEAD", "--"]
         scope = "working-tree"
@@ -1124,6 +1152,14 @@ def build_index(
     source_paths = sorted(relative for relative in stats if _language(Path(relative)))
     source_set = set(source_paths)
     documentation_paths = [relative for relative in stats if Path(relative).suffix.lower() in DOCUMENT_SUFFIXES]
+    other_paths = sorted(set(stats) - source_set - set(documentation_paths))
+    identity = _git_identity(root)
+    git_inventory = _git_tracked_paths(root, identity)
+    tracked_paths = set(git_inventory.get("paths", []))
+    for relative, record in stats.items():
+        record["git_status"] = (
+            "tracked" if relative in tracked_paths else "not-tracked"
+        ) if git_inventory["status"] == "available" else "unavailable"
     documentation = {relative: _text(root / relative).lower() for relative in documentation_paths}
     test_texts = {
         relative: _text(root / relative).lower()
@@ -1149,7 +1185,6 @@ def build_index(
         for relative in source_paths
         if Path(relative).suffix.lower() == ".go"
     }
-    identity = _git_identity(root)
     delta = _git_changes(root, base, identity)
     go_values: dict[str, dict[str, Any]] = {}
     python_values: dict[str, dict[str, Any]] = {}
@@ -1277,6 +1312,26 @@ def build_index(
     )
 
     applicable = [record for record in records if not record["generated"] and not record["is_test"]]
+    generated_records = [record for record in records if record["generated"]]
+    test_records = [
+        record for record in records if record["is_test"] and not record["generated"]
+    ]
+    other_records = []
+    for relative in other_paths:
+        record = dict(stats[relative])
+        record.update(
+            {
+                "suffix": Path(relative).suffix.lower(),
+                "analysis": {
+                    "status": "not-applicable",
+                    "reason": "no configured source or documentation analyzer",
+                },
+            }
+        )
+        other_records.append(record)
+    inventory_accounted = len(records) + len(documentation_paths) + len(other_records)
+    if inventory_accounted != len(stats):
+        raise QualityIndexError("regular-file inventory categories overlap or are incomplete")
     tested = sum(record["tests"]["status"] == "associated" for record in applicable)
     documented = sum(record["documentation"]["status"] == "evidence" for record in applicable)
     go_documentation_applicable = [
@@ -1300,8 +1355,23 @@ def build_index(
     profile_units = sum(int(record["profile"].get("units", 0)) for record in profile_applicable)
     profile_covered = sum(int(record["profile"].get("covered_units", 0)) for record in profile_applicable)
     summary = {
+        "admitted_regular_files": len(stats),
+        "inventory_accounted_files": inventory_accounted,
+        "inventory_accounting_percent": _ratio(inventory_accounted, len(stats)),
+        "analyzable_source_files": len(records),
+        "production_source_files": len(applicable),
+        "test_source_files": len(test_records),
+        "documentation_files": len(documentation_paths),
+        "other_regular_files": len(other_records),
+        "tracked_files": len(tracked_paths) if git_inventory["status"] == "available" else None,
+        "tracked_admitted_files": (
+            len(set(stats) & tracked_paths)
+            if git_inventory["status"] == "available"
+            else None
+        ),
+        # Compatibility alias retained through the additive 1.1 schema.
         "source_files": len(applicable),
-        "generated_source_files": sum(record["generated"] for record in records),
+        "generated_source_files": len(generated_records),
         "test_evidence_files": tested,
         "documentation_evidence_files": documented,
         "profiling_applicable_files": len(profile_applicable),
@@ -1333,7 +1403,7 @@ def build_index(
         "open_gaps": len(gaps),
     }
     return {
-        "schema_version": "1.0.0",
+        "schema_version": "1.1.0",
         "generated_by": {"tool": "rkc quality-index", "version": SCRIPT_VERSION},
         "project": PROJECT,
         "publisher": PUBLISHER,
@@ -1351,10 +1421,29 @@ def build_index(
                 "Go parser AST attachment of non-empty leading comments to exported "
                 "production declarations; package/file documentation evidence remains separate"
             ),
+            "denominators": {
+                "file_test_and_documentation_percent": "non-generated, non-test analyzable source files",
+                "profiling_file_percent": "production Go/Python files with executable profile applicability on the current platform",
+                "inventory_accounting_percent": "all admitted regular files partitioned into analyzable source, documentation, or other files",
+            },
         },
         "summary": summary,
         "files": records,
         "documentation": [stats[path] for path in documentation_paths],
+        "other_files": other_records,
+        "git_inventory": {
+            **git_inventory,
+            "tracked_admitted_paths": (
+                sorted(set(stats) & tracked_paths)
+                if git_inventory["status"] == "available"
+                else []
+            ),
+            "tracked_outside_admitted_paths": (
+                sorted(tracked_paths - set(stats))
+                if git_inventory["status"] == "available"
+                else []
+            ),
+        },
         "exclusions": exclusions,
         "deltas": delta,
         "profile_errors": sorted(profile_errors),
@@ -1424,7 +1513,14 @@ def render_markdown(index: Mapping[str, Any]) -> str:
         "",
         "| Measure | Result |",
         "| --- | ---: |",
-        f"| Source files | {summary['source_files']} |",
+        f"| Admitted regular files | {summary['admitted_regular_files']} |",
+        f"| Inventory accounting | {summary['inventory_accounting_percent'] if summary['inventory_accounting_percent'] is not None else 'n/a'}% ({summary['inventory_accounted_files']}/{summary['admitted_regular_files']}) |",
+        f"| Analyzable source files | {summary['analyzable_source_files']} |",
+        f"| Production source files in evidence denominator | {summary['production_source_files']} |",
+        f"| Test source files | {summary['test_source_files']} |",
+        f"| Generated source files | {summary['generated_source_files']} |",
+        f"| Documentation files | {summary['documentation_files']} |",
+        f"| Files outside current analyzers | {summary['other_regular_files']} |",
         f"| Test evidence | {summary['test_evidence_percent'] if summary['test_evidence_percent'] is not None else 'n/a'}% |",
         f"| Documentation evidence | {summary['documentation_evidence_percent'] if summary['documentation_evidence_percent'] is not None else 'n/a'}% |",
         f"| Exported Go declarations documented | {go_documentation_text} |",
@@ -1470,6 +1566,15 @@ def render_markdown(index: Mapping[str, Any]) -> str:
             f"{record['go_exported_documentation']['status']} | "
             f"{record['profile']['status']} |"
         )
+    lines.extend(["", "## Files outside current analyzers", ""])
+    other_files = index.get("other_files", [])
+    if other_files:
+        lines.extend(
+            f"- `{record['path']}` — {record['analysis']['reason']}"
+            for record in other_files
+        )
+    else:
+        lines.append("- Every admitted regular file has a configured analyzer.")
     lines.extend(["", "## Changed paths", ""])
     changes = index["deltas"].get("items", [])
     if changes:
@@ -1481,9 +1586,9 @@ def render_markdown(index: Mapping[str, Any]) -> str:
             "",
             "## Reproducibility",
             "",
-            "The JSON file beside this document contains SHA-256, byte, and line metadata for every admitted source and documentation file. Re-run `make quality-index` after edits; pass `--base <ref>`, `--go-profile <path>`, `--go-report <path>`, or `--python-report <path>` for a bounded delta or profile view.",
+            "The JSON file beside this document contains SHA-256, byte, line, analyzer-applicability, and Git-tracking metadata for every admitted regular file. Re-run `make quality-index` after edits; pass `--base <ref>`, `--go-profile <path>`, `--go-report <path>`, or `--python-report <path>` for a bounded delta or profile view.",
             "",
-            f"RKC-owned code and this report are released under the [MIT License](../LICENSE); retain the license and credit **{PUBLISHER} / RKC contributors** in redistributed products.",
+            f"RKC-owned code and this report are released under the [MIT License](../LICENSE). The license requires copies or substantial portions to retain its copyright and permission notice. Crediting **{PUBLISHER} / RKC contributors** and retaining NOTICE are requested, but are not additional license conditions.",
             "",
         ]
     )

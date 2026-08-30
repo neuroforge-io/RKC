@@ -45,9 +45,11 @@ The governing rule is deliberately unromantic:
 - **Hostile-repository posture.** Normal scans do not execute repository code.
   Inputs, outputs, caches, journals, snapshots, and optional models have
   explicit containment and resource contracts.
-- **Portable and commercially usable.** RKC-owned code is MIT-licensed with
-  simple attribution, builds CGO-free binaries, and retains deterministic SPDX
-  evidence. Third-party components remain separately attributed.
+- **Portable and commercially usable.** RKC-owned code is MIT-licensed; copies
+  or substantial portions retain its copyright and permission notice, while
+  NeuroForgeIO credit is requested. RKC builds CGO-free binaries and retains
+  deterministic SPDX evidence. Third-party components remain separately
+  attributed.
 
 ## Implemented now
 
