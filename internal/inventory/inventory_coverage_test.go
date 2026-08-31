@@ -16,7 +16,29 @@ import (
 )
 
 func TestInventoryCoverageFileLimitsSpecialObjectsAndFileExclusions(t *testing.T) {
-	root := t.TempDir()
+	// Keep the fixture root short enough for the Unix-domain socket below even
+	// when the Go toolchain uses an isolated, nested temporary directory.
+	unixSocketFixture := false
+	switch runtime.GOOS {
+	case "aix", "darwin", "dragonfly", "freebsd", "linux", "netbsd", "openbsd", "solaris":
+		unixSocketFixture = true
+	}
+	temporaryRoot := ""
+	if unixSocketFixture {
+		// Filesystem Unix sockets have a small absolute-path ceiling. Use the
+		// standard short Unix temporary root rather than an arbitrary deep
+		// environment override so this security fixture cannot disappear.
+		temporaryRoot = "/tmp"
+	}
+	root, err := os.MkdirTemp(temporaryRoot, "rkc-inv-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := os.RemoveAll(root); err != nil {
+			t.Errorf("remove inventory fixture: %v", err)
+		}
+	})
 	payload := []byte("larger than the direct file limit")
 	largePath := filepath.Join(root, "large.txt")
 	mustWriteInventoryFile(t, largePath, payload)
@@ -31,8 +53,11 @@ func TestInventoryCoverageFileLimitsSpecialObjectsAndFileExclusions(t *testing.T
 	excludedPath := filepath.Join(root, "excluded.txt")
 	mustWriteInventoryFile(t, excludedPath, []byte("excluded"))
 	socketPath := filepath.Join(root, "special.sock")
-	listener, listenErr := net.Listen("unix", socketPath)
-	if listenErr == nil {
+	if unixSocketFixture {
+		listener, listenErr := net.Listen("unix", socketPath)
+		if listenErr != nil {
+			t.Fatalf("create Unix-socket fixture: %v", listenErr)
+		}
 		t.Cleanup(func() { _ = listener.Close() })
 	}
 
@@ -47,7 +72,7 @@ func TestInventoryCoverageFileLimitsSpecialObjectsAndFileExclusions(t *testing.T
 	if statuses["excluded.txt"] != "excluded" {
 		t.Fatalf("excluded file status = %q", statuses["excluded.txt"])
 	}
-	if listenErr == nil && statuses["special.sock"] != "excluded" {
+	if unixSocketFixture && statuses["special.sock"] != "excluded" {
 		t.Fatalf("special object status = %q", statuses["special.sock"])
 	}
 

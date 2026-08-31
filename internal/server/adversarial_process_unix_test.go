@@ -70,7 +70,18 @@ func TestWorkbenchUnixUserBusEndpointRequiresDirectOwnedSocket(t *testing.T) {
 		t.Fatal("missing runtime directory was accepted")
 	}
 
-	runtimeDirectory := t.TempDir()
+	// testing.TempDir includes the full test name. Under an isolated release
+	// GOTMPDIR that can exceed Unix sockaddr_un limits before the security
+	// assertions run, so allocate a short private directory explicitly.
+	runtimeDirectory, err := os.MkdirTemp("/tmp", "rkc-bus-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := os.RemoveAll(runtimeDirectory); err != nil {
+			t.Errorf("remove user-bus fixture: %v", err)
+		}
+	})
 	if err := os.Chmod(runtimeDirectory, 0o700); err != nil {
 		t.Fatal(err)
 	}
