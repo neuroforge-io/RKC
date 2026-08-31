@@ -43,8 +43,12 @@ var scipLanguageSpecs = []scipLanguageDescriptor{
 	// Document.position_encoding. Only digest-pinned, same-process generation
 	// may fill that producer invariant; inert external indexes remain strict.
 	{name: "python", tool: "scip-python", defaultArgs: []string{"index", "."}, generatedPositionEncoding: 2, generatedEncodingVersion: "0.6.6", note: "pyright-backed Python indexing"},
-	{name: "typescript", aliases: []string{"ts"}, tool: "scip-typescript", defaultArgs: []string{"index"}, note: "TypeScript and JavaScript indexing"},
-	{name: "javascript", aliases: []string{"js"}, tool: "scip-typescript", defaultArgs: []string{"index"}, note: "TypeScript and JavaScript indexing"},
+	// scip-typescript 0.4.0 likewise predates the document-level field. Its
+	// TypeScript compiler positions are JavaScript string offsets (UTF-16 code
+	// units), so the exact digest/version-authenticated producer may be sealed
+	// with encoding 2 under the same narrow compatibility contract.
+	{name: "typescript", aliases: []string{"ts"}, tool: "scip-typescript", defaultArgs: []string{"index"}, generatedPositionEncoding: 2, generatedEncodingVersion: "0.4.0", note: "TypeScript and JavaScript indexing"},
+	{name: "javascript", aliases: []string{"js"}, tool: "scip-typescript", defaultArgs: []string{"index"}, generatedPositionEncoding: 2, generatedEncodingVersion: "0.4.0", note: "TypeScript and JavaScript indexing"},
 	{name: "rust", tool: "rust-analyzer", defaultArgs: []string{"scip", "."}, note: "Rust indexing through rust-analyzer"},
 	{name: "c", aliases: []string{"c++", "cc", "cpp", "cuda"}, tool: "scip-clang", defaultArgs: []string{"--compdb-path=build/compile_commands.json"}, note: "C/C++/CUDA indexing; requires a compile database"},
 	{name: "java", aliases: []string{"kotlin", "scala"}, tool: "scip-java", defaultArgs: []string{}, note: "JVM indexing; follow the scip-java build workflow"},

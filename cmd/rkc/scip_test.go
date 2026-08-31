@@ -116,20 +116,62 @@ func validPythonSourceIndexWithoutPositionEncoding(source string) []byte {
 }
 
 func validPythonSourceIndexWithoutPositionEncodingFor(source, tool, version string) []byte {
+	return validSourceIndexWithoutPositionEncoding(
+		source, "main.py", "Python", tool, version,
+	)
+}
+
+func validSourceIndexWithoutPositionEncoding(source, path, language, tool, version string) []byte {
 	occurrence := scipMessage(
 		scipLegacyRange(1, 0, 0, 3),
 		scipFieldString(2, "scip-python python rkc-test 1.0 run()."),
 		scipFieldVarint(3, 1),
 	)
 	document := scipMessage(
-		scipFieldString(1, "main.py"),
+		scipFieldString(1, path),
 		scipFieldBytes(2, occurrence),
-		scipFieldString(4, "Python"),
+		scipFieldString(4, language),
 	)
 	return scipMessage(
 		scipFieldBytes(1, validSCIPMetadataFor(tool, version)),
 		scipFieldBytes(2, document),
 	)
+}
+
+func TestScipGenerateAuthenticatesLegacyScipTypeScriptPositionEncoding(t *testing.T) {
+	directory := t.TempDir()
+	repository := filepath.Join(directory, "repo")
+	if err := os.Mkdir(repository, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	source := "export const value = 1\n"
+	if err := os.WriteFile(filepath.Join(repository, "main.ts"), []byte(source), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	indexBytes := validSourceIndexWithoutPositionEncoding(
+		source, "main.ts", "TypeScript", "scip-typescript", "0.4.0",
+	)
+	tool := writeFakeIndexer(t, directory, "printf '"+hex.EncodeToString(indexBytes)+"' | xxd -r -p > index.scip\n")
+	lockPath := filepath.Join(directory, "indexers.lock.json")
+	if err := runScipPin([]string{
+		"--language", "typescript", "--tool", tool, "--version", "v0.4.0", "--lock", lockPath,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	out := filepath.Join(directory, "out")
+	if err := runScipGenerate(context.Background(), []string{
+		"--language", "typescript", "--tool", tool, "--lock", lockPath, "--out", out, repository,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	inputs, _, err := scipindex.PrepareInputs(context.Background(), []string{filepath.Join(out, "typescript.scip")})
+	if err != nil || len(inputs) != 1 || !inputs[0].CompilerAuthenticated() || inputs[0].SourceBinding == nil {
+		t.Fatalf("prepared adapted scip-typescript index = %+v, %v", inputs, err)
+	}
+	inspection, err := scipindex.Inspect(context.Background(), inputs[0])
+	if err != nil || inspection.Tool != "scip-typescript" || inspection.ToolVersion != "0.4.0" || inspection.Documents != 1 {
+		t.Fatalf("inspect adapted scip-typescript index = %+v, %v", inspection, err)
+	}
 }
 
 func validSourceIndex(source string, embedText bool) []byte {

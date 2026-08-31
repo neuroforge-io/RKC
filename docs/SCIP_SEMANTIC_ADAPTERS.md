@@ -188,12 +188,13 @@ The importer:
   repository truth, while top-level external symbol metadata remains external;
 - requires an explicit SCIP position encoding: 1 for UTF-8 bytes, 2 for UTF-16
   code units, or 3 for UTF-32 code points. Unspecified (0) and unknown values
-  fail closed rather than risking incorrect source spans. The sole compatibility
-  exception is same-process generation by a digest-pinned `scip-python` 0.6.6
-  producer: its older schema omits the field while its Pyright/TypeScript
-  implementation emits UTF-16 code-unit offsets, so RKC source-seals the output
-  with encoding 2 and then repeats strict validation. Bare imports, unpinned
-  generation, other producers, and unknown encodings never receive this repair;
+  fail closed rather than risking incorrect source spans. The only compatibility
+  exceptions are same-process generation by digest-pinned `scip-python` 0.6.6
+  and `scip-typescript` 0.4.0 producers. Their older schemas omit the field,
+  while their Pyright/TypeScript implementations emit UTF-16 code-unit offsets,
+  so RKC source-seals their output with encoding 2 and then repeats strict
+  validation. Bare imports, unpinned generation, other tool versions, other
+  producers, and unknown encodings never receive this repair;
 - rejects symbolic-link index inputs and source path components;
 - caps each index at 512 MiB, the aggregate at 1 GiB, the input count at 64,
   and document/message/string/entity counts at bounded limits;
