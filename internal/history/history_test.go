@@ -359,6 +359,14 @@ func TestHistoryValidationAndGitFailures(t *testing.T) {
 	if _, err := Build(context.Background(), Options{Repository: t.TempDir()}); err == nil {
 		t.Fatal("non-repository was accepted")
 	}
+	nested := filepath.Join(root, "nested")
+	if err := os.Mkdir(nested, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Build(context.Background(), Options{Repository: nested}); err == nil ||
+		!strings.Contains(err.Error(), "exact Git work tree") {
+		t.Fatalf("nested non-repository result = %v", err)
+	}
 
 	writeFakeGit := func(t *testing.T, script string) string {
 		t.Helper()
@@ -376,9 +384,10 @@ func TestHistoryValidationAndGitFailures(t *testing.T) {
 		}
 	})
 	t.Run("malformed log", func(t *testing.T) {
-		git := writeFakeGit(t, "case \"$1\" in\nrev-parse) echo deadbeef ;;\nlog) printf 'bad\\000record\\000' ;;\nesac\n")
-		if _, err := Build(context.Background(), Options{Repository: t.TempDir(), GitExecutable: git}); err == nil {
-			t.Fatal("malformed log was accepted")
+		git := writeFakeGit(t, "case \"$1:$2\" in\nrev-parse:--show-toplevel) pwd ;;\nrev-parse:HEAD) printf '%040d\\n' 0 ;;\nlog:*) printf 'bad\\000record\\000' ;;\nesac\n")
+		if _, err := Build(context.Background(), Options{Repository: t.TempDir(), GitExecutable: git}); err == nil ||
+			!strings.Contains(err.Error(), "enumerate commits") {
+			t.Fatalf("malformed log result = %v", err)
 		}
 	})
 	t.Run("cancelled", func(t *testing.T) {
@@ -388,6 +397,38 @@ func TestHistoryValidationAndGitFailures(t *testing.T) {
 			t.Fatalf("cancelled build = %v", err)
 		}
 	})
+}
+
+func TestHistoryExternalWorkTreeAffinity(t *testing.T) {
+	root := gitFixture(t, fixtureCommit{"one", map[string]string{"a.go": "package a\n\nfunc A() {}\n"}})
+	gitDirectoryOutput, err := exec.Command("git", "-C", root, "rev-parse", "--absolute-git-dir").Output()
+	if err != nil {
+		t.Fatal(err)
+	}
+	workTree := t.TempDir()
+	t.Setenv("GIT_DIR", strings.TrimSpace(string(gitDirectoryOutput)))
+	t.Setenv("GIT_WORK_TREE", workTree)
+	compiled, err := Build(context.Background(), Options{Repository: workTree})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if compiled.SourceRevision == "" || len(compiled.Commits) != 1 {
+		t.Fatalf("external work-tree history = %+v", compiled)
+	}
+}
+
+func TestHistoryRejectsUnpairedAffinityEnvironment(t *testing.T) {
+	root := gitFixture(t, fixtureCommit{"one", map[string]string{"a.go": "package a\n\nfunc A() {}\n"}})
+	gitDirectoryOutput, err := exec.Command("git", "-C", root, "rev-parse", "--absolute-git-dir").Output()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("GIT_DIR", strings.TrimSpace(string(gitDirectoryOutput)))
+	t.Setenv("GIT_WORK_TREE", "")
+	if _, err := Build(context.Background(), Options{Repository: t.TempDir()}); err == nil ||
+		!strings.Contains(err.Error(), "unpaired Git affinity") {
+		t.Fatalf("unpaired affinity result = %v", err)
+	}
 }
 
 func errorsIsContext(err error) bool {

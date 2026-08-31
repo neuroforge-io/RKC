@@ -20,6 +20,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/neuroforge-io/RKC/internal/gitworktree"
 	"github.com/neuroforge-io/RKC/internal/lang/goast"
 	"github.com/neuroforge-io/RKC/internal/lang/tssyntax"
 	"github.com/neuroforge-io/RKC/internal/sourceorigin"
@@ -31,7 +32,7 @@ import (
 const PluginID = "rkc.history"
 
 // PluginVersion identifies the semantic-delta compiler semantics.
-const PluginVersion = "1.1.0"
+const PluginVersion = "1.2.0"
 
 const (
 	// SchemaVersion is the canonical history format version.
@@ -210,6 +211,24 @@ func Build(ctx context.Context, options Options) (History, error) {
 	}
 	if maxCommits < 1 || maxCommits > MaximumCommits {
 		return History{}, fmt.Errorf("history max commits must be between 1 and %d", MaximumCommits)
+	}
+	if !gitworktree.AffinityEnvironmentIsPaired() {
+		return History{}, errors.New("history repository has an unpaired Git affinity environment")
+	}
+	topLevelBytes, err := gitOutputBounded(
+		ctx,
+		git,
+		root,
+		gitworktree.MaximumTopLevelBytes+2,
+		"rev-parse",
+		"--show-toplevel",
+	)
+	if err != nil {
+		return History{}, fmt.Errorf("resolve Git work tree: %w", err)
+	}
+	topLevel, topLevelOK := gitworktree.ParseTopLevelOutput(topLevelBytes)
+	if !topLevelOK || !gitworktree.IsExactRoot(root, topLevel) {
+		return History{}, errors.New("history repository is not the exact Git work tree")
 	}
 
 	headBytes, err := gitOutputBounded(ctx, git, root, 256, "rev-parse", "HEAD")

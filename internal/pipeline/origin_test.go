@@ -114,6 +114,24 @@ func TestInspectGitSupportsVerifiedExternalWorkTree(t *testing.T) {
 	}
 }
 
+func TestInspectGitRejectsUnpairedAffinityEnvironment(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git unavailable")
+	}
+	repository := initialiseOriginFixture(t)
+	gitDirectory := gitFixtureOutput(t, repository, "rev-parse", "--absolute-git-dir")
+	t.Setenv("GIT_DIR", gitDirectory)
+	t.Setenv("GIT_WORK_TREE", "")
+
+	info, err := inspectGit(context.Background(), t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !info.Unavailable || info.Commit != "" || info.Origin != "" {
+		t.Fatalf("unpaired affinity environment produced Git identity: %+v", info)
+	}
+}
+
 func gitFixtureOutput(t *testing.T, root string, arguments ...string) string {
 	t.Helper()
 	command := exec.Command("git", append([]string{"-C", root}, arguments...)...)

@@ -6,10 +6,6 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
-	"github.com/neuroforge-io/RKC/internal/configenv"
-	"github.com/neuroforge-io/RKC/internal/flow"
-	"github.com/neuroforge-io/RKC/internal/history"
-	"github.com/neuroforge-io/RKC/internal/runtime"
 	"io"
 	"os"
 	"os/exec"
@@ -18,17 +14,22 @@ import (
 	"strings"
 	"time"
 
+	"github.com/neuroforge-io/RKC/internal/configenv"
 	"github.com/neuroforge-io/RKC/internal/docparse"
+	"github.com/neuroforge-io/RKC/internal/flow"
 	"github.com/neuroforge-io/RKC/internal/framework/envkeys"
 	"github.com/neuroforge-io/RKC/internal/framework/jsonschema"
 	"github.com/neuroforge-io/RKC/internal/framework/manifest"
 	"github.com/neuroforge-io/RKC/internal/framework/openapi"
 	"github.com/neuroforge-io/RKC/internal/framework/secretpack"
+	"github.com/neuroforge-io/RKC/internal/gitworktree"
+	"github.com/neuroforge-io/RKC/internal/history"
 	"github.com/neuroforge-io/RKC/internal/inventory"
 	"github.com/neuroforge-io/RKC/internal/lang/goast"
 	"github.com/neuroforge-io/RKC/internal/lang/scipindex"
 	"github.com/neuroforge-io/RKC/internal/lang/tssyntax"
 	"github.com/neuroforge-io/RKC/internal/plugin"
+	"github.com/neuroforge-io/RKC/internal/runtime"
 	"github.com/neuroforge-io/RKC/internal/scheduler"
 	"github.com/neuroforge-io/RKC/internal/security/secrets"
 	"github.com/neuroforge-io/RKC/internal/sourceorigin"
@@ -1085,6 +1086,16 @@ func reconcileRepositoryOrigin(supplied, discovered string) (string, error) {
 
 func inspectGit(ctx context.Context, root string) (rkcmodel.GitInfo, error) {
 	info := rkcmodel.GitInfo{}
+	if !gitworktree.AffinityEnvironmentIsPaired() {
+		info.Unavailable = true
+		return info, nil
+	}
+	topLevelOutput, err := gitOutputRaw(ctx, root, "rev-parse", "--show-toplevel")
+	topLevel, topLevelOK := gitworktree.ParseTopLevelOutput(topLevelOutput)
+	if err != nil || !topLevelOK || !gitworktree.IsExactRoot(root, topLevel) {
+		info.Unavailable = true
+		return info, nil
+	}
 	commit, err := gitOutput(ctx, root, "rev-parse", "HEAD")
 	if err != nil {
 		info.Unavailable = true
@@ -1102,6 +1113,11 @@ func inspectGit(ctx context.Context, root string) (rkcmodel.GitInfo, error) {
 	return info, nil
 }
 func gitOutput(ctx context.Context, root string, args ...string) (string, error) {
+	output, err := gitOutputRaw(ctx, root, args...)
+	return strings.TrimSpace(string(output)), err
+}
+
+func gitOutputRaw(ctx context.Context, root string, args ...string) ([]byte, error) {
 	cmdArgs := append([]string{"-c", "core.hooksPath=/dev/null", "-C", root}, args...)
 	cmd := exec.CommandContext(ctx, "git", cmdArgs...)
 	cmd.Env = append(
@@ -1112,5 +1128,5 @@ func gitOutput(ctx context.Context, root string, args ...string) (string, error)
 		"GIT_CONFIG_GLOBAL=/dev/null",
 	)
 	output, err := cmd.Output()
-	return strings.TrimSpace(string(output)), err
+	return output, err
 }

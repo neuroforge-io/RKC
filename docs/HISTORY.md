@@ -8,7 +8,7 @@ symbol appeared, how its signature changed, which commits touched it, where it
 lived, and which refactors renamed it. The result is a `.rkc-history.json`
 record that can be browsed, reported, or imported into a matching atlas
 snapshot with `scan --history`. The current history schema is **1.1** and its
-producer version is **rkc.history 1.1.0**.
+producer version is **rkc.history 1.2.0**.
 
 ```sh
 rkc history build --dir . --out .rkc-history.json
@@ -47,6 +47,13 @@ separators. Human-readable terminal output escapes untrusted control bytes as a
 second line of defense. The compiler never serializes the repository's absolute
 host path, Git author identity, or credentials.
 
+Git discovery is bound to the exact requested working-tree directory. A plain
+folder nested beneath some other checkout is not silently attributed to that
+parent repository. Explicit external work trees remain supported when Git
+reports that the requested directory itself is the work-tree root and both
+`GIT_DIR` and `GIT_WORK_TREE` are present. Unpaired ambient Git affinity is
+rejected.
+
 ## Immutable source affinity
 
 Schema 1.1 binds every history record to:
@@ -79,7 +86,7 @@ the same safe repository label and exact revision.
 identity, stamps matching nodes with lifecycle attributes
 (`history_first_observed_commit`, `history_last_observed_commit`,
 `history_touched_commits`, `history_files`) and immutable source-affinity
-attributes. Imported evidence records identify `rkc.history` version 1.1.0 and
+attributes. Imported evidence records identify `rkc.history` version 1.2.0 and
 the compiled `source_id`. RKC adds `supersedes` edges only for conservative
 rename candidates whose endpoints exist in the matching bundle. A symbol that
 moved to another package appears as a new lifecycle with its own identity

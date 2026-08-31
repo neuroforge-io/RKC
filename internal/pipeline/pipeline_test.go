@@ -438,6 +438,17 @@ func TestInspectGitAvailableAndUnavailable(t *testing.T) {
 	if info.Unavailable || info.Commit == "" || info.Dirty {
 		t.Fatalf("committed Git info = %+v", info)
 	}
+	nested := filepath.Join(root, "nested")
+	if err := os.Mkdir(nested, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	nestedInfo, err := inspectGit(context.Background(), nested)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !nestedInfo.Unavailable {
+		t.Fatalf("nested non-repository Git info = %+v", nestedInfo)
+	}
 	mustWritePipelineFile(t, filepath.Join(root, "untracked.txt"), "dirty\n")
 	dirty, err := inspectGit(context.Background(), root)
 	if err != nil {
