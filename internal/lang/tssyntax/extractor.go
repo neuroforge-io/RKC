@@ -339,12 +339,13 @@ func (p *parser) parseFunction(i, end int, parentID, parentQualified string, exp
 	}
 	signature := p.render(start, max(close+1, j))
 	id := rkcmodel.StableID("node", kind, qualified, signature)
-	ev := p.extractor.evidence(p.file, "declared", "typescript.syntax."+kind, p.tokens[start], p.tokens[max(start, max(bodyEnd, close))], qualified, 1)
+	terminal := boundedTokenIndex(start, max(bodyEnd, close), end)
+	ev := p.extractor.evidence(p.file, "declared", "typescript.syntax."+kind, p.tokens[start], p.tokens[terminal], qualified, 1)
 	visibility := "private"
 	if exported || parentID != "" {
 		visibility = "public"
 	}
-	node := rkcmodel.Node{ID: id, LogicalID: rkcmodel.StableID("logical", p.file.Language, kind, qualified), Kind: kind, Name: name, QualifiedName: qualified, Signature: signature, Language: p.file.Language, Visibility: visibility, PublicSurface: exported, ArtifactID: p.file.ArtifactID, Source: sourceRange(p.file, p.tokens[start], p.tokens[max(start, max(bodyEnd, close))]), EvidenceIDs: []string{ev}, Attributes: map[string]any{"arguments": parameters, "return_type": returnType, "async": asyncModifier, "generator": hasToken(p.tokens[start:i], "*")}}
+	node := rkcmodel.Node{ID: id, LogicalID: rkcmodel.StableID("logical", p.file.Language, kind, qualified), Kind: kind, Name: name, QualifiedName: qualified, Signature: signature, Language: p.file.Language, Visibility: visibility, PublicSurface: exported, ArtifactID: p.file.ArtifactID, Source: sourceRange(p.file, p.tokens[start], p.tokens[terminal]), EvidenceIDs: []string{ev}, Attributes: map[string]any{"arguments": parameters, "return_type": returnType, "async": asyncModifier, "generator": hasToken(p.tokens[start:i], "*")}}
 	p.extractor.addNode(node)
 	owner := p.moduleID
 	if parentID != "" {
@@ -450,8 +451,9 @@ func (p *parser) parseNamedType(i, end int, parentID, parentQualified string, ex
 			finish = close
 		}
 	}
+	terminal := boundedTokenIndex(start, finish, end)
 	id := rkcmodel.StableID("node", kind, qualified)
-	ev := p.extractor.evidence(p.file, "declared", "typescript.syntax."+kind, p.tokens[start], p.tokens[max(start, finish)], qualified, 1)
+	ev := p.extractor.evidence(p.file, "declared", "typescript.syntax."+kind, p.tokens[start], p.tokens[terminal], qualified, 1)
 	visibility := "private"
 	if exported {
 		visibility = "public"
@@ -461,7 +463,7 @@ func (p *parser) parseNamedType(i, end int, parentID, parentQualified string, ex
 			return bodyStart
 		}
 		return finish + 1
-	}())), Language: p.file.Language, Visibility: visibility, PublicSurface: exported, ArtifactID: p.file.ArtifactID, Source: sourceRange(p.file, p.tokens[start], p.tokens[max(start, finish)]), EvidenceIDs: []string{ev}})
+	}())), Language: p.file.Language, Visibility: visibility, PublicSurface: exported, ArtifactID: p.file.ArtifactID, Source: sourceRange(p.file, p.tokens[start], p.tokens[terminal]), EvidenceIDs: []string{ev}})
 	owner := p.moduleID
 	if parentID != "" {
 		owner = parentID
@@ -713,8 +715,9 @@ func (p *parser) parseMethod(i, end int, parentID, parentQualified string) int {
 	qualified := parentQualified + "." + name
 	signature := p.render(start, max(close+1, j))
 	id := rkcmodel.StableID("node", kind, qualified, signature)
-	ev := p.extractor.evidence(p.file, "declared", "typescript.syntax."+kind, p.tokens[start], p.tokens[max(start, max(bodyEnd, close))], qualified, 1)
-	p.extractor.addNode(rkcmodel.Node{ID: id, LogicalID: rkcmodel.StableID("logical", p.file.Language, kind, qualified), Kind: kind, Name: name, QualifiedName: qualified, Signature: signature, Language: p.file.Language, Visibility: visibility, PublicSurface: visibility == "public", ArtifactID: p.file.ArtifactID, Source: sourceRange(p.file, p.tokens[start], p.tokens[max(start, max(bodyEnd, close))]), EvidenceIDs: []string{ev}, Attributes: map[string]any{"arguments": params, "return_type": returnType, "async": async, "static": static}})
+	terminal := boundedTokenIndex(start, max(bodyEnd, close), end)
+	ev := p.extractor.evidence(p.file, "declared", "typescript.syntax."+kind, p.tokens[start], p.tokens[terminal], qualified, 1)
+	p.extractor.addNode(rkcmodel.Node{ID: id, LogicalID: rkcmodel.StableID("logical", p.file.Language, kind, qualified), Kind: kind, Name: name, QualifiedName: qualified, Signature: signature, Language: p.file.Language, Visibility: visibility, PublicSurface: visibility == "public", ArtifactID: p.file.ArtifactID, Source: sourceRange(p.file, p.tokens[start], p.tokens[terminal]), EvidenceIDs: []string{ev}, Attributes: map[string]any{"arguments": params, "return_type": returnType, "async": async, "static": static}})
 	p.extractor.addEdge("declares", parentID, id, "declared", []string{ev}, nil)
 	if bodyStart < end && p.tokens[bodyStart].text == "{" {
 		p.parseCalls(id, bodyStart+1, bodyEnd)
@@ -911,6 +914,14 @@ func (p *parser) untilBodyOrTerminator(start, end int) int {
 	}
 	return end
 }
+
+// boundedTokenIndex converts a parser's exclusive range end into a safe token
+// index when a declaration legitimately reaches EOF without a body or
+// terminator. Callers establish 0 <= start < end <= len(tokens).
+func boundedTokenIndex(start, candidate, end int) int {
+	return max(start, min(candidate, end-1))
+}
+
 func (p *parser) render(start, end int) string {
 	if start < 0 || start >= len(p.tokens) || end <= start {
 		return ""

@@ -167,6 +167,64 @@ export async function load(id: string): Promise<Item> {
 	}
 }
 
+func TestDeclarationsWithoutTerminatorsHaveBoundedSourceRanges(t *testing.T) {
+	root := t.TempDir()
+	fixtures := []struct {
+		path, artifactID, source string
+		want                     map[string]string
+	}{
+		{
+			path:       "function.d.ts",
+			artifactID: "artifact:function",
+			source:     "export default function tarjan<T>(graph: Map<T, Set<T>>): Array<Set<T>>",
+			want:       map[string]string{"tarjan": "function"},
+		},
+		{
+			path:       "type.d.ts",
+			artifactID: "artifact:type",
+			source:     "export type Result = string",
+			want:       map[string]string{"Result": "type"},
+		},
+		{
+			path:       "interface.d.ts",
+			artifactID: "artifact:interface",
+			source:     "export interface Runner {\n  run(): void\n}",
+			want:       map[string]string{"Runner": "interface", "run": "method"},
+		},
+	}
+	files := make([]pluginapi.FileRef, 0, len(fixtures))
+	sizes := make(map[string]int64, len(fixtures))
+	for _, fixture := range fixtures {
+		if err := os.WriteFile(filepath.Join(root, fixture.path), []byte(fixture.source), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		files = append(files, pluginapi.FileRef{ArtifactID: fixture.artifactID, Path: fixture.path, Language: "typescript", SHA256: "hash"})
+		sizes[fixture.artifactID] = int64(len(fixture.source))
+	}
+
+	fragment, err := Extract(Options{Root: root, SnapshotID: "snapshot", Files: files})
+	if err != nil {
+		t.Fatalf("Extract() error = %v", err)
+	}
+	for _, fixture := range fixtures {
+		for name, kind := range fixture.want {
+			found := false
+			for _, node := range fragment.Nodes {
+				if node.ArtifactID != fixture.artifactID || node.Name != name || node.Kind != kind {
+					continue
+				}
+				found = true
+				if node.Source == nil || node.Source.StartByte < 0 || node.Source.EndByte > sizes[fixture.artifactID] || node.Source.EndByte < node.Source.StartByte {
+					t.Fatalf("unbounded source range for %s: %#v (size %d)", name, node.Source, sizes[fixture.artifactID])
+				}
+			}
+			if !found {
+				t.Errorf("missing %s %s in nodes: %#v", kind, name, fragment.Nodes)
+			}
+		}
+	}
+}
+
 func TestExtractRejectsTypeScriptPathOutsideRoot(t *testing.T) {
 	parent := t.TempDir()
 	root := filepath.Join(parent, "repository")
