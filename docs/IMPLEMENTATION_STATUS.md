@@ -1,8 +1,9 @@
 # Implementation status
 
-RKC-owned status evidence is published by **NeuroForgeIO** under the
-[MIT License](../LICENSE); percentages below are evidence signals, not claims
-of unmeasured semantic completeness.
+This RKC status evidence is published by **NeuroForgeIO** under
+[Apache-2.0](../LICENSE). Copyright remains with NeuroForgeIO and applicable RKC
+contributors; percentages below are evidence signals, not claims of unmeasured
+semantic completeness.
 
 Version: `0.3.0-reference`
 
@@ -50,14 +51,16 @@ index, and the non-recursive RKC self-catalogue.
   3,999,986 bytes.
 - Independent privacy review found no personal developer paths, maintainer
   credentials, private keys, active session tokens, recursive RKC output,
-  model weights, or private ERAIS artifacts. GitHub secret scanning and push
+  model weights, or private unrelated-project artifacts. GitHub secret scanning and push
   protection are enabled, and secret, code-scanning, and Dependabot alert
   inventories were empty at review time. These are strong scanner and manual
   review results, not a claim that pattern matching is complete DLP.
-- The self-run deliberately used no compiler-generated SCIP index and no
-  model. Consequently it records zero semantic parses, resolves
-  9,922/31,487 relationships (31.51%), and finds repository-source
-  documentation for 1,037/4,111 public symbols (25.23%). Generation and
+- The reference self-run deliberately used no compiler-generated SCIP index
+  and no model: it records zero semantic parses and resolves
+  9,922/31,487 relationships (31.51%). The compiler-grade self-run described
+  in [`SHOWCASE_2026-07-27.md`](SHOWCASE_2026-07-27.md) imports a pinned
+  scip-go index and resolves 126,418/148,917 relationships (84.89%), with 246
+  Go files compiler-parsed. Generation and
   embedding defaults remain null because the required pair gate did not pass.
   Browser/assistive-technology acceptance, large-atlas sharding, native
   non-Linux packages, aggregate Python/model ceilings, signed provenance, and
@@ -101,7 +104,10 @@ profiles, quality index, and every artifact upload.
 - The same review exposes the next quality work rather than hiding it: this
   no-SCIP self-run has zero compiler-semantic parses, resolves only
   10,965/37,085 relationships (29.57%), and finds source documentation on
-  892/4,720 public symbols (18.90%). The human repository overview is useful
+  892/4,720 public symbols (18.90%). Importing a pinned compiler-grade
+  scip-go index raises relationship resolution to 84.89% on the same source
+  (see [`SHOWCASE_2026-07-27.md`](SHOWCASE_2026-07-27.md)). The human repository
+  overview is useful
   but too terse for first-class onboarding. The standalone atlas also lost the
   outer Git identity, and the static browser in that evidence eagerly loaded a
   68.8 MB copy of the graph while ignoring the separate 30.3 MB lexical index.
@@ -121,11 +127,19 @@ profiles, quality index, and every artifact upload.
 |---|---|---|
 | Scan journals | Implemented | Command outcome includes post-DAG policy and publication failures; resilient bounded list/show, symlink-safe owner-only state paths, hash-chain replay, crash-tail recovery, and Unix runtime/Windows protected-DACL contract tests are present. Explicit journal pruning and SQLite history projection remain additive roadmap work rather than correctness dependencies |
 | OpenAPI JSON/YAML | Implemented | Common bounded reads, duplicate-key rejection, YAML depth/token/node limits, safe scalar normalization, escaped local references, cache invalidation, and cold/warm/edit parity are covered. Cross-file reference resolution remains a separate roadmap item |
-| Workbench lifecycle and GUI | Core implemented on guarded Linux; explicit opt-in; browser acceptance partial | Submission deadlines, cancellation, bounded cleanup proof, truthful `cleanup_failed`, sanitized user-bus access, close/shutdown, and DELETE API are targeted-test green. One typed catalogue drives static/live command metadata, exact atlas/SQLite selectors, valid defaults, and the allowlist. `rkc open --workbench` enters the exact guard before scan, receives the one-time URL-fragment bootstrap through an owner-private readiness file, launches the browser from the outer process, and strips/consumes the fragment before session-token use. Every live server regenerates executable UI bytes from the current binary and validated bundle; whole-origin `no-store`, worker/manifest/form denial, and an ephemeral loopback port additionally prevent imported or older same-origin browser code from reaching privileged APIs. Direct workbench serving requires `--ready-file` and rejects `--open`. Read-only remains the safe default while workspace path confinement, aggregate nested-model ceilings, and reproducible browser/assistive-technology acceptance remain required before default-on promotion |
+| Workbench lifecycle and GUI | Core implemented on guarded Linux; explicit opt-in; browser acceptance partial | Submission deadlines, cancellation, bounded cleanup proof, truthful `cleanup_failed`, sanitized user-bus access, close/shutdown, and DELETE API are targeted-test green. One typed catalogue drives static/live command metadata, exact atlas/SQLite selectors, valid defaults, and the allowlist. The graphical folder picker runs exact `quickstart <folder>` analysis; before success, the server loads the generated owned atlas through the normal integrity/canonical/coverage checks, verifies publication and snapshot identity, and atomically swaps the immutable dataset plus dataset-aware command defaults. Failed validation keeps the prior atlas. Dataset API responses carry an immutable snapshot-generation identity, and the browser retries then visibly rejects a parallel bootstrap assembled across an activation boundary. `rkc open --workbench` enters the exact guard before scan, receives the one-time URL-fragment bootstrap through an owner-private readiness file, launches the browser from the outer process, and strips/consumes the fragment before session-token use. Every live server regenerates executable UI bytes from the current binary and validated bundle; whole-origin `no-store`, worker/manifest/form denial, and an ephemeral loopback port reduce imported or older same-origin browser-code risk without claiming that an OS-selected port can never be reused. Direct workbench serving requires `--ready-file` and rejects `--open`. Doctor/helper probes, custom Git/Python scan helpers, remote scan acquisition, custom quickstart configuration, and live Git history compilation remain terminal-only because per-job process-group cleanup cannot prove containment of detached descendants. The server periodically re-proves both the resource envelope and higher-priority admission. Read-only remains the safe default while aggregate nested-model ceilings and reproducible browser/assistive-technology acceptance remain required before default-on promotion |
 | HTTP listener confidentiality | Implemented | Loopback is the fail-closed default; non-loopback read-only serving requires explicit `--allow-remote`, the workbench requires an ephemeral loopback origin, API responses use `private, no-store`, and every workbench-origin response is non-cacheable plus same-origin resource protected |
 | Workbench containment | Implemented for the allowlisted command profile | One guarded server scope, single-job admission, per-command process groups, deadline/cancel TERM-to-KILL cleanup proof, and rejection of nested servers or model/Python commands that may create separately managed units prevent supported work from escaping. Unprovable cleanup fails visibly and blocks a success claim; nested managed runtimes remain disabled until an aggregate session ceiling is proved |
 | Model default | Intentionally unset after complete qualification | Qwen3.5 4B Q4_0 improved to 4/6 generation cases with no unsupported claim or canary leakage, but over-abstained on the hostile-input case, timed out at exact 32K, and exceeded the strict process-RSS gate despite a safe 4.156 GB cgroup peak. Granite 4 H 1B and Qwen3.5 0.8B each passed only 2/6; Gemma 4 E2B and Qwen3.5 2B were also rejected. The paired Qwen3 embedding role passed all gates, but pair-level promotion correctly remained disabled |
 | Release verification | Passed remotely and enforced on every `main` push | Main-branch CI run `33311156962` and CodeQL run `33311156881` passed on signed commit `bb5de8250df99c7ee1c2ce91633c136818e5adcc`. Two cache-isolated builds produced the identical 53,789,045-byte archive with SHA-256 `5c1532dd9e6baaddf3a226a4ddf572629ef6f6a07a2c44700fc245f5d55d5aab`; all 521 checksum records, 520 manifest records, 519 SPDX file records, 23 outer evidence files, and 18 release-validation stages were independently verified. The commit/tree-bound self-catalogue republished atlas, graph, lexical search, deterministic docs, browser assets, 14 NotebookLM sources, and 7,322 verified outer checksum records without recursive output, model execution, or model-weight ingestion |
+
+Workbench parity is deliberately incomplete: trace capture, SCIP index
+generation, model/Python execution, and nested servers remain blocked because
+the current process-group boundary cannot prove containment of detached
+descendants. Verification and import of existing evidence remain available.
+Kernel-enforced per-job containment plus reproducible browser and assistive-
+technology acceptance are release gates; no GUI success state is emitted for a
+rejected operation.
 
 ## Core
 
@@ -142,7 +156,7 @@ profiles, quality index, and every artifact upload.
 | Transactional storage contract | Implemented | Typed reader/writer/recovery API; atomic, immutable in-memory conformance backend with authenticated cursors and lossless export |
 | SQLite driver/bootstrap | Implemented | Pinned pure-Go driver, embedded digest-locked migrations through schema `0.5.0`, privacy-safe opaque repository affinity, fail-closed build/publication compare-and-swap, monotonic current-pointer guards, CGO-free build gates, reader-key initialization, read-only consumers, and strict database-open health checks |
 | SQLite runtime writer/query layer | Implemented | Transactional staging/publication, OS writer leases, recovery, digest-verified canonical reads, exact coverage binding, authenticated pagination, projections, and CLI/HTTP/MCP integration |
-| Pipeline DAG and cache library | Implemented | All 16 canonical scan stages route through the deterministic DAG with bounded resource admission; owner-only hash-chained command journals and ownership-bound verified CAS payloads provide selective keys plus `plan`/inspect/verify/prune UX. Retries, additional derived-output stages, and SQLite journal projection are future extensions, not hidden fallbacks |
+| Pipeline DAG and cache library | Implemented | All 20 canonical scan stages route through the deterministic DAG with bounded resource admission; owner-only hash-chained command journals and ownership-bound verified CAS payloads provide selective keys plus `plan`/inspect/verify/prune UX. `plan` also exposes non-executing evidence opportunities for missing compiler, runtime, and history authority; it is not yet a question-driven acquisition loop. Retries, additional derived-output stages, and SQLite journal projection are future extensions, not hidden fallbacks |
 | Clean/incremental equivalence | Implemented | Cold, warm, reversed-input, and localized-change paths are differentially checked against clean canonical output; the release benchmark and guarded RKC self-catalogue exercise repository-scale determinism |
 | Live atlas load efficiency | Implemented and self-profiled | A one-core, nice-19, idle-I/O load of the 7,840-file RKC self-atlas now streams verified projection files through one reusable hash buffer, retains only the three canonical inputs used by the live server, and validates canonical ordering without cloning the decoded 62,585,787-byte bundle. Cumulative allocation fell from 1,727.15 MiB to 1,031.66 MiB (40.27%); a separate final run completed in 2.90 seconds with 612,504 KiB maximum RSS and no swap. Every file remains size/SHA-256 verified, imported executable assets remain untrusted, and wall time is intentionally secondary while ERAIS has priority |
 | Portable command builds | Implemented | `make portable-build` compiles both CGO-free commands for Linux, macOS, and Windows `amd64`/`arm64` targets in a private temporary workspace; the reproducible reference package still publishes Linux binaries only until native packaging and install smoke gates are added for the other targets |
@@ -160,9 +174,11 @@ profiles, quality index, and every artifact upload.
 | package/build manifests | Implemented | Deterministic npm, Go module, Python requirements, and Docker extraction with all dependency scopes, string/object CLI bins, multi-entry replacements, bounded readers, and secret-default redaction |
 | environment templates | Implemented | keys, defaults, required/secret metadata |
 | secret detection/redaction | Implemented | pattern scanner; not a complete DLP system |
-| compiler-grade semantic adapters | Implemented through SCIP import | Streaming dependency-free SCIP ingestion preserves compiler-resolved symbols, definitions, references, implementations, signatures, documentation, diagnostics, roles, and exact UTF-8/16/32 source ranges. Repeatable `--scip-index` integration is available in the CLI and workbench `quickstart`, `plan`, and `scan` workflows for Python, JavaScript/TypeScript, Go, C/C++/CUDA, Rust, Java/Kotlin/Scala, C#/Visual Basic, and any conforming producer. RKC deliberately does not execute indexers during normal scans |
+| bounded interprocedural flow, runtime assertions, configuration, and history | Flow/config/history implemented; authenticated runtime observation planned | The `value-flow` stage compiles bounded call graphs, per-function Go CFGs, and value-flow edges (`flows_to`, `binds_to`, `returns_to`, `reads`) with package/type-authoritative sources and sinks. Basename sanitizer matches are confidence-0.25 non-authoritative hypotheses, never `sanitizes` truth or traversable protection. `rkc flow` reports origins, sinks, paths, environment readership, and the separate hypothesis list. Trace capture is guarded, digest-bound, and source-affine, but neither a self-hash nor same-process handling authenticates its producer. All current imports therefore remain confidence-0.5 `user_asserted` evidence and do not set canonical executed/test/call truth. Pre/post inventories detect endpoint drift but not transient ABA mutation. Go statement coverage has no call-event stream, so `rkc trace report` explicitly marks authenticated execution and call-edge observation unavailable. Aggregate coverage cannot attribute an ordered call path to one test, so none is invented. An attested producer-identity and isolation receipt remains a 1.0 gate. The `config-env` stage compiles Go build tags, CI workflows, Terraform declarations, and environment contracts without recording secret values or raw CI command bodies; 4 KiB per-text, 65,536-fact, 64 MiB retained-output, and bounded-diagnostic ceilings prevent repository-controlled text amplification. The `history-import` stage stamps symbol lifecycles and conservative `supersedes` rename refactors from `rkc history build`. All passes are bounded and deterministic |
+| compiler-grade semantic adapters | Implemented through SCIP import and first-class generation | Streaming dependency-free SCIP ingestion preserves symbols, definitions, references, implementations, signatures, documentation, diagnostics, roles, and exact UTF-8/16/32 source ranges. Repeatable `--scip-index` integration is available in the CLI and workbench `quickstart`, `plan`, and `scan` workflows for Python, JavaScript/TypeScript, Go, C/C++/CUDA, Rust, Java/Kotlin/Scala, C#/Visual Basic, and any conforming producer. Only same-process generation by a digest-pinned, non-bypassed indexer is confidence-1 `compiler_resolved`; bare imports are source-bound but producer-unverified confidence-0.75 `syntax_inferred` evidence. Terminal `rkc scip generate` and `--scip-generate` hash document sources before execution, verify them after exit, embed the unchanged bytes in `Document.text`, and publish a validated digest-bound index. Every imported document requires matching intrinsic text; editable receipts cannot authorize no-text facts. GUI generation is fail-closed until detached-descendant cleanup is kernel-enforced; GUI verification, pinning, and existing-index import remain available. Every document must have a canonical repository-relative path, identify an inventoried text artifact, and declare position encoding 1 (UTF-8), 2 (UTF-16), or 3 (UTF-32); unsupported/unspecified encodings and out-of-repository documents fail closed. External symbol records remain imported metadata rather than authenticated repository truth. RKC deliberately does not download or execute indexers during normal scans |
 | Tree-sitter universal host | Planned | grammar registry and queries specified |
-| runtime evidence | Planned | disabled by default and sandbox-dependent |
+| runtime evidence | Guarded capture and assertion import implemented; authenticated observation pending | Capture is opt-in, bounded, digest-bound, disabled during ordinary scans, and records only explicitly selected environment key names—never values. Every current import remains an operator assertion regardless of process locality. A producer-authenticated capture contract, transient-mutation isolation, temporal call/branch/value events, and per-test paths remain explicit 1.0 gates |
+| active evidence acquisition | Opportunity planning implemented; closed loop planned | `rkc plan` reports whether compiler, runtime, and semantic-history authority is admitted and emits exact separately authorized next-command vectors. It does not yet create canonical uncertainty/request/attempt/result records or execute a question-driven acquire → recompile → reason loop |
 
 ## Knowledge products
 
@@ -172,11 +188,11 @@ profiles, quality index, and every artifact upload.
 | Markdown documentation | Implemented | deterministic facts and symbol pages |
 | normalized source envelopes | Implemented | likely secrets redacted by default |
 | NotebookLM pack | Implemented | Byte-bounded grouping, deterministic source inventory, exact byte counts, and a generated `UPLOAD.md` guide with grounding and quota-handling instructions; the default target is 4,000,000 bytes |
-| responsive browser and local workbench | Implemented core; browser acceptance partial | Accessible static default and explicit token-authenticated guarded loopback execution; a one-time fragment capability travels only through an owner-private readiness file and private redirect, is stripped before exchange, and cannot be reused. Ordinary static search/filtering loads a compact snapshot-bound exact-set node projection, while canonical detail, evidence, diagnostics, and graph data remain lazy. The typed CLI palette, dataset-aware exact argument arrays, bounded output, deadlines, cancellation, all terminal/cleanup states, and responsive desktop/mobile layout contracts are unit-tested. Vectors that could create separately managed model/Python units visibly fail closed. Workspace confinement, aggregate model ceilings, browser automation, assistive-technology acceptance, true large-export sharding/virtualization, guided forms, and live incremental job output remain open |
+| responsive browser and local workbench | Implemented core; browser acceptance partial | Accessible static default and explicit token-authenticated guarded loopback execution; a one-time fragment capability travels only through an owner-private readiness file and private redirect, is stripped before exchange, and cannot be reused. Ordinary static search/filtering loads a compact snapshot-bound exact-set node projection, while canonical detail, evidence, diagnostics, and graph data remain lazy. The typed CLI palette, dataset-aware exact argument arrays, bounded output, deadlines, cancellation, all terminal/cleanup states, and responsive desktop/mobile layout contracts are unit-tested. Vectors that could create separately managed model/Python units or invoke uncontained acquisition/history/custom helpers visibly fail closed. Workspace confinement, aggregate model ceilings, browser automation, assistive-technology acceptance, true large-export sharding/virtualization, guided forms, and live incremental job output remain open |
 | ranked lexical search | Implemented | persisted portable index |
 | semantic/hybrid query | Implemented, model-gated | Exact-qualified `llama.cpp` embedding path, corpus-bound vector receipts, deterministic lexical fusion, and GraphRAG expansion are complete. With no pair-qualified default, model-backed mode fails closed while lexical/FTS5/graph search remains fully available |
 | FTS5 runtime search | Implemented | `query --database` ranks the committed snapshot through SQLite FTS5/BM25 with literal-token MATCH construction, deterministic ties and traces, typed failures, cancellation, field filters, UTF-8/result bounds, and shared semantic-fusion/GraphRAG expansion |
-| graph paths, impact, SCCs | Implemented | bounded in-memory graph operations |
+| graph paths, impact, SCCs, structural counterfactuals | Implemented | bounded in-memory graph operations; counterfactuals compare an immutable baseline with a derived omission view, carry evidence and truncation state, and are always non-authoritative |
 | semantic diff | Implemented | conservative logical/signature comparison |
 | guarded self-catalogue | Implemented | immutable commit-tree blob staging; recursive-output/model-weight exclusion; atomic complete publication and deterministic receipts |
 | quality and delta index | Implemented | deterministic standard-library source/documentation inventory with SHA-256 metadata, conservative test/documentation associations, exact local-Go-parser coverage for exported production declarations, optional Go/Python profile mapping, and Git change triage; percentages are explicit evidence signals rather than semantic 100% claims, and Go parsing never imports, builds, or executes the indexed repository |
@@ -189,7 +205,7 @@ profiles, quality index, and every artifact upload.
 | bounded evidence packets | Implemented | coherent truncation and redaction |
 | `llama.cpp` CLI provider | Implemented | fake-executable integration tested |
 | pinned native `llama.cpp` bootstrap | Implemented | exact source digest, CPU-only portable/native profiles, guarded build |
-| cgroup, priority, CPU-only and RSS policy | Implemented on Linux; portable analysis is explicitly unprotected elsewhere | On ordinary Linux, `open`, direct `quickstart`, and direct `scan` self-re-execute before repository or generated-state writes. An existing exact RKC unit is reused rather than creating a sibling allowance. The constrained-container exception requires cgroup-namespace root plus proven equal-or-tighter CPU, hard-memory, swap, task, weight, OOM, and per-thread scheduling controls; generic external cgroups are rejected. Exact host units retain one CPU, weight 1, nice 19, idle I/O, 4 GiB pressure/4.5 GiB hard memory, bounded swap/tasks, ERAIS pre-emption, cancellation/reap, and auditable cleanup. Both reused paths re-prove controls during work. Direct scans require final-effective Python or plugin disablement; direct quickstart rejects Python until an aggregate parent/adapter ceiling is proved. macOS and Windows retain deterministic portable analysis without claiming kernel cgroup or scheduling enforcement |
+| cgroup, priority, CPU-only and RSS policy | Implemented on Linux; portable analysis is explicitly unprotected elsewhere | On ordinary Linux, `open`, direct `quickstart`, and direct `scan` self-re-execute before repository or generated-state writes. An existing exact RKC unit is reused rather than creating a sibling allowance. The constrained-container exception requires cgroup-namespace root plus proven equal-or-tighter CPU, hard-memory, swap, task, weight, OOM, and per-thread scheduling controls; generic external cgroups are rejected. Exact host units retain one CPU, weight 1, nice 19, idle I/O, 4 GiB pressure/4.5 GiB hard memory, bounded swap/tasks, higher-priority pre-emption, cancellation/reap, and auditable cleanup. Higher-priority admission is policy-driven: the default `yield` policy runs inside the subordinate envelope while processes matching configured workload markers merely exist and refuses or cancels when their aggregate CPU load reaches the configured fraction of one core. The generic marker set is `torchrun,lm_eval`; host-specific workloads are configured only through `RKC_HIGHER_PRIORITY_MARKERS`. Fifty percent of one core is the default load threshold, and `RKC_HIGHER_PRIORITY_POLICY=refuse` restores strict refusal whenever a match is visible. `rkc doctor` validates and reports the active configuration. Both reused paths re-prove controls during work. Direct scans require final-effective Python or plugin disablement; direct quickstart rejects Python until an aggregate parent/adapter ceiling is proved. macOS and Windows retain deterministic portable analysis without claiming kernel cgroup or scheduling enforcement |
 | claim/summary validation | Implemented | Atomic statements, citations, identifiers, certainty, inference policy, unsafe markup, and bounds are checked; free-form summaries are never published |
 | grounded repository answers | Implemented | CLI uses bounded lexical/semantic/hybrid plus graph evidence, canonical re-resolution, validation, and abstention. Up to two sanitized retrieval-repair passes repeat the full validator under one deadline, retain a pass audit, select the strongest grounded attempt, and never ingest generated output. Qualified embedding/generation bindings are required for model-backed modes |
 | real GGUF benchmark below 4.5 GiB | Fully qualified rejection; no promotion | Qwen3.5 4B Q4_0 completed the guarded pair gate with a 4.156 GB cgroup peak and 4/6 generation cases, but failed hostile-input grounding, exact-32K latency, and strict process RSS. Qwen3 Embedding 0.6B Q8_0 again passed recall, margin, norm, memory, and latency checks. The required pair failed, so defaults remain null |
@@ -199,7 +215,7 @@ profiles, quality index, and every artifact upload.
 
 | Interface | Status | Notes |
 |---|---|---|
-| CLI and guided terminal first run | Implemented | `wizard` (alias `tui`) is a dependency-free, line-oriented guide over the existing safe workflows: choose a folder, open the verified read-only browser, compile only, show complete help, or cancel. It handles EOF without starting work and does not claim full CLI parity. `open` (alias `start`) composes scan, strict checks, loopback serving, and optional desktop-browser launch. On Linux, these first-run scans self-admit, reuse only a kernel-proven exact RKC/private-container envelope, and continuously yield to ERAIS; help remains local and guarded internal context calls do not recursively admit. Static analysis stays portable but explicitly lacks Linux kernel enforcement on macOS and Windows, while `--workbench` is opt-in and Linux-only |
+| CLI and guided terminal first run | Implemented | `wizard` (alias `tui`) is a dependency-free, line-oriented guide over the existing safe workflows: choose a folder, open the verified read-only browser, compile only, show complete help, or cancel. It handles EOF without starting work and does not claim full CLI parity. `open` (alias `start`) composes scan, strict checks, loopback serving, and optional desktop-browser launch. On Linux, these first-run scans self-admit, reuse only a kernel-proven exact RKC/private-container envelope, and continuously yield to configured higher-priority workloads; help remains local and guarded internal context calls do not recursively admit. Static analysis stays portable but explicitly lacks Linux kernel enforcement on macOS and Windows, while `--workbench` is opt-in and Linux-only |
 | local read-only HTTP API | Implemented | Bounded loopback-first reads over validated filesystem or SQLite snapshots |
 | OpenAPI parity validation | Implemented | Generated operation inventory and handler parity are contract-checked |
 | MCP stdio server | Implemented | Dependency-light local tools over the same validated snapshot readers |
@@ -265,14 +281,13 @@ retains exact uncovered Go coordinates and Python line/branch arcs for direct
 test triage. The reviewed `0d04bcdd386c494046f0e99297099dec2ee9736c`
 index reports 100% test and file-documentation evidence under the documented
 heuristics, **206/206 public `pkg/*` exported Go declarations documented**, and
-**467/773 across all production Go code**. Successor source closes that complete
-exact queue: the same local syntax parser now reports **773/773 attached
-declaration comments (100%)** across public, command, internal, and example Go
-code. This proves comment attachment, not prose correctness or semantic
-completeness. The reviewed fresh combined Go/Python profile covers
-**28,553/31,635 units (90.26%)**, leaving 3,082 exact uncovered units across 110
-files. Fresh CI profiles remain authoritative for executable coverage
-percentages and residual test gaps.
+  **467/773 across all production Go code**. The later commit-bound checkpoint
+  described at the top of this document reports **775/775 attached declaration
+  comments (100%)**. This proves comment attachment, not prose correctness or
+  semantic completeness. That later reviewed Go/Python profile covers
+  **29,247/32,438 units (90.16%)**, leaving 3,191 exact uncovered units across 112
+  gap records. Fresh CI profiles remain authoritative for executable coverage
+  percentages and residual test gaps; no number here claims the uncommitted tree.
 
 `make safe-complete-package` runs that logged sequence inside the mandatory
 resource guard. Commit-bound release commands reject tracked or untracked source
@@ -300,7 +315,8 @@ qualify or promote a model; both committed model defaults remain null until the
 separate measured qualification gate passes.
 
 ---
-_RKC is stewarded by **NeuroForgeIO** and released under the **MIT License**.
-Redistributions must retain the copyright and permission notices required by
-that license. Attribution to NeuroForgeIO is requested, but is not an additional
-license condition._
+_RKC is open source, published and maintained by **NeuroForgeIO**, under the
+**Apache License, Version 2.0**. Copyright 2026 NeuroForgeIO and RKC
+contributors. Redistributed
+works must preserve applicable license and `NOTICE` terms. Third-party materials
+retain their own licenses and ownership._

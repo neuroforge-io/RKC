@@ -1,0 +1,223 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://rkc.dev/schemas/history.schema.json",
+  "title": "RKC compiled semantic history 1.1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "repository",
+    "repository_id",
+    "source_revision",
+    "revision_policy",
+    "ancestry_policy",
+    "source_id",
+    "commit",
+    "commit_limit",
+    "window_truncated",
+    "details_truncated",
+    "commits",
+    "symbols",
+    "refactors"
+  ],
+  "properties": {
+    "schema_version": { "const": "1.1" },
+    "repository": { "$ref": "#/$defs/repositoryLabel" },
+    "repository_id": { "$ref": "#/$defs/repositoryID" },
+    "source_reference": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 4096,
+      "pattern": "^(?:https|ssh|git)://[^\\u0000-\\u001F\\u007F-\\u009F]+$"
+    },
+    "source_revision": { "$ref": "#/$defs/gitObject" },
+    "revision_policy": { "const": "exact_head" },
+    "ancestry_policy": { "const": "first_parent" },
+    "source_id": { "$ref": "#/$defs/historySourceID" },
+    "commit": { "$ref": "#/$defs/gitObject" },
+    "commit_limit": { "type": "integer", "minimum": 1, "maximum": 10000 },
+    "window_truncated": { "type": "boolean" },
+    "details_truncated": { "type": "boolean" },
+    "commits": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 10000,
+      "items": { "$ref": "#/$defs/commitRecord" }
+    },
+    "symbols": {
+      "type": "array",
+      "maxItems": 131072,
+      "items": { "$ref": "#/$defs/symbolHistory" }
+    },
+    "refactors": {
+      "type": "array",
+      "maxItems": 131072,
+      "items": { "$ref": "#/$defs/refactor" }
+    }
+  },
+  "$defs": {
+    "gitObject": {
+      "type": "string",
+      "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$"
+    },
+    "repositoryLabel": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 255,
+      "pattern": "^[^/\\\\\\u0000-\\u001F\\u007F-\\u009F]+$"
+    },
+    "repositoryID": {
+      "type": "string",
+      "pattern": "^rkc:repository:[0-9a-f]{24}$"
+    },
+    "historySourceID": {
+      "type": "string",
+      "pattern": "^rkc:history-source:[0-9a-f]{24}$"
+    },
+    "symbolID": {
+      "type": "string",
+      "pattern": "^rkc:history-symbol:[0-9a-f]{24}$"
+    },
+    "safePath": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 4096,
+      "pattern": "^[^/\\\\\\u0000-\\u001F\\u007F-\\u009F][^\\\\\\u0000-\\u001F\\u007F-\\u009F]*$"
+    },
+    "safeKind": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64,
+      "pattern": "^[^\\u0000-\\u001F\\u007F-\\u009F]+$"
+    },
+    "safeName": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 1024,
+      "pattern": "^[^\\u0000-\\u001F\\u007F-\\u009F]+$"
+    },
+    "qualifiedName": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 4096,
+      "pattern": "^[^\\u0000-\\u001F\\u007F-\\u009F]+$"
+    },
+    "symbolIDArray": {
+      "type": "array",
+      "maxItems": 131072,
+      "uniqueItems": true,
+      "items": { "$ref": "#/$defs/symbolID" }
+    },
+    "commitRecord": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "date",
+        "subject",
+        "changed_files",
+        "added_symbols",
+        "removed_symbols",
+        "changed_symbols"
+      ],
+      "properties": {
+        "id": { "$ref": "#/$defs/gitObject" },
+        "parent": { "$ref": "#/$defs/gitObject" },
+        "date": { "type": "string", "maxLength": 64, "format": "date-time" },
+        "subject": {
+          "type": "string",
+          "maxLength": 4096,
+          "pattern": "^[^\\u0000-\\u001F\\u007F-\\u009F]*$"
+        },
+        "changed_files": {
+          "type": "array",
+          "maxItems": 512,
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/safePath" }
+        },
+        "added_symbols": { "$ref": "#/$defs/symbolIDArray" },
+        "removed_symbols": { "$ref": "#/$defs/symbolIDArray" },
+        "changed_symbols": { "$ref": "#/$defs/symbolIDArray" }
+      }
+    },
+    "signatureSnapshot": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["commit", "signature", "file"],
+      "properties": {
+        "commit": { "$ref": "#/$defs/gitObject" },
+        "signature": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 16384,
+          "pattern": "^[^\\u0000-\\u001F\\u007F-\\u009F]+$"
+        },
+        "file": { "$ref": "#/$defs/safePath" }
+      }
+    },
+    "symbolHistory": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "kind",
+        "name",
+        "qualified_name",
+        "language",
+        "first_observed_commit",
+        "last_observed_commit",
+        "files",
+        "commits_touching"
+      ],
+      "properties": {
+        "id": { "$ref": "#/$defs/symbolID" },
+        "kind": { "$ref": "#/$defs/safeKind" },
+        "name": { "$ref": "#/$defs/safeName" },
+        "qualified_name": { "$ref": "#/$defs/qualifiedName" },
+        "language": { "enum": ["go", "typescript"] },
+        "first_observed_commit": { "$ref": "#/$defs/gitObject" },
+        "last_observed_commit": { "$ref": "#/$defs/gitObject" },
+        "files": {
+          "type": "array",
+          "maxItems": 10001,
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/safePath" }
+        },
+        "commits_touching": {
+          "type": "array",
+          "maxItems": 10000,
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/gitObject" }
+        },
+        "signature_history": {
+          "type": "array",
+          "maxItems": 64,
+          "items": { "$ref": "#/$defs/signatureSnapshot" }
+        },
+        "signature_history_truncated": { "type": "boolean" }
+      }
+    },
+    "refactor": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "commit",
+        "language",
+        "kind",
+        "from",
+        "to",
+        "qualified_from",
+        "qualified_to"
+      ],
+      "properties": {
+        "commit": { "$ref": "#/$defs/gitObject" },
+        "language": { "enum": ["go", "typescript"] },
+        "kind": { "$ref": "#/$defs/safeKind" },
+        "from": { "$ref": "#/$defs/qualifiedName" },
+        "to": { "$ref": "#/$defs/qualifiedName" },
+        "qualified_from": { "$ref": "#/$defs/qualifiedName" },
+        "qualified_to": { "$ref": "#/$defs/qualifiedName" }
+      }
+    }
+  }
+}

@@ -1,6 +1,7 @@
 # Local model runtime
 
-This RKC document is released under the NeuroForgeIO project MIT License.
+This NeuroForgeIO-published RKC document is copyright 2026 NeuroForgeIO and
+RKC contributors and released under Apache-2.0.
 Model weights, llama.cpp, and other external inputs retain their own terms;
 see [`BRANDING_AND_ATTRIBUTION.md`](BRANDING_AND_ATTRIBUTION.md).
 
@@ -97,9 +98,13 @@ download manifest. It pins every byte count, SHA-256, upstream revision, HTTPS
 redirect host, license, and qualification state. The downloader accepts no URL
 or output filename from the shell, rejects links and non-regular files, streams
 to an exact byte ceiling, and publishes a verified inode without replacing an
-existing path. Cached multi-gigabyte verification rechecks ERAIS priority every
+existing path. Cached multi-gigabyte verification rechecks higher-priority work
+every
 16 MiB, and the `verify` command requires the same live resource guard as a
-download. A conservative free-space reserve is checked on the exact cache
+download. Under the default `yield` policy an idle higher-priority process does
+not block the guard; measurable CPU load still stops the work promptly, and
+`RKC_HIGHER_PRIORITY_POLICY=refuse` restores the strict refusal. A conservative
+free-space reserve is checked on the exact cache
 filesystem before a temporary inode is created. Model downloads require
 explicit `Apache-2.0` acceptance.
 
@@ -132,12 +137,16 @@ make model-runtime-portable
 make model-runtime-native
 ```
 
-Every fetch, build, and real-model qualification command fails if ERAIS is
-active and must prove it is inside the low-priority Linux cgroup before doing
-heavy work. That guard limits the workload to one CPU core, 4 GiB operating memory,
+Every fetch, build, and real-model qualification command yields to work matching
+the configured higher-priority markers and must prove it is inside the
+low-priority Linux cgroup before doing
+heavy work. Under the default `yield` policy an idle higher-priority process
+does not block the command, and measurable CPU load stops it promptly; the
+strict `RKC_HIGHER_PRIORITY_POLICY=refuse` setting refuses whenever one is
+visible. That guard limits the workload to one CPU core, 4 GiB operating memory,
 4.5 GiB hard memory, 256 MiB swap, 128 tasks, nice 19, idle I/O, and high
 OOM-kill preference. Configure and build commands run in private process groups
-with fixed deadlines and sub-second ERAIS polling; priority, timeout, or
+with fixed deadlines and sub-second priority polling; priority, timeout, or
 cancellation terminates and reaps the whole group. Runtime staging also has a
 conservative disk-headroom gate, and failed `.building-*` trees are quarantined
 and removed only when their original inode identity is still bound.
@@ -210,8 +219,9 @@ threshold, but pair-level promotion remains fail-closed.
 
 Qualification HTTP is restricted to credential-free IP-literal loopback URLs.
 It uses an explicit no-proxy opener, refuses every redirect, revalidates the
-final response URL, and monitors ERAIS while long requests are pending. If a
-higher-priority workload appears, RKC terminates the complete local server
+final response URL, and monitors higher-priority work while long requests are
+pending. If the configured policy decides that higher-priority work has become
+active, RKC terminates the complete local server
 process group before deferring the run.
 
 ```sh
@@ -338,7 +348,8 @@ Until that gate is met, 4.5 GiB is a guarded engineering ceiling, not a
 marketing measurement or evidence that any candidate model is satisfactory.
 
 ---
-_RKC is stewarded by **NeuroForgeIO** and released under the **MIT License**.
-Redistributions must retain the copyright and permission notices required by
-that license. Attribution to NeuroForgeIO is requested, but is not an additional
-license condition._
+_RKC is open source, published and maintained by **NeuroForgeIO**, under the
+**Apache License, Version 2.0**. Copyright 2026 NeuroForgeIO and RKC
+contributors. Redistributed
+works must preserve applicable license and `NOTICE` terms. Third-party materials
+retain their own licenses and ownership._

@@ -79,8 +79,9 @@ func TestDefaultConfigurationIsValidAndDeterministic(t *testing.T) {
 func TestDefaultInventoryExclusionsAreExplicitAndIsolated(t *testing.T) {
 	want := strings.Join([]string{
 		".cache", ".coverage", ".git", ".mypy_cache", ".pytest_cache",
-		".rkc", ".rkc-coverage", ".rkc-downloads", ".rkc-models", ".rkc-runtime",
-		".rkc-state", ".rkc.rkc-derived", ".ruff_cache", ".venv",
+		".rkc", ".rkc-coverage", ".rkc-downloads", ".rkc-history.json",
+		".rkc-models", ".rkc-runtime", ".rkc-scip",
+		".rkc-state", ".rkc-trace.json", ".rkc.rkc-derived", ".ruff_cache", ".venv",
 		"__pycache__", "bin", "coverage", "coverage.out", "coverage.xml",
 		"dist", "htmlcov", "venv",
 	}, ",")

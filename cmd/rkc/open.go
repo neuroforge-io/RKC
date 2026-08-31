@@ -41,6 +41,8 @@ type openOptions struct {
 	noBrowser    bool
 	workbench    bool
 	scipIndexes  stringList
+	tracePaths   stringList
+	historyPath  string
 }
 
 func newOpenFlagSet(output io.Writer) (*flag.FlagSet, *openOptions) {
@@ -57,7 +59,9 @@ func newOpenFlagSet(output io.Writer) (*flag.FlagSet, *openOptions) {
 	fs.StringVar(&options.readyFile, "ready-file", "", "atomically write the server readiness receipt to this path")
 	fs.BoolVar(&options.noBrowser, "no-browser", false, "serve the atlas without opening a browser (useful for headless hosts)")
 	fs.BoolVar(&options.workbench, "workbench", false, "enable the trusted-user local command launcher (Linux only; not a filesystem sandbox)")
-	fs.Var(&options.scipIndexes, "scip-index", "compiler-produced SCIP index to import; repeatable")
+	fs.Var(&options.scipIndexes, "scip-index", "SCIP index to import; external files remain producer-unverified; repeatable")
+	fs.Var(&options.tracePaths, "trace", "runtime trace file to import; repeatable")
+	fs.StringVar(&options.historyPath, "history", "", "compiled semantic history file to import")
 	return fs, options
 }
 
@@ -108,7 +112,7 @@ func runOpenContext(ctx context.Context, args []string) error {
 		}
 	}
 
-	quickstartArgs := make([]string, 0, 12+len(options.scipIndexes)*2)
+	quickstartArgs := make([]string, 0, 14+(len(options.scipIndexes)+len(options.tracePaths))*2)
 	if options.config != "" {
 		quickstartArgs = append(quickstartArgs, "--config", options.config)
 	}
@@ -127,6 +131,12 @@ func runOpenContext(ctx context.Context, args []string) error {
 	}
 	for _, index := range options.scipIndexes {
 		quickstartArgs = append(quickstartArgs, "--scip-index", index)
+	}
+	for _, tracePath := range options.tracePaths {
+		quickstartArgs = append(quickstartArgs, "--trace", tracePath)
+	}
+	if options.historyPath != "" {
+		quickstartArgs = append(quickstartArgs, "--history", options.historyPath)
 	}
 	quickstartArgs = append(quickstartArgs, root)
 	if err := runQuickstartContext(ctx, quickstartArgs); err != nil {
@@ -152,9 +162,11 @@ func runOpenContext(ctx context.Context, args []string) error {
 	return nil
 }
 
-// Workbench browser capabilities must never be delivered on the historical
+// Do not deliberately deliver workbench browser capabilities on the historical
 // fixed read-only origin. An older or imported atlas could have registered a
-// persistent service worker there before current CSP protections existed.
+// persistent service worker there before current CSP protections existed; an
+// ephemeral port reduces that risk but cannot prove that the OS never reuses an
+// earlier origin.
 func finalizeOpenOptions(fs *flag.FlagSet, options *openOptions) {
 	if fs != nil && options != nil && options.workbench && !flagWasSet(fs, "addr") {
 		options.address = "127.0.0.1:0"

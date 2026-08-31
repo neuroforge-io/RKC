@@ -130,7 +130,10 @@ func TestPositionMapperAllEncodingsAndBoundaries(t *testing.T) {
 		}
 	}
 	if _, err := newPositionMapper(source, 0); err == nil {
-		t.Fatal("ambiguous mapper encoding succeeded")
+		t.Fatal("ambiguous unspecified mapper encoding succeeded")
+	}
+	if _, err := newPositionMapper(source, 4); err == nil {
+		t.Fatal("unsupported mapper encoding succeeded")
 	}
 	valid, err := utf8Mapper.sourceRange("x", "artifact", sourcePosition{
 		startLine: 0, startCharacter: 1, endLine: 0, endCharacter: 5,
@@ -408,7 +411,7 @@ func TestInputAndIndexFailureCoverage(t *testing.T) {
 	if _, _, err := PrepareInputs(context.Background(), []string{missing}); err == nil {
 		t.Fatal("missing input succeeded")
 	}
-	valid := writeNamedIndex(t, root, "valid.scip", fieldMessage(1, message(fieldVarint(1, 0))))
+	valid := writeNamedIndex(t, root, "valid.scip", indexMessage("compiler", "1", nil, nil))
 	if _, _, err := PrepareInputs(context.Background(), []string{valid, valid}); err == nil ||
 		!strings.Contains(err.Error(), "duplicate") {
 		t.Fatalf("duplicate input = %v", err)
@@ -463,7 +466,10 @@ func TestInputAndIndexFailureCoverage(t *testing.T) {
 		t.Fatalf("prepared digest mismatch = %v", err)
 	}
 	externalIndex := writeNamedIndex(t, root, "external.scip", message(
-		fieldMessage(1, message(fieldMessage(2, fieldString(1, "compiler")))),
+		fieldMessage(1, message(
+			fieldMessage(2, fieldString(1, "compiler")),
+			fieldString(3, "file:///workspace"),
+		)),
 		fieldMessage(3, symbolMessage(
 			"scip . . . dep/External#", "External", 7, "", "", nil,
 		)),
@@ -644,8 +650,8 @@ func TestExtractorDocumentAndOccurrenceFailureCoverage(t *testing.T) {
 			files: map[string]pluginapi.FileRef{}, artifacts: map[string]rkcmodel.Artifact{},
 			nodes: map[string]rkcmodel.Node{}, edges: map[string]rkcmodel.Edge{},
 			evidence: map[string]rkcmodel.Evidence{}, diagnostics: map[string]rkcmodel.Diagnostic{},
-			parsed: map[string]map[string]struct{}{},
-			input:  Input{SHA256: strings.Repeat("b", 64)},
+			parsed: map[string]map[string]struct{}{}, documents: map[string]sourceIdentity{},
+			input: Input{SHA256: strings.Repeat("b", 64)},
 		}
 	}
 	for name, setup := range map[string]func(*extractor) document{
@@ -662,7 +668,7 @@ func TestExtractorDocumentAndOccurrenceFailureCoverage(t *testing.T) {
 			return document{occurrences: []occurrence{{}}}
 		},
 		"non canonical": func(*extractor) document {
-			return document{path: "../escape.go"}
+			return document{path: "a//escape.go"}
 		},
 		"missing inventory": func(*extractor) document {
 			return document{path: "missing.go"}
@@ -680,27 +686,53 @@ func TestExtractorDocumentAndOccurrenceFailureCoverage(t *testing.T) {
 		})
 	}
 
+	// SCIP documents must never escape the indexed repository.
+	value := newExtractor(t.TempDir())
+	value.files["x.go"] = pluginapi.FileRef{Path: "x.go", ArtifactID: "artifact"}
+	value.artifacts["x.go"] = rkcmodel.Artifact{ID: "artifact", Path: "x.go"}
+	if err := value.extractDocument(document{
+		path: "../external/x.go", occurrences: []occurrence{{symbol: "x"}},
+	}); err == nil {
+		t.Fatal("external document escaped the repository")
+	}
+
 	root := t.TempDir()
 	if err := os.WriteFile(filepath.Join(root, "x.go"), []byte("x\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	value := newExtractor(root)
+	value = newExtractor(root)
+	sourceDigest := digest([]byte("x\n"))
 	value.files["x.go"] = pluginapi.FileRef{
-		Path: "x.go", ArtifactID: "artifact", SizeBytes: 99, Language: "go",
+		Path: "x.go", ArtifactID: "artifact", SHA256: sourceDigest, SizeBytes: 99, Language: "go",
 	}
-	value.artifacts["x.go"] = rkcmodel.Artifact{ID: "artifact", Path: "x.go"}
+	value.artifacts["x.go"] = rkcmodel.Artifact{
+		ID: "artifact", Path: "x.go", SHA256: sourceDigest, SizeBytes: 99,
+	}
 	if err := value.extractDocument(document{path: "x.go"}); err == nil ||
 		!strings.Contains(err.Error(), "size changed") {
 		t.Fatalf("size mismatch = %v", err)
 	}
 	value.files["x.go"] = pluginapi.FileRef{
-		Path: "x.go", ArtifactID: "artifact", SizeBytes: 2, Language: "go",
+		Path: "x.go", ArtifactID: "artifact", SHA256: sourceDigest, SizeBytes: 2, Language: "go",
+	}
+	value.artifacts["x.go"] = rkcmodel.Artifact{
+		ID: "artifact", Path: "x.go", SHA256: sourceDigest, SizeBytes: 2,
 	}
 	if err := value.extractDocument(document{
-		path: "x.go", positionEncoding: 0,
+		path: "x.go", text: "x\n", textPresent: true, positionEncoding: 4,
 		occurrences: []occurrence{{symbol: "x"}},
 	}); err == nil || !strings.Contains(err.Error(), "encoding") {
-		t.Fatalf("ambiguous encoding = %v", err)
+		t.Fatalf("unsupported encoding = %v", err)
+	}
+	// The protocol's unspecified encoding is ambiguous and fails closed.
+	if err := value.extractDocument(document{
+		path: "x.go", text: "x\n", textPresent: true, positionEncoding: 0,
+		occurrences: []occurrence{{
+			symbol: "scip . . . x/", roles: roleDefinition,
+			typedRange: &sourcePosition{startLine: 0, startCharacter: 0, endLine: 0, endCharacter: 1},
+		}},
+	}); err == nil || !strings.Contains(err.Error(), "ambiguous or unsupported") {
+		t.Fatalf("unspecified encoding = %v", err)
 	}
 
 	mapper, err := newPositionMapper([]byte("x\n"), 1)
@@ -739,5 +771,38 @@ func fieldFixed32(number int, value uint32) []byte {
 	return []byte{
 		byte(number<<3 | 5),
 		byte(value), byte(value >> 8), byte(value >> 16), byte(value >> 24),
+	}
+}
+
+func TestSharedFactsKeepStrongestCompilerAuthority(t *testing.T) {
+	for _, authenticatedFirst := range []bool{false, true} {
+		value := &extractor{
+			nodes: map[string]rkcmodel.Node{}, edges: map[string]rkcmodel.Edge{},
+		}
+		insert := func(authenticated bool) {
+			authority := "unverified_external"
+			visibility := "imported_unverified"
+			if authenticated {
+				authority = "pinned_current_process"
+				visibility = "compiler_indexed"
+			}
+			value.input = Input{compilerAuthenticated: authenticated}
+			value.upsertNode(rkcmodel.Node{
+				ID: "node", Kind: "function", Name: "f", Visibility: visibility,
+				Attributes: map[string]any{"producer_authentication": authority},
+			})
+			value.addEdge("references", "from", "node", []string{"evidence"}, nil)
+		}
+		insert(authenticatedFirst)
+		insert(!authenticatedFirst)
+		if node := value.nodes["node"]; node.Visibility != "compiler_indexed" ||
+			node.Attributes["producer_authentication"] != "pinned_current_process" {
+			t.Fatalf("node authority depended on order: %+v", node)
+		}
+		edge := value.edges[rkcmodel.StableID("edge", "references", "from", "node")]
+		if edge.Resolution != rkcmodel.ResolutionCompilerResolved || edge.Confidence != 1 ||
+			edge.Attributes["producer_authentication"] != "pinned_current_process" {
+			t.Fatalf("edge authority depended on order: %+v", edge)
+		}
 	}
 }

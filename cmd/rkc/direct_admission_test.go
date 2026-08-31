@@ -580,6 +580,16 @@ func TestDirectAdmissionArgumentSafetyIsGrammarAware(t *testing.T) {
 		err.Error() != "flag provided but not defined: -unknown" {
 		t.Fatalf("unknown quickstart flag = %v", err)
 	}
+	if help, err := validateDirectCommandAdmission("plan", []string{
+		"--no-cache", "--no-python", "--scip-index", "index.scip",
+		"--trace", "trace.json", "--history", "history.json", ".",
+	}); help || err != nil {
+		t.Fatalf("safe plan admission = help:%t error:%v", help, err)
+	}
+	if _, err := validateDirectCommandAdmission("plan", []string{"--unknown"}); err == nil ||
+		err.Error() != "flag provided but not defined: -unknown" {
+		t.Fatalf("unknown plan flag = %v", err)
+	}
 
 	for _, test := range []struct {
 		command string

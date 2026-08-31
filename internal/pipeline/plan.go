@@ -7,7 +7,9 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/neuroforge-io/RKC/internal/history"
 	"github.com/neuroforge-io/RKC/internal/lang/scipindex"
+	"github.com/neuroforge-io/RKC/internal/runtime"
 	"github.com/neuroforge-io/RKC/internal/scheduler"
 	"github.com/neuroforge-io/RKC/pkg/rkcmodel"
 )
@@ -29,10 +31,24 @@ type StagePlan struct {
 // ScanPlan is the read-only preview of a scan after source inventory,
 // normalization, SCIP admission, and cache probing have completed.
 type ScanPlan struct {
-	Root      string      `json:"root"`
-	CacheRoot string      `json:"cache_root,omitempty"`
-	Stages    []StagePlan `json:"stages"`
-	Summary   PlanSummary `json:"summary"`
+	Root                  string                `json:"root"`
+	CacheRoot             string                `json:"cache_root,omitempty"`
+	Stages                []StagePlan           `json:"stages"`
+	Summary               PlanSummary           `json:"summary"`
+	EvidenceOpportunities []EvidenceOpportunity `json:"evidence_opportunities"`
+}
+
+// EvidenceOpportunity makes missing higher-authority inputs explicit without
+// acquiring or executing anything during planning. Command is an exact argv
+// template for a separately authorized next step, never a shell string.
+type EvidenceOpportunity struct {
+	Kind                  string   `json:"kind"`
+	Authority             string   `json:"authority"`
+	Status                string   `json:"status"`
+	AdmittedInputs        int      `json:"admitted_inputs"`
+	Detail                string   `json:"detail"`
+	Command               []string `json:"command,omitempty"`
+	RequiresAuthorization bool     `json:"requires_authorization"`
 }
 
 // PlanSummary partitions every planned stage by effective disposition.
@@ -71,6 +87,24 @@ func Plan(ctx context.Context, opts Options) (ScanPlan, error) {
 	state.scipInputs, state.scipDigest, err = scipindex.PrepareInputs(ctx, enabledSCIPIndexes(opts))
 	if err != nil {
 		return ScanPlan{}, fmt.Errorf("prepare SCIP indexes: %w", err)
+	}
+	state.traceInputs, state.traceDigest, err = runtime.PrepareTraceInputs(ctx, opts.TracePaths)
+	if err != nil {
+		return ScanPlan{}, fmt.Errorf("validate runtime trace inputs: %w", err)
+	}
+	for _, input := range state.traceInputs {
+		if _, err := runtime.LoadTrace(ctx, input); err != nil {
+			return ScanPlan{}, fmt.Errorf("validate runtime trace: %w", err)
+		}
+	}
+	if opts.HistoryPath != "" {
+		state.historyInput, err = history.PrepareInput(ctx, opts.HistoryPath)
+		if err != nil {
+			return ScanPlan{}, fmt.Errorf("prepare history input: %w", err)
+		}
+		if _, err := history.ReadCompiledFile(ctx, state.historyInput); err != nil {
+			return ScanPlan{}, fmt.Errorf("validate history input: %w", err)
+		}
 	}
 	if _, err := state.runInventory(ctx); err != nil {
 		return ScanPlan{}, fmt.Errorf("plan inventory: %w", err)
@@ -156,7 +190,70 @@ func Plan(ctx context.Context, opts Options) (ScanPlan, error) {
 		plan.Stages = append(plan.Stages, stagePlan)
 	}
 	plan.Summary.Stages = len(plan.Stages)
+	plan.EvidenceOpportunities = evidenceOpportunities(state)
 	return plan, nil
+}
+
+func evidenceOpportunities(state *stagedScanState) []EvidenceOpportunity {
+	result := []EvidenceOpportunity{
+		{
+			Kind: "compiler_semantics", Authority: "compiler_or_structured_assertion", Status: "not_supplied",
+			Detail:  "No SCIP index is admitted; syntax and deterministic framework evidence remain available.",
+			Command: []string{"rkc", "scip", "languages"}, RequiresAuthorization: false,
+		},
+		{
+			Kind: "runtime_capture_assertion", Authority: "operator_assertion", Status: "not_supplied",
+			Detail:                "No runtime capture assertion is admitted. Current capture can add bounded assertions, not producer-authenticated observations.",
+			Command:               []string{"rkc", "trace", "capture", "--dir", ".", "--out", ".rkc-trace.json", "--", "go", "test", "./..."},
+			RequiresAuthorization: true,
+		},
+		{
+			Kind: "semantic_history", Authority: "version_control", Status: "not_supplied",
+			Detail:                "No compiled semantic history is admitted; current-tree facts remain usable without lifecycle claims.",
+			Command:               []string{"rkc", "history", "build", "--dir", ".", "--out", ".rkc-history.json"},
+			RequiresAuthorization: true,
+		},
+	}
+	if len(state.scipInputs) > 0 {
+		result[0].AdmittedInputs = len(state.scipInputs)
+		authenticated := 0
+		for _, input := range state.scipInputs {
+			if input.CompilerAuthenticated() {
+				authenticated++
+			}
+		}
+		switch authenticated {
+		case len(state.scipInputs):
+			result[0].Authority = "compiler"
+			result[0].Status = "admitted_compiler_authenticated"
+			result[0].Detail = fmt.Sprintf("All %d validated SCIP inputs retain current-process compiler authentication.", authenticated)
+		case 0:
+			result[0].Authority = "structured_index_assertion"
+			result[0].Status = "admitted_assertion"
+			result[0].Detail = fmt.Sprintf("All %d validated SCIP inputs are producer-unverified structured assertions; facts cannot be labelled compiler-resolved.", len(state.scipInputs))
+		default:
+			result[0].Authority = "mixed"
+			result[0].Status = "admitted_mixed_authority"
+			result[0].Detail = fmt.Sprintf("%d of %d validated SCIP inputs retain current-process compiler authentication; the remainder are producer-unverified structured assertions.", authenticated, len(state.scipInputs))
+		}
+		result[0].Command = nil
+		result[0].RequiresAuthorization = false
+	}
+	if len(state.traceInputs) > 0 {
+		result[1].Status = "admitted_assertion"
+		result[1].AdmittedInputs = len(state.traceInputs)
+		result[1].Detail = "Digest-bound, source-affine runtime assertions are validated and included; no current capture authenticates its command-output producer."
+		result[1].Command = nil
+		result[1].RequiresAuthorization = false
+	}
+	if state.historyInput.Path != "" {
+		result[2].Status = "admitted"
+		result[2].AdmittedInputs = 1
+		result[2].Detail = "Digest-bound semantic history is validated and included in the planned evidence boundary."
+		result[2].Command = nil
+		result[2].RequiresAuthorization = false
+	}
+	return result
 }
 
 func stageEnabled(stageID string, opts Options) bool {
@@ -181,6 +278,12 @@ func stageEnabled(stageID string, opts Options) bool {
 		return !opts.DisableFrameworks && !opts.DisableEnvKeys
 	case "secret-scan":
 		return !opts.DisableSecretScan
+	case "config-env":
+		return !opts.DisableFrameworks
+	case "trace-import":
+		return len(opts.TracePaths) > 0
+	case "history-import":
+		return opts.HistoryPath != ""
 	default:
 		return true
 	}

@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/neuroforge-io/RKC/internal/inventory"
 	rkcplugin "github.com/neuroforge-io/RKC/internal/plugin"
 )
 
@@ -224,30 +225,7 @@ func defaultConfiguration() Configuration {
 // inventory engine treats each value as that path plus its descendants; it does
 // not interpret Git ignore files or glob metacharacters.
 func defaultInventoryExclusions() []string {
-	return []string{
-		".cache",
-		".coverage",
-		".git",
-		".mypy_cache",
-		".pytest_cache",
-		".rkc",
-		".rkc-coverage",
-		".rkc-downloads",
-		".rkc-models",
-		".rkc-runtime",
-		".rkc-state",
-		".rkc.rkc-derived",
-		".ruff_cache",
-		".venv",
-		"__pycache__",
-		"bin",
-		"coverage",
-		"coverage.out",
-		"coverage.xml",
-		"dist",
-		"htmlcov",
-		"venv",
-	}
+	return inventory.DefaultExclusions()
 }
 
 func loadConfiguration(path string) (Configuration, error) {

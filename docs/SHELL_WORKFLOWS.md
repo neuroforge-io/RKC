@@ -27,15 +27,18 @@ release sequence or the static/syntax contracts in
 | [`scripts/validate-dco.sh`](../scripts/validate-dco.sh) | Validates signed-off-by trailers and the approved repository ancestry for a commit range. |
 | [`scripts/verify-release.sh`](../scripts/verify-release.sh) | Runs the full evidence-producing release validation sequence with exact step inventory and source binding. |
 | [`scripts/verify-resource-guard.sh`](../scripts/verify-resource-guard.sh) | Proves the delegated cgroup, CPU/memory/swap/task limits, idle scheduling, and OOM policy of the local guard. |
-| [`scripts/with-rkc-limits.sh`](../scripts/with-rkc-limits.sh) | Places local builds, scans, and model work in a subordinate one-core, low-priority cgroup and yields to higher-priority ERAIS work. |
+| [`scripts/with-rkc-limits.sh`](../scripts/with-rkc-limits.sh) | Places local builds, scans, and model work in a subordinate one-core, low-priority cgroup and yields to configured higher-priority workload classes. The strict policy (`RKC_HIGHER_PRIORITY_POLICY=refuse`) refuses to start while higher-priority work is visible; the default `yield` policy starts inside the subordinate envelope and leaves continuous load monitoring to the guarded RKC binary. `RKC_HIGHER_PRIORITY_MARKERS` replaces the generic `torchrun,lm_eval` classes with 1-16 unique lower-case ASCII markers of at most 32 bytes each and 255 bytes total; empty retains the default and invalid values fail closed. |
 
 ## Operating rules
 
 Use the corresponding `make` target where one exists. On a shared Linux host,
 choose the `safe-*` target so systemd user cgroups enforce the documented
 4 GiB soft / 4.5 GiB hard memory ceiling, 256 MiB swap ceiling, one CPU core,
-idle I/O, and low process priority. The guard refuses to start while a visible
-ERAIS or evaluation workload is active. Release and self-catalogue workflows
+idle I/O, and low process priority. The strict policy (`RKC_HIGHER_PRIORITY_POLICY=refuse`)
+refuses to start while a visible configured higher-priority workload is active;
+the default `yield` policy starts
+inside the same subordinate envelope and defers continuous load monitoring to
+the guarded RKC binary. Release and self-catalogue workflows
 also refuse dirty source, symlinked output, model-weight input, and generated
 output recursion.
 
@@ -45,14 +48,16 @@ outside this reference release. Their source-level contracts are checked on
 every Python test discovery run, while the guarded CI workflow supplies the
 runtime evidence for operations that create release or temporary artifacts.
 
-RKC-owned documentation and workflows are MIT-licensed by NeuroForgeIO and RKC
-contributors. NeuroForgeIO requests that redistributions retain
+RKC documentation and workflows are published by NeuroForgeIO, copyright 2026
+NeuroForgeIO and RKC contributors, and Apache-2.0 licensed. Redistributions
+must preserve the applicable
 [`NOTICE`](../NOTICE); review
 [`THIRD_PARTY_NOTICES.md`](../THIRD_PARTY_NOTICES.md) for applicable third-party
 obligations.
 
 ---
-_RKC is stewarded by **NeuroForgeIO** and released under the **MIT License**.
-Redistributions must retain the copyright and permission notices required by
-that license. Attribution to NeuroForgeIO is requested, but is not an additional
-license condition._
+_RKC is open source, published and maintained by **NeuroForgeIO**, under the
+**Apache License, Version 2.0**. Copyright 2026 NeuroForgeIO and RKC
+contributors. Redistributed
+works must preserve applicable license and `NOTICE` terms. Third-party materials
+retain their own licenses and ownership._

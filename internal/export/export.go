@@ -701,7 +701,7 @@ func notebookUploadGuide(bundle model.Bundle, sources []notebookSource, totalByt
 	var b strings.Builder
 	b.WriteString("# Upload this RKC atlas to an LLM notebook\n\n")
 	b.WriteString("This directory is a deterministic, citation-oriented Markdown export of one RKC snapshot. It is suitable for NotebookLM and other notebook or agent systems that accept Markdown sources.\n\n")
-	b.WriteString("RKC is developed by NeuroForgeIO and RKC contributors under the MIT License. Repository and third-party content retains its own terms; this export does not relicense it.\n\n")
+	b.WriteString("RKC is published by NeuroForgeIO; copyright 2026 NeuroForgeIO and RKC contributors, licensed under Apache-2.0. Repository and third-party content retains its own terms; this export does not relicense it.\n\n")
 	if licenseIncluded {
 		b.WriteString("Verified admitted top-level license and notice artifacts are included in `05_license_and_attribution_*.md`. Review those repository-provided terms before reuse.\n\n")
 	} else {
@@ -1434,7 +1434,9 @@ const siteHTML = `<!doctype html>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <meta name="color-scheme" content="dark light">
+<meta name="description" content="Evidence-backed repository atlas: symbols, relationships, diagnostics, and coverage compiled by RKC.">
 <title>RKC · Repository atlas</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%23111722'/%3E%3Ccircle cx='16' cy='16' r='6' fill='none' stroke='%23a9c5ff' stroke-width='2.5'/%3E%3Ccircle cx='16' cy='7' r='2.6' fill='%2380e1c1'/%3E%3Ccircle cx='25' cy='21' r='2.6' fill='%2380e1c1'/%3E%3Ccircle cx='7' cy='21' r='2.6' fill='%2380e1c1'/%3E%3Cpath d='M16 9.6 22.4 19M16 9.6 9.6 19M18.6 21h-5.2' stroke='%23a9c5ff' stroke-width='1.6' fill='none'/%3E%3C/svg%3E">
 <link rel="stylesheet" href="./styles.css">
 </head>
 <body>
@@ -1480,7 +1482,7 @@ const siteHTML = `<!doctype html>
     <div class="loading" role="status" aria-live="polite">Loading repository data…</div>
   </section>
 </main>
-<footer><span id="snapshot"></span><span>Evidence-backed atlas · NeuroForgeIO / RKC · MIT · static read-only by default · protected workbench by explicit opt-in.</span></footer>
+<footer><span id="snapshot"></span><span>Evidence-backed atlas · NeuroForgeIO / RKC · Apache-2.0 · static read-only by default · protected workbench by explicit opt-in.</span></footer>
 <noscript><div class="noscript">This atlas needs JavaScript to load its local snapshot data.</div></noscript>
 <script src="./app.js" defer></script>
 </body>
@@ -1522,8 +1524,10 @@ const siteCSS = `:root {
 }
 * { box-sizing: border-box; }
 [hidden] { display: none !important; }
+html { scrollbar-gutter: stable; }
 html, body { margin: 0; min-height: 100%; background: var(--bg); color: var(--text); font: 14px/1.55 ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
 body { background-image: radial-gradient(circle at 78% -10%, color-mix(in srgb, var(--accent) 12%, transparent), transparent 34rem); background-attachment: fixed; }
+::selection { background: color-mix(in srgb, var(--accent) 32%, transparent); }
 button, input, select { font: inherit; }
 button, select { min-height: 42px; }
 button { color: inherit; }
@@ -1539,7 +1543,7 @@ h1 { font-size: 22px; line-height: 1.2; margin: 3px 0 0; }
 .connection { width: fit-content; margin: 0 0 8px auto; padding: 3px 9px; border: 1px solid var(--line); border-radius: 999px; color: var(--muted); background: var(--panel2); font-size: 11px; }
 .connection.live { color: var(--good); border-color: color-mix(in srgb, var(--good) 55%, var(--line)); }
 .connection.enabled { color: var(--accent2); border-color: color-mix(in srgb, var(--accent2) 55%, var(--line)); }
-.metric { padding: 6px 10px; border: 1px solid var(--line); border-radius: 999px; color: var(--muted); background: var(--panel2); }
+.metric { padding: 6px 10px; border: 1px solid var(--line); border-radius: 999px; color: var(--muted); background: var(--panel2); white-space: nowrap; }
 .metric b { color: var(--text); }
 .tabs { position: sticky; top: 0; z-index: 3; display: flex; gap: 4px; padding: 8px 20px; overflow-x: auto; border-bottom: 1px solid var(--line); background: var(--panel); background: color-mix(in srgb, var(--panel) 94%, transparent); backdrop-filter: blur(14px); }
 .tabs button { flex: 0 0 auto; border: 1px solid transparent; border-radius: 7px; padding: 8px 12px; color: var(--muted); background: transparent; cursor: pointer; }
@@ -1571,7 +1575,7 @@ section { min-width: 0; padding: 24px; overflow: auto; }
 .noscript { padding: 16px; color: var(--text); background: var(--bad); }
 .card { margin: 0 0 16px; padding: 17px 18px; background: var(--panel); border: 1px solid var(--line); border-radius: 12px; box-shadow: var(--shadow); }
 .card { transition: border-color .16s ease, transform .16s ease; }
-.card:hover { border-color: color-mix(in srgb, var(--accent) 42%, var(--line)); }
+.card:hover { border-color: color-mix(in srgb, var(--accent) 42%, var(--line)); transform: translateY(-1px); }
 .card h2, .card h3 { margin-top: 0; }
 .card h4 { margin-bottom: 6px; }
 .onboarding { margin: 12px 0 20px; padding-left: 22px; }
@@ -1599,6 +1603,16 @@ textarea { width: 100%; min-height: 96px; resize: vertical; padding: 11px; color
 .command-choice span { margin-top: 3px; color: var(--muted); font-size: 11px; }
 .command-choice.active { border-color: var(--accent2); box-shadow: inset 3px 0 0 var(--accent2); }
 .command-mode { float: right; color: var(--muted); font-size: 10px; text-transform: uppercase; letter-spacing: .08em; }
+.repository-picker { border-color: color-mix(in srgb, var(--accent2) 55%, var(--line)); }
+.folder-controls { display: grid; grid-template-columns: minmax(220px, 1fr) auto auto; gap: 8px; align-items: end; }
+.folder-controls .field { min-width: 0; }
+.folder-browser { margin-top: 12px; padding: 12px; border: 1px solid var(--line); border-radius: 9px; background: var(--panel2); }
+.folder-browser[hidden] { display: none; }
+.folder-browser-header { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.folder-path { flex: 1 1 280px; min-width: 0; overflow-wrap: anywhere; }
+.folder-list { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 7px; max-height: 280px; margin-top: 10px; overflow: auto; }
+.folder-choice { min-height: 44px; padding: 8px 10px; overflow-wrap: anywhere; text-align: left; color: var(--text); background: var(--panel); border: 1px solid var(--line); border-radius: 8px; cursor: pointer; }
+.folder-choice:hover { border-color: var(--accent); }
 .job-output { min-height: 190px; max-height: 48vh; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; }
 .job-meta { display: grid; grid-template-columns: repeat(auto-fit, minmax(145px, 1fr)); gap: 8px; margin: 12px 0; }
 .job-meta .stat strong { font-size: 13px; }
@@ -1666,16 +1680,24 @@ footer { display: flex; justify-content: space-between; gap: 16px; padding: 12px
   .tabs { padding-inline: 10px; }
   .filters { grid-template-columns: 1fr; }
   .grid { grid-template-columns: 1fr; }
+  .folder-controls { grid-template-columns: 1fr; }
   .bar-row { grid-template-columns: 1fr 64px; gap: 5px 8px; }
   .bar-row > span:first-child { grid-column: 1 / -1; }
   .graph-shell { min-height: 420px; }
   .graph-shell svg { height: 420px; }
+}
+@media (max-width: 380px) {
+  header { padding: 14px; }
+  .metrics .metric { font-size: 11px; padding: 5px 8px; }
+  .entity { min-height: 54px; }
+  .command-mode { float: none; display: block; }
 }`
 
 const siteJS = `'use strict';
 const commandCatalog=__RKC_COMMAND_CATALOG__;
-const state={bundle:null,coverage:null,nodes:new Map(),artifacts:new Map(),evidence:new Map(),outgoing:new Map(),incoming:new Map(),selected:null,view:'overview',results:[],workbench:null,commandName:'quickstart',api:false,facets:null,listTruncated:false,diagnosticsTruncated:false,searchTimer:null,searchRevision:0,staticBootstrap:false,staticLoad:null,staticSearchRecords:null,staticSearchByID:new Map(),staticSearchLoad:null};
+const state={bundle:null,coverage:null,nodes:new Map(),artifacts:new Map(),evidence:new Map(),outgoing:new Map(),incoming:new Map(),selected:null,view:'overview',results:[],workbench:null,commandName:'quickstart',repositoryFolder:'',directoryListing:null,activationNotice:null,api:false,facets:null,listTruncated:false,diagnosticsTruncated:false,searchTimer:null,searchRevision:0,atlasRevision:0,staticBootstrap:false,staticLoad:null,staticSearchRecords:null,staticSearchByID:new Map(),staticSearchLoad:null};
 const maximumGraphNeighbors=32,maximumGraphNodesShown=16;
+const snapshotGenerationHeader='X-RKC-Snapshot-ID',snapshotGenerationErrorCode='RKC_SNAPSHOT_GENERATION_CHANGED',maximumSnapshotLoadAttempts=3;
 const $=id=>document.getElementById(id);
 const esc=value=>String(value??'').replace(/[&<>"']/g,ch=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch]));
 const label=node=>node?.qualified_name||node?.name||node?.id||'unknown';
@@ -1684,8 +1706,9 @@ const number=value=>new Intl.NumberFormat().format(value||0);
 
 async function boot(){
   try{
+    const atlasRevision=advanceAtlasGeneration();
     const data=await loadInitialData();
-    applyAtlasData(data);
+    applyAtlasData(data,atlasRevision);
     initialiseControls();
     renderHeader();
     renderList();
@@ -1702,29 +1725,51 @@ async function boot(){
 }
 
 async function loadInitialData(){
-  try{
-    const health=await fetch('/api/v1/health',{cache:'no-store',headers:{Accept:'application/json'}});
-    if(!health.ok)throw new Error('API unavailable');
-    const [manifest,coverage,nodes,diagnostics,facets]=await Promise.all([
-      fetchJSON('/api/v1/manifest'),fetchJSON('/api/v1/coverage'),
-      fetchJSON('/api/v1/nodes?limit=120'),fetchJSON('/api/v1/diagnostics?limit=200'),
-      fetchJSON('/api/v1/facets')
-    ]);
-    state.api=true;
-    return {bundle:{snapshot:manifest,nodes:nodes.items||[],artifacts:[],edges:[],evidence:[],diagnostics:diagnostics.items||[]},coverage,facets,list_truncated:Boolean(nodes.truncated),diagnostics_truncated:Boolean(diagnostics.truncated)};
-  }catch(_error){
-    state.api=false;
-    const bootstrap=await fetch('./data/bootstrap.json',{cache:'no-store'});
-    if(bootstrap.ok)return bootstrap.json();
-    const full=await fetch('./data/atlas.json',{cache:'no-store'});
-    if(!full.ok)throw new Error('HTTP '+full.status);
-    return full.json();
+  let apiError=null;
+  for(let attempt=0;attempt<maximumSnapshotLoadAttempts;attempt++){
+    try{
+      const data=await loadAPISnapshotGeneration();
+      state.api=true;
+      return data;
+    }catch(error){
+      apiError=error;
+      if(!isSnapshotGenerationError(error))break;
+      if(attempt+1<maximumSnapshotLoadAttempts)await new Promise(resolve=>setTimeout(resolve,25));
+    }
   }
+  // A generation mismatch means the API is available but activation crossed
+  // this parallel read. Never conceal that integrity failure with stale static
+  // files; bounded retries either converge on one generation or fail visibly.
+  if(isSnapshotGenerationError(apiError))throw apiError;
+  state.api=false;
+  const bootstrap=await fetch('./data/bootstrap.json',{cache:'no-store'});
+  if(bootstrap.ok)return bootstrap.json();
+  const full=await fetch('./data/atlas.json',{cache:'no-store'});
+  if(!full.ok)throw new Error('HTTP '+full.status);
+  return full.json();
 }
 
-function applyAtlasData(data){
+async function loadAPISnapshotGeneration(){
+  const [healthResult,manifestResult,coverageResult,nodesResult,diagnosticsResult,facetsResult]=await Promise.all([
+    fetchSnapshotJSON('/api/v1/health'),fetchSnapshotJSON('/api/v1/manifest'),fetchSnapshotJSON('/api/v1/coverage'),
+    fetchSnapshotJSON('/api/v1/nodes?limit=120'),fetchSnapshotJSON('/api/v1/diagnostics?limit=200'),
+    fetchSnapshotJSON('/api/v1/facets')
+  ]);
+  const responses=[healthResult,manifestResult,coverageResult,nodesResult,diagnosticsResult,facetsResult];
+  const snapshotID=manifestResult.snapshotID;
+  const manifest=manifestResult.data,coverage=coverageResult.data,health=healthResult.data;
+  if(!snapshotID||responses.some(result=>result.snapshotID!==snapshotID)||
+      manifest?.id!==snapshotID||coverage?.snapshot_id!==snapshotID||health?.snapshot_id!==snapshotID){
+    throw snapshotGenerationError('Snapshot generation changed while the atlas was loading. Reload to obtain one consistent snapshot.');
+  }
+  const nodes=nodesResult.data,diagnostics=diagnosticsResult.data,facets=facetsResult.data;
+  return {bundle:{snapshot:manifest,nodes:nodes.items||[],artifacts:[],edges:[],evidence:[],diagnostics:diagnostics.items||[]},coverage,facets,list_truncated:Boolean(nodes.truncated),diagnostics_truncated:Boolean(diagnostics.truncated)};
+}
+
+function applyAtlasData(data,atlasRevision){
+  if(atlasRevision!==state.atlasRevision)throw snapshotGenerationError('A stale atlas generation cannot replace the active repository state.');
   if(!data?.bundle?.snapshot||!Array.isArray(data.bundle.nodes)||!data.coverage)throw new Error('atlas data is incomplete');
-  state.bundle=data.bundle;state.coverage=data.coverage;state.facets=data.facets||state.facets;
+  state.bundle=data.bundle;state.coverage=data.coverage;state.facets=data.facets||null;
   state.staticBootstrap=Boolean(data.static_bootstrap);state.listTruncated=Boolean(data.list_truncated);state.diagnosticsTruncated=Boolean(data.diagnostics_truncated);
   state.nodes.clear();state.artifacts.clear();state.evidence.clear();state.outgoing.clear();state.incoming.clear();
   for(const node of state.bundle.nodes)state.nodes.set(node.id,node);
@@ -1736,10 +1781,12 @@ function applyAtlasData(data){
 async function ensureFullStaticData(){
   if(state.api||!state.staticBootstrap)return;
   if(!state.staticLoad)state.staticLoad=(async()=>{
+    const atlasRevision=state.atlasRevision,expectedSnapshot=state.bundle.snapshot.id;
     const response=await fetch('./data/atlas.json',{cache:'no-store'});
     if(!response.ok)throw new Error('HTTP '+response.status);
     const data=await response.json();
-    applyAtlasData(data);state.staticBootstrap=false;state.listTruncated=false;renderHeader();
+    if(data?.bundle?.snapshot?.id!==expectedSnapshot||atlasRevision!==state.atlasRevision)throw snapshotGenerationError('Snapshot changed while complete offline details were loading.');
+    applyAtlasData(data,atlasRevision);state.staticBootstrap=false;state.listTruncated=false;renderHeader();
   })();
   try{await state.staticLoad}finally{state.staticLoad=null}
 }
@@ -1747,7 +1794,7 @@ async function ensureFullStaticData(){
 async function ensureStaticSearchData(){
   if(state.api||!state.staticBootstrap||state.staticSearchRecords)return;
   if(!state.staticSearchLoad)state.staticSearchLoad=(async()=>{
-    const expectedSnapshot=state.bundle.snapshot.id,response=await fetch('./data/search.json',{cache:'no-store'});
+    const atlasRevision=state.atlasRevision,expectedSnapshot=state.bundle.snapshot.id,response=await fetch('./data/search.json',{cache:'no-store'});
     if(!response.ok)throw new Error('HTTP '+response.status);
     const data=await response.json();
     if(data?.schema_version!=='1'||data.snapshot_id!==expectedSnapshot)throw new Error('offline search index does not match this snapshot');
@@ -1758,49 +1805,74 @@ async function ensureStaticSearchData(){
       for(const key of ['language','qualified_name','signature','path'])if(record[key]!==undefined&&typeof record[key]!=='string')throw new Error('offline search index has an invalid record field');
       byID.set(record.id,record);
     }
-    if(state.bundle.snapshot.id!==expectedSnapshot)throw new Error('snapshot changed while offline search was loading');
+    if(atlasRevision!==state.atlasRevision||state.bundle.snapshot.id!==expectedSnapshot)throw snapshotGenerationError('Snapshot changed while offline search was loading.');
     state.staticSearchRecords=data.records;state.staticSearchByID=byID;
   })();
   try{await state.staticSearchLoad}finally{state.staticSearchLoad=null}
 }
 
 async function fetchJSON(path,options){
+  const atlasRevision=state.atlasRevision,expectedSnapshot=state.bundle?.snapshot?.id;
+  if(!state.api||!expectedSnapshot)throw snapshotGenerationError('An active API snapshot is required for repository reads.');
   const response=await fetch(path,{cache:'no-store',headers:{Accept:'application/json',...(options?.headers||{})},...options});
   const data=await response.json();
+  const responseSnapshot=(response.headers?.get(snapshotGenerationHeader)||'').trim();
+  if(!responseSnapshot||responseSnapshot!==expectedSnapshot)throw snapshotGenerationError('Repository read response does not match the active snapshot.');
+  if(atlasRevision!==state.atlasRevision||state.bundle?.snapshot?.id!==expectedSnapshot)throw snapshotGenerationError('Repository read completed after the active atlas generation changed.');
   if(!response.ok)throw new Error(data?.detail||data?.title||('HTTP '+response.status));
   return data;
 }
+
+async function fetchSnapshotJSON(path){
+  const response=await fetch(path,{cache:'no-store',headers:{Accept:'application/json'}});
+  const data=await response.json();
+  if(!response.ok)throw new Error(data?.detail||data?.title||('HTTP '+response.status));
+  const snapshotID=(response.headers.get(snapshotGenerationHeader)||'').trim();
+  if(!snapshotID)throw snapshotGenerationError('Snapshot generation identity is missing from the read API response.');
+  return {data,snapshotID};
+}
+
+function snapshotGenerationError(message){const error=new Error(message);error.code=snapshotGenerationErrorCode;return error}
+function isSnapshotGenerationError(error){return error?.code===snapshotGenerationErrorCode}
+function advanceAtlasGeneration(){state.atlasRevision++;state.searchRevision++;clearTimeout(state.searchTimer);return state.atlasRevision}
 
 function push(map,key,value){if(!map.has(key))map.set(key,[]);map.get(key).push(value)}
 function safeHash(){try{return decodeURIComponent(location.hash.slice(1))}catch(_error){return''}}
 
 function initialiseControls(){
+	  refreshAtlasFilters(true);
+	  $('search').addEventListener('input',scheduleListRefresh);
+	  $('search').addEventListener('keydown',event=>{if(event.key==='ArrowDown'&&state.results.length){event.preventDefault();focusResult(0)}});
+	  $('kind').addEventListener('change',scheduleListRefresh);
+	  $('language').addEventListener('change',scheduleListRefresh);
+	  $('clear-filters').addEventListener('click',clearFilters);
+	  $('list').addEventListener('keydown',handleListKeys);
+	  const tabs=[...document.querySelectorAll('[role="tab"]')];
+	  for(const [index,button] of tabs.entries()){
+		button.addEventListener('click',()=>setView(button.dataset.view));
+		button.addEventListener('keydown',event=>{
+		  let target=-1;
+		  if(event.key==='ArrowRight'||event.key==='ArrowDown')target=(index+1)%tabs.length;
+		  if(event.key==='ArrowLeft'||event.key==='ArrowUp')target=(index-1+tabs.length)%tabs.length;
+		  if(event.key==='Home')target=0;
+		  if(event.key==='End')target=tabs.length-1;
+		  if(target>=0){event.preventDefault();tabs[target].focus();setView(tabs[target].dataset.view,false)}
+		});
+	  }
+	  document.addEventListener('keydown',event=>{
+		if(event.key==='/'&&!isEditable(document.activeElement)){event.preventDefault();$('search').focus();$('search').select()}
+		if(event.key==='Escape'&&filtersActive()){event.preventDefault();clearFilters();$('search').focus()}
+	  });
+}
+
+function refreshAtlasFilters(reset){
   const kinds=(state.facets?Object.keys(state.facets.node_kinds||{}):[...new Set(state.bundle.nodes.map(node=>node.kind).filter(Boolean))]).sort();
   const languages=(state.facets?Object.keys(state.facets.languages||{}):[...new Set(state.bundle.nodes.map(node=>node.language).filter(Boolean))]).sort();
-  $('kind').insertAdjacentHTML('beforeend',kinds.map(value=>'<option value="'+esc(value)+'">'+esc(value)+'</option>').join(''));
-  $('language').insertAdjacentHTML('beforeend',languages.map(value=>'<option value="'+esc(value)+'">'+esc(value)+'</option>').join(''));
-  $('search').addEventListener('input',scheduleListRefresh);
-  $('search').addEventListener('keydown',event=>{if(event.key==='ArrowDown'&&state.results.length){event.preventDefault();focusResult(0)}});
-  $('kind').addEventListener('change',scheduleListRefresh);
-  $('language').addEventListener('change',scheduleListRefresh);
-  $('clear-filters').addEventListener('click',clearFilters);
-  $('list').addEventListener('keydown',handleListKeys);
-  const tabs=[...document.querySelectorAll('[role="tab"]')];
-  for(const [index,button] of tabs.entries()){
-    button.addEventListener('click',()=>setView(button.dataset.view));
-    button.addEventListener('keydown',event=>{
-      let target=-1;
-      if(event.key==='ArrowRight'||event.key==='ArrowDown')target=(index+1)%tabs.length;
-      if(event.key==='ArrowLeft'||event.key==='ArrowUp')target=(index-1+tabs.length)%tabs.length;
-      if(event.key==='Home')target=0;
-      if(event.key==='End')target=tabs.length-1;
-      if(target>=0){event.preventDefault();tabs[target].focus();setView(tabs[target].dataset.view,false)}
-    });
-  }
-  document.addEventListener('keydown',event=>{
-    if(event.key==='/'&&!isEditable(document.activeElement)){event.preventDefault();$('search').focus();$('search').select()}
-    if(event.key==='Escape'&&filtersActive()){event.preventDefault();clearFilters();$('search').focus()}
-  });
+	const selectedKind=reset?'':$('kind').value,selectedLanguage=reset?'':$('language').value;
+	$('kind').innerHTML='<option value="">All node kinds</option>'+kinds.map(value=>'<option value="'+esc(value)+'">'+esc(value)+'</option>').join('');
+	$('language').innerHTML='<option value="">All languages</option>'+languages.map(value=>'<option value="'+esc(value)+'">'+esc(value)+'</option>').join('');
+	if(kinds.includes(selectedKind))$('kind').value=selectedKind;
+	if(languages.includes(selectedLanguage))$('language').value=selectedLanguage;
 }
 
 function isEditable(element){return element instanceof HTMLInputElement||element instanceof HTMLTextAreaElement||element instanceof HTMLSelectElement||element?.isContentEditable}
@@ -1871,6 +1943,7 @@ function focusResult(index){
 function renderHeader(){
   const coverage=state.coverage,bundle=state.bundle;
   $('title').textContent=bundle.snapshot.root_name+' repository atlas';
+  document.title=(bundle.snapshot.root_name||'Repository')+' repository atlas';
   $('snapshot').textContent='Snapshot '+bundle.snapshot.id;
   const values=[['artifacts',coverage.artifacts_inventoried],['symbols',coverage.symbols_total],['edges',coverage.edges_total],['unresolved',coverage.unresolved_edges],['errors',coverage.diagnostics_by_severity?.error||0]];
   $('metrics').innerHTML=values.map(([name,value])=>'<span class="metric"><b>'+number(value)+'</b> '+esc(name)+'</span>').join('');
@@ -1904,8 +1977,9 @@ async function probeWorkbench(){
     if(!response.ok)throw new Error('unavailable');
     const session=await response.json();
     if(!session?.enabled||!session.token||!Array.isArray(session.commands))throw new Error('invalid workbench session');
-    storeWorkbenchToken(session.token);
-    state.workbench=session;
+	storeWorkbenchToken(session.token);
+	state.workbench=session;
+	state.repositoryFolder=session.active_dataset?.repository_root||session.workspace||'';
     $('runtime-status').textContent='Protected local workbench';
     $('runtime-status').className='connection enabled';
   }catch(_error){
@@ -1958,7 +2032,9 @@ function selectNode(id,view='symbol',focusContent=true){
 }
 
 async function loadAPINode(id){
+  const atlasRevision=state.atlasRevision;
   const detail=await fetchJSON('/api/v1/nodes/'+encodeURIComponent(id));
+  if(atlasRevision!==state.atlasRevision)throw snapshotGenerationError('Node detail completed after the active atlas generation changed.');
   state.nodes.set(detail.node.id,detail.node);
   state.evidence=new Map([...state.evidence,...(detail.evidence||[]).map(item=>[item.id,item])]);
   state.outgoing.set(id,detail.outgoing_edges||[]);
@@ -2008,7 +2084,8 @@ function renderOverview(){
   const bundle=state.bundle,coverage=state.coverage;
   const languages=state.facets?.languages||countBy((bundle.artifacts||[]).filter(artifact=>artifact.language),artifact=>artifact.language);
   const kinds=state.facets?.node_kinds||countBy(bundle.nodes,node=>node.kind),resolutions=state.facets?.edge_resolutions||countBy(bundle.edges||[],edge=>edge.resolution);
-  $('content').innerHTML='<div class="card"><span class="eyebrow">Start here</span><h2>Explore '+esc(bundle.snapshot.root_name)+'</h2><ol class="onboarding"><li>Search by symbol, signature, path, language, or kind.</li><li>Select an entity to inspect its source, relationships, and evidence.</li><li>Use Graph for a bounded neighbourhood, Diagnostics for findings, and Coverage for proof ratios.</li></ol><div class="grid">'+stat('Content digest',short(bundle.snapshot.content_digest))+stat('Git commit',short(bundle.snapshot.git?.commit||'unavailable'))+stat('Schema',bundle.snapshot.schema_version)+stat('Tool',(bundle.snapshot.tool?.name||'rkc')+' '+(bundle.snapshot.tool?.version||''))+'</div></div><div class="grid"><div class="card"><h3>Language inventory</h3>'+bars(languages)+'</div><div class="card"><h3>Node vocabulary</h3>'+bars(kinds)+'</div></div><div class="card"><h3>Relationship resolution</h3>'+bars(resolutions)+'</div><div class="card"><h3>Trust posture</h3><p>Facts are stored as nodes, edges, and evidence. Compiler-resolved facts remain distinguishable from syntax inference, and unresolved relationships remain explicit. Generated prose, when present, remains a claim with evidence identifiers rather than becoming repository truth.</p><div class="grid">'+stat('Inventory accounting',percent(coverage.inventory_accounting_ratio))+stat('Semantic artifacts',number(coverage.artifacts_semantically_parsed))+stat('Compiler evidence',number(coverage.evidence_kinds?.compiler_resolved||0))+stat('Symbol evidence',percent(coverage.symbol_evidence_ratio))+stat('Edge resolution',percent(coverage.edge_resolution_ratio))+stat('Claim citation',coverage.claims_total?percent(coverage.claim_citation_ratio):'n/a')+'</div></div>';
+	const activation=state.activationNotice?'<div class="diagnostic note" role="status"><b>Atlas activated:</b> '+esc(state.activationNotice.root_name)+' · snapshot <span class="mono">'+esc(short(state.activationNotice.snapshot_id))+'</span>. Overview, search, graph, and command defaults now use this validated snapshot.</div>':'';
+	$('content').innerHTML=activation+'<div class="card"><span class="eyebrow">Start here</span><h2>Explore '+esc(bundle.snapshot.root_name)+'</h2><ol class="onboarding"><li>Search by symbol, signature, path, language, or kind.</li><li>Select an entity to inspect its source, relationships, and evidence.</li><li>Use Graph for a bounded neighbourhood, Diagnostics for findings, and Coverage for proof ratios.</li></ol><div class="grid">'+stat('Content digest',short(bundle.snapshot.content_digest))+stat('Git commit',short(bundle.snapshot.git?.commit||'unavailable'))+stat('Schema',bundle.snapshot.schema_version)+stat('Tool',(bundle.snapshot.tool?.name||'rkc')+' '+(bundle.snapshot.tool?.version||''))+'</div></div><div class="grid"><div class="card"><h3>Language inventory</h3>'+bars(languages)+'</div><div class="card"><h3>Node vocabulary</h3>'+bars(kinds)+'</div></div><div class="card"><h3>Relationship resolution</h3>'+bars(resolutions)+'</div><div class="card"><h3>Trust posture</h3><p>Facts are stored as nodes, edges, and evidence. Compiler-resolved facts remain distinguishable from syntax inference, and unresolved relationships remain explicit. Generated prose, when present, remains a claim with evidence identifiers rather than becoming repository truth.</p><div class="grid">'+stat('Inventory accounting',percent(coverage.inventory_accounting_ratio))+stat('Semantic artifacts',number(coverage.artifacts_semantically_parsed))+stat('Compiler evidence',number(coverage.evidence_kinds?.compiler_resolved||0))+stat('Symbol evidence',percent(coverage.symbol_evidence_ratio))+stat('Edge resolution',percent(coverage.edge_resolution_ratio))+stat('Claim citation',coverage.claims_total?percent(coverage.claim_citation_ratio):'n/a')+'</div></div>';
 }
 
 function renderSymbol(id){
@@ -2027,12 +2104,14 @@ function wireNodeButtons(view){for(const button of $('content').querySelectorAll
 
 async function renderGraph(seedID){
   if(state.api){
+    const atlasRevision=state.atlasRevision;
     $('content').innerHTML='<div class="loading" role="status">Loading bounded graph neighbourhood…</div>';
     try{
       const neighborhood=await fetchJSON('/api/v1/graph/neighborhood?node_id='+encodeURIComponent(seedID)+'&max_depth=1&max_nodes='+(maximumGraphNeighbors+1)+'&include_unresolved=true');
+      if(atlasRevision!==state.atlasRevision)return;
       for(const node of neighborhood.nodes||[])state.nodes.set(node.id,node);
       for(const edge of neighborhood.edges||[]){pushUnique(state.outgoing,edge.from,edge);pushUnique(state.incoming,edge.to,edge)}
-    }catch(error){$('content').innerHTML='<div class="card empty-state" role="alert"><h2>Graph query failed</h2><p>'+esc(error?.message||error)+'</p></div>';return}
+    }catch(error){if(atlasRevision!==state.atlasRevision)return;$('content').innerHTML='<div class="card empty-state" role="alert"><h2>Graph query failed</h2><p>'+esc(error?.message||error)+'</p></div>';return}
   }
   renderGraphFromState(seedID);
 }
@@ -2063,9 +2142,12 @@ function renderCommands(){
   const session=state.workbench||{enabled:false,commands:defaultCommands()},commands=session.commands||defaultCommands();
   if(!commands.some(item=>item.name===state.commandName))state.commandName=commands[0]?.name||'help';
   const enabled=Boolean(session.enabled);
+  const selectedCommand=commands.find(item=>item.name===state.commandName),defaultExecutable=selectedCommand?.default_executable!==false;
+  const restrictionNotice=enabled&&!defaultExecutable?'<p class="diagnostic warning"><b>Workbench boundary:</b> '+esc(selectedCommand.restriction||'This preset remains in its separately guarded command-line path.')+'</p>':'';
   const workspace=enabled?session.workspace:'Start with rkc open --workbench on a supported Linux host.';
-  $('content').innerHTML='<div class="card"><span class="eyebrow">Safe CLI workflows</span><h2>Command center</h2><p>Build, inspect, search, explain, validate, and maintain RKC from one responsive workspace. This catalogue exposes bounded workflows that are safe to preview here; the protected server executes only its explicit allowlist. Server lifecycle and separately managed model or Python operations stay in their guarded CLI paths. Commands are passed as exact argument arrays—never through a shell—and only one job runs at a time.</p><div class="grid">'+stat('Execution',enabled?'Enabled · token authenticated':'Read-only preview')+stat('Workspace',workspace)+stat('Resource policy','1 CPU · 4.5 GiB hard ceiling')+stat('Output bound',enabled?number(session.maximum_output_bytes)+' bytes':'2 MiB')+'</div></div><div class="command-layout"><div class="card"><h3>Choose a workflow</h3><div class="command-palette" id="command-palette">'+commands.map(command=>'<button type="button" class="command-choice '+(command.name===state.commandName?'active':'')+'" data-command="'+esc(command.name)+'"><span class="command-mode">'+esc(command.mode)+'</span><strong>'+esc(command.name)+'</strong><span>'+esc(command.description)+'</span></button>').join('')+'</div></div><div class="card"><span class="kind">rkc '+esc(state.commandName)+'</span><h3>Arguments</h3><label class="search-label" for="command-args">Enter the same options and values you would put after the command</label><textarea id="command-args" spellcheck="false" aria-describedby="command-guidance" placeholder="--help">'+esc(defaultCommandArgs(state.commandName))+'</textarea><p id="command-guidance" class="help-text">'+esc(commandGuidance(state.commandName))+'</p><pre id="command-preview">'+esc(commandPreview())+'</pre><div class="button-row"><button type="button" class="secondary" id="copy-command">Copy command</button><button type="button" class="primary" id="run-command" '+(enabled?'':'disabled')+'>Run protected command</button><button type="button" class="danger" id="cancel-command" hidden>Cancel command</button><span id="command-status" class="muted" role="status" aria-live="polite">'+(enabled?'Ready':'Execution is disabled in a static or read-only server.')+'</span></div><div id="job-meta" class="job-meta" hidden aria-label="Current job details"></div><h3>Job output</h3><pre id="job-output" class="job-output" tabindex="0" aria-live="polite">No command has run in this session.</pre></div></div>';
-  const authority=enabled?(session.authority_notice||'Trusted-user launcher: commands have the invoking account’s filesystem authority; this workspace is not a security sandbox.'):'Execution is disabled. Static preview cannot modify the host.';
+  const folderPicker=enabled?'<div class="card repository-picker"><span class="eyebrow">Guided first run</span><h2>Analyze a folder</h2><p>Choose any folder available to your local account. RKC will compile it into a verified, searchable atlas using the portable deterministic profile; a model is not required.</p><div class="folder-controls"><div class="field"><label class="search-label" for="repository-folder">Repository or project folder</label><input id="repository-folder" type="text" maxlength="4096" autocomplete="off" spellcheck="false" value="'+esc(state.repositoryFolder||workspace)+'"></div><button type="button" class="secondary" id="browse-folder">Browse folders</button><button type="button" class="primary" id="analyze-folder">Analyze this folder</button></div><p id="folder-status" class="help-text" role="status" aria-live="polite">The chooser lists folders only and stays inside this protected browser session.</p><div id="folder-browser" class="folder-browser" hidden></div></div>':'';
+  $('content').innerHTML='<div class="card"><span class="eyebrow">Safe CLI workflows</span><h2>Command center</h2><p>Build, inspect, search, explain, validate, and maintain RKC from one responsive workspace. This catalogue exposes bounded workflows that are safe to preview here; the protected server executes only its explicit allowlist. Server lifecycle and helper-launching model, Python, remote acquisition, and live history operations stay in their guarded CLI paths. Commands are passed as exact argument arrays—never through a shell—and only one job runs at a time.</p><div class="grid">'+stat('Execution',enabled?'Enabled · token authenticated':'Read-only preview')+stat('Workspace',workspace)+stat('Resource policy',enabled?'1 CPU · 4.5 GiB hard ceiling · re-proved continuously':'No command execution')+stat('Output bound',enabled?number(session.maximum_output_bytes)+' bytes':'Not applicable')+'</div></div>'+folderPicker+'<div class="command-layout"><div class="card"><h3>Choose a workflow</h3><div class="command-palette" id="command-palette">'+commands.map(command=>'<button type="button" class="command-choice '+(command.name===state.commandName?'active':'')+'" data-command="'+esc(command.name)+'"><span class="command-mode">'+esc(command.mode)+(command.default_executable===false?' · CLI only':'')+'</span><strong>'+esc(command.name)+'</strong><span>'+esc(command.description)+'</span></button>').join('')+'</div></div><div class="card"><span class="kind">rkc '+esc(state.commandName)+'</span><h3>Arguments</h3><label class="search-label" for="command-args">Enter the same options and values you would put after the command</label><textarea id="command-args" spellcheck="false" aria-describedby="command-guidance" placeholder="--help">'+esc(defaultCommandArgs(state.commandName))+'</textarea><p id="command-guidance" class="help-text">'+esc(commandGuidance(state.commandName))+'</p>'+restrictionNotice+'<pre id="command-preview">'+esc(commandPreview())+'</pre><div class="button-row"><button type="button" class="secondary" id="copy-command">Copy command</button><button type="button" class="primary" id="run-command" '+(enabled&&defaultExecutable?'':'disabled')+'>Run protected command</button><button type="button" class="danger" id="cancel-command" hidden>Cancel command</button><span id="command-status" class="muted" role="status" aria-live="polite">'+(enabled?(defaultExecutable?'Ready':'Use the copied command in its separately guarded CLI path.'):'Execution is disabled in a static or read-only server.')+'</span></div><div id="job-meta" class="job-meta" hidden aria-label="Current job details"></div><h3>Job output</h3><pre id="job-output" class="job-output" tabindex="0" aria-live="polite">No command has run in this session.</pre></div></div>';
+  const authority=enabled?(session.authority_notice||'Trusted-user launcher: commands have the invoking account’s filesystem authority; this workspace is not a security sandbox. Use a trusted browser profile because ephemeral origin allocation cannot prove legacy service-worker state is absent.'):'Execution is disabled. Static preview cannot modify the host.';
   const authorityNotice=document.createElement('p');authorityNotice.className='diagnostic warning';
   const authorityLabel=document.createElement('b');authorityLabel.textContent='Authority: ';authorityNotice.append(authorityLabel,document.createTextNode(authority));
   $('content').querySelector('.card .grid').before(authorityNotice);
@@ -2074,11 +2156,75 @@ function renderCommands(){
   $('command-args').addEventListener('input',()=>{$('command-preview').textContent=commandPreview()});
   $('copy-command').addEventListener('click',copyCommand);
   $('run-command').addEventListener('click',runWorkbenchCommand);
+  if(enabled){
+    const folder=$('repository-folder');
+    folder.addEventListener('input',()=>{state.repositoryFolder=folder.value});
+    folder.addEventListener('keydown',event=>{if(event.key==='Enter'){event.preventDefault();browseWorkbenchDirectory(folder.value)}});
+    $('browse-folder').addEventListener('click',()=>browseWorkbenchDirectory(folder.value));
+    $('analyze-folder').addEventListener('click',()=>analyzeRepositoryFolder(folder.value));
+  }
 }
+
+function selectedRepositoryDefaults(name){
+  if(!state.workbench?.enabled)return null;
+  const folder=String(state.repositoryFolder||'').trim();if(!folder)return null;
+  const atlas=joinWorkbenchPath(folder,'.rkc'),snapshotState=joinWorkbenchPath(folder,'.rkc-state');
+  const values={
+    quickstart:[folder],doctor:['--repository',folder],plan:[folder],
+    scan:['--no-python','--out',atlas,'--state-dir',snapshotState,folder],
+    check:['--coverage',joinWorkbenchPath(atlas,'coverage.json')],
+	query:['--dir',atlas,'resource guard'],
+	synthesize:['--packet-only=true','--dir',atlas,'--query','How does this repository work?'],
+	components:['--dir',atlas],flow:['report','--dir',atlas],trace:['report','--dir',atlas],
+	history:['--help'],
+  };
+  return values[name]||null;
+}
+
+function joinWorkbenchPath(root,leaf){const separator=/[\\/]$/.test(root)?'':(root.includes('\\')&&!root.includes('/')?'\\':'/');return root+separator+leaf}
 
 function defaultCommandArgs(name){
   const commands=state.workbench?.commands||defaultCommands(),command=commands.find(item=>item.name===name);
-  return (command?.default_args||['--help']).map(shellQuote).join(' ');
+  return (selectedRepositoryDefaults(name)||command?.default_args||['--help']).map(shellQuote).join(' ');
+}
+
+async function browseWorkbenchDirectory(path){
+  const status=$('folder-status'),browser=$('folder-browser');if(!status||!browser)return;
+  status.textContent='Opening folder…';status.className='help-text';
+  try{
+    const query=new URLSearchParams();if(String(path||'').trim())query.set('path',String(path).trim());
+    const response=await fetch('/api/v1/workbench/directories?'+query.toString(),{cache:'no-store',headers:{Accept:'application/json','X-RKC-Workbench-Token':state.workbench.token}});
+    const listing=await response.json();if(!response.ok)throw new Error(listing.detail||listing.title||'Folder cannot be opened');
+    if(!listing.path||!Array.isArray(listing.directories))throw new Error('Folder response is invalid');
+    state.directoryListing=listing;renderWorkbenchDirectory();
+    status.textContent=listing.truncated?'Showing a bounded folder list. Enter a more specific path to narrow it.':'Choose this folder or open one of its subfolders.';
+  }catch(error){status.textContent=String(error?.message||error);status.className='status-bad';browser.hidden=true}
+}
+
+function renderWorkbenchDirectory(){
+  const listing=state.directoryListing,browser=$('folder-browser');if(!listing||!browser)return;
+  const parent=listing.parent?'<button type="button" class="secondary" id="folder-parent">Up one folder</button>':'';
+  const entries=listing.directories.length?listing.directories.map(item=>'<button type="button" class="folder-choice" data-folder="'+esc(item.path)+'">📁 '+esc(item.name)+'</button>').join(''):'<p class="muted">No subfolders here.</p>';
+  browser.hidden=false;browser.innerHTML='<div class="folder-browser-header">'+parent+'<button type="button" class="primary" id="choose-folder">Use this folder</button><strong class="folder-path mono">'+esc(listing.path)+'</strong></div><div class="folder-list" role="list" aria-label="Subfolders">'+entries+'</div>'+(listing.truncated?'<p class="help-text">This very large folder was truncated at the safety bound.</p>':'');
+  if(listing.parent)$('folder-parent').addEventListener('click',()=>browseWorkbenchDirectory(listing.parent));
+  $('choose-folder').addEventListener('click',()=>selectRepositoryFolder(listing.path));
+  for(const button of browser.querySelectorAll('[data-folder]'))button.addEventListener('click',()=>browseWorkbenchDirectory(button.dataset.folder));
+}
+
+function selectRepositoryFolder(path){
+  state.repositoryFolder=path;state.directoryListing=null;
+  if($('repository-folder'))$('repository-folder').value=path;
+  if($('folder-browser'))$('folder-browser').hidden=true;
+  const defaults=selectedRepositoryDefaults(state.commandName);
+  if(defaults&&$('command-args')){$('command-args').value=defaults.map(shellQuote).join(' ');$('command-preview').textContent=commandPreview()}
+  if($('folder-status')){$('folder-status').textContent='Selected '+path;$('folder-status').className='help-text status-good'}
+}
+
+function analyzeRepositoryFolder(path){
+  const folder=String(path||'').trim();if(!folder){$('folder-status').textContent='Choose a folder first.';$('folder-status').className='status-bad';return}
+  state.repositoryFolder=folder;state.commandName='quickstart';renderCommands();
+  $('command-args').value=shellQuote(folder);$('command-preview').textContent=commandPreview();
+  runWorkbenchCommand();
 }
 
 function commandGuidance(name){
@@ -2115,12 +2261,15 @@ async function runWorkbenchCommand(){
     const response=await fetch('/api/v1/workbench/jobs',{method:'POST',headers:{'Content-Type':'application/json','Accept':'application/json','X-RKC-Workbench-Token':state.workbench.token},body:JSON.stringify({args})});
     const job=await response.json();
     if(!response.ok)throw new Error(job.detail||job.title||'Command request failed');
-    cancel.hidden=false;cancel.disabled=false;
-    const cancelHandler=()=>cancelWorkbenchJob(job.id,cancel,status);
-    cancel.addEventListener('click',cancelHandler);
-    try{await pollWorkbenchJob(job.id,status,output)}finally{cancel.removeEventListener('click',cancelHandler)}
-  }catch(error){status.textContent='Command failed to start';status.className='status-bad';output.textContent=String(error?.message||error)}
-  finally{run.disabled=!state.workbench?.enabled;cancel.hidden=true;cancel.disabled=false}
+	cancel.hidden=false;cancel.disabled=false;
+	const cancelHandler=()=>cancelWorkbenchJob(job.id,cancel,status);
+	cancel.addEventListener('click',cancelHandler);
+	try{
+	  const completed=await pollWorkbenchJob(job.id,status,output);
+	  if(completed.status==='succeeded'&&completed.activated_dataset)await loadActivatedWorkbenchDataset(completed.activated_dataset);
+	}finally{cancel.removeEventListener('click',cancelHandler)}
+	  }catch(error){status.textContent='Command or atlas activation failed';status.className='status-bad';output.textContent=String(error?.message||error)}
+	  finally{const command=(state.workbench?.commands||[]).find(item=>item.name===state.commandName);run.disabled=!state.workbench?.enabled||command?.default_executable===false;cancel.hidden=true;cancel.disabled=false}
 }
 
 async function pollWorkbenchJob(id,status,output){
@@ -2132,12 +2281,38 @@ async function pollWorkbenchJob(id,status,output){
     status.className=job.status==='succeeded'?'status-good':(['failed','timed_out','cleanup_failed'].includes(job.status)?'status-bad':(job.status==='canceled'?'status-warn':'muted'));
     renderJobMeta(job);
     output.textContent=(job.output||'')+(job.truncated?'\n\n[output truncated at the 2 MiB safety bound]':'')+(job.error?'\n\n'+job.error:'');
-    if(['succeeded','failed','timed_out','canceled','cleanup_failed'].includes(job.status))return;
-    await new Promise(resolve=>setTimeout(resolve,650));
+	if(['succeeded','failed','timed_out','canceled','cleanup_failed'].includes(job.status))return job;
+	await new Promise(resolve=>setTimeout(resolve,650));
   }
 }
+
+async function loadActivatedWorkbenchDataset(identity){
+  if(!identity?.snapshot_id||!identity?.repository_root||!identity?.atlas_root)throw new Error('The server did not return a complete activated dataset identity.');
+	const atlasRevision=advanceAtlasGeneration();
+	try{
+	  state.selected=null;state.results=[];state.staticLoad=null;state.staticSearchLoad=null;state.staticSearchRecords=null;state.staticSearchByID=new Map();
+	  $('search').value='';$('kind').value='';$('language').value='';
+	  history.replaceState(null,'',location.pathname+location.search);
+	  $('content').setAttribute('aria-busy','true');
+	  $('content').innerHTML='<div class="loading" role="status">Opening the validated '+esc(identity.root_name||'repository')+' atlas…</div>';
+	  const data=await loadInitialData();
+	  if(data?.bundle?.snapshot?.id!==identity.snapshot_id)throw new Error('Activated snapshot identity does not match the atlas returned by the read API.');
+	  if(data.bundle.snapshot.root_name!==identity.root_name||(identity.repository_id&&data.bundle.snapshot.repository_id!==identity.repository_id))throw new Error('Activated repository identity does not match the atlas returned by the read API.');
+	  applyAtlasData(data,atlasRevision);refreshAtlasFilters(true);renderHeader();
+	  await probeWorkbench();
+	  if(atlasRevision!==state.atlasRevision)throw snapshotGenerationError('Atlas activation was superseded by a newer repository generation.');
+	  if(state.workbench?.active_dataset?.snapshot_id!==identity.snapshot_id)throw new Error('Workbench defaults are not bound to the activated snapshot.');
+	  state.activationNotice=identity;renderList();setView('overview',false);
+	  $('content').setAttribute('aria-busy','false');
+	}catch(error){
+	  if(atlasRevision!==state.atlasRevision)throw error;
+	  $('content').setAttribute('aria-busy','false');
+	  $('content').innerHTML='<div class="card empty-state" role="alert"><h2>Atlas activation could not be displayed</h2><p>'+esc(error?.message||error)+'</p><p>The prior view was not claimed as the newly analyzed repository.</p></div>';
+	  throw error;
+	}
+}
 async function cancelWorkbenchJob(id,button,status){
-  button.disabled=true;status.textContent='Canceling safely…';status.className='status-warn';
+  button.disabled=true;status.textContent='Canceling…';status.className='status-warn';
   try{
     const response=await fetch('/api/v1/workbench/jobs/'+encodeURIComponent(id),{method:'DELETE',headers:{Accept:'application/json','X-RKC-Workbench-Token':state.workbench.token}});
     const job=await response.json();
@@ -2151,7 +2326,7 @@ function renderJobMeta(job){
   container.hidden=false;
   container.innerHTML=stat('Job',short(job.id))+stat('State',workbenchStatusLabel(job.status))+stat('Deadline',deadline&&!Number.isNaN(deadline.valueOf())?deadline.toLocaleString():'n/a')+stat('Finished',finished&&!Number.isNaN(finished.valueOf())?finished.toLocaleString():'pending')+stat('Cleanup scope',job.cleanup_scope||'n/a');
 }
-function workbenchStatusLabel(status){return({queued:'Queued',running:'Running',succeeded:'Succeeded',failed:'Failed',timed_out:'Timed out',canceled:'Canceled safely',cleanup_failed:'Cleanup unproven'})[status]||String(status||'Unknown')}
+function workbenchStatusLabel(status){return({queued:'Queued',running:'Running',succeeded:'Succeeded',failed:'Failed',timed_out:'Timed out',canceled:'Canceled',cleanup_failed:'Cleanup unproven'})[status]||String(status||'Unknown')}
 function progress(name,value){if(!Number.isFinite(value))return '<div class="bar-row"><span>'+esc(name)+'</span><span class="muted" role="status">Not applicable</span><strong>n/a</strong></div>';const amount=Math.max(0,Math.min(100,value*100));return '<div class="bar-row"><span>'+esc(name)+'</span><div class="bar" role="progressbar" aria-label="'+esc(name)+'" aria-valuemin="0" aria-valuemax="100" aria-valuenow="'+amount.toFixed(1)+'"><span style="width:'+amount+'%"></span></div><strong>'+percent(value)+'</strong></div>'}
 function stat(name,value){return '<div class="stat"><span class="muted">'+esc(name)+'</span><strong class="'+(String(value).length>28?'mono':'')+'">'+esc(value)+'</strong></div>'}
 function countBy(values,keyFn){const result=Object.create(null);for(const value of values){const key=keyFn(value)||'unknown';result[key]=(result[key]||0)+1}return result}

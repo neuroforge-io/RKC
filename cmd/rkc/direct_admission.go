@@ -131,7 +131,7 @@ func runProtectedDirectLocal(
 		args,
 		local,
 		protectedDirectLocalDependencies{
-			checkHigherPriority: resourceguard.CheckHigherPriority,
+			checkHigherPriority: resourceguard.CurrentPriorityCheck(),
 			requireEnvelope:     resourceguard.RequireCurrentProcessReusableLowPriority,
 			newTicker: func(interval time.Duration) (<-chan time.Time, func()) {
 				ticker := time.NewTicker(interval)
@@ -277,6 +277,7 @@ var scanAdmissionBooleanFlags = map[string]struct{}{
 	"no-jsonl-graph": {}, "no-manifests": {}, "no-markdown": {}, "no-openapi": {},
 	"no-plugins": {}, "no-python": {}, "no-search-index": {}, "no-secret-scan": {},
 	"no-static-site": {}, "no-typescript": {}, "submodules": {},
+	"scip-no-pin-check":            {},
 	"unsafe-include-secret-values": {},
 }
 
@@ -290,16 +291,49 @@ var scanAdmissionValueFlags = map[string]struct{}{
 	"max-file-bytes": {}, "max-files": {}, "max-repository-bytes": {},
 	"max-text-bytes": {}, "notebook-pack-bytes": {}, "out": {},
 	"plugin-output-bytes": {}, "plugin-timeout": {}, "python": {},
-	"python-plugin": {}, "ref": {}, "runs-dir": {}, "scip-index": {},
-	"stage-memory-mib": {}, "stage-workers": {}, "state-dir": {},
+	"python-plugin": {}, "ref": {}, "runs-dir": {}, "scip-generate": {},
+	"scip-index": {}, "scip-lock": {}, "scip-tool": {},
+	"stage-memory-mib": {}, "stage-workers": {}, "state-dir": {}, "trace": {}, "history": {},
 }
 
 var quickstartAdmissionBooleanFlags = map[string]struct{}{
-	"clean": {}, "force": {}, "python": {},
+	"clean": {}, "force": {}, "python": {}, "scip-no-pin-check": {},
 }
 
 var quickstartAdmissionValueFlags = map[string]struct{}{
-	"config": {}, "out": {}, "scip-index": {}, "state-dir": {},
+	"config": {}, "out": {}, "scip-generate": {}, "scip-index": {},
+	"scip-lock": {}, "scip-tool": {}, "state-dir": {}, "trace": {}, "history": {},
+}
+
+var scipAdmissionBooleanFlags = map[string]struct{}{
+	"json": {}, "no-pin-check": {},
+}
+
+var scipAdmissionValueFlags = map[string]struct{}{
+	"language": {}, "lock": {}, "out": {}, "output": {},
+	"timeout": {}, "tool": {}, "tool-args": {},
+}
+
+var traceAdmissionBooleanFlags = map[string]struct{}{
+	"json": {},
+}
+
+var traceAdmissionValueFlags = map[string]struct{}{
+	"dir": {}, "environment-key": {}, "out": {}, "timeout": {},
+}
+
+var planAdmissionBooleanFlags = map[string]struct{}{
+	"json": {}, "no-cache": {}, "no-env-keys": {}, "no-frameworks": {},
+	"no-go": {}, "no-json-schema": {}, "no-manifests": {}, "no-markdown": {},
+	"no-openapi": {}, "no-plugins": {}, "no-python": {}, "no-secret-scan": {},
+	"no-typescript": {},
+}
+
+var planAdmissionValueFlags = map[string]struct{}{
+	"cache-dir": {}, "config": {}, "exclude": {}, "history": {},
+	"max-file-bytes": {}, "max-files": {}, "max-repository-bytes": {},
+	"max-text-bytes": {}, "plugin-output-bytes": {}, "plugin-timeout": {},
+	"python": {}, "scip-index": {}, "trace": {},
 }
 
 func validateDirectCommandAdmission(command string, args []string) (bool, error) {
@@ -312,8 +346,27 @@ func validateDirectCommandAdmission(command string, args []string) (bool, error)
 	case "quickstart":
 		booleanFlags = quickstartAdmissionBooleanFlags
 		valueFlags = quickstartAdmissionValueFlags
+	case "scip":
+		booleanFlags = scipAdmissionBooleanFlags
+		valueFlags = scipAdmissionValueFlags
+	case "trace":
+		booleanFlags = traceAdmissionBooleanFlags
+		valueFlags = traceAdmissionValueFlags
+	case "plan":
+		booleanFlags = planAdmissionBooleanFlags
+		valueFlags = planAdmissionValueFlags
 	default:
 		return false, fmt.Errorf("direct resource admission does not support command %q", command)
+	}
+	if command == "scip" || command == "trace" {
+		expected := "generate"
+		if command == "trace" {
+			expected = "capture"
+		}
+		if len(args) == 0 || args[0] != expected {
+			return false, fmt.Errorf("direct %s admission requires the %s subcommand", command, expected)
+		}
+		args = args[1:]
 	}
 
 	values := map[string]bool{}

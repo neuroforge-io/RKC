@@ -120,7 +120,13 @@ func TestRunGitBoundsAndRedactsFailureOutput(t *testing.T) {
 	t.Parallel()
 	script := filepath.Join(t.TempDir(), "fake-git")
 	content := "#!/bin/sh\nprintf '%s' 'https://user:" + "verysecret" + "@example.test/repo ' >&2\nprintf '%04096d' 0 >&2\nexit 23\n"
-	if err := os.WriteFile(script, []byte(content), 0o700); err != nil {
+	// Publish the executable through a rename so exec can never observe a
+	// half-written inode (ETXTBSY) under heavy load.
+	staging := filepath.Join(t.TempDir(), "fake-git.staging")
+	if err := os.WriteFile(staging, []byte(content), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(staging, script); err != nil {
 		t.Fatal(err)
 	}
 	err := runGit(context.Background(), Options{GitExecutable: script, MaximumLogBytes: 128}, "https://example.test/repo", "", "clone")

@@ -30,7 +30,7 @@ make quality-index
 
 The default output is `.rkc-quality/index.json`, `.rkc-quality/index.md`, and
 `.rkc-quality/MANIFEST.json`. The manifest is the deterministic artifact
-receipt: schema `1.0.0` records the generator, index schema, NeuroForgeIO/MIT
+receipt: schema `1.0.0` records the generator, index schema, NeuroForgeIO/Apache-2.0
 identity, relative source provenance, and exact byte count and SHA-256 for both
 payload files. Its `inventory_sha256` hashes the compact, sorted-key UTF-8 JSON
 encoding of the `integrity.files` array. The manifest deliberately excludes
@@ -56,7 +56,7 @@ run the portable script directly:
 
 On a shared development host, use `make safe-quality-index` so the scan runs
 inside RKC's fail-closed one-core, low-priority resource envelope and yields to
-higher-priority ERAIS work.
+work matching the configured higher-priority markers.
 
 ```sh
 python3 scripts/quality_index.py \
@@ -194,17 +194,16 @@ CI error; it never degrades to a misleading clean-worktree comparison. Local
 `make quality-index` runs remain intentionally fast and omit profiles unless
 you pass them explicitly.
 
-The report is branded and licensed with the project: RKC-owned code and docs
-are released by **NeuroForgeIO** and RKC contributors under the [MIT
-License](../LICENSE). The license requires copies or substantial portions to
-retain its copyright and permission notice. Retaining [`NOTICE`](../NOTICE) and
-crediting NeuroForgeIO/RKC contributors are requested, but are not additional
-license conditions. Third-party dependencies, model weights, and compiler
-indexes keep their own licenses as documented in
+The report is branded and licensed with the project: original RKC code and docs
+are copyright 2026 **NeuroForgeIO** and released under the [Apache License,
+Version 2.0](../LICENSE). Redistributed works must preserve the applicable
+license and [`NOTICE`](../NOTICE) terms. Third-party dependencies, model
+weights, and compiler indexes retain their own ownership and licenses as documented in
 [`THIRD_PARTY_NOTICES.md`](../THIRD_PARTY_NOTICES.md).
 
 ---
-_RKC is stewarded by **NeuroForgeIO** and released under the **MIT License**.
-Redistributions must retain the copyright and permission notices required by
-that license. Attribution to NeuroForgeIO is requested, but is not an additional
-license condition._
+_RKC is open source, published and maintained by **NeuroForgeIO**, under the
+**Apache License, Version 2.0**. Copyright 2026 NeuroForgeIO and RKC
+contributors. Redistributed
+works must preserve applicable license and `NOTICE` terms. Third-party materials
+retain their own licenses and ownership._

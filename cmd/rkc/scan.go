@@ -68,7 +68,15 @@ func runScanContext(ctx context.Context, args []string) (resultErr error) {
 	noGo := fs.Bool("no-go", !cfg.Plugins.GoAST.Enabled, "disable the Go syntax adapter")
 	noTypeScript := fs.Bool("no-typescript", !cfg.Plugins.TypeScriptSyntax.Enabled, "disable the JavaScript and TypeScript syntax adapter")
 	scipIndexes := stringList{}
-	fs.Var(&scipIndexes, "scip-index", "compiler-produced SCIP index to import; repeatable")
+	fs.Var(&scipIndexes, "scip-index", "SCIP index to import; external files remain producer-unverified; repeatable")
+	scipGenerate := stringList{}
+	fs.Var(&scipGenerate, "scip-generate", "generate a compiler-grade SCIP index for this language before scanning; repeatable")
+	scipTool := fs.String("scip-tool", "", "indexer binary override used by --scip-generate")
+	scipLock := fs.String("scip-lock", defaultScipIndexerLockPath(), "operator-owned absolute indexer pin lock used by --scip-generate")
+	scipNoPinCheck := fs.Bool("scip-no-pin-check", false, "explicitly allow an unpinned or digest-mismatched SCIP indexer")
+	historyPath := fs.String("history", "", "compiled history file to import (lifecycle and supersedes evidence)")
+	tracePaths := stringList{}
+	fs.Var(&tracePaths, "trace", "runtime trace file to import; repeatable")
 	noFrameworks := fs.Bool("no-frameworks", !cfg.Frameworks.Enabled, "disable all deterministic framework and document extractors")
 	noMarkdown := fs.Bool("no-markdown", !cfg.Frameworks.Markdown, "disable Markdown document structure extraction")
 	noOpenAPI := fs.Bool("no-openapi", !cfg.Frameworks.OpenAPIJSON, "disable OpenAPI JSON/YAML extraction")
@@ -135,8 +143,20 @@ func runScanContext(ctx context.Context, args []string) (resultErr error) {
 	if err != nil {
 		return err
 	}
+	if len(scipGenerate) > 0 {
+		generated, err := generateSCIPIndexes(ctx, scipGenerate, rootAbs, outAbs, *scipTool, *scipLock, *scipNoPinCheck)
+		if err != nil {
+			return err
+		}
+		scipIndexes = append(scipIndexes, generated...)
+	}
 	if rel, err := filepath.Rel(rootAbs, outAbs); err == nil && rel != "." && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
 		excludes = append(excludes, filepath.ToSlash(rel))
+	}
+	if len(scipGenerate) > 0 {
+		if rel, err := filepath.Rel(rootAbs, generatedSCIPDirectory(outAbs)); err == nil && rel != "." && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+			excludes = append(excludes, filepath.ToSlash(rel))
+		}
 	}
 	if *stateDir != "" {
 		stateAbs, err := safeoutput.ResolveTarget(*stateDir, rootAbs)
@@ -370,6 +390,8 @@ func runScanContext(ctx context.Context, args []string) (resultErr error) {
 	bundle, coverage, scanErr := pipeline.Scan(ctx, pipeline.Options{
 		Root: rootAbs, MaxFileBytes: *maxFile, MaxTextBytes: *maxText, MaxRepositoryBytes: *maxRepository, MaxFiles: *maxFiles,
 		Excludes: excludes, SCIPIndexes: append([]string(nil), scipIndexes...),
+		TracePaths:        append([]string(nil), tracePaths...),
+		HistoryPath:       *historyPath,
 		PythonInterpreter: *python, PythonPlugin: pluginPath, PluginTimeout: *pluginTimeout,
 		PluginMaxOutput: *pluginOutput, PluginMaxStderr: 2 * 1024 * 1024,
 		PluginMemoryMiB: cfg.Plugins.MemoryLimitMiB, PluginSwapMiB: cfg.Plugins.MemorySwapLimitMiB,
@@ -414,7 +436,7 @@ func runScanContext(ctx context.Context, args []string) (resultErr error) {
 		return fmt.Errorf("scan rejected before publication with %d error diagnostic(s)", coverage.DiagnosticsBySeverity["error"])
 	}
 	displayRepositoryOrigin := bundle.Snapshot.Git.Origin
-	coverage, err = enforceWorkspacePrivacy(&bundle, cfg.Workspace.PrivacyMode)
+	coverage, err = enforceWorkspacePrivacyWithCoverage(&bundle, cfg.Workspace.PrivacyMode, coverage)
 	if err != nil {
 		return err
 	}
@@ -621,6 +643,10 @@ func runScanContext(ctx context.Context, args []string) (resultErr error) {
 // artifact and evidence paths are intentionally retained in every mode: they
 // are the portable citation contract used by humans, agents, and integrations.
 func enforceWorkspacePrivacy(bundle *rkcmodel.Bundle, mode string) (rkcmodel.Coverage, error) {
+	return enforceWorkspacePrivacyWithCoverage(bundle, mode, rkcmodel.Coverage{})
+}
+
+func enforceWorkspacePrivacyWithCoverage(bundle *rkcmodel.Bundle, mode string, _ rkcmodel.Coverage) (rkcmodel.Coverage, error) {
 	if bundle == nil {
 		return rkcmodel.Coverage{}, errors.New("workspace privacy transformation requires a bundle")
 	}

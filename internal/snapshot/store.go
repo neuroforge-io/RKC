@@ -35,8 +35,11 @@ const (
 	ownershipMarkerMax      = 4 * 1024
 	buildingRecordMaxSize   = 64 * 1024
 	currentFileMaxSize      = 1024
-	maximumBundleSize       = 256 * 1024 * 1024
-	maximumCoverageSize     = 16 * 1024 * 1024
+	// maximumBundleSize matches every downstream reader. It accommodates the
+	// measured compiler-indexed self-analysis while preventing a bundle that a
+	// server, exporter, or SQLite reader cannot subsequently open.
+	maximumBundleSize   = 512 << 20
+	maximumCoverageSize = 16 * 1024 * 1024
 )
 
 var (

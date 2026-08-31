@@ -6,6 +6,10 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"github.com/neuroforge-io/RKC/internal/configenv"
+	"github.com/neuroforge-io/RKC/internal/flow"
+	"github.com/neuroforge-io/RKC/internal/history"
+	"github.com/neuroforge-io/RKC/internal/runtime"
 	"io"
 	"os"
 	"os/exec"
@@ -45,6 +49,14 @@ type Options struct {
 	MaxFiles           int
 	Excludes           []string
 	SCIPIndexes        []string
+	// HistoryPath lists one compiled history file to import (lifecycle
+	// attributes and supersedes edges).
+	HistoryPath string
+	// TracePaths lists runtime trace files to import (repeatable). Each trace
+	// binds into the snapshot identity. The current trace-import stage records
+	// producer-unverified coverage and test claims as trace-scoped assertions;
+	// it cannot mark execution, call events, or per-test paths as observed.
+	TracePaths []string
 
 	PythonInterpreter       string
 	PythonPlugin            string
@@ -125,6 +137,17 @@ func scanSequential(ctx context.Context, opts Options) (rkcmodel.Bundle, rkcmode
 	if err != nil {
 		return rkcmodel.Bundle{}, rkcmodel.Coverage{}, fmt.Errorf("prepare SCIP indexes: %w", err)
 	}
+	traceInputs, traceDigest, err := runtime.PrepareTraceInputs(ctx, opts.TracePaths)
+	if err != nil {
+		return rkcmodel.Bundle{}, rkcmodel.Coverage{}, fmt.Errorf("prepare runtime traces: %w", err)
+	}
+	var historyInput history.Input
+	if opts.HistoryPath != "" {
+		historyInput, err = history.PrepareInput(ctx, opts.HistoryPath)
+		if err != nil {
+			return rkcmodel.Bundle{}, rkcmodel.Coverage{}, fmt.Errorf("prepare history input: %w", err)
+		}
+	}
 	suppliedOrigin, err := publicSuppliedOrigin(opts.Origin)
 	if err != nil {
 		return rkcmodel.Bundle{}, rkcmodel.Coverage{}, err
@@ -142,11 +165,25 @@ func scanSequential(ctx context.Context, opts Options) (rkcmodel.Bundle, rkcmode
 	rootName := filepath.Base(root)
 	repositoryIdentity := firstNonEmpty(origin, rootName)
 	repositoryID := rkcmodel.StableID("repository", repositoryIdentity)
-	snapshotID := stableSnapshotID(repositoryIdentity, gitInfo.Commit, inv.Digest, scipDigest, opts)
+	snapshotID := stableSnapshotID(
+		repositoryIdentity,
+		gitInfo.Commit,
+		inv.Digest,
+		scipDigest,
+		traceDigest,
+		historyInput.SHA256,
+		opts,
+	)
 	if gitInfo.Dirty {
 		gitInfo.WorkingTreeDigest = inv.Digest
 	}
 	metadata := map[string]string{"scip_input_digest": scipDigest}
+	if traceDigest != "" {
+		metadata["trace_input_digest"] = traceDigest
+	}
+	if historyInput.SHA256 != "" {
+		metadata["history_input_digest"] = historyInput.SHA256
+	}
 	if origin != "" {
 		metadata["source_reference"] = origin
 	}
@@ -284,10 +321,6 @@ func scanSequential(ctx context.Context, opts Options) (rkcmodel.Bundle, rkcmode
 	if err := scipindex.VerifyInputs(ctx, scipInputs); err != nil {
 		return rkcmodel.Bundle{}, rkcmodel.Coverage{}, fmt.Errorf("reverify SCIP indexes: %w", err)
 	}
-	if err := reverifyInventoriedSources(root, files, sourceIdentities); err != nil {
-		return rkcmodel.Bundle{}, rkcmodel.Coverage{}, err
-	}
-
 	for i := range bundle.Artifacts {
 		if _, ok := parsed[bundle.Artifacts[i].ID]; ok && bundle.Artifacts[i].Status == "text" {
 			bundle.Artifacts[i].Status = "syntax_parsed"
@@ -298,6 +331,43 @@ func scanSequential(ctx context.Context, opts Options) (rkcmodel.Bundle, rkcmode
 	resolveHeuristicEdges(&bundle)
 	dedupeBundle(&bundle)
 	secrets.SanitizeBundle(&bundle, secretLiterals)
+	// The sequential oracle mirrors the staged value-flow pass so both paths
+	// produce byte-identical canonical output.
+	flowFragment, _, flowErr := flow.Analyze(ctx, flow.Options{
+		Root: root, Files: files, Artifacts: bundle.Artifacts, Bundle: bundle,
+	})
+	if flowErr != nil {
+		return rkcmodel.Bundle{}, rkcmodel.Coverage{}, fmt.Errorf("value-flow: %w", flowErr)
+	}
+	mergeFragment(&bundle, flowFragment)
+	dedupeBundle(&bundle)
+	if !opts.DisableFrameworks {
+		configFragment, configErr := configenv.Extract(ctx, configenv.Options{Root: root, Files: files})
+		handleFragment(&bundle, configFragment, configErr, "RKC-CFG-3003", configenv.PluginID)
+	}
+	dedupeBundle(&bundle)
+	for _, input := range traceInputs {
+		trace, traceErr := runtime.LoadTrace(ctx, input)
+		if traceErr != nil {
+			return rkcmodel.Bundle{}, rkcmodel.Coverage{}, traceErr
+		}
+		if _, traceErr = runtime.Import(ctx, &bundle, trace); traceErr != nil {
+			return rkcmodel.Bundle{}, rkcmodel.Coverage{}, fmt.Errorf("import trace %s: %w", trace.ID, traceErr)
+		}
+	}
+	if historyInput.Path != "" {
+		compiled, historyErr := history.ReadCompiledFile(ctx, historyInput)
+		if historyErr != nil {
+			return rkcmodel.Bundle{}, rkcmodel.Coverage{}, historyErr
+		}
+		if _, historyErr = history.Import(ctx, &bundle, compiled); historyErr != nil {
+			return rkcmodel.Bundle{}, rkcmodel.Coverage{}, fmt.Errorf("import history %s: %w", historyInput.SHA256, historyErr)
+		}
+	}
+	dedupeBundle(&bundle)
+	if err := reverifyInventoriedSources(root, files, sourceIdentities); err != nil {
+		return rkcmodel.Bundle{}, rkcmodel.Coverage{}, err
+	}
 	report := rkcmodel.ValidateBundle(bundle, rkcmodel.ValidationOptions{StrictVocabulary: true, RequireEvidence: true})
 	bundle.Diagnostics = append(bundle.Diagnostics, report.Diagnostics...)
 	dedupeBundle(&bundle)
@@ -322,10 +392,19 @@ func enabledSCIPIndexes(opts Options) []string {
 	return append([]string(nil), opts.SCIPIndexes...)
 }
 
-func stableSnapshotID(repositoryIdentity, commit, inventoryDigest, scipDigest string, opts Options) string {
+func stableSnapshotID(
+	repositoryIdentity, commit, inventoryDigest, scipDigest, traceDigest, historyDigest string,
+	opts Options,
+) string {
 	parts := []string{repositoryIdentity, commit, inventoryDigest}
 	if scipDigest != "" {
 		parts = append(parts, scipDigest)
+	}
+	if traceDigest != "" {
+		parts = append(parts, "trace-input", traceDigest)
+	}
+	if historyDigest != "" {
+		parts = append(parts, "history-input", historyDigest)
 	}
 	parts = append(
 		parts,

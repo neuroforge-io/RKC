@@ -16,6 +16,7 @@ type document struct {
 	path             string
 	language         string
 	text             string
+	textPresent      bool
 	positionEncoding int32
 	occurrences      []occurrence
 	symbols          []symbolInformation
@@ -161,6 +162,7 @@ func parseDocument(data []byte) (document, error) {
 				result.language = value
 			case 5:
 				result.text = value
+				result.textPresent = true
 			}
 		case 2:
 			if err := requireWire(field, wire, 2); err != nil {

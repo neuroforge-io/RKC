@@ -261,8 +261,10 @@ documentation.
 
 An execution path is a named, evidence-backed ordered path through the graph.
 It records entry node, optional exit node, node IDs, edge IDs, and evidence IDs.
-It may come from static traversal, an authorized runtime trace, or a combined
-analysis, with the source stated explicitly.
+It may come from static traversal, a future producer-authenticated runtime
+observation, or a combined analysis, with the source stated explicitly.
+Current trace capture—including same-process capture—remains `user_asserted`
+and cannot establish an observed execution path.
 
 ## Identity construction
 
@@ -346,8 +348,32 @@ queries immutable snapshots through this schema. Portable JSON and JSONL remain
 exports of the same canonical RKR records rather than a competing source of
 truth.
 
+## Flow, runtime, configuration, and history records
+
+- `cfg_block` nodes hold bounded per-function control-flow blocks; `precedes`
+  edges carry their branch kind (`entry`, `branch`, `loop`, `return`, `join`, ...).
+- `value` nodes carry `flow_role` attributes (source, sink, literal,
+  call_result, parameter, return, field, computed, write, range, external) and
+  `flows_to`/`binds_to`/`returns_to` edges express value lineage. Name-based
+  sanitizer candidates are low-confidence, non-authoritative `related_to`
+  hypotheses and cannot establish a sanitization claim.
+- `environment_variable` nodes are shared by the env-keys, value-flow, and
+  config-env producers; `reads` edges bind them to code, `configures` edges to
+  CI workflows.
+- `test_result` is reserved for terminal events from a producer-authenticated
+  test source. Current capture records package-qualified status and elapsed
+  time as `user_asserted`. Aggregate coverage cannot assign spans or an ordered
+  call walk to one test, so trace import emits no per-test `ExecutionPath`.
+- Node `executed` and edge `observed` attributes are reserved for
+  producer-authenticated execution and call-event sources. Current trace import
+  instead attaches `execution_asserted_trace_ids` and trace-scoped
+  `execution_not_observed_trace_ids`; history-import adds
+  `first_seen_commit`, `last_seen_commit`, `touched_commits`, and `supersedes`
+  edges for rename refactors.
+
 ---
-_RKC is stewarded by **NeuroForgeIO** and released under the **MIT License**.
-Redistributions must retain the copyright and permission notices required by
-that license. Attribution to NeuroForgeIO is requested, but is not an additional
-license condition._
+_RKC is open source, published and maintained by **NeuroForgeIO**, under the
+**Apache License, Version 2.0**. Copyright 2026 NeuroForgeIO and RKC
+contributors. Redistributed
+works must preserve applicable license and `NOTICE` terms. Third-party materials
+retain their own licenses and ownership._

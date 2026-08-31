@@ -4,9 +4,10 @@
 **Working abbreviation:** RKC  
 **Document status:** Build specification  
 **Reference schema version:** `0.1.0`  
-**Target core license:** MIT; copyright and permission notice retention is
-required by that license, while NeuroForgeIO credit is requested and is not an
-additional license condition
+**Target core license:** Apache-2.0; RKC project materials are published by
+NeuroForgeIO and copyright 2026 NeuroForgeIO and RKC contributors, with
+license, changed-file, notice, and attribution obligations governed by
+Apache-2.0 section 4
 **Baseline date:** 2026-07-21
 
 ---
@@ -2835,10 +2836,9 @@ RKC must not imply that generated exports change the source repository's license
 
 Recommended:
 
-- MIT for core, CLI, daemon, UI, schemas, official SDKs, and official plugins;
-  the license-required copyright and permission notice is retained, while
-  NeuroForgeIO and RKC contributor credit is requested and is not an additional
-  license condition;
+- Apache-2.0 for core, CLI, daemon, UI, schemas, official SDKs, and official
+  plugins, with RKC materials copyright 2026 NeuroForgeIO and RKC contributors
+  and section 4 redistribution obligations preserved;
 - DCO for contributions;
 - separate model and third-party plugin licenses;
 - `THIRD_PARTY_NOTICES` generated for distributions;
@@ -4200,7 +4200,7 @@ Create ADRs for:
 10. no mandatory graph database;
 11. structured claim output;
 12. content-addressed object storage;
-13. MIT license-notice clarity, requested credit, and DCO;
+13. Apache-2.0 license/NOTICE clarity, NeuroForgeIO ownership, and DCO;
 14. telemetry privacy defaults;
 15. NotebookLM limits as configurable profiles.
 
@@ -4552,7 +4552,8 @@ planned semantic adapters, sandboxes, or team-service features into completed
 work through compression.
 
 ---
-_RKC is stewarded by **NeuroForgeIO** and released under the **MIT License**.
-Redistributions must retain the copyright and permission notices required by
-that license. Attribution to NeuroForgeIO is requested, but is not an additional
-license condition._
+_RKC is open source, published and maintained by **NeuroForgeIO**, under the
+**Apache License, Version 2.0**. Copyright 2026 NeuroForgeIO and RKC
+contributors. Redistributed
+works must preserve applicable license and `NOTICE` terms. Third-party materials
+retain their own licenses and ownership._

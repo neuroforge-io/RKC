@@ -60,7 +60,16 @@ func runPath(args []string) error {
 		return writeJSONStdout(path)
 	}
 	if !path.Found {
-		fmt.Printf("No path found from %s to %s after visiting %d nodes.\n", source.QualifiedName, target.QualifiedName, path.Visited)
+		if path.Truncated {
+			fmt.Printf("Path search from %s to %s was truncated at the %s after visiting %d nodes; path existence remains unresolved.\n",
+				source.QualifiedName, target.QualifiedName, graphPathLimitText(path), path.Visited)
+		} else if path.SearchExhausted {
+			fmt.Printf("No path found from %s to %s after exhaustively visiting %d admissible nodes.\n",
+				source.QualifiedName, target.QualifiedName, path.Visited)
+		} else {
+			fmt.Printf("No path found from %s to %s, but search completion is unknown after visiting %d nodes.\n",
+				source.QualifiedName, target.QualifiedName, path.Visited)
+		}
 		return nil
 	}
 	fmt.Printf("Path depth %d, visited %d nodes:\n", path.Depth, path.Visited)

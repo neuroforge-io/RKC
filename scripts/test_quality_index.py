@@ -4,6 +4,8 @@ import hashlib
 import io
 import json
 import os
+import runpy
+import stat
 import subprocess
 import sys
 import tempfile
@@ -714,7 +716,7 @@ class QualityIndexTests(unittest.TestCase):
         self.assertFalse(any(record["path"].startswith("quality/") for record in built["files"]))
         self.assertEqual(built["project"], "RKC")
         self.assertEqual(built["publisher"], "NeuroForgeIO")
-        self.assertEqual(built["license"]["spdx"], "MIT")
+        self.assertEqual(built["license"]["spdx"], "Apache-2.0")
         self.assertEqual(built["summary"]["profiling_file_percent"], 100.0)
         self.assertEqual(built["summary"]["profile_uncovered_units"], 0)
         self.assertEqual(built["summary"]["profiling_zero_executable_files"], 1)
@@ -738,9 +740,9 @@ class QualityIndexTests(unittest.TestCase):
         )
         markdown = index.render_markdown(built)
         self.assertIn("RKC quality index", markdown)
-        self.assertIn("MIT License", markdown)
-        self.assertIn("requested, but are not additional", markdown)
-        self.assertNotIn("with attribution", markdown)
+        self.assertIn("Apache License, Version 2.0", markdown)
+        self.assertIn("copyright 2026 **NeuroForgeIO**", markdown)
+        self.assertIn("LICENSE and NOTICE terms", markdown)
         self.assertIn("`MANIFEST.json` is the deterministic publication receipt", markdown)
         self.assertIn("Production source files in evidence denominator", markdown)
         self.assertIn("Inventory accounting | 100.0%", markdown)
@@ -1000,6 +1002,476 @@ class QualityIndexTests(unittest.TestCase):
         self.assertTrue(payload["profile_errors"])
         self.assertEqual(payload["summary"]["profile_errors"], 1)
         self.assertIn("Profile errors", (output / "index.md").read_text(encoding="utf-8"))
+
+    def test_filesystem_observation_failures_are_explicit(self) -> None:
+        source = self.write("source.py", "print('safe')\n")
+        excluded = self.write("coverage.out", "ignored\n")
+        del excluded
+
+        with self.assertRaisesRegex(index.QualityIndexError, "escapes"):
+            index._relative(self.root.parent / "outside.py", self.root)
+        files, _ = index._walk_files(
+            self.root, self.root.parent / "outside-quality"
+        )
+        self.assertEqual(files, [source])
+
+        if hasattr(os, "mkfifo"):
+            fifo = self.root / "events.pipe"
+            os.mkfifo(fifo)
+            _, exclusions = index._walk_files(self.root, None)
+            self.assertIn(
+                {"path": "events.pipe", "reason": "non-regular-file"},
+                exclusions,
+            )
+
+        real_lstat = os.lstat
+        bad_directory = self.root / "bad-directory"
+        bad_directory.mkdir()
+
+        def fail_directory(candidate: str | os.PathLike[str]) -> os.stat_result:
+            if Path(candidate) == bad_directory:
+                raise PermissionError("directory observation denied")
+            return real_lstat(candidate)
+
+        with mock.patch.object(index.os, "lstat", side_effect=fail_directory):
+            with self.assertRaisesRegex(index.QualityIndexError, "cannot inspect"):
+                index._walk_files(self.root, None)
+
+        regular_info = real_lstat(source)
+
+        def replace_directory_type(
+            candidate: str | os.PathLike[str],
+        ) -> os.stat_result:
+            if Path(candidate) == bad_directory:
+                return regular_info
+            return real_lstat(candidate)
+
+        with mock.patch.object(
+            index.os, "lstat", side_effect=replace_directory_type
+        ):
+            with self.assertRaisesRegex(index.QualityIndexError, "not a directory"):
+                index._walk_files(self.root, None)
+
+        denied_file = self.write("denied.txt", "private\n")
+
+        def fail_file(candidate: str | os.PathLike[str]) -> os.stat_result:
+            if Path(candidate) == denied_file:
+                raise PermissionError("file observation denied")
+            return real_lstat(candidate)
+
+        with mock.patch.object(index.os, "lstat", side_effect=fail_file):
+            with self.assertRaisesRegex(index.QualityIndexError, "cannot inspect"):
+                index._walk_files(self.root, None)
+        with mock.patch.object(
+            index.os, "open", side_effect=PermissionError("read denied")
+        ):
+            with self.assertRaisesRegex(index.QualityIndexError, "cannot read"):
+                index._file_stats_with_identity(source, self.root)
+
+        stable = (1, 2, 3, 4, stat.S_IFREG)
+        changed = (1, 2, 3, 5, stat.S_IFREG)
+        with mock.patch.object(
+            index,
+            "_stat_identity",
+            side_effect=[stable, stable, stable, changed],
+        ):
+            with self.assertRaisesRegex(index.QualityIndexError, "changed while"):
+                index._file_stats_with_identity(source, self.root)
+
+    def test_profile_parsers_reject_remaining_ambiguous_evidence(self) -> None:
+        source_paths = {"pkg/api.go"}
+        go_profile = self.write(
+            "remaining-go.out",
+            "mode: set\n"
+            "\n"
+            "pkg/api.go:1.1,1.2 1 0\n"
+            "pkg/api.go:1.1,1.2 2 1\n"
+            "pkg/api.go:1.1,1.2 1 1\n"
+            "pkg/api.go:2.1,2.2 0 0\n",
+        )
+        values, errors = index._go_profile(go_profile, source_paths, self.root)
+        self.assertEqual(len(errors), 1)
+        self.assertEqual(values["pkg/api.go"]["statements"], 0)
+        self.assertEqual(values["pkg/api.go"]["uncovered_regions"], [])
+
+        python_sources = {
+            "missing-summary.py",
+            "bad-counter.py",
+            "bad-lines.py",
+            "bad-branches.py",
+            "branch-count.py",
+            "duplicate.py",
+        }
+
+        def summary(
+            statements: int = 0,
+            covered: int = 0,
+            branches: int = 0,
+            covered_branches: int = 0,
+        ) -> dict[str, int]:
+            return {
+                "num_statements": statements,
+                "covered_lines": covered,
+                "num_branches": branches,
+                "covered_branches": covered_branches,
+            }
+
+        python_report = self.write(
+            "remaining-python.json",
+            json.dumps(
+                {
+                    "meta": {"branch_coverage": True},
+                    "files": {
+                        "missing-summary.py": {"summary": []},
+                        "bad-counter.py": {
+                            "summary": {
+                                **summary(),
+                                "num_statements": True,
+                            },
+                            "missing_lines": [],
+                            "missing_branches": [],
+                        },
+                        "bad-lines.py": {
+                            "summary": summary(1, 0),
+                            "missing_lines": "not-a-list",
+                            "missing_branches": [],
+                        },
+                        "bad-branches.py": {
+                            "summary": summary(branches=1),
+                            "missing_lines": [],
+                            "missing_branches": "not-a-list",
+                        },
+                        "branch-count.py": {
+                            "summary": summary(branches=2),
+                            "missing_lines": [],
+                            "missing_branches": [[1, -1]],
+                        },
+                        "duplicate.py": {
+                            "summary": summary(),
+                            "missing_lines": [],
+                            "missing_branches": [],
+                        },
+                        str(self.root / "duplicate.py"): {
+                            "summary": summary(),
+                            "missing_lines": [],
+                            "missing_branches": [],
+                        },
+                    },
+                }
+            ),
+        )
+        values, errors = index._python_profile(
+            python_report, python_sources, self.root
+        )
+        self.assertEqual(set(values), {"duplicate.py"})
+        self.assertEqual(len(errors), 6)
+        self.assertTrue(any("no summary" in error for error in errors))
+        self.assertTrue(any("invalid num_statements" in error for error in errors))
+        self.assertTrue(any("invalid missing_lines" in error for error in errors))
+        self.assertTrue(any("invalid missing_branches" in error for error in errors))
+        self.assertTrue(any("missing-branch" in error for error in errors))
+        self.assertTrue(any("repeats" in error for error in errors))
+
+        missing_metadata = index._go_profile_metadata(
+            self.root / "missing-metadata.json", source_paths, self.root
+        )
+        self.assertIn("cannot read", missing_metadata[2][0])
+        non_object = self.write("metadata-array.json", "[]")
+        self.assertIn(
+            "not an object",
+            index._go_profile_metadata(non_object, source_paths, self.root)[2][0],
+        )
+        no_report = self.write("metadata-no-report.json", '{"go": []}')
+        self.assertIn(
+            "no report object",
+            index._go_profile_metadata(no_report, source_paths, self.root)[2][0],
+        )
+        invalid_paths = self.write(
+            "metadata-paths.json",
+            json.dumps(
+                {
+                    "zero_statement_files": [7, "unknown.go"],
+                    "current_platform_excluded_files": ["pkg/api.go"],
+                }
+            ),
+        )
+        zero, excluded, metadata_errors = index._go_profile_metadata(
+            invalid_paths, source_paths, self.root
+        )
+        self.assertEqual(zero, set())
+        self.assertEqual(excluded, {"pkg/api.go"})
+        self.assertEqual(len(metadata_errors), 2)
+        self.assertEqual(
+            index._profile_result(
+                "go", "pkg/api.go", {}, {}, True, False, set(), excluded
+            )["status"],
+            "platform-excluded",
+        )
+        self.assertIsNone(
+            index._resolve_profile_path(
+                str(self.root.parent / "outside.go"), source_paths, self.root
+            )
+        )
+
+    def test_git_and_build_provenance_fail_closed_at_final_observation(self) -> None:
+        with mock.patch.object(
+            index.subprocess, "run", side_effect=OSError("git unavailable")
+        ):
+            with self.assertRaisesRegex(index.QualityIndexError, "Git inspection"):
+                index._run_git(self.root, ["status"])
+
+        failed = subprocess.CompletedProcess([], 1, stdout="", stderr="")
+        available = {"status": "available", "commit": "a" * 40, "tree": "b" * 40}
+        with mock.patch.object(index, "_run_git", return_value=failed):
+            self.assertEqual(
+                index._git_tracked_paths(self.root, available)["status"],
+                "unavailable",
+            )
+            self.assertEqual(
+                index._git_stability_token(self.root, available)["status"],
+                "unavailable",
+            )
+        with self.assertRaisesRegex(index.QualityIndexError, "incomplete"):
+            index._parse_git_changes("M\0")
+
+        successful_diff = subprocess.CompletedProcess(
+            [], 0, stdout="M\0tracked.py\0", stderr=""
+        )
+        with mock.patch.object(
+            index, "_run_git", side_effect=[successful_diff, failed]
+        ):
+            delta = index._git_changes(self.root, None, available)
+        self.assertEqual(delta["items"], [{"status": "M", "path": "tracked.py"}])
+
+        self.write("worker.py", '"""Documented worker."""\nprint("ok")\n')
+        first = {"status": "unavailable", "reason": "first observation"}
+        second = {"status": "unavailable", "reason": "changed observation"}
+        with mock.patch.object(index, "_git_identity", side_effect=[first, second]):
+            with self.assertRaisesRegex(index.QualityIndexError, "Git commit"):
+                index.build_index(self.root)
+
+        real_walk = index._walk_files
+        walk_count = 0
+
+        def change_inventory(
+            root: Path, output: Path | None
+        ) -> tuple[list[Path], list[dict[str, str]]]:
+            nonlocal walk_count
+            walk_count += 1
+            files, exclusions = real_walk(root, output)
+            if walk_count == 2:
+                exclusions = [*exclusions, {"path": "late", "reason": "changed"}]
+            return files, exclusions
+
+        with mock.patch.object(index, "_walk_files", side_effect=change_inventory):
+            with self.assertRaisesRegex(index.QualityIndexError, "inventory changed"):
+                index.build_index(self.root)
+
+        real_lstat = os.lstat
+        observed = 0
+
+        def remove_before_revalidation(
+            candidate: str | os.PathLike[str],
+        ) -> os.stat_result:
+            nonlocal observed
+            if Path(candidate) == self.root / "worker.py":
+                observed += 1
+                if observed == 4:
+                    raise FileNotFoundError("removed after indexing")
+            return real_lstat(candidate)
+
+        with mock.patch.object(
+            index.os, "lstat", side_effect=remove_before_revalidation
+        ):
+            with self.assertRaisesRegex(index.QualityIndexError, "cannot revalidate"):
+                index.build_index(self.root)
+
+        overlap = self.root / "overlap"
+        overlap.mkdir()
+        (overlap / "guide.md").write_text("plain words\n", encoding="utf-8")
+        with mock.patch.object(index, "_language", return_value="python"):
+            with self.assertRaisesRegex(index.QualityIndexError, "categories overlap"):
+                index.build_index(overlap)
+
+    def test_render_and_publication_boundary_variants(self) -> None:
+        self.write("worker.py", '"""Documented worker."""\nprint("ok")\n')
+        report = index.build_index(self.root)
+        report["gaps"] = []
+        report["deltas"] = {
+            "status": "available",
+            "scope": "working-tree",
+            "items": [{"status": "M", "path": "worker.py"}],
+        }
+        rendered = index.render_markdown(report)
+        self.assertIn("No gaps were detected", rendered)
+        self.assertIn("`M` `worker.py`", rendered)
+
+        regions: list[object] = ["invalid"]
+        regions.extend(
+            {
+                "start_line": number,
+                "start_column": 1,
+                "end_line": number,
+                "end_column": 2,
+                "units": 1,
+            }
+            for number in range(1, 10)
+        )
+        region_hint = index._uncovered_hint({"regions": regions})
+        self.assertIn("+2 more", region_hint)
+        location_hint = index._uncovered_hint(
+            {
+                "lines": list(range(1, 11)),
+                "branches": ["invalid", *[[line, -1] for line in range(1, 10)]],
+            }
+        )
+        self.assertIn("+2 more", location_hint)
+        self.assertIn("branches ", location_hint)
+        self.assertEqual(index._uncovered_hint({}), "")
+
+        impossible = Path("/") / "rkc-quality-parent-does-not-exist"
+        with mock.patch.object(index.os, "lstat", side_effect=FileNotFoundError):
+            with self.assertRaisesRegex(index.QualityIndexError, "parent does not exist"):
+                index._safe_output_directory(impossible)
+
+        replaced = self.root / "replaced" / "quality"
+        regular_info = os.lstat(self.root / "worker.py")
+        real_lstat = os.lstat
+
+        def replace_created_directory(
+            candidate: str | os.PathLike[str],
+        ) -> os.stat_result:
+            path = Path(candidate)
+            if path == replaced and path.exists():
+                return regular_info
+            return real_lstat(candidate)
+
+        with mock.patch.object(
+            index.os, "lstat", side_effect=replace_created_directory
+        ):
+            with self.assertRaisesRegex(index.QualityIndexError, "replaced unsafely"):
+                index._safe_output_directory(replaced)
+
+        staging = self.root / "short-write"
+        staging.mkdir()
+
+        class ShortWriter:
+            def __init__(self, descriptor: int) -> None:
+                self.descriptor = descriptor
+
+            def __enter__(self) -> ShortWriter:
+                return self
+
+            def __exit__(self, *_arguments: object) -> None:
+                os.close(self.descriptor)
+
+            def write(self, content: bytes) -> int:
+                return max(0, len(content) - 1)
+
+            def flush(self) -> None:
+                return None
+
+            def fileno(self) -> int:
+                return self.descriptor
+
+        with mock.patch.object(
+            index.os, "fdopen", side_effect=lambda descriptor, _mode: ShortWriter(descriptor)
+        ):
+            with self.assertRaisesRegex(OSError, "short write"):
+                index._stage_output_member(staging, "index.json", b"{}\n")
+        self.assertEqual(list(staging.iterdir()), [])
+
+        script = Path(index.__file__).resolve()
+        with mock.patch.object(
+            sys, "argv", [str(script), "--root", str(self.root / "absent")]
+        ), mock.patch("sys.stderr", new=io.StringIO()):
+            with self.assertRaisesRegex(SystemExit, "1"):
+                runpy.run_path(str(script), run_name="__main__")
+
+    def test_remaining_association_and_cleanup_boundaries(self) -> None:
+        self.write("main.rs", "fn main() {}\n")
+        rust_report = index.build_index(self.root)
+        self.assertEqual(rust_report["files"][0]["language"], "rust")
+        self.assertFalse(index._text_mentions_path("no source reference", "x.py"))
+
+        go_evidence = index._test_evidence(
+            "pkg/service.go",
+            "go",
+            ["pkg/service.go", "pkg/service_test.go"],
+            {"pkg/service_test.go": "package pkg\nfunc TestRun() {}\n"},
+            "service",
+        )
+        self.assertEqual(go_evidence, ["pkg/service_test.go"])
+
+        generated = self.write(
+            "pkg/generated.go",
+            "// Code generated by fixture. DO NOT EDIT.\npackage pkg\n",
+        )
+        source = self.write("pkg/source.go", "package pkg\n")
+        package_docs = index._go_package_documentation(
+            self.root, ["pkg/generated.go", "pkg/source.go"]
+        )
+        self.assertEqual(package_docs, {})
+        del generated
+        documentation = index._documentation_evidence(
+            "pkg/source.go", source, {}, self.root
+        )
+        self.assertEqual(documentation["status"], "gap")
+
+        short_hint = index._uncovered_hint(
+            {"lines": [7], "branches": [[7, -1]]}
+        )
+        self.assertEqual(short_hint, "lines 7; branches 7->-1")
+
+        vanished = self.root / "vanished-stage"
+        vanished.mkdir()
+        staged_path: list[Path] = []
+        real_mkstemp = tempfile.mkstemp
+
+        def remember_stage(*arguments: object, **keywords: object) -> tuple[int, str]:
+            descriptor, raw = real_mkstemp(*arguments, **keywords)
+            staged_path.append(Path(raw))
+            return descriptor, raw
+
+        class VanishingWriter:
+            def __init__(self, descriptor: int) -> None:
+                self.descriptor = descriptor
+
+            def __enter__(self) -> VanishingWriter:
+                return self
+
+            def __exit__(self, *_arguments: object) -> None:
+                os.close(self.descriptor)
+
+            def write(self, _content: bytes) -> int:
+                staged_path[-1].unlink()
+                raise OSError("staged member disappeared")
+
+        with mock.patch.object(
+            index.tempfile, "mkstemp", side_effect=remember_stage
+        ), mock.patch.object(
+            index.os,
+            "fdopen",
+            side_effect=lambda descriptor, _mode: VanishingWriter(descriptor),
+        ):
+            with self.assertRaisesRegex(OSError, "disappeared"):
+                index._stage_output_member(vanished, "index.json", b"{}\n")
+        self.assertEqual(list(vanished.iterdir()), [])
+
+        output = self.root / "cleanup-publication"
+        output.mkdir()
+        missing_stages = [
+            output / ".missing-index",
+            output / ".missing-markdown",
+            output / ".missing-manifest",
+        ]
+        with mock.patch.object(
+            index, "_stage_output_member", side_effect=missing_stages
+        ), mock.patch.object(
+            index.os, "replace", side_effect=OSError("publication target changed")
+        ):
+            with self.assertRaisesRegex(OSError, "target changed"):
+                index.write_index(rust_report, output)
 
 
 if __name__ == "__main__":

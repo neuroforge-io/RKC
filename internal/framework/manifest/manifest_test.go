@@ -96,8 +96,22 @@ func TestExtractManifestsRichInputsAndDeterminism(t *testing.T) {
 			wantedNames[node.Name] = true
 		}
 		if node.Name == "DB_PASSWORD" {
-			if node.Attributes["default"] != "<redacted>" || node.Attributes["secret_like"] != true {
+			if _, present := node.Attributes["default_sha256"]; present || node.Attributes["secret_like"] != true {
 				t.Errorf("secret Docker attribute = %#v", node.Attributes)
+			}
+		}
+		if node.Name == "PUBLIC_MODE" {
+			if node.Attributes["default_sha256"] != manifestValueDigest("docker-default", "enabled") ||
+				node.Attributes["default_class"] != "literal" {
+				t.Errorf("public Docker default metadata = %#v", node.Attributes)
+			}
+			if _, present := node.Attributes["default"]; present {
+				t.Error("public Docker default was copied into the atlas")
+			}
+		}
+		if node.Kind == "build_target" && node.Language == "shell" && (node.Name == "build" || node.Name == "test") {
+			if node.Signature != "" || node.Attributes["command"] != nil || node.Attributes["command_sha256"] == nil {
+				t.Errorf("npm script command was not safely summarized: %#v", node)
 			}
 		}
 	}
@@ -112,6 +126,11 @@ func TestExtractManifestsRichInputsAndDeterminism(t *testing.T) {
 	}
 	if strings.Contains(string(encoded), sensitiveValue) {
 		t.Fatal("Docker secret-like default leaked into fragment")
+	}
+	for _, command := range []string{"node build.js", "node test.js", "PUBLIC_MODE=enabled"} {
+		if strings.Contains(string(encoded), command) {
+			t.Fatalf("manifest value %q leaked into extracted fragment", command)
+		}
 	}
 
 	var foundIndirect bool
@@ -289,12 +308,14 @@ func TestDockerfileBackslashContinuations(t *testing.T) {
 			t.Errorf("%s source = %#v, want lines %d-%d", node.Name, node.Source, expected.start, expected.end)
 		}
 		if expected.value != "" {
-			value := node.Attributes["default"]
+			value := node.Attributes["default_sha256"]
+			wantValue := any(manifestValueDigest("docker-default", expected.value))
 			if node.Kind == "build_target" {
 				value = node.Attributes["base_image"]
+				wantValue = expected.value
 			}
-			if value != expected.value {
-				t.Errorf("%s value = %#v, want %q", node.Name, value, expected.value)
+			if value != wantValue {
+				t.Errorf("%s value metadata = %#v, want %#v", node.Name, value, wantValue)
 			}
 		}
 		if len(node.EvidenceIDs) != 1 {

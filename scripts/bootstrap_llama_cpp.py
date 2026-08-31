@@ -303,7 +303,7 @@ def _run(
     timeout_seconds: float,
     priority_check: Callable[[], None] | None = None,
 ) -> None:
-    """Run one bounded build group while continuously yielding to ERAIS."""
+    """Run one bounded build group while yielding to configured priority work."""
     if priority_check is None:
         priority_check = assert_priority_available
     if timeout_seconds <= 0:

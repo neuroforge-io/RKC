@@ -50,6 +50,7 @@ func TestExtractCompilerSymbolsReferencesRelationshipsAndDiagnostics(t *testing.
 		fieldMessage(3, symbolMessage(run, "run", 26, "def run(self)", child, nil)),
 		fieldMessage(3, symbolMessage(helper, "helper", 17, "def helper()", "", nil)),
 		fieldString(4, "Python"),
+		fieldString(5, string(source)),
 		fieldVarint(6, 3),
 	)
 	index := indexMessage("scip-python", "0.6.0", document, symbolMessage(base, "Base", 7, "", "", nil))
@@ -58,16 +59,23 @@ func TestExtractCompilerSymbolsReferencesRelationshipsAndDiagnostics(t *testing.
 	if err != nil {
 		t.Fatal(err)
 	}
+	if err := MarkGeneratedByCurrentProcess(inputs[0]); err != nil {
+		t.Fatal(err)
+	}
+	inputs, _, err = PrepareInputs(context.Background(), []string{indexPath})
+	if err != nil {
+		t.Fatal(err)
+	}
 	artifactID := rkcmodel.StableID("artifact", "main.py")
 	fragment, err := Extract(context.Background(), Options{
 		Root: root, Inputs: inputs,
 		Files: []pluginapi.FileRef{{
 			ArtifactID: artifactID, Path: "main.py", Language: "python",
-			SizeBytes: int64(len(source)), Materialized: sourcePath,
+			SHA256: digest(source), SizeBytes: int64(len(source)), Materialized: sourcePath,
 		}},
 		Artifacts: []rkcmodel.Artifact{{
 			ID: artifactID, Path: "main.py", Kind: "source", Language: "python",
-			SizeBytes: int64(len(source)), Text: true, Status: "text",
+			SHA256: digest(source), SizeBytes: int64(len(source)), Text: true, Status: "text",
 		}},
 	})
 	if err != nil {
@@ -116,7 +124,7 @@ func TestExtractRejectsUnsafeAmbiguousAndChangedInputs(t *testing.T) {
 			t.Fatalf("Extract(metadata order) = %v", err)
 		}
 	})
-	t.Run("document traversal", func(t *testing.T) {
+	t.Run("external documents fail closed", func(t *testing.T) {
 		root := t.TempDir()
 		indexPath := writeIndex(t, root, indexMessage(
 			"scip-go", "1", message(fieldString(1, "../outside.go"), fieldString(4, "Go")), nil,
@@ -127,10 +135,24 @@ func TestExtractRejectsUnsafeAmbiguousAndChangedInputs(t *testing.T) {
 		}
 		if _, err := Extract(context.Background(), Options{Root: root, Inputs: inputs}); err == nil ||
 			!strings.Contains(err.Error(), "not canonical") {
-			t.Fatalf("Extract(traversal) = %v", err)
+			t.Fatalf("Extract(external document) = %v", err)
 		}
 	})
-	t.Run("ambiguous positions", func(t *testing.T) {
+	t.Run("non-canonical paths fail closed", func(t *testing.T) {
+		root := t.TempDir()
+		indexPath := writeIndex(t, root, indexMessage(
+			"scip-go", "1", message(fieldString(1, "a//b.go"), fieldString(4, "Go")), nil,
+		))
+		inputs, _, err := PrepareInputs(context.Background(), []string{indexPath})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := Extract(context.Background(), Options{Root: root, Inputs: inputs}); err == nil ||
+			!strings.Contains(err.Error(), "not canonical") {
+			t.Fatalf("Extract(non-canonical path) = %v", err)
+		}
+	})
+	t.Run("unsupported positions", func(t *testing.T) {
 		root := t.TempDir()
 		source := []byte("package main\n")
 		if err := os.WriteFile(filepath.Join(root, "main.go"), source, 0o600); err != nil {
@@ -140,6 +162,9 @@ func TestExtractRejectsUnsafeAmbiguousAndChangedInputs(t *testing.T) {
 			fieldString(1, "main.go"),
 			fieldMessage(2, occurrenceMessage(encodedLegacyRange(0, 0, 7), "scip . . . main/", roleDefinition, 14, nil, nil)),
 			fieldString(4, "Go"),
+			fieldString(5, string(source)),
+			// 4 is outside the SCIP PositionEncoding enum (0..3).
+			fieldVarint(6, 4),
 		)
 		indexPath := writeIndex(t, root, indexMessage("scip-go", "1", document, nil))
 		inputs, _, err := PrepareInputs(context.Background(), []string{indexPath})
@@ -149,11 +174,76 @@ func TestExtractRejectsUnsafeAmbiguousAndChangedInputs(t *testing.T) {
 		artifactID := rkcmodel.StableID("artifact", "main.go")
 		_, err = Extract(context.Background(), Options{
 			Root: root, Inputs: inputs,
-			Files:     []pluginapi.FileRef{{ArtifactID: artifactID, Path: "main.go", SizeBytes: int64(len(source))}},
-			Artifacts: []rkcmodel.Artifact{{ID: artifactID, Path: "main.go", Text: true, Status: "text"}},
+			Files: []pluginapi.FileRef{{
+				ArtifactID: artifactID, Path: "main.go", SHA256: digest(source), SizeBytes: int64(len(source)),
+			}},
+			Artifacts: []rkcmodel.Artifact{{
+				ID: artifactID, Path: "main.go", SHA256: digest(source), SizeBytes: int64(len(source)), Text: true, Status: "text",
+			}},
 		})
 		if err == nil || !strings.Contains(err.Error(), "position_encoding") {
-			t.Fatalf("Extract(ambiguous encoding) = %v", err)
+			t.Fatalf("Extract(unsupported encoding) = %v", err)
+		}
+	})
+	t.Run("unspecified positions fail and explicit positions work", func(t *testing.T) {
+		root := t.TempDir()
+		source := []byte("package main\n")
+		if err := os.WriteFile(filepath.Join(root, "main.go"), source, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		for _, encoding := range []uint64{0, 3} {
+			document := message(
+				fieldString(1, "main.go"),
+				fieldMessage(2, occurrenceMessage(encodedLegacyRange(0, 0, 7), "scip . . . main/", roleDefinition, 14, nil, nil)),
+				fieldString(4, "Go"),
+				fieldString(5, string(source)),
+				fieldVarint(6, encoding),
+			)
+			indexPath := writeIndex(t, root, indexMessage("scip-go", "1", document, nil))
+			inputs, _, err := PrepareInputs(context.Background(), []string{indexPath})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := MarkGeneratedByCurrentProcess(inputs[0]); err != nil {
+				t.Fatal(err)
+			}
+			inputs, _, err = PrepareInputs(context.Background(), []string{indexPath})
+			if err != nil {
+				t.Fatal(err)
+			}
+			artifactID := rkcmodel.StableID("artifact", "main.go")
+			result, err := Extract(context.Background(), Options{
+				Root: root, Inputs: inputs,
+				Files: []pluginapi.FileRef{{
+					ArtifactID: artifactID, Path: "main.go", SHA256: digest(source), SizeBytes: int64(len(source)),
+				}},
+				Artifacts: []rkcmodel.Artifact{{
+					ID: artifactID, Path: "main.go", SHA256: digest(source), SizeBytes: int64(len(source)), Text: true, Status: "text",
+				}},
+			})
+			if encoding == 0 {
+				if err == nil || !strings.Contains(err.Error(), "ambiguous or unsupported") {
+					t.Fatalf("Extract(encoding 0) = %v", err)
+				}
+				continue
+			}
+			if err != nil {
+				t.Fatalf("Extract(encoding %d) = %v", encoding, err)
+			}
+			if len(result.Artifacts) != 1 || result.Artifacts[0].Status != "semantic_parsed" {
+				t.Fatalf("Extract(encoding %d) semantic artifact = %+v", encoding, result.Artifacts)
+			}
+			nodeID := rkcmodel.StableID("node", "scip", "scip . . . main/")
+			found := false
+			for _, node := range result.Nodes {
+				if node.ID == nodeID {
+					found = true
+					break
+				}
+			}
+			if !found {
+				t.Fatalf("Extract(encoding %d) produced no definition node", encoding)
+			}
 		}
 	})
 	t.Run("prepared digest mismatch", func(t *testing.T) {
@@ -208,6 +298,33 @@ func TestPrepareInputsCanonicalizesSortsAndRejectsSymlinks(t *testing.T) {
 	cancel()
 	if _, _, err := PrepareInputs(cancelled, []string{first}); err == nil {
 		t.Fatal("PrepareInputs accepted a cancelled context")
+	}
+}
+
+func TestPrepareInputsCoalescesIdenticalBytesWithStrongestAuthority(t *testing.T) {
+	root := t.TempDir()
+	original := writeNamedIndex(t, root, "original.scip", indexMessage("same", "1", nil, nil))
+	duplicate := filepath.Join(root, "duplicate.scip")
+	data, err := os.ReadFile(original)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(duplicate, data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	originalInput, _, err := PrepareInputs(context.Background(), []string{original})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := MarkGeneratedByCurrentProcess(originalInput[0]); err != nil {
+		t.Fatal(err)
+	}
+	inputs, _, err := PrepareInputs(context.Background(), []string{duplicate, original})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(inputs) != 1 || inputs[0].Path != original || !inputs[0].CompilerAuthenticated() {
+		t.Fatalf("coalesced input = %+v", inputs)
 	}
 }
 

@@ -34,7 +34,11 @@ MAX_ASSET_BYTES = 8 * 1024 * 1024 * 1024
 DOWNLOAD_CHUNK_BYTES = 1024 * 1024
 PRIORITY_RECHECK_BYTES = 16 * 1024 * 1024
 MIN_DISK_HEADROOM_BYTES = 4 * 1024 * 1024 * 1024
-PRIORITY_NAMES = (b"erais", b"torchrun", b"lm_eval")
+HIGHER_PRIORITY_MARKERS_ENVIRONMENT = "RKC_HIGHER_PRIORITY_MARKERS"
+DEFAULT_HIGHER_PRIORITY_MARKERS = "torchrun,lm_eval"
+MAX_HIGHER_PRIORITY_MARKER_BYTES = 255
+MAX_HIGHER_PRIORITY_MARKER_COUNT = 16
+MAX_HIGHER_PRIORITY_MARKER_LENGTH = 32
 SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 REVISION_RE = re.compile(r"^[0-9a-f]{40}$")
 ID_RE = re.compile(r"^[a-z0-9][a-z0-9._-]{0,95}$")
@@ -59,7 +63,7 @@ class MissingAsset(IntegrityError):
 
 
 class PriorityBlocked(AssetError):
-    """A higher-priority ERAIS workload is active."""
+    """Configured higher-priority work blocks an RKC operation."""
 
 
 @dataclass(frozen=True)
@@ -104,6 +108,68 @@ class ModelLock:
 
 def _fail(message: str) -> NoReturn:
     raise LockError(message)
+
+
+def parse_priority_markers(value: str) -> tuple[bytes, ...]:
+    """Validate the bounded marker contract shared with the Go guard."""
+    try:
+        encoded = value.encode("ascii")
+    except UnicodeEncodeError as exc:
+        raise PriorityBlocked(
+            f"{HIGHER_PRIORITY_MARKERS_ENVIRONMENT} contains a non-ASCII marker"
+        ) from exc
+    if not encoded:
+        raise PriorityBlocked(
+            f"{HIGHER_PRIORITY_MARKERS_ENVIRONMENT} must not be empty"
+        )
+    if len(encoded) > MAX_HIGHER_PRIORITY_MARKER_BYTES:
+        raise PriorityBlocked(
+            f"{HIGHER_PRIORITY_MARKERS_ENVIRONMENT} exceeds the "
+            f"{MAX_HIGHER_PRIORITY_MARKER_BYTES}-byte limit"
+        )
+    markers = encoded.split(b",")
+    if len(markers) > MAX_HIGHER_PRIORITY_MARKER_COUNT:
+        raise PriorityBlocked(
+            f"{HIGHER_PRIORITY_MARKERS_ENVIRONMENT} exceeds the "
+            f"{MAX_HIGHER_PRIORITY_MARKER_COUNT}-marker limit"
+        )
+    seen: set[bytes] = set()
+    for index, marker in enumerate(markers, start=1):
+        if not marker:
+            raise PriorityBlocked(
+                f"{HIGHER_PRIORITY_MARKERS_ENVIRONMENT} entry {index} is empty"
+            )
+        if len(marker) > MAX_HIGHER_PRIORITY_MARKER_LENGTH:
+            raise PriorityBlocked(
+                f"{HIGHER_PRIORITY_MARKERS_ENVIRONMENT} entry {index} exceeds "
+                f"the {MAX_HIGHER_PRIORITY_MARKER_LENGTH}-byte marker limit"
+            )
+        if re.fullmatch(rb"[a-z0-9][a-z0-9_]*", marker) is None:
+            raise PriorityBlocked(
+                f"{HIGHER_PRIORITY_MARKERS_ENVIRONMENT} entry {index} is not "
+                "a lower-case ASCII marker"
+            )
+        if marker in seen:
+            raise PriorityBlocked(
+                f"{HIGHER_PRIORITY_MARKERS_ENVIRONMENT} entry {index} "
+                "duplicates an earlier marker"
+            )
+        seen.add(marker)
+    return tuple(markers)
+
+
+def configured_priority_markers(
+    environ: Mapping[str, str] | None = None,
+) -> tuple[bytes, ...]:
+    """Return configured classes; blank retains the compatibility default."""
+    source = os.environ if environ is None else environ
+    value = source.get(
+        HIGHER_PRIORITY_MARKERS_ENVIRONMENT,
+        DEFAULT_HIGHER_PRIORITY_MARKERS,
+    )
+    if value == "":
+        value = DEFAULT_HIGHER_PRIORITY_MARKERS
+    return parse_priority_markers(value)
 
 
 def _strict_object(pairs: Iterable[tuple[str, object]]) -> dict[str, object]:
@@ -549,13 +615,15 @@ def _matches_priority_process(
     command: bytes,
     process_name: bytes,
     ancestors: set[int],
+    priority_names: tuple[bytes, ...] | None = None,
 ) -> bool:
     """Match a real priority workload without matching an invoking wrapper."""
+    names = configured_priority_markers() if priority_names is None else priority_names
     process_name = process_name.lower()
-    if pid in ancestors and not any(name in process_name for name in PRIORITY_NAMES):
+    if pid in ancestors and not any(name in process_name for name in names):
         return False
     arguments = command.lower().split()
-    if any(name in _priority_path_tokens(process_name) for name in PRIORITY_NAMES):
+    if any(name in _priority_path_tokens(process_name) for name in names):
         return True
     if not arguments:
         return False
@@ -573,7 +641,7 @@ def _matches_priority_process(
     return any(
         name in _priority_path_tokens(value)
         for value in launch_values
-        for name in PRIORITY_NAMES
+        for name in names
     )
 
 
@@ -585,8 +653,13 @@ def _priority_path_tokens(value: bytes) -> set[bytes]:
     }
 
 
-def _priority_process_class(command: bytes, process_name: bytes = b"") -> str:
+def _priority_process_class(
+    command: bytes,
+    process_name: bytes = b"",
+    priority_names: tuple[bytes, ...] | None = None,
+) -> str:
     """Return a fixed, non-sensitive class for a matched priority process."""
+    names = configured_priority_markers() if priority_names is None else priority_names
     arguments = command.lower().split()
     launch_values = [process_name.lower()]
     if arguments:
@@ -603,7 +676,7 @@ def _priority_process_class(command: bytes, process_name: bytes = b"") -> str:
         )
     for value in launch_values:
         tokens = _priority_path_tokens(value)
-        for name in PRIORITY_NAMES:
+        for name in names:
             if name in tokens:
                 return name.decode("ascii")
     return "priority-workload"
@@ -615,6 +688,7 @@ def active_priority_processes() -> list[tuple[int, str]]:
     Raw command lines can contain credentials, prompts, or private paths. They
     are used only for matching and are never returned to diagnostics.
     """
+    priority_names = configured_priority_markers()
     matches: list[tuple[int, str]] = []
     if sys.platform.startswith("linux") and Path("/proc").is_dir():
         ancestors = _ancestor_pids()
@@ -627,37 +701,63 @@ def active_priority_processes() -> list[tuple[int, str]]:
                 process_name = (entry / "comm").read_bytes()[:256].strip().lower()
             except (FileNotFoundError, PermissionError, ProcessLookupError, OSError):
                 continue
-            if _matches_priority_process(pid, command, process_name, ancestors):
-                matches.append((pid, _priority_process_class(command, process_name)))
+            if _matches_priority_process(
+                pid, command, process_name, ancestors, priority_names
+            ):
+                matches.append(
+                    (
+                        pid,
+                        _priority_process_class(
+                            command, process_name, priority_names
+                        ),
+                    )
+                )
         return sorted(matches)
     try:
         result = subprocess.run(
-            ["pgrep", "-af", "[e]rais|[t]orchrun|[l]m_eval"],
+            [
+                "pgrep",
+                "-af",
+                "|".join(
+                    f"[{name[:1].decode('ascii')}]{name[1:].decode('ascii')}"
+                    for name in priority_names
+                ),
+            ],
             check=False,
             stdout=subprocess.PIPE,
             stderr=subprocess.DEVNULL,
             timeout=5,
         )
     except (FileNotFoundError, subprocess.TimeoutExpired) as exc:
-        raise PriorityBlocked(f"cannot prove ERAIS is idle on this platform: {exc}") from exc
+        raise PriorityBlocked(
+            "cannot prove configured higher-priority work is idle on this "
+            f"platform: {exc}"
+        ) from exc
     for line in result.stdout.decode("utf-8", errors="replace").splitlines()[:32]:
         raw_pid, _, command = line.partition(" ")
         if raw_pid.isdigit() and int(raw_pid) != os.getpid():
             matches.append(
-                (int(raw_pid), _priority_process_class(command.encode("utf-8")))
+                (
+                    int(raw_pid),
+                    _priority_process_class(
+                        command.encode("utf-8"), priority_names=priority_names
+                    ),
+                )
             )
     return matches
 
 
 def assert_priority_available() -> None:
-    """Fail before or during heavy work whenever ERAIS is active."""
+    """Fail before or during heavy work when configured priority work blocks."""
     matches = active_priority_processes()
     if matches:
         summary = "; ".join(
             f"pid={pid} class={process_class}"
             for pid, process_class in matches[:4]
         )
-        raise PriorityBlocked(f"ERAIS has priority; RKC work is deferred: {summary}")
+        raise PriorityBlocked(
+            f"configured higher-priority work blocks RKC work: {summary}"
+        )
 
 
 def _read_cgroup_value(directory: Path, name: str) -> str:

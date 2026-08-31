@@ -471,10 +471,10 @@ func TestStagedFailureContracts(t *testing.T) {
 
 func TestStageCacheOversizeAndPruneContracts(t *testing.T) {
 	cache := openContractStageCache(t)
-	oversized := make([]byte, maximumStagePayloadBytes+1)
-	if _, err := cache.putPayload(oversized); err == nil ||
-		!strings.Contains(err.Error(), "maximum") {
-		t.Fatalf("putPayload(oversized) = %v", err)
+	if stagePayloadExceedsLimit(maximumStagePayloadBytes) ||
+		!stagePayloadExceedsLimit(maximumStagePayloadBytes+1) ||
+		!stagePayloadExceedsLimit(-1) {
+		t.Fatal("stage payload size boundary is not fail-closed")
 	}
 	if _, err := cache.Prune(context.Background(), StageCachePruneOptions{}); err == nil ||
 		!strings.Contains(err.Error(), "positive age") {

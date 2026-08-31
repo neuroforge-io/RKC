@@ -1,8 +1,10 @@
 # Local model selection
 
-This RKC document is part of the NeuroForgeIO-owned MIT-licensed project. Any
-Apache-2.0 or other license named below belongs to an external model asset and
-does not change RKC's license; see [`BRANDING_AND_ATTRIBUTION.md`](BRANDING_AND_ATTRIBUTION.md).
+This RKC document is part of the NeuroForgeIO-published Apache-2.0 project.
+Copyright in RKC remains with NeuroForgeIO and applicable contributors. Each
+license named below belongs to the corresponding external model asset and does
+not transfer its ownership to NeuroForgeIO or RKC contributors; see
+[`BRANDING_AND_ATTRIBUTION.md`](BRANDING_AND_ATTRIBUTION.md).
 
 RKC treats model selection as a measured operating-point decision, not a model
 card popularity contest. The non-negotiable local envelope is one CPU core,
@@ -16,8 +18,29 @@ No generation model is selected as RKC's default. Qwen3.5 4B Q4_0 was
 qualified under the 4 GiB operating / 4.5 GiB hard envelope and rejected. The
 exact locked asset failed the complete generation, hostile-input, exact-32K,
 latency, and process-RSS contract, so it remains `unqualified` and ineligible
-for defaults. The embedding candidate remains Qwen3 Embedding 0.6B Q8_0,
-qualified separately at 8,192 tokens.
+for defaults. Qwen3 Embedding 0.6B Q8_0 passed the isolated 8,192-token embedding
+metrics, but it is not pair-qualified, default-eligible, or marked qualified in
+the model lock because the required generation/embedding pair failed.
+
+The 2026-08-31 upstream recheck does not change that decision. Google's
+[Gemma 4 model card](https://ai.google.dev/gemma/docs/core/model_card_4) lists
+E2B as Apache-2.0, 128K context, 2.3B effective language parameters and about
+5.1B parameters including per-layer embeddings; upstream
+[`llama.cpp` multimodal documentation](https://github.com/ggml-org/llama.cpp/blob/master/docs/multimodal.md)
+lists the official Gemma 4 E2B GGUF route. Runtime support therefore exists,
+but RKC's measured E2B operating point still fails structured grammar
+compatibility and interactive long-context latency. Qwen's official
+[Qwen3.5-2B model](https://huggingface.co/Qwen/Qwen3.5-2B) remains Apache-2.0
+and long-context capable, but the retained guarded run reached only 16% of the
+exact 32K path at the five-minute boundary. Neither becomes a default merely
+because its model card or runtime support improved.
+
+RKC also does not make a nominally free hosted API the default. Uncontracted
+quotas, retention policy, egress, availability, and model drift are not a
+reliable production boundary for private repository knowledge. The supported
+zero-cost fallback is deterministic local retrieval plus `synthesize
+--packet-only`, which produces a bounded, cited evidence packet that a human or
+any separately governed agent can consume without becoming canonical truth.
 
 ## 2026-08-30 official-source refresh
 
@@ -247,7 +270,8 @@ expansion, evidence packets, deterministic documentation, and every canonical
 repository fact remain fully usable without a model.
 
 ---
-_RKC is stewarded by **NeuroForgeIO** and released under the **MIT License**.
-Redistributions must retain the copyright and permission notices required by
-that license. Attribution to NeuroForgeIO is requested, but is not an additional
-license condition._
+_RKC is open source, published and maintained by **NeuroForgeIO**, under the
+**Apache License, Version 2.0**. Copyright 2026 NeuroForgeIO and RKC
+contributors. Redistributed
+works must preserve applicable license and `NOTICE` terms. Third-party materials
+retain their own licenses and ownership._

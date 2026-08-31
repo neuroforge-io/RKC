@@ -355,6 +355,51 @@ type Coverage struct {
 	EdgeResolutionRatio float64 `json:"edge_resolution_ratio"`
 	// ClaimCitationRatio compares evidence-citing with all claims.
 	ClaimCitationRatio float64 `json:"claim_citation_ratio"`
+	// FlowCFGBlocks counts bounded control-flow-graph blocks produced by the
+	// value-flow stage (zero when the stage is disabled).
+	FlowCFGBlocks int `json:"flow_cfg_blocks,omitempty"`
+	// FlowCFGEdges counts precedes edges between CFG blocks.
+	FlowCFGEdges int `json:"flow_cfg_edges,omitempty"`
+	// FlowCallEdges counts call-graph edges (resolved and unresolved).
+	FlowCallEdges int `json:"flow_call_edges,omitempty"`
+	// FlowCallEdgesResolved counts call edges with a resolved target.
+	FlowCallEdgesResolved int `json:"flow_call_edges_resolved,omitempty"`
+	// FlowValueEdges counts value-flow edges (flows_to, binds_to, returns_to,
+	// sanitizes) produced by the value-flow stage.
+	FlowValueEdges int `json:"flow_value_edges,omitempty"`
+	// FlowSources counts deterministic source-role value entities.
+	FlowSources int `json:"flow_sources,omitempty"`
+	// FlowSinks counts deterministic sink-role value entities.
+	FlowSinks int `json:"flow_sinks,omitempty"`
+	// RuntimeTraces counts imported trace records, including assertions.
+	RuntimeTraces int `json:"runtime_traces,omitempty"`
+	// RuntimeProducerAuthenticatedTraces counts traces whose evidence producer,
+	// not merely their capture record, is authenticated.
+	RuntimeProducerAuthenticatedTraces int `json:"runtime_producer_authenticated_traces,omitempty"`
+	// RuntimeAssertionTraces counts producer-unverified trace inputs.
+	RuntimeAssertionTraces int `json:"runtime_assertion_traces,omitempty"`
+	// RuntimeCaptureIntegrityAssertions counts assertion traces whose exact record
+	// was produced by the importing RKC process. This is not producer authority.
+	RuntimeCaptureIntegrityAssertions int `json:"runtime_capture_integrity_assertions,omitempty"`
+	// RuntimeProducerAuthenticatedTests counts results from a
+	// producer-authenticated test-event source.
+	RuntimeProducerAuthenticatedTests int `json:"runtime_producer_authenticated_tests,omitempty"`
+	// RuntimeProducerObservedCallEdges counts call edges supported by actual
+	// events from a producer-authenticated call-event source.
+	RuntimeProducerObservedCallEdges int `json:"runtime_producer_observed_call_edges,omitempty"`
+	// RuntimeFunctionsExecutionAsserted counts functions for which a trace makes
+	// a positive, producer-unverified statement-coverage assertion.
+	RuntimeFunctionsExecutionAsserted int `json:"runtime_functions_execution_asserted,omitempty"`
+	// RuntimeFunctionsNotObserved counts functions carrying one or more
+	// trace-scoped negative assertions. It is not a dead-code, non-execution, or
+	// impossibility claim.
+	RuntimeFunctionsNotObserved int `json:"runtime_functions_not_observed,omitempty"`
+	// RuntimeCallObservationAvailable states whether an admitted producer
+	// supplied actual call events.
+	RuntimeCallObservationAvailable bool `json:"runtime_call_observation_available,omitempty"`
+	// RuntimeProducerCallEdgeObservationRatio compares producer-observed with
+	// resolved static call edges only when call-event observation is available.
+	RuntimeProducerCallEdgeObservationRatio float64 `json:"runtime_producer_call_edge_observation_ratio,omitempty"`
 	// DeterministicOutputDigest is CanonicalDigest of the measured Bundle.
 	DeterministicOutputDigest string `json:"deterministic_output_digest"`
 }

@@ -8,11 +8,27 @@ make self-catalogue
 ```
 
 The target always enters [`scripts/with-rkc-limits.sh`](../scripts/with-rkc-limits.sh)
-before it builds or scans. The resource guard refuses to start while an ERAIS
-training or evaluation process is active and otherwise runs the complete
-process tree at the lowest CPU and I/O priorities inside a bounded cgroup.
-Calling [`scripts/self-catalogue.sh`](../scripts/self-catalogue.sh) directly is
+before it builds or scans. The resource guard keeps the complete process tree
+at the lowest CPU and I/O priorities inside a bounded cgroup and, under the
+default `yield` policy, proceeds while a process matching a configured
+higher-priority marker merely runs (the strict
+`RKC_HIGHER_PRIORITY_POLICY=refuse` setting instead refuses while one is
+visible). Calling [`scripts/self-catalogue.sh`](../scripts/self-catalogue.sh) directly is
 rejected.
+
+Compiler-grade self-analysis is opt-in and digest-bound: supply a host-built
+`scip-go` binary through `SCIP_GO_BINARY`, and the workflow pins it to its
+exact SHA-256, generates a strictly validated Go index, and imports it through
+the normal `--scip-index` path:
+
+```sh
+SCIP_GO_BINARY="$HOME/go/bin/scip-go" make self-catalogue
+```
+
+Without the variable the self-run remains the deterministic no-SCIP profile
+(31.5% relationship resolution); with it, the measured compiler-grade profile
+resolves 84.89% of relationships (see
+[`SHOWCASE_2026-07-27.md`](SHOWCASE_2026-07-27.md)).
 
 ## Non-recursive source boundary
 
@@ -149,7 +165,8 @@ catalogue before success, recursively deletes a catalogue, or adopts an
 unmarked directory.
 
 ---
-_RKC is stewarded by **NeuroForgeIO** and released under the **MIT License**.
-Redistributions must retain the copyright and permission notices required by
-that license. Attribution to NeuroForgeIO is requested, but is not an additional
-license condition._
+_RKC is open source, published and maintained by **NeuroForgeIO**, under the
+**Apache License, Version 2.0**. Copyright 2026 NeuroForgeIO and RKC
+contributors. Redistributed
+works must preserve applicable license and `NOTICE` terms. Third-party materials
+retain their own licenses and ownership._

@@ -28,14 +28,16 @@ import (
 )
 
 const (
-	workbenchMaximumRequestBytes = 64 * 1024
-	workbenchMaximumOutputBytes  = 2 * 1024 * 1024
-	workbenchMaximumArguments    = 128
-	workbenchMaximumArgumentSize = 4096
-	workbenchMaximumJobs         = 32
-	workbenchTokenHeader         = "X-RKC-Workbench-Token"
-	workbenchBootstrapHeader     = "X-RKC-Workbench-Bootstrap"
-	workbenchBootstrapFragment   = "rkc-workbench"
+	workbenchMaximumRequestBytes     = 64 * 1024
+	workbenchMaximumOutputBytes      = 2 * 1024 * 1024
+	workbenchMaximumArguments        = 128
+	workbenchMaximumArgumentSize     = 4096
+	workbenchMaximumJobs             = 32
+	workbenchMaximumDirectoryEntries = 256
+	workbenchMaximumInspectedEntries = 4096
+	workbenchTokenHeader             = "X-RKC-Workbench-Token"
+	workbenchBootstrapHeader         = "X-RKC-Workbench-Bootstrap"
+	workbenchBootstrapFragment       = "rkc-workbench"
 )
 
 // ErrWorkbenchJobNotFound reports an unknown cancellation target.
@@ -68,11 +70,24 @@ type Workbench struct {
 	bootstrap   string
 	slot        chan struct{}
 	environment []string
-	commands    []commandcatalog.Command
+	commands    []workbenchCommand
 
-	mu     sync.RWMutex
-	jobs   map[string]*workbenchJob
-	closed bool
+	mu   sync.RWMutex
+	jobs map[string]*workbenchJob
+	// activeDataset and commands are replaced under the same lock after a
+	// successful quickstart has been loaded and its repository identity has been
+	// verified. HTTP handlers retain immutable Dataset pointers after releasing
+	// the lock, so every request observes one complete atlas generation.
+	activeDataset *Dataset
+	closed        bool
+}
+
+type workbenchDatasetIdentity struct {
+	SnapshotID     string `json:"snapshot_id"`
+	RepositoryID   string `json:"repository_id,omitempty"`
+	RootName       string `json:"root_name"`
+	RepositoryRoot string `json:"repository_root"`
+	AtlasRoot      string `json:"atlas_root"`
 }
 
 type workbenchJob struct {
@@ -88,6 +103,10 @@ type workbenchJob struct {
 	Truncated    bool       `json:"truncated"`
 	Error        string     `json:"error,omitempty"`
 	CleanupScope string     `json:"cleanup_scope,omitempty"`
+	// ActivatedDataset is present only after the server has fully loaded the
+	// quickstart output, checked its snapshot/repository identity, and atomically
+	// made it the dataset served by the read APIs.
+	ActivatedDataset *workbenchDatasetIdentity `json:"activated_dataset,omitempty"`
 
 	context               context.Context
 	cancel                context.CancelFunc
@@ -96,7 +115,23 @@ type workbenchJob struct {
 	mayLaunchManagedUnits bool
 }
 
-type workbenchCommand = commandcatalog.Command
+type workbenchDirectoryEntry struct {
+	Name string `json:"name"`
+	Path string `json:"path"`
+}
+
+type workbenchDirectoryListing struct {
+	Path        string                    `json:"path"`
+	Parent      string                    `json:"parent,omitempty"`
+	Directories []workbenchDirectoryEntry `json:"directories"`
+	Truncated   bool                      `json:"truncated"`
+}
+
+type workbenchCommand struct {
+	commandcatalog.Command
+	DefaultExecutable bool   `json:"default_executable"`
+	Restriction       string `json:"restriction,omitempty"`
+}
 
 var workbenchCommands = commandcatalog.Commands(commandcatalog.Context{})
 
@@ -146,9 +181,167 @@ func NewWorkbench(config WorkbenchConfig) (*Workbench, error) {
 	return &Workbench{
 		workspace: workspace, executable: executable, timeout: config.Timeout,
 		token: token, bootstrap: bootstrap, slot: make(chan struct{}, 1), environment: environment,
-		commands: commandcatalog.Commands(config.CommandContext),
+		commands: workbenchCommandViews(commandcatalog.Commands(config.CommandContext)),
 		jobs:     make(map[string]*workbenchJob),
 	}, nil
+}
+
+func workbenchCommandViews(commands []commandcatalog.Command) []workbenchCommand {
+	result := make([]workbenchCommand, 0, len(commands))
+	for _, command := range commands {
+		arguments := append([]string{command.Name}, command.DefaultArgs...)
+		view := workbenchCommand{Command: command, DefaultExecutable: true}
+		if err := validateWorkbenchExecution(arguments); err != nil {
+			view.DefaultExecutable = false
+			view.Restriction = err.Error()
+		}
+		result = append(result, view)
+	}
+	return result
+}
+
+// attachDataset binds the immutable dataset used when the live handler starts.
+// A Workbench may be constructed before the handler, so activation deliberately
+// fails closed until this binding exists.
+func (workbench *Workbench) attachDataset(dataset *Dataset) {
+	if workbench == nil || dataset == nil {
+		return
+	}
+	workbench.mu.Lock()
+	defer workbench.mu.Unlock()
+	if workbench.activeDataset == nil {
+		workbench.activeDataset = dataset
+	}
+}
+
+func (workbench *Workbench) currentDataset(fallback *Dataset) *Dataset {
+	if workbench == nil {
+		return fallback
+	}
+	workbench.mu.RLock()
+	dataset := workbench.activeDataset
+	workbench.mu.RUnlock()
+	if dataset == nil {
+		return fallback
+	}
+	return dataset
+}
+
+func workbenchDatasetIdentityFor(dataset *Dataset) *workbenchDatasetIdentity {
+	if dataset == nil {
+		return nil
+	}
+	repositoryRoot := dataset.Manifest.RootPath
+	if repositoryRoot == "" && filepath.Base(dataset.Root) == ".rkc" {
+		repositoryRoot = filepath.Dir(dataset.Root)
+	}
+	return workbenchDatasetIdentityForRepository(dataset, repositoryRoot)
+}
+
+func workbenchDatasetIdentityForRepository(dataset *Dataset, repositoryRoot string) *workbenchDatasetIdentity {
+	return &workbenchDatasetIdentity{
+		SnapshotID:     dataset.Manifest.ID,
+		RepositoryID:   dataset.Manifest.RepositoryID,
+		RootName:       dataset.Manifest.RootName,
+		RepositoryRoot: repositoryRoot,
+		AtlasRoot:      dataset.Root,
+	}
+}
+
+func workbenchCommandContextForDataset(dataset *Dataset) commandcatalog.Context {
+	return commandcatalog.Context{
+		DatasetArgs: []string{"--dir", dataset.Root},
+		CheckArgs:   []string{"--coverage", filepath.Join(dataset.Root, "coverage.json")},
+	}
+}
+
+// completedQuickstartRoots recognizes the exact argv emitted by the graphical
+// Analyze action. Flag-bearing/manual quickstart vectors retain their ordinary
+// command behavior but do not silently change the live dataset because their
+// effective output path would require command-specific flag evaluation.
+func (workbench *Workbench) completedQuickstartRoots(args []string) (string, string, bool, error) {
+	if len(args) != 2 || args[0] != "quickstart" || strings.HasPrefix(args[1], "-") {
+		return "", "", false, nil
+	}
+	repository := args[1]
+	if !filepath.IsAbs(repository) {
+		repository = filepath.Join(workbench.workspace, repository)
+	}
+	repository, err := filepath.Abs(repository)
+	if err != nil {
+		return "", "", true, fmt.Errorf("resolve analyzed repository: %w", err)
+	}
+	repository, err = filepath.EvalSymlinks(repository)
+	if err != nil {
+		return "", "", true, fmt.Errorf("resolve analyzed repository links: %w", err)
+	}
+	info, err := os.Stat(repository)
+	if err != nil {
+		return "", "", true, fmt.Errorf("inspect analyzed repository: %w", err)
+	}
+	if !info.IsDir() {
+		return "", "", true, errors.New("analyzed repository is not a directory")
+	}
+	return repository, filepath.Join(repository, ".rkc"), true, nil
+}
+
+// activateCompletedQuickstart is a postcondition of graphical Analyze, not a
+// second command. Load performs the complete export-manifest, canonical bundle,
+// coverage, and vocabulary validation before any shared pointer changes. The
+// repository root recorded in the immutable snapshot must also identify the
+// exact folder supplied to quickstart.
+func (workbench *Workbench) activateCompletedQuickstart(id string, args []string) error {
+	repository, atlas, requested, err := workbench.completedQuickstartRoots(args)
+	if err != nil || !requested {
+		return err
+	}
+	dataset, err := Load(atlas)
+	if err != nil {
+		return fmt.Errorf("load analyzed atlas: %w", err)
+	}
+	resolvedAtlas, err := filepath.EvalSymlinks(atlas)
+	if err != nil {
+		return fmt.Errorf("resolve analyzed atlas links: %w", err)
+	}
+	resolvedAtlas, err = filepath.Abs(resolvedAtlas)
+	if err != nil {
+		return fmt.Errorf("resolve analyzed atlas: %w", err)
+	}
+	if dataset.Root != resolvedAtlas {
+		return fmt.Errorf("loaded atlas root %q does not match analyzed output %q", dataset.Root, resolvedAtlas)
+	}
+	if dataset.Integrity != IntegrityVerified {
+		return fmt.Errorf("analyzed atlas integrity is %q, expected %q", dataset.Integrity, IntegrityVerified)
+	}
+	if dataset.Manifest.ID == "" || dataset.Manifest.Status != "committed" {
+		return fmt.Errorf("analyzed atlas snapshot is not committed (id=%q status=%q)", dataset.Manifest.ID, dataset.Manifest.Status)
+	}
+	// Canonical portable atlases intentionally redact host-local RootPath. The
+	// selected repository is instead bound by the exact resolved <repo>/.rkc
+	// location, ownership marker, export-manifest snapshot ID, and deterministic
+	// root name retained in the canonical snapshot.
+	if dataset.Manifest.RootName != filepath.Base(repository) {
+		return fmt.Errorf("analyzed snapshot root name %q does not match selected folder %q", dataset.Manifest.RootName, filepath.Base(repository))
+	}
+
+	identity := workbenchDatasetIdentityForRepository(dataset, repository)
+	commands := workbenchCommandViews(commandcatalog.Commands(workbenchCommandContextForDataset(dataset)))
+	workbench.mu.Lock()
+	defer workbench.mu.Unlock()
+	job, ok := workbench.jobs[id]
+	if !ok || job.Status != "running" {
+		return errors.New("analyzed atlas job is no longer active")
+	}
+	if err := job.context.Err(); err != nil {
+		return fmt.Errorf("analyzed atlas activation was canceled: %w", err)
+	}
+	if workbench.closed || workbench.activeDataset == nil {
+		return errors.New("live dataset activation is unavailable while the workbench is shutting down")
+	}
+	workbench.activeDataset = dataset
+	workbench.commands = commands
+	job.ActivatedDataset = identity
+	return nil
 }
 
 func randomWorkbenchValue(size int) (string, error) {
@@ -164,13 +357,18 @@ func (workbench *Workbench) handleSession(w http.ResponseWriter, request *http.R
 		writeProblem(w, http.StatusForbidden, "Workbench authorization failed", "same-origin loopback access and the out-of-band bootstrap capability are required")
 		return
 	}
+	workbench.mu.RLock()
+	commands := append([]workbenchCommand(nil), workbench.commands...)
+	activeDataset := workbenchDatasetIdentityFor(workbench.activeDataset)
+	workbench.mu.RUnlock()
 	w.Header().Set("Cache-Control", "no-store")
 	writeJSON(w, http.StatusOK, map[string]any{
 		"enabled": true, "token": workbench.token, "workspace": workbench.workspace,
 		"maximum_output_bytes": workbenchMaximumOutputBytes,
 		"timeout_seconds":      int(workbench.timeout.Seconds()),
-		"authority_notice":     "Trusted-user launcher: commands have the invoking OS user's filesystem authority; the workspace sets command defaults and is not a security sandbox.",
-		"commands":             workbench.commands,
+		"authority_notice":     "Trusted-user launcher: commands have the invoking OS user's filesystem authority; the workspace sets command defaults and is not a security sandbox. Use a trusted browser profile: ephemeral origin allocation reduces, but cannot prove the absence of, legacy service-worker state.",
+		"commands":             commands,
+		"active_dataset":       activeDataset,
 	})
 }
 
@@ -253,10 +451,47 @@ func validateWorkbenchExecution(args []string) error {
 	if err := validateWorkbenchArgs(args); err != nil {
 		return err
 	}
+	if workbenchUsesCustomOrUnpinnedSCIPIndexer(args) {
+		return errors.New("custom or unpinned SCIP indexer execution is unavailable in the workbench; pin and run custom indexers from the protected terminal workflow, then import or verify the generated index here")
+	}
 	if workbenchMayLaunchManagedUnits(args) {
 		return errors.New("this command can start a separately managed runtime and is disabled until the workbench can prove one aggregate resource ceiling")
 	}
 	return nil
+}
+
+// workbenchUsesCustomOrUnpinnedSCIPIndexer removes one GUI route that can select
+// an arbitrary executable or bypass its digest pin before execution. A custom
+// binary can call setsid and leave the per-job process group, so this capability
+// remains terminal-only until cleanup can prove a stronger kernel-enforced
+// containment boundary. Other helper-launching routes are classified below.
+// All indexer generation, including a pinned canonical tool, is separately
+// classified as managed-unit risk; imported indexes, verification, and pin-file
+// maintenance remain available.
+func workbenchUsesCustomOrUnpinnedSCIPIndexer(args []string) bool {
+	if len(args) == 0 {
+		return false
+	}
+	var restricted []string
+	switch args[0] {
+	case "scan", "quickstart":
+		restricted = []string{"scip-tool", "scip-no-pin-check"}
+	case "scip":
+		if len(args) < 2 || args[1] != "generate" {
+			return false
+		}
+		restricted = []string{"tool", "no-pin-check"}
+	default:
+		return false
+	}
+	for _, argument := range args[1:] {
+		for _, name := range restricted {
+			if _, _, matched := workbenchFlagToken(argument, name); matched {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func (workbench *Workbench) handleJob(w http.ResponseWriter, request *http.Request) {
@@ -295,6 +530,118 @@ func (workbench *Workbench) handleCancelJob(w http.ResponseWriter, request *http
 	}
 	w.Header().Set("Cache-Control", "no-store")
 	writeJSON(w, http.StatusOK, job)
+}
+
+// handleDirectories provides the non-technical folder chooser with a bounded,
+// directory-only view of the invoking user's filesystem. It is available only
+// on the explicitly enabled, token-authenticated workbench origin. The selected
+// workspace is a convenience default rather than a sandbox, so an absolute path
+// can deliberately navigate elsewhere under the same OS-user authority.
+func (workbench *Workbench) handleDirectories(w http.ResponseWriter, request *http.Request) {
+	if !workbench.authorize(request) {
+		writeProblem(w, http.StatusForbidden, "Workbench authorization failed", "same-origin token authentication is required")
+		return
+	}
+	listing, err := workbench.directoryListing(request.URL.Query())
+	if err != nil {
+		writeProblem(w, http.StatusBadRequest, "Folder cannot be opened", err.Error())
+		return
+	}
+	w.Header().Set("Cache-Control", "no-store")
+	writeJSON(w, http.StatusOK, listing)
+}
+
+func (workbench *Workbench) directoryListing(values url.Values) (workbenchDirectoryListing, error) {
+	for key, entries := range values {
+		if key != "path" {
+			return workbenchDirectoryListing{}, fmt.Errorf("unsupported folder-browser parameter %q", key)
+		}
+		if len(entries) != 1 {
+			return workbenchDirectoryListing{}, errors.New("folder browser accepts one path parameter")
+		}
+	}
+	requested := values.Get("path")
+	if requested == "" {
+		requested = workbench.workspace
+	}
+	if len(requested) > workbenchMaximumArgumentSize || strings.IndexByte(requested, 0) >= 0 {
+		return workbenchDirectoryListing{}, errors.New("folder path must be non-empty and at most 4096 bytes")
+	}
+	for _, character := range requested {
+		if unicode.IsControl(character) {
+			return workbenchDirectoryListing{}, errors.New("folder path contains unsupported control characters")
+		}
+	}
+	if !filepath.IsAbs(requested) {
+		requested = filepath.Join(workbench.workspace, requested)
+	}
+	resolved, err := filepath.Abs(requested)
+	if err != nil {
+		return workbenchDirectoryListing{}, fmt.Errorf("resolve folder: %w", err)
+	}
+	resolved, err = filepath.EvalSymlinks(resolved)
+	if err != nil {
+		return workbenchDirectoryListing{}, fmt.Errorf("resolve folder links: %w", err)
+	}
+	info, err := os.Stat(resolved)
+	if err != nil {
+		return workbenchDirectoryListing{}, fmt.Errorf("inspect folder: %w", err)
+	}
+	if !info.IsDir() {
+		return workbenchDirectoryListing{}, errors.New("selected path is not a directory")
+	}
+
+	directory, err := os.Open(resolved)
+	if err != nil {
+		return workbenchDirectoryListing{}, fmt.Errorf("open folder: %w", err)
+	}
+	defer directory.Close()
+	listing := workbenchDirectoryListing{Path: resolved, Directories: []workbenchDirectoryEntry{}}
+	if parent := filepath.Dir(resolved); parent != resolved {
+		listing.Parent = parent
+	}
+	inspected := 0
+	for len(listing.Directories) < workbenchMaximumDirectoryEntries && inspected < workbenchMaximumInspectedEntries {
+		remaining := workbenchMaximumInspectedEntries - inspected
+		batchSize := 128
+		if remaining < batchSize {
+			batchSize = remaining
+		}
+		entries, readErr := directory.ReadDir(batchSize)
+		inspected += len(entries)
+		for _, entry := range entries {
+			// Symlinks remain selectable through the explicit path box, but are not
+			// followed while enumerating. This keeps traversal finite and avoids
+			// surprising jumps in the ordinary point-and-click path.
+			if !entry.IsDir() {
+				continue
+			}
+			listing.Directories = append(listing.Directories, workbenchDirectoryEntry{
+				Name: entry.Name(), Path: filepath.Join(resolved, entry.Name()),
+			})
+			if len(listing.Directories) == workbenchMaximumDirectoryEntries {
+				listing.Truncated = true
+				break
+			}
+		}
+		if errors.Is(readErr, io.EOF) {
+			break
+		}
+		if readErr != nil {
+			return workbenchDirectoryListing{}, fmt.Errorf("read folder: %w", readErr)
+		}
+	}
+	if inspected == workbenchMaximumInspectedEntries {
+		listing.Truncated = true
+	}
+	sort.Slice(listing.Directories, func(i, j int) bool {
+		left, right := strings.ToLower(listing.Directories[i].Name), strings.ToLower(listing.Directories[j].Name)
+		if left == right {
+			return listing.Directories[i].Name < listing.Directories[j].Name
+		}
+		return left < right
+	})
+	return listing, nil
 }
 
 func (workbench *Workbench) authorize(request *http.Request) bool {
@@ -489,6 +836,26 @@ func (workbench *Workbench) runJob(id string) {
 	if err != nil {
 		releaseSlot()
 		workbench.finishJob(id, "failed", exitCodeFor(command), output.String(), output.Truncated(), err.Error())
+		return
+	}
+	if ctx.Err() != nil {
+		releaseSlot()
+		workbench.finishJobFromContext(id, nil, &output)
+		return
+	}
+	// Keep the single execution slot through validation and pointer publication.
+	// Otherwise a queued command could mutate the just-produced atlas between
+	// quickstart exit and the integrity loader's immutable in-memory capture.
+	if err := workbench.activateCompletedQuickstart(id, args); err != nil {
+		releaseSlot()
+		workbench.finishJob(
+			id,
+			"failed",
+			0,
+			output.String(),
+			output.Truncated(),
+			"quickstart completed but the analyzed atlas was not activated: "+err.Error(),
+		)
 		return
 	}
 	releaseSlot()
@@ -693,6 +1060,10 @@ func (workbench *Workbench) jobSnapshot(id string) (*workbenchJob, bool) {
 func copyWorkbenchJob(job *workbenchJob) *workbenchJob {
 	copy := *job
 	copy.Args = append([]string(nil), job.Args...)
+	if job.ActivatedDataset != nil {
+		identity := *job.ActivatedDataset
+		copy.ActivatedDataset = &identity
+	}
 	copy.context = nil
 	copy.cancel = nil
 	copy.done = nil
@@ -715,6 +1086,12 @@ func workbenchMayLaunchManagedUnits(args []string) bool {
 	switch args[0] {
 	case "answer":
 		return true
+	case "doctor":
+		// Doctor probes ambient Git and Python executables, and --config may name
+		// a different Python interpreter. Help is parsed before any probe; every
+		// executable doctor path remains terminal-only until the whole helper
+		// tree shares a kernel-enforced cleanup boundary.
+		return !workbenchExactHelp(args)
 	case "synthesize":
 		// The first option must unambiguously disable generation. Requiring the
 		// safety flag first prevents another string flag from consuming it as a
@@ -725,13 +1102,41 @@ func workbenchMayLaunchManagedUnits(args []string) bool {
 	case "query":
 		return workbenchQueryMayLaunchManagedUnit(args[1:])
 	case "scan":
+		// Remote acquisition invokes Git, while these flags can select an
+		// arbitrary Git/Python executable or load helper defaults from a config
+		// file. Do not infer safety merely from --no-python/--no-plugins: either
+		// flag can otherwise mask a separately executable acquisition route.
+		if workbenchHasAnyFlag(args[1:], "config", "git", "python", "python-plugin") ||
+			workbenchScanLooksRemote(args[1:]) ||
+			workbenchHasFlag(args[1:], "scip-generate") {
+			return true
+		}
 		pythonDisabled := workbenchLeadingTrueFlag(args, "no-python") &&
 			!workbenchFlagCanBeFalse(args[2:], "no-python")
 		pluginsDisabled := workbenchLeadingTrueFlag(args, "no-plugins") &&
 			!workbenchFlagCanBeFalse(args[2:], "no-plugins")
 		return !pythonDisabled && !pluginsDisabled
 	case "quickstart":
-		return workbenchFlagCanBeTrue(args[1:], "python")
+		// Guided Analyze submits only a local folder. A custom configuration can
+		// redirect plugin/helper discovery, so keep that advanced route in the
+		// terminal alongside Python and SCIP generation.
+		return workbenchHasFlag(args[1:], "config") ||
+			workbenchHasFlag(args[1:], "scip-generate") ||
+			workbenchFlagCanBeTrue(args[1:], "python")
+	case "history":
+		// build and symbol execute Git walks. report/help consume an already
+		// compiled bounded file and do not launch a helper.
+		return len(args) >= 2 && (args[1] == "build" || args[1] == "symbol")
+	case "scip":
+		// Digest pinning authenticates the executable, not the lifecycle of
+		// descendants it may detach. Generation therefore remains terminal-only
+		// until the workbench has kernel-enforced descendant cleanup.
+		return len(args) >= 2 && args[1] == "generate"
+	case "trace":
+		// Capture intentionally accepts an arbitrary command vector. A captured
+		// command can create descendants outside the per-job process group, so the
+		// workbench exposes only the non-executing report, verify, and help paths.
+		return len(args) >= 2 && args[1] == "capture"
 	case "wizard":
 		// The browser catalogue may display the terminal guide's help, but an
 		// interactive wizard can select open and therefore start a nested server.
@@ -741,6 +1146,47 @@ func workbenchMayLaunchManagedUnits(args []string) bool {
 	default:
 		return false
 	}
+}
+
+func workbenchExactHelp(args []string) bool {
+	return len(args) == 2 && (args[1] == "--help" || args[1] == "-h")
+}
+
+func workbenchHasAnyFlag(args []string, names ...string) bool {
+	for _, name := range names {
+		if workbenchHasFlag(args, name) {
+			return true
+		}
+	}
+	return false
+}
+
+// workbenchScanLooksRemote conservatively recognizes every remote source form
+// accepted by acquire.Open. False positives are preferable to launching Git
+// from the browser; local scans and the guided quickstart remain available.
+func workbenchScanLooksRemote(args []string) bool {
+	for _, argument := range args {
+		lower := strings.ToLower(strings.TrimSpace(argument))
+		for _, scheme := range []string{"https://", "ssh://", "file://", "git://"} {
+			if strings.HasPrefix(lower, scheme) {
+				return true
+			}
+		}
+		at := strings.Index(argument, "@")
+		if at > 0 && strings.Contains(argument[at+1:], ":") {
+			return true
+		}
+	}
+	return false
+}
+
+func workbenchHasFlag(args []string, name string) bool {
+	for _, argument := range args {
+		if _, _, matched := workbenchFlagToken(argument, name); matched {
+			return true
+		}
+	}
+	return false
 }
 
 // workbenchFlagToken recognizes the one- and two-dash forms accepted by Go's

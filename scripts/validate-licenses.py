@@ -35,68 +35,25 @@ MARKDOWN_EXCLUDED_TREES = {
     "vendor",
 }
 ATTRIBUTION_FOOTER = """---
-_RKC is stewarded by **NeuroForgeIO** and released under the **MIT License**.
-Redistributions must retain the copyright and permission notices required by
-that license. Attribution to NeuroForgeIO is requested, but is not an additional
-license condition._"""
+_RKC is open source, published and maintained by **NeuroForgeIO**, under the
+**Apache License, Version 2.0**. Copyright 2026 NeuroForgeIO and RKC
+contributors. Redistributed
+works must preserve applicable license and `NOTICE` terms. Third-party materials
+retain their own licenses and ownership._"""
 ATTRIBUTION_LANGUAGE_FILES = (
     Path("NOTICE"),
     Path("cmd/rkc/main.go"),
     Path("scripts/package-complete.py"),
     Path("scripts/quality_index.py"),
 )
-AMBIGUOUS_ATTRIBUTION_PATTERNS = (
-    re.compile(
-        r"\bMIT(?:[- ]licensed(?:\s+open source|\s+work)?| License)?"
-        r"\s+with(?:\s+[a-z-]+){0,3}\s+attribution\b",
-        re.IGNORECASE,
-    ),
-    # Uppercase NOTICE refers to the first-party notice file; ordinary MIT
-    # "permission notice" language is deliberately not matched.
-    re.compile(r"(?i:\bretain\b)[^.!?\n]{0,120}\bNOTICE\b"),
-)
-FIRST_PARTY_ATTRIBUTION_PATTERNS = (
-    re.compile(
-        r"\b(?:credit(?:ed|ing)?|attribut(?:e|ed|ing|ion)|"
-        r"acknowledg(?:e|ed|ing|ement)|display(?:ed|ing)?|"
-        r"nam(?:e|ed|ing)|mention(?:ed|ing)?)\b[^.!?\n]{0,160}?"
-        r"\b(?:NeuroForgeIO|RKC contributors?)\b",
-        re.IGNORECASE,
-    ),
-    re.compile(
-        r"\b(?:NeuroForgeIO|RKC contributors?)\b[^.!?\n]{0,160}?"
-        r"\b(?:credit(?:ed|ing)?|attribut(?:e|ed|ing|ion)|"
-        r"acknowledg(?:e|ed|ing|ement)|display(?:ed|ing)?|"
-        r"nam(?:e|ed|ing)|mention(?:ed|ing)?)\b",
-        re.IGNORECASE,
-    ),
-)
-SAFE_ATTRIBUTION_QUALIFIER = re.compile(
-    r"\brather\s+than\s+"
-    r"(?:required|mandatory|obligatory|compulsory|necessary)\b|"
-    r"\brequest(?:s|ed|ing)?\b|"
-    r"\b(?:optional|voluntary|appreciated|discretionary)\b|"
-    # Whitespace permits ordinary Markdown wrapping without allowing an
-    # unrelated later line to be swallowed as part of the negation.
-    r"\b(?:not|never)\b"
-    r"(?:\s+(?:a|an|the|any|additional|separate|extra|legal|license|licence))*"
-    r"\s+"
-    r"\b(?:required|mandatory|obligatory|compulsory|condition|restriction|"
-    r"requirement|obligation|necessary|have\s+to|need\s+to)\b|"
-    r"\bno\b[^.!?\n]{0,80}"
-    r"\b(?:must|shall|required|requirement|condition|restriction|obligation)\b|"
-    r"\bwithout\b[^.!?\n]{0,80}\b(?:requiring|mandating|obliging)\b",
-    re.IGNORECASE,
-)
-MANDATORY_ATTRIBUTION_QUALIFIER = re.compile(
-    r"\b(?:must|shall|required|mandatory|obligatory|compulsory|necessary|"
-    r"prerequisite|requirement|restriction|condition|obligation)\b|"
-    r"\b(?:need|have)\s+to\b|\boblig(?:ed|ated)\b",
-    re.IGNORECASE,
-)
-ATTRIBUTION_CLAUSE_BOUNDARY = re.compile(
-    r";|,\s*(?:but|while|however|yet)\b|\b(?:but|while|however|yet)\b",
-    re.IGNORECASE,
+STALE_FIRST_PARTY_LICENSE_PATTERNS = (
+    re.compile(r"\bRKC is MIT[- ]licensed\b", re.IGNORECASE),
+    re.compile(r"\bRKC-owned[^\n.]{0,120}\bMIT\b", re.IGNORECASE),
+    re.compile(r"\bNeuroForgeIO/MIT\b", re.IGNORECASE),
+    re.compile(r"\bproject MIT License\b", re.IGNORECASE),
+    re.compile(r"\bTarget core license:\*\* MIT\b", re.IGNORECASE),
+    re.compile(r"released under the \*\*MIT License\*\*", re.IGNORECASE),
+    re.compile(r"\bNOTICE retention[^\n.]{0,100}\brequested\b", re.IGNORECASE),
 )
 PROHIBITED_TRACKED_SUFFIXES = frozenset(
     {
@@ -333,7 +290,7 @@ def markdown_attribution_required(relative: Path) -> bool:
 
 
 def validate_markdown_attribution() -> None:
-    """Require the exact MIT attribution footer on first-party Markdown."""
+    """Require the exact Apache-2.0 ownership footer on first-party Markdown."""
     failures: list[str] = []
     checked = 0
     for path in sorted(ROOT.rglob("*.md")):
@@ -365,7 +322,7 @@ def validate_markdown_attribution() -> None:
 
 
 def validate_attribution_language() -> None:
-    """Reject wording that makes requested first-party credit sound mandatory."""
+    """Reject stale first-party MIT claims after the Apache-2.0 transition."""
     failures: list[str] = []
     relative_paths = set(ATTRIBUTION_LANGUAGE_FILES)
     relative_paths.update(
@@ -387,77 +344,14 @@ def validate_attribution_language() -> None:
         except (FileNotFoundError, OSError, UnicodeDecodeError) as exc:
             failures.append(f"{relative}: cannot read UTF-8 text: {exc}")
             continue
-        rejected = False
-        patterns = tuple(
-            (pattern, value) for pattern in AMBIGUOUS_ATTRIBUTION_PATTERNS
-        )
-        if relative.suffix == ".md" or relative in {
-            Path("NOTICE"),
-            Path("cmd/rkc/main.go"),
-        }:
-            prose = value
-            if relative.suffix == ".md":
-                prose = re.sub(
-                    r"(?m)^[ \t]{0,3}#{1,6}[^\r\n]*",
-                    lambda heading: " " * len(heading.group(0)),
-                    prose,
-                )
-            patterns += tuple(
-                (pattern, prose) for pattern in FIRST_PARTY_ATTRIBUTION_PATTERNS
-            )
-        for pattern, scan_value in patterns:
-            for match in pattern.finditer(scan_value):
-                sentence_start = max(
-                    scan_value.rfind(".", 0, match.start()),
-                    scan_value.rfind("!", 0, match.start()),
-                    scan_value.rfind("?", 0, match.start()),
-                )
-                sentence_ends = tuple(
-                    position
-                    for position in (
-                        scan_value.find(".", match.end()),
-                        scan_value.find("!", match.end()),
-                        scan_value.find("?", match.end()),
-                    )
-                    if position >= 0
-                )
-                sentence_end = (
-                    min(sentence_ends) + 1 if sentence_ends else len(scan_value)
-                )
-                sentence = scan_value[sentence_start + 1 : sentence_end]
-                match_start = match.start() - sentence_start - 1
-                match_end = match.end() - sentence_start - 1
-                clause_start = 0
-                clause_end = len(sentence)
-                for boundary in ATTRIBUTION_CLAUSE_BOUNDARY.finditer(sentence):
-                    if boundary.end() <= match_start:
-                        clause_start = boundary.end()
-                    elif boundary.start() >= match_end:
-                        clause_end = boundary.start()
-                        break
-                clause = sentence[clause_start:clause_end]
-                if SAFE_ATTRIBUTION_QUALIFIER.search(clause):
-                    # Remove the complete non-mandatory phrase before looking
-                    # for a contradictory positive obligation in the same
-                    # clause. A lone word such as "optional" must not mask a
-                    # later "mandatory" condition.
-                    without_safe_language = SAFE_ATTRIBUTION_QUALIFIER.sub(
-                        " ", clause
-                    )
-                    if not MANDATORY_ATTRIBUTION_QUALIFIER.search(
-                        without_safe_language
-                    ):
-                        continue
+        for pattern in STALE_FIRST_PARTY_LICENSE_PATTERNS:
+            match = pattern.search(value)
+            if match is not None:
                 line = value.count("\n", 0, match.start()) + 1
-                failures.append(
-                    f"{relative}:{line}: mandatory-sounding first-party attribution"
-                )
-                rejected = True
-                break
-            if rejected:
+                failures.append(f"{relative}:{line}: stale first-party MIT claim")
                 break
     record(
-        "first-party attribution semantics",
+        "first-party Apache-2.0 semantics",
         not failures,
         "; ".join(failures[:20]),
     )
@@ -567,12 +461,13 @@ def validate_root_documents() -> None:
     """Validate the project license, notice, and third-party terms."""
     documents = {relative: read_regular(relative) for relative in REQUIRED_FILES}
     require_markers(
-        "MIT license text",
+        "Apache-2.0 license text",
         documents[Path("LICENSE")],
         (
-            "MIT License",
-            "Permission is hereby granted",
-            "THE SOFTWARE IS PROVIDED",
+            "Apache License",
+            "Version 2.0, January 2004",
+            "Grant of Patent License",
+            "END OF TERMS AND CONDITIONS",
         ),
     )
     require_markers(
@@ -580,25 +475,29 @@ def validate_root_documents() -> None:
         documents[Path("NOTICE")],
         (
             "Repository Knowledge Compiler (RKC)",
-            "Copyright (c) 2026 NeuroForgeIO and RKC contributors",
+            "Copyright 2026 NeuroForgeIO and RKC contributors",
+            "does not modify the Apache License, Version 2.0",
         ),
     )
     require_markers(
         "third-party inventory",
         documents[Path("THIRD_PARTY_NOTICES.md")],
         (
-            "RKC-owned source code",
-            "MIT License",
+            "Original RKC source code",
+            "Apache License, Version 2.0",
+            "copyright 2026 NeuroForgeIO and RKC contributors",
             "NeuroForgeIO",
             "commercial products",
+            "does not relicense them as",
+            "ownership",
             "Go runtime and standard library",
             "BSD-3-Clause",
             "LICENSES/Go.txt",
             "do not bundle model weights",
             "llama.cpp",
             "MIT licensed",
-            "Qwen3.5-2B",
-            "Qwen3-Embedding-0.6B",
+            "Locked asset ID",
+            "Upstream ownership / conversion",
             "models/models.lock.json",
             "gopkg.in/yaml.v3 v3.0.1",
             "modernc.org/sqlite v1.54.0",
@@ -642,7 +541,7 @@ def validate_declared_metadata() -> None:
     require_markers(
         "implemented OpenAPI license metadata",
         openapi,
-        ("license:", "name: MIT", "identifier: MIT"),
+        ("license:", "name: Apache License 2.0", "identifier: Apache-2.0"),
     )
 
     plugin_failures: list[str] = []
@@ -657,10 +556,10 @@ def validate_declared_metadata() -> None:
             if (
                 isinstance(plugin_id, str)
                 and plugin_id.startswith("rkc.")
-                and expression != "MIT"
+                and expression != "Apache-2.0"
             ):
                 plugin_failures.append(
-                    f"{plugin_id}: official RKC plugin is not MIT"
+                    f"{plugin_id}: official RKC plugin is not Apache-2.0"
                 )
         except (KeyError, OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
             plugin_failures.append(f"{path.relative_to(ROOT)}: {exc}")
@@ -671,7 +570,9 @@ def validate_declared_metadata() -> None:
     )
 
     model_lock = read_regular(Path("models/models.lock.json"))
+    model_notice = read_regular(Path("THIRD_PARTY_NOTICES.md"))
     model_failures: list[str] = []
+    model_notice_failures: list[str] = []
     if model_lock is not None:
         try:
             document = json.loads(model_lock)
@@ -679,20 +580,50 @@ def validate_declared_metadata() -> None:
             if llama["license_spdx"] != "MIT":
                 model_failures.append("llama.cpp is not recorded as MIT")
             assets = document["assets"]
+            if not isinstance(assets, list):
+                raise TypeError("assets must be an array")
+            seen_asset_ids: set[str] = set()
             for asset in assets:
+                if not isinstance(asset, dict):
+                    raise TypeError("asset entries must be objects")
+                asset_id = asset["id"]
                 kind = asset["kind"]
                 expression = asset["license_spdx"]
+                if not isinstance(asset_id, str) or not asset_id:
+                    model_failures.append("model asset has an invalid id")
+                    continue
+                if asset_id in seen_asset_ids:
+                    model_failures.append(f"{asset_id}: duplicate model asset id")
+                seen_asset_ids.add(asset_id)
+                if not isinstance(kind, str) or not isinstance(expression, str):
+                    model_failures.append(f"{asset_id}: invalid kind or SPDX license")
+                    continue
                 if kind == "source-archive" and expression != "MIT":
-                    model_failures.append(f"{asset['id']}: source license is not MIT")
+                    model_failures.append(f"{asset_id}: source license is not MIT")
                 if (
                     kind in ("generation-model", "embedding-model")
                     and expression != "Apache-2.0"
                 ):
                     model_failures.append(
-                        f"{asset['id']}: model license is not Apache-2.0"
+                        f"{asset_id}: model license is not Apache-2.0"
+                    )
+                notice_row = f"| `{asset_id}` | {kind} | `{expression}` |"
+                if model_notice is None or notice_row not in model_notice:
+                    model_notice_failures.append(
+                        f"{asset_id}: exact kind/SPDX notice row is missing"
                     )
         except (KeyError, TypeError, json.JSONDecodeError) as exc:
             model_failures.append(f"invalid model lock license metadata: {exc}")
+            model_notice_failures.append(
+                "model notice closure cannot be checked against an invalid lock"
+            )
+    else:
+        model_notice_failures.append("model lock is missing")
+    record(
+        "optional model notice closure",
+        model_lock is not None and model_notice is not None and not model_notice_failures,
+        "; ".join(model_notice_failures),
+    )
     record(
         "optional model/runtime license metadata",
         model_lock is not None and not model_failures,

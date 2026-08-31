@@ -27,7 +27,7 @@ from typing import Any, Mapping, Sequence
 SCRIPT_VERSION = "1.4.0"
 PROJECT = "RKC"
 PUBLISHER = "NeuroForgeIO"
-LICENSE = "MIT"
+LICENSE = "Apache-2.0"
 DEFAULT_OUTPUT_NAME = ".rkc-quality"
 QUALITY_ARTIFACT_SCHEMA_VERSION = "1.0.0"
 QUALITY_RECEIPT_NAME = "MANIFEST.json"
@@ -1504,7 +1504,10 @@ def build_index(
         "generated_by": {"tool": "rkc quality-index", "version": SCRIPT_VERSION},
         "project": PROJECT,
         "publisher": PUBLISHER,
-        "license": {"spdx": LICENSE, "attribution": "NeuroForgeIO and RKC contributors"},
+        "license": {
+            "spdx": LICENSE,
+            "copyright": "Copyright 2026 NeuroForgeIO and RKC contributors",
+        },
         "source": {"root": ".", "git": identity, "base": base},
         "policy": {
             "description": "Heuristic associations are triage evidence, not proof of semantic completeness.",
@@ -1693,7 +1696,7 @@ def render_markdown(index: Mapping[str, Any]) -> str:
             "",
             "`MANIFEST.json` is the deterministic publication receipt. It binds the exact bytes of `index.json` and `index.md` and is atomically committed after both payload files; validate its SHA-256 records before consuming this artifact.",
             "",
-            f"RKC-owned code and this report are released under the [MIT License](../LICENSE). The license requires copies or substantial portions to retain its copyright and permission notice. Crediting **{PUBLISHER} / RKC contributors** and retaining NOTICE are requested, but are not additional license conditions.",
+            f"Original RKC code and this report are copyright 2026 **{PUBLISHER}** and released under the [Apache License, Version 2.0](../LICENSE). Redistributions must preserve the applicable LICENSE and NOTICE terms. Third-party materials retain their own licenses and ownership.",
             "",
         ]
     )

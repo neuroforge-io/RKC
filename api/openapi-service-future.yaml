@@ -4,7 +4,8 @@ info:
   version: 0.1.0
   summary: Evidence-backed repository inventory, graph, documentation, search, export, and job API.
   license:
-    name: MIT
+    name: Apache License 2.0
+    identifier: Apache-2.0
 servers:
   - url: http://127.0.0.1:8787/api/v1
     description: Local daemon

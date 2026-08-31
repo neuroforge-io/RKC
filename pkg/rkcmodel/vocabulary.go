@@ -25,6 +25,7 @@ var NodeKinds = set(
 	"repository", "project", "package", "directory", "file", "symlink", "special", "archive", "archive_member", "notebook", "notebook_cell", "module", "namespace",
 	"class", "interface", "trait", "type", "enum", "enum_member", "function", "method",
 	"constructor", "field", "property", "variable", "constant", "parameter", "return_value",
+	"value", "cfg_block", "trace",
 	"api_service", "api_endpoint", "api_operation", "security_scheme", "graphql_type", "graphql_field", "rpc_service", "rpc_method",
 	"cli_command", "cli_argument", "cli_flag", "config_key", "environment_variable", "secret",
 	"database", "database_table", "database_column", "database_view", "database_index", "migration",
@@ -42,6 +43,7 @@ var EdgeKinds = set(
 	"tests", "covers", "documents", "configures", "depends_on", "builds", "generates", "packages",
 	"deploys", "emits", "subscribes", "publishes", "consumes", "migrates", "invoked_by", "supersedes",
 	"owned_by", "licensed_under", "observed_with", "derived_from", "related_to",
+	"precedes", "flows_to", "binds_to", "returns_to", "sanitizes",
 )
 
 // ArtifactKinds contains the canonical physical-object vocabulary. Callers

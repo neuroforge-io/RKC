@@ -23,10 +23,11 @@ EXCLUDED = {
 ATTRIBUTION_EXCLUDED_FILES = {Path("THIRD_PARTY_NOTICES.md")}
 ATTRIBUTION_EXCLUDED_TREES = {"LICENSES", "third_party", "vendor"}
 ATTRIBUTION_FOOTER = """---
-_RKC is stewarded by **NeuroForgeIO** and released under the **MIT License**.
-Redistributions must retain the copyright and permission notices required by
-that license. Attribution to NeuroForgeIO is requested, but is not an additional
-license condition._"""
+_RKC is open source, published and maintained by **NeuroForgeIO**, under the
+**Apache License, Version 2.0**. Copyright 2026 NeuroForgeIO and RKC
+contributors. Redistributed
+works must preserve applicable license and `NOTICE` terms. Third-party materials
+retain their own licenses and ownership._"""
 issues: list[dict[str, object]] = []
 checked = 0
 
@@ -61,7 +62,7 @@ for path in markdown_files():
         report(
             path,
             max(1, len(lines)),
-            "missing standard NeuroForgeIO/MIT attribution footer",
+            "missing standard NeuroForgeIO/Apache-2.0 publisher and contributor footer",
         )
     fence: str | None = None
     for number, line in enumerate(lines, 1):

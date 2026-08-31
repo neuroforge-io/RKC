@@ -497,7 +497,7 @@ func TestOpenServeArgumentsDefaultReadOnlyAndKeepWorkbenchExplicit(t *testing.T)
 	}
 }
 
-func TestOpenWorkbenchDefaultsToFreshEphemeralOrigin(t *testing.T) {
+func TestOpenWorkbenchDefaultsToEphemeralOrigin(t *testing.T) {
 	fs, options := newOpenFlagSet(io.Discard)
 	if err := fs.Parse([]string{"--workbench", "."}); err != nil {
 		t.Fatal(err)
@@ -523,6 +523,19 @@ func TestOpenWorkbenchDefaultsToFreshEphemeralOrigin(t *testing.T) {
 	finalizeOpenOptions(fs, options)
 	if options.address != "127.0.0.1:0" {
 		t.Fatalf("static open address = %q", options.address)
+	}
+
+	fs, options = newOpenFlagSet(io.Discard)
+	if err := fs.Parse([]string{
+		"--scip-index", "index.scip", "--trace", "trace.json",
+		"--history", "history.json", ".",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual([]string(options.scipIndexes), []string{"index.scip"}) ||
+		!reflect.DeepEqual([]string(options.tracePaths), []string{"trace.json"}) ||
+		options.historyPath != "history.json" {
+		t.Fatalf("open evidence inputs = %+v", options)
 	}
 }
 

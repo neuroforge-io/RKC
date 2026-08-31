@@ -32,7 +32,16 @@ func runQuickstartContext(ctx context.Context, args []string) error {
 	clean := fs.Bool("clean", false, "disable incremental stage-cache reuse")
 	force := fs.Bool("force", true, "replace an existing RKC-owned atlas")
 	scipIndexes := stringList{}
-	fs.Var(&scipIndexes, "scip-index", "compiler-produced SCIP index to import; repeatable")
+	fs.Var(&scipIndexes, "scip-index", "SCIP index to import; external files remain producer-unverified; repeatable")
+	scipGenerate := stringList{}
+	fs.Var(&scipGenerate, "scip-generate", "generate a compiler-grade SCIP index for this language before scanning; repeatable")
+	scipTool := fs.String("scip-tool", "", "indexer binary override used by --scip-generate")
+	defaultScipLock := defaultScipIndexerLockPath()
+	scipLock := fs.String("scip-lock", defaultScipLock, "operator-owned absolute indexer pin lock used by --scip-generate")
+	scipNoPinCheck := fs.Bool("scip-no-pin-check", false, "explicitly allow an unpinned or digest-mismatched SCIP indexer")
+	tracePaths := stringList{}
+	fs.Var(&tracePaths, "trace", "runtime trace file to import; repeatable")
+	historyPath := fs.String("history", "", "compiled semantic history file to import")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -87,6 +96,24 @@ func runQuickstartContext(ctx context.Context, args []string) error {
 	}
 	for _, index := range scipIndexes {
 		scanArguments = append(scanArguments, "--scip-index", index)
+	}
+	for _, language := range scipGenerate {
+		scanArguments = append(scanArguments, "--scip-generate", language)
+	}
+	if *scipTool != "" {
+		scanArguments = append(scanArguments, "--scip-tool", *scipTool)
+	}
+	if *scipLock != defaultScipLock {
+		scanArguments = append(scanArguments, "--scip-lock", *scipLock)
+	}
+	if *scipNoPinCheck {
+		scanArguments = append(scanArguments, "--scip-no-pin-check")
+	}
+	for _, tracePath := range tracePaths {
+		scanArguments = append(scanArguments, "--trace", tracePath)
+	}
+	if *historyPath != "" {
+		scanArguments = append(scanArguments, "--history", *historyPath)
 	}
 	scanArguments = append(scanArguments, root)
 	if err := runScanContext(ctx, scanArguments); err != nil {

@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 )
 
 const (
@@ -25,9 +26,36 @@ const (
 // Input is an absolute, regular-file SCIP input bound to its exact size and
 // SHA-256 digest. Callers must revalidate it with VerifyInputs before import.
 type Input struct {
-	Path      string `json:"path"`
-	SHA256    string `json:"sha256"`
-	SizeBytes int64  `json:"size_bytes"`
+	Path                  string         `json:"path"`
+	SHA256                string         `json:"sha256"`
+	SizeBytes             int64          `json:"size_bytes"`
+	SourceBinding         *SourceBinding `json:"source_binding,omitempty"`
+	compilerAuthenticated bool
+}
+
+// CompilerAuthenticated reports whether this exact input was produced by an
+// authenticated compiler-indexer invocation in the current RKC process. The
+// marker is deliberately not serializable: portable SCIP files remain
+// unverified until RKC acquires fresh producer evidence.
+func (input Input) CompilerAuthenticated() bool {
+	return input.compilerAuthenticated
+}
+
+var currentProcessGenerations sync.Map
+
+// MarkGeneratedByCurrentProcess records that input was produced by the pinned
+// compiler invocation in this RKC process. The marker is deliberately
+// process-local and cannot be reconstructed from editable index metadata.
+func MarkGeneratedByCurrentProcess(input Input) error {
+	if input.Path == "" || !validDigest(input.SHA256) || input.SizeBytes < 0 {
+		return errors.New("cannot authenticate an invalid generated SCIP input")
+	}
+	currentProcessGenerations.Store(generationTrustKey(input), struct{}{})
+	return nil
+}
+
+func generationTrustKey(input Input) string {
+	return input.Path + "\x00" + input.SHA256 + "\x00" + fmt.Sprintf("%d", input.SizeBytes)
 }
 
 // PrepareInputs canonicalizes, deduplicates, bounds, and hashes SCIP paths. It
@@ -47,6 +75,7 @@ func PrepareInputs(ctx context.Context, paths []string) ([]Input, string, error)
 		)
 	}
 	seen := map[string]struct{}{}
+	contentPosition := map[string]int{}
 	inputs := make([]Input, 0, len(paths))
 	var totalBytes int64
 	for _, path := range paths {
@@ -70,6 +99,21 @@ func PrepareInputs(ctx context.Context, paths []string) ([]Input, string, error)
 		if err != nil {
 			return nil, "", err
 		}
+		input.SourceBinding, err = loadManifestSourceBinding(input)
+		if err != nil {
+			return nil, "", fmt.Errorf("prepare SCIP index %q: %w", absolute, err)
+		}
+		_, input.compilerAuthenticated = currentProcessGenerations.Load(generationTrustKey(input))
+		contentKey := input.SHA256 + "\x00" + fmt.Sprintf("%d", input.SizeBytes)
+		if position, duplicate := contentPosition[contentKey]; duplicate {
+			merged, err := mergeIdenticalInput(inputs[position], input)
+			if err != nil {
+				return nil, "", err
+			}
+			inputs[position] = merged
+			continue
+		}
+		contentPosition[contentKey] = len(inputs)
 		totalBytes += input.SizeBytes
 		if totalBytes > MaximumTotalIndexBytes {
 			return nil, "", fmt.Errorf(
@@ -85,9 +129,60 @@ func PrepareInputs(ctx context.Context, paths []string) ([]Input, string, error)
 		_, _ = io.WriteString(hasher, input.SHA256)
 		_, _ = io.WriteString(hasher, "\x00")
 		_, _ = io.WriteString(hasher, fmt.Sprintf("%d", input.SizeBytes))
+		// Producer authentication changes the semantic authority of every fact
+		// extracted from the same bytes. Bind it into the aggregate digest so an
+		// unverified import can never reuse a compiler-authoritative cache entry
+		// (or vice versa).
+		if input.compilerAuthenticated {
+			_, _ = io.WriteString(hasher, "\x00pinned-current-process")
+		} else {
+			_, _ = io.WriteString(hasher, "\x00unverified-external")
+		}
+		if input.SourceBinding != nil {
+			_, _ = io.WriteString(hasher, "\x00")
+			_, _ = io.WriteString(hasher, input.SourceBinding.SourceSHA256)
+			_, _ = io.WriteString(hasher, "\x00")
+			_, _ = io.WriteString(hasher, input.SourceBinding.ProjectRootSHA256)
+			_, _ = io.WriteString(hasher, "\x00")
+			_, _ = io.WriteString(hasher, fmt.Sprintf("%d", input.SourceBinding.DocumentCount))
+		}
 		_, _ = io.WriteString(hasher, "\n")
 	}
 	return inputs, hex.EncodeToString(hasher.Sum(nil)), nil
+}
+
+// mergeIdenticalInput coalesces byte-identical indexes before extraction.
+// Authority and source affinity use the strongest consistent evidence, while
+// the selected path is deterministic within an authority class. This avoids
+// path order deciding whether shared facts are compiler-resolved.
+func mergeIdenticalInput(left, right Input) (Input, error) {
+	if left.SHA256 != right.SHA256 || left.SizeBytes != right.SizeBytes {
+		return Input{}, errors.New("cannot merge non-identical SCIP inputs")
+	}
+	if left.SourceBinding != nil && right.SourceBinding != nil &&
+		!equalSourceBinding(left.SourceBinding, right.SourceBinding) {
+		return Input{}, fmt.Errorf(
+			"byte-identical SCIP indexes %q and %q have conflicting source bindings",
+			left.Path, right.Path,
+		)
+	}
+	result := left
+	if right.compilerAuthenticated && !left.compilerAuthenticated {
+		result = right
+	} else if right.compilerAuthenticated == left.compilerAuthenticated && right.Path < left.Path {
+		result = right
+	}
+	result.compilerAuthenticated = left.compilerAuthenticated || right.compilerAuthenticated
+	if result.SourceBinding == nil {
+		if left.SourceBinding != nil {
+			binding := *left.SourceBinding
+			result.SourceBinding = &binding
+		} else if right.SourceBinding != nil {
+			binding := *right.SourceBinding
+			result.SourceBinding = &binding
+		}
+	}
+	return result, nil
 }
 
 // VerifyInputs reopens and rehashes every prepared input, failing if path,
@@ -110,11 +205,20 @@ func VerifyInputs(ctx context.Context, expected []Input) error {
 	}
 	for _, input := range actual {
 		want, ok := expectedByPath[input.Path]
-		if !ok || want.SHA256 != input.SHA256 || want.SizeBytes != input.SizeBytes {
+		if !ok || want.SHA256 != input.SHA256 || want.SizeBytes != input.SizeBytes ||
+			!equalSourceBinding(want.SourceBinding, input.SourceBinding) ||
+			want.compilerAuthenticated != input.compilerAuthenticated {
 			return fmt.Errorf("SCIP index %q changed during the scan", input.Path)
 		}
 	}
 	return nil
+}
+
+func equalSourceBinding(left, right *SourceBinding) bool {
+	if left == nil || right == nil {
+		return left == nil && right == nil
+	}
+	return *left == *right
 }
 
 func inspectAndDigest(ctx context.Context, path string) (Input, error) {

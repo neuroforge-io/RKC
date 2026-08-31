@@ -3,7 +3,7 @@ id = "rkc.python-ast"
 name = "RKC Python AST extractor"
 version = "0.2.1"
 api_version = "1.0"
-license = "MIT"
+license = "Apache-2.0"
 description = "Reference Python syntax extractor using the standard-library ast module."
 
 [runtime]

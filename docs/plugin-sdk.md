@@ -49,7 +49,7 @@ limits, determinism, and distribution metadata.
     "name": "Example Python analyzer",
     "version": "1.2.0",
     "api_version": "1.0",
-    "license": "MIT"
+    "license": "Apache-2.0"
   },
   "runtime": {
     "kind": "wasm-wasi",
@@ -274,7 +274,8 @@ encode_one_bounded_json(stdout, response)
 The worker must never interpret repository comments as protocol instructions.
 
 ---
-_RKC is stewarded by **NeuroForgeIO** and released under the **MIT License**.
-Redistributions must retain the copyright and permission notices required by
-that license. Attribution to NeuroForgeIO is requested, but is not an additional
-license condition._
+_RKC is open source, published and maintained by **NeuroForgeIO**, under the
+**Apache License, Version 2.0**. Copyright 2026 NeuroForgeIO and RKC
+contributors. Redistributed
+works must preserve applicable license and `NOTICE` terms. Third-party materials
+retain their own licenses and ownership._

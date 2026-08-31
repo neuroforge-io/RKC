@@ -14,6 +14,7 @@ import (
 	"testing"
 
 	"github.com/neuroforge-io/RKC/internal/commandcatalog"
+	"github.com/neuroforge-io/RKC/internal/resourceguard"
 	"github.com/neuroforge-io/RKC/internal/safeoutput"
 	"github.com/neuroforge-io/RKC/internal/search"
 	"github.com/neuroforge-io/RKC/internal/snapshot"
@@ -23,7 +24,7 @@ import (
 func TestRunDispatchAndUsage(t *testing.T) {
 	for _, args := range [][]string{nil, {"help"}, {"--help"}, {"-h"}} {
 		output, err := captureStdout(t, func() error { return run(args) })
-		if err != nil || !strings.Contains(output, "NeuroForgeIO") || !strings.Contains(output, "Repository Knowledge Compiler") || !strings.Contains(output, "MIT") || !strings.Contains(output, "Copies or substantial portions must retain") || !strings.Contains(output, "requested; neither is an additional license condition") || strings.Contains(output, "with attribution") {
+		if err != nil || !strings.Contains(output, "NeuroForgeIO") || !strings.Contains(output, "Repository Knowledge Compiler") || !strings.Contains(output, "Apache-2.0") || !strings.Contains(output, "Copyright 2026 NeuroForgeIO and RKC contributors") || !strings.Contains(output, "LICENSE and NOTICE") || strings.Contains(output, "MIT-licensed") {
 			t.Fatalf("run(%v): output=%q err=%v", args, output, err)
 		}
 	}
@@ -237,6 +238,56 @@ func TestDoctorCommandReportsPassAndFatalFailure(t *testing.T) {
 	if strictErr == nil || !strings.Contains(strictErr.Error(), "strict mode") || !strings.Contains(strictOutput, `"strict": true`) {
 		t.Fatalf("strict doctor: output=%q err=%v", strictOutput, strictErr)
 	}
+}
+
+func TestHigherPriorityPolicyDoctorFailsClosedOnInvalidEnvironment(t *testing.T) {
+	t.Run("invalid marker classes", func(t *testing.T) {
+		const sentinel = "SUPER_SECRET_MARKER_VALUE"
+		t.Setenv(resourceguard.HigherPriorityMarkersEnvironment, sentinel)
+		check := higherPriorityPolicyCheck()
+		if check.Status != "fail" || check.Fatal ||
+			!strings.Contains(check.Detail, "fails closed") || check.Remediation == "" ||
+			strings.Contains(check.Detail, sentinel) {
+			t.Fatalf("invalid marker check = %+v", check)
+		}
+	})
+
+	t.Run("valid custom marker classes", func(t *testing.T) {
+		t.Setenv(resourceguard.HigherPriorityMarkersEnvironment, "critical_train,batch2")
+		t.Setenv(resourceguard.HigherPriorityPolicyEnvironment, "refuse")
+		check := higherPriorityPolicyCheck()
+		if check.Status != "pass" || !strings.Contains(check.Detail, "2 configured") {
+			t.Fatalf("custom marker check = %+v", check)
+		}
+	})
+
+	t.Run("invalid policy", func(t *testing.T) {
+		t.Setenv(resourceguard.HigherPriorityPolicyEnvironment, "sometimes")
+		check := higherPriorityPolicyCheck()
+		if check.Status != "fail" || check.Fatal ||
+			!strings.Contains(check.Detail, "fails closed") || check.Remediation == "" {
+			t.Fatalf("invalid policy check = %+v", check)
+		}
+	})
+
+	t.Run("invalid yield threshold", func(t *testing.T) {
+		t.Setenv(resourceguard.HigherPriorityPolicyEnvironment, "yield")
+		t.Setenv(resourceguard.HigherPriorityLoadMaxEnvironment, "not-a-number")
+		check := higherPriorityPolicyCheck()
+		if check.Status != "fail" || check.Fatal ||
+			!strings.Contains(check.Detail, "fails closed") || check.Remediation == "" {
+			t.Fatalf("invalid threshold check = %+v", check)
+		}
+	})
+
+	t.Run("refuse does not consume yield threshold", func(t *testing.T) {
+		t.Setenv(resourceguard.HigherPriorityPolicyEnvironment, "refuse")
+		t.Setenv(resourceguard.HigherPriorityLoadMaxEnvironment, "not-a-number")
+		check := higherPriorityPolicyCheck()
+		if check.Status != "pass" || !strings.Contains(check.Detail, "does not start") {
+			t.Fatalf("refuse policy check = %+v", check)
+		}
+	})
 }
 
 func TestPythonIsolationDoctorNeverReportsManagerEnvironment(t *testing.T) {

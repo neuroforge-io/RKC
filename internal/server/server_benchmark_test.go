@@ -1,4 +1,4 @@
-// Copyright 2026 NeuroForgeIO. Licensed under the MIT License.
+// Copyright 2026 NeuroForgeIO. Licensed under the Apache License, Version 2.0.
 
 package server
 

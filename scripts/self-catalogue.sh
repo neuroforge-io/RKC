@@ -520,14 +520,27 @@ SCAN_ARGS=(
   --fail-on-errors
   # The Python adapter is a separately managed service. Keep this complete
   # self-run inside one provable aggregate cgroup until nested-unit accounting
-  # is implemented; compiler-produced SCIP can be imported separately.
+  # is implemented.
   --no-python
   --out "$ATLAS"
   --force
 )
+# Compiler-grade self-analysis is opt-in: the operator supplies SCIP_GO_BINARY
+# (a host-built scip-go). RKC pins it to its exact digest, generates and
+# strictly validates the index, and imports it through the normal digest-bound
+# path, so the snapshot identity binds the compiler semantics.
+SCIP_ARGS=()
+if [[ -n ${SCIP_GO_BINARY:-} ]]; then
+  SCIP_LOCK="$WORK/scip-lock.json"
+  "$RKC_BIN" scip pin --language go --tool "$SCIP_GO_BINARY" --lock "$SCIP_LOCK" --json >/dev/null
+  "$RKC_BIN" scip generate --language go --lock "$SCIP_LOCK" --out "$WORK/scip" --json "$SOURCE" >"$WORK/scip.json"
+  SCIP_ARGS+=(--scip-index "$WORK/scip/go.scip")
+  echo "self-catalogue: compiler-grade Go semantics enabled (digest-bound scip-go index)" >&2
+fi
 for excluded in "${EXCLUSIONS[@]}"; do
   SCAN_ARGS+=(--exclude "$excluded")
 done
+SCAN_ARGS+=("${SCIP_ARGS[@]}")
 # The staged source is byte-for-byte bound to COMMIT but deliberately has no
 # embedded .git directory. Give RKC read-only discovery access to the original
 # control directory and the verified staged work tree so every independently

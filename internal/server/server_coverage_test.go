@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -77,6 +78,9 @@ func TestHandlerAllAPIRoutesAndSecurityHeaders(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			response := httptest.NewRecorder()
 			handler.ServeHTTP(response, httptest.NewRequest(http.MethodGet, tc.url, nil))
+			if got := response.Header().Get(snapshotGenerationHeader); got != dataset.Manifest.ID {
+				t.Fatalf("snapshot generation header=%q want %q", got, dataset.Manifest.ID)
+			}
 			if response.Code != tc.wantStatus {
 				t.Fatalf("status=%d want=%d body=%s", response.Code, tc.wantStatus, response.Body.String())
 			}
@@ -419,6 +423,297 @@ func TestLoadFailsClosedOnTampering(t *testing.T) {
 			t.Fatalf("coverage mismatch error = %v", err)
 		}
 	})
+	t.Run("invalid manifest", func(t *testing.T) {
+		root := t.TempDir()
+		writeServerJSON(t, filepath.Join(root, "bundle.json"), bundle)
+		if err := os.WriteFile(filepath.Join(root, "rkc.manifest.json"), []byte("{"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := Load(root); err == nil || !strings.Contains(err.Error(), "load manifest") {
+			t.Fatalf("invalid manifest error = %v", err)
+		}
+	})
+	t.Run("export snapshot", func(t *testing.T) {
+		root := writeVerifiedServerAtlas(t, bundle)
+		rewriteServerExportManifest(t, root, "different-snapshot")
+		writeServerJSON(t, filepath.Join(root, safeoutput.MarkerName), safeoutput.Marker{
+			SchemaVersion: "1.0", Producer: "rkc", Kind: "atlas", SnapshotID: "different-snapshot",
+		})
+		if _, err := Load(root); err == nil || !strings.Contains(err.Error(), "export manifest snapshot") {
+			t.Fatalf("export snapshot error = %v", err)
+		}
+	})
+	t.Run("invalid coverage", func(t *testing.T) {
+		root := writeVerifiedServerAtlas(t, bundle)
+		if err := os.WriteFile(filepath.Join(root, "coverage.json"), []byte("{"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		rewriteServerExportManifest(t, root, bundle.Snapshot.ID)
+		if _, err := Load(root); err == nil || !strings.Contains(err.Error(), "load coverage") {
+			t.Fatalf("invalid coverage error = %v", err)
+		}
+	})
+}
+
+func TestInspectDatasetIntegrityRejectsMalformedOwnership(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name  string
+		want  string
+		setup func(t *testing.T, root string)
+	}{
+		{
+			name: "marker directory", want: "bounded regular file",
+			setup: func(t *testing.T, root string) {
+				t.Helper()
+				if err := os.Mkdir(filepath.Join(root, safeoutput.MarkerName), 0o700); err != nil {
+					t.Fatal(err)
+				}
+			},
+		},
+		{
+			name: "oversized marker", want: "bounded regular file",
+			setup: func(t *testing.T, root string) {
+				t.Helper()
+				if err := os.WriteFile(filepath.Join(root, safeoutput.MarkerName), bytes.Repeat([]byte("x"), maximumOwnershipMarkerFileSize+1), 0o600); err != nil {
+					t.Fatal(err)
+				}
+			},
+		},
+		{
+			name: "invalid marker JSON", want: "read ownership marker",
+			setup: func(t *testing.T, root string) {
+				t.Helper()
+				if err := os.WriteFile(filepath.Join(root, safeoutput.MarkerName), []byte("{"), 0o600); err != nil {
+					t.Fatal(err)
+				}
+			},
+		},
+		{
+			name: "wrong marker kind", want: "does not identify a committed atlas",
+			setup: func(t *testing.T, root string) {
+				t.Helper()
+				writeServerJSON(t, filepath.Join(root, safeoutput.MarkerName), safeoutput.Marker{
+					SchemaVersion: "1.0", Producer: "rkc", Kind: "synthesis", SnapshotID: "snapshot",
+				})
+			},
+		},
+		{
+			name: "empty marker snapshot", want: "does not identify a committed atlas",
+			setup: func(t *testing.T, root string) {
+				t.Helper()
+				writeServerJSON(t, filepath.Join(root, safeoutput.MarkerName), safeoutput.Marker{
+					SchemaVersion: "1.0", Producer: "rkc", Kind: "atlas",
+				})
+			},
+		},
+		{
+			name: "marked atlas without manifest", want: "missing rkc-export-manifest.json",
+			setup: func(t *testing.T, root string) {
+				t.Helper()
+				writeServerJSON(t, filepath.Join(root, safeoutput.MarkerName), safeoutput.Marker{
+					SchemaVersion: "1.0", Producer: "rkc", Kind: "atlas", SnapshotID: "snapshot",
+				})
+			},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			root := t.TempDir()
+			tc.setup(t, root)
+			if _, err := inspectDatasetIntegrity(root); err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("error=%v, want substring %q", err, tc.want)
+			}
+		})
+	}
+}
+
+func TestExportManifestValidationRejectsUnsafeMetadata(t *testing.T) {
+	t.Parallel()
+	bundle := richDataset().Bundle
+	findRecord := func(t *testing.T, manifest *datasetExportManifest, path string) *datasetExportFile {
+		t.Helper()
+		for index := range manifest.Files {
+			if manifest.Files[index].Path == path {
+				return &manifest.Files[index]
+			}
+		}
+		t.Fatalf("manifest does not contain %q", path)
+		return nil
+	}
+	cases := []struct {
+		name   string
+		want   string
+		mutate func(t *testing.T, manifest *datasetExportManifest)
+	}{
+		{"unsupported schema", "unsupported schema", func(_ *testing.T, manifest *datasetExportManifest) { manifest.SchemaVersion = "0.0" }},
+		{"empty snapshot", "empty snapshot id", func(_ *testing.T, manifest *datasetExportManifest) { manifest.SnapshotID = " " }},
+		{"unsafe path", "unsafe export path", func(_ *testing.T, manifest *datasetExportManifest) { manifest.Files[0].Path = "../escape" }},
+		{"unsorted records", "not canonically sorted", func(_ *testing.T, manifest *datasetExportManifest) {
+			manifest.Files[0], manifest.Files[1] = manifest.Files[1], manifest.Files[0]
+		}},
+		{"duplicate records", "duplicated", func(_ *testing.T, manifest *datasetExportManifest) { manifest.Files[1].Path = manifest.Files[0].Path }},
+		{"negative size", "invalid metadata", func(_ *testing.T, manifest *datasetExportManifest) { manifest.Files[0].Size = -1 }},
+		{"uppercase digest", "invalid metadata", func(_ *testing.T, manifest *datasetExportManifest) {
+			manifest.Files[0].SHA256 = strings.ToUpper(manifest.Files[0].SHA256)
+		}},
+		{"nonhex digest", "invalid digest", func(_ *testing.T, manifest *datasetExportManifest) {
+			manifest.Files[0].SHA256 = strings.Repeat("z", sha256.Size*2)
+		}},
+		{"required file not canonical", "not marked canonical", func(t *testing.T, manifest *datasetExportManifest) {
+			findRecord(t, manifest, "bundle.json").Canonical = false
+		}},
+		{"oversized static file", "static site file", func(t *testing.T, manifest *datasetExportManifest) {
+			findRecord(t, manifest, "site/index.html").Size = maximumStaticSiteFileSize + 1
+		}},
+		{"incorrect total", "byte totals", func(_ *testing.T, manifest *datasetExportManifest) { manifest.TotalBytes++ }},
+		{"incorrect canonical digest", "canonical export manifest digest", func(_ *testing.T, manifest *datasetExportManifest) {
+			manifest.CanonicalFilesDigest = strings.Repeat("0", sha256.Size*2)
+		}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			root := writeVerifiedServerAtlas(t, bundle)
+			manifestPath := filepath.Join(root, exportManifestName)
+			manifest := readServerExportManifest(t, manifestPath)
+			tc.mutate(t, &manifest)
+			writeServerJSON(t, manifestPath, manifest)
+			if _, _, err := verifyDatasetExportManifest(root, manifestPath); err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("error=%v, want substring %q", err, tc.want)
+			}
+		})
+	}
+
+	t.Run("unknown manifest field", func(t *testing.T) {
+		root := writeVerifiedServerAtlas(t, bundle)
+		manifestPath := filepath.Join(root, exportManifestName)
+		var payload map[string]any
+		data, err := os.ReadFile(manifestPath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := json.Unmarshal(data, &payload); err != nil {
+			t.Fatal(err)
+		}
+		payload["unexpected"] = true
+		writeServerJSON(t, manifestPath, payload)
+		if _, _, err := verifyDatasetExportManifest(root, manifestPath); err == nil || !strings.Contains(err.Error(), "unknown field") {
+			t.Fatalf("unknown-field error = %v", err)
+		}
+	})
+
+	t.Run("nonregular exported file", func(t *testing.T) {
+		root := writeVerifiedServerAtlas(t, bundle)
+		outside := filepath.Join(t.TempDir(), "outside.txt")
+		if err := os.WriteFile(outside, []byte("outside"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Symlink(outside, filepath.Join(root, "injected-link")); err != nil {
+			t.Skipf("symlinks unavailable: %v", err)
+		}
+		if _, _, err := verifyDatasetExportManifest(root, filepath.Join(root, exportManifestName)); err == nil || !strings.Contains(err.Error(), "non-regular file") {
+			t.Fatalf("nonregular-file error = %v", err)
+		}
+	})
+}
+
+func TestDatasetPathAndBoundedReadHelpers(t *testing.T) {
+	t.Parallel()
+	for _, value := range []string{"", ".", "..", "../escape", "a/../b", "a//b", exportManifestName, safeoutput.MarkerName} {
+		if _, err := canonicalDatasetPath(value); err == nil {
+			t.Errorf("canonicalDatasetPath(%q) accepted unsafe path", value)
+		}
+	}
+	if got, err := canonicalDatasetPath("graph/nodes.jsonl"); err != nil || got != "graph/nodes.jsonl" {
+		t.Fatalf("canonical path = %q, %v", got, err)
+	}
+	for _, value := range []string{"", ".", "..", "../escape", "a/../b", "a//b"} {
+		if _, err := canonicalLegacyDatasetPath(value); err == nil {
+			t.Errorf("canonicalLegacyDatasetPath(%q) accepted unsafe path", value)
+		}
+	}
+
+	root := t.TempDir()
+	path := filepath.Join(root, "data.json")
+	content := []byte(`{"value":"bounded"}`)
+	if err := os.WriteFile(path, content, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	expected := sha256.Sum256(content)
+	data, size, digest, err := readAndHashRegularFile(path, int64(len(content)))
+	if err != nil || !bytes.Equal(data, content) || size != int64(len(content)) || digest != hex.EncodeToString(expected[:]) {
+		t.Fatalf("captured file = %q/%d/%q, err=%v", data, size, digest, err)
+	}
+	data, size, digest, err = readAndHashRegularFile(path, 0)
+	if err != nil || len(data) != 0 || size != int64(len(content)) || digest != hex.EncodeToString(expected[:]) {
+		t.Fatalf("hashed file = %q/%d/%q, err=%v", data, size, digest, err)
+	}
+	if _, _, _, err := readAndHashRegularFile(path, int64(len(content)-1)); err == nil || !strings.Contains(err.Error(), "capture limit") {
+		t.Fatalf("capture-limit error = %v", err)
+	}
+	if _, _, _, err := readAndHashRegularFile(root, 1); err == nil || !strings.Contains(err.Error(), "not regular") {
+		t.Fatalf("directory hash error = %v", err)
+	}
+
+	if _, _, err := openBoundedDatasetFile(root, "data.json", 0); err == nil || !strings.Contains(err.Error(), "positive and bounded") {
+		t.Fatalf("zero-limit error = %v", err)
+	}
+	if _, _, err := openBoundedDatasetFile(root, "data.json", maxSignedInt64); err == nil || !strings.Contains(err.Error(), "positive and bounded") {
+		t.Fatalf("unbounded-limit error = %v", err)
+	}
+	if _, _, err := readBoundedDatasetFile(root, "data.json", int64(len(content)-1)); err == nil || !strings.Contains(err.Error(), "file exceeds") {
+		t.Fatalf("bounded-read error = %v", err)
+	}
+	if err := decodeStrictJSON([]byte(`{} {}`), &struct{}{}); err == nil || !strings.Contains(err.Error(), "multiple JSON values") {
+		t.Fatalf("multiple-value error = %v", err)
+	}
+
+	integrity := datasetIntegrity{manifest: &datasetExportManifest{}, files: map[string][]byte{}}
+	if err := integrity.readJSON(root, "missing.json", &struct{}{}); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("manifest-backed missing file error = %v", err)
+	}
+	if exists, err := pathExists(path); err != nil || !exists {
+		t.Fatalf("existing path = %v, %v", exists, err)
+	}
+	if exists, err := pathExists(filepath.Join(root, "missing")); err != nil || exists {
+		t.Fatalf("missing path = %v, %v", exists, err)
+	}
+
+	rootFile := filepath.Join(t.TempDir(), "not-a-directory")
+	if err := os.WriteFile(rootFile, []byte("root"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := ensureNoSymlinkComponents(rootFile, "child"); err == nil || !strings.Contains(err.Error(), "root is not") {
+		t.Fatalf("non-directory root error = %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "component"), []byte("file"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := ensureNoSymlinkComponents(root, "component/child"); err == nil || !strings.Contains(err.Error(), "not a directory") {
+		t.Fatalf("non-directory component error = %v", err)
+	}
+
+	var nodes []model.Node
+	if err := readLegacyJSONL(root, "data.json", &nodes, legacyLoadLimits{}, nil); err == nil || !strings.Contains(err.Error(), "positive and bounded") {
+		t.Fatalf("invalid JSONL limits error = %v", err)
+	}
+	diagnostics := []model.Diagnostic{{Severity: "warning", Code: "IGNORED", Message: "warning"}}
+	for index := 9; index >= 0; index-- {
+		diagnostics = append(diagnostics, model.Diagnostic{Severity: "error", Code: fmt.Sprintf("E%02d", index), Message: "failure"})
+	}
+	message := validationErrors(model.ValidationReport{Diagnostics: diagnostics})
+	if !strings.HasPrefix(message, "E00: failure") || !strings.Contains(message, "and 2 more") || strings.Contains(message, "IGNORED") {
+		t.Fatalf("validationErrors = %q", message)
+	}
+}
+
+func TestStaticSiteRejectsUnsupportedMethods(t *testing.T) {
+	t.Parallel()
+	response := httptest.NewRecorder()
+	richDataset().Handler().ServeHTTP(response, httptest.NewRequest(http.MethodPost, "/", nil))
+	if response.Code != http.StatusMethodNotAllowed || response.Header().Get("Allow") != "GET, HEAD" || !strings.Contains(response.Body.String(), "GET and HEAD only") {
+		t.Fatalf("static POST response = status %d headers %v body %s", response.Code, response.Header(), response.Body.String())
+	}
 }
 
 func TestLoadRebuildsPersistedSearchIndexFromValidatedBundle(t *testing.T) {
@@ -640,6 +935,19 @@ func rewriteServerExportManifest(t *testing.T, root, snapshotID string) {
 		SchemaVersion: model.SchemaVersion, SnapshotID: snapshotID, Files: files, TotalBytes: totalBytes,
 		CanonicalBytes: canonicalBytes, CanonicalFilesDigest: hex.EncodeToString(canonicalSum[:]),
 	})
+}
+
+func readServerExportManifest(t *testing.T, path string) datasetExportManifest {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var manifest datasetExportManifest
+	if err := json.Unmarshal(data, &manifest); err != nil {
+		t.Fatal(err)
+	}
+	return manifest
 }
 
 func tFixtureRoot() string {

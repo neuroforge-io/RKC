@@ -1,15 +1,17 @@
 # Architecture
 
-RKC-owned architecture and documentation are released by NeuroForgeIO and RKC
-contributors under the MIT License. External dependencies, model assets, and
-analyzed repositories retain their own licenses; see
+Copyright 2026 NeuroForgeIO and RKC contributors. NeuroForgeIO publishes and
+maintains this Apache-2.0-licensed architecture and documentation. External dependencies, model assets, and
+analyzed repositories retain their own ownership and licenses; see
 [`BRANDING_AND_ATTRIBUTION.md`](BRANDING_AND_ATTRIBUTION.md).
 
 ## System purpose
 
-RKC is a compiler pipeline for repository knowledge. It creates one immutable,
-evidence-bearing model and treats every user interface, export, and model
-response as a projection of that model.
+RKC is a compiler pipeline for repository knowledge. Its target is a bounded
+causal and executable model of a software system—not merely better code search.
+It creates one immutable, evidence-bearing world model and treats every user
+interface, export, agent request, and model response as a projection of that
+model.
 
 ```text
 repository or Git URL
@@ -17,6 +19,9 @@ repository or Git URL
   -> complete inventory and policy dispositions
   -> immutable source hashes / content-addressed objects
   -> language and framework analyzers
+  -> compiler semantics + bounded flow/configuration/history evidence
+  -> explicitly authorized runtime capture assertions
+  -> future producer-authenticated runtime events
   -> bounded GraphPatch fragments
   -> merge, conservative resolution, conflict retention
   -> canonical validation and coverage
@@ -62,6 +67,13 @@ internal/docparse
 internal/framework/*
   document, interface, manifest, environment, and security packs
 
+internal/flow + internal/configenv
+  bounded Go control/value flow plus build, CI, Terraform, and environment
+  contracts
+
+internal/runtime + internal/history
+  digest-bound execution observations and bounded semantic Git deltas
+
 pkg/rkcmodel
   public canonical records, stable IDs, sorting, validation, coverage
 
@@ -98,6 +110,8 @@ A source-truth snapshot is derived from:
 repository content digest
 Git commit or working-tree digest
 optional compiler-semantic input digest
+optional runtime-observation input digests
+optional semantic-history input digest
 analysis-affecting configuration digest
 policy digest
 plugin lock digest
@@ -126,15 +140,19 @@ cannot partially replace a committed snapshot.
 | 2 | syntax | declared syntax and structurally inferred relations |
 | 3 | semantic | compiler/indexer-resolved symbols and types |
 | 4 | framework | routes, APIs, configuration, schemas, build conventions |
-| 5 | runtime | observations from an explicitly authorized execution |
+| 5 | runtime | producer-authenticated events from an explicitly authorized execution |
 | 6 | model | validated derived explanations only |
 
 The current release implements Tiers 0–2 broadly for Python, Go, and
-JavaScript/TypeScript, Tier 3 through validated compiler-produced SCIP indexes,
-selected Tier-4 packs, and Tier-6 packet/provider infrastructure. SCIP provides
-one deterministic semantic boundary for Python, JavaScript/TypeScript, Go,
-C/C++/CUDA, Rust, Java/Kotlin/Scala, C#/Visual Basic, and other conforming
-producers. Authorized Tier 5 remains planned.
+JavaScript/TypeScript, Tier 3 when SCIP input retains authenticated compiler
+provenance, selected Tier-4 packs, bounded runtime capture assertions below
+Tier 5, and Tier-6 packet/provider infrastructure. Portable SCIP inputs remain
+producer-unverified structured assertions. SCIP
+provides one deterministic semantic boundary for Python,
+JavaScript/TypeScript, Go, C/C++/CUDA, Rust, Java/Kotlin/Scala, C#/Visual Basic,
+and other conforming producers. Current aggregate coverage asserts that spans
+were reported covered in one capture, but it does not authenticate execution,
+call events, or individual test paths; RKC therefore does not invent them.
 
 ## Graph merge policy
 
@@ -248,8 +266,68 @@ separately and must not be confused with the local daemon's current surface.
 - language adapters emit fragments or GraphPatch records;
 - derived products never become hidden sources of canonical truth.
 
+## Analysis stages
+
+`scan` executes a deterministic 20-stage DAG: inventory, normalize, env-keys,
+go-syntax, json-schema, manifests, markdown, openapi, python-syntax,
+scip-semantic, secret-scan, typescript-syntax, merge, resolve, value-flow,
+config-env, trace-import, history-import, validate, and coverage. The
+`value-flow` stage compiles bounded call graphs, CFGs, and value-flow edges;
+`config-env` compiles build tags, CI workflows, Terraform declarations, and
+environment contracts; `trace-import` binds digest/source-affine runtime
+assertions. Same-process capture authenticates record integrity only, so no
+current capture is promoted to observed spans or terminal test outcomes.
+Statement coverage never establishes an
+observed call edge; `history-import` stamps symbol lifecycles and supersedes
+edges. Every stage is deterministic and
+cacheable where its inputs permit; trace and history digests bind into the
+snapshot identity.
+
+## Evidence acquisition loop and causal maturity
+
+`rkc plan` performs evidence-opportunity planning. It inventories the target,
+shows the exact 20-stage execution/cache plan, validates any supplied SCIP,
+trace, or history inputs, and emits exact argument vectors for missing
+higher-authority evidence. It does not execute analyzers, tests, indexers, or
+history acquisition during planning. Runtime capture and compiler index
+generation remain separately authorized operations.
+
+The implemented loop is therefore:
+
+```text
+inspect current evidence
+  -> expose missing compiler/runtime/history authority
+  -> human or agent authorizes a bounded acquisition
+  -> validate and digest the inert result
+  -> compile a new immutable snapshot
+  -> compare static possibility with observed actuality
+```
+
+Question-driven uncertainty records, targeted test generation, predicate-aware
+symbolic execution, machine-readable test setup/stimulus/assertion contracts,
+and cross-repository service federation remain explicit next evidence layers.
+They must be implemented as bounded, cited records—not model guesses or hidden
+background execution.
+
+`rkc counterfactual` is the first derived causal-analysis surface. It compares
+a canonical baseline route with a read-only view that omits exact nodes or
+edges. Results are always non-authoritative, snapshot-bound, evidence-linked,
+and explicit about traversal limits. They never mutate canonical truth or claim
+that bounded structural reachability proves production causation.
+
+## System and agent independence
+
+RKC has no code, data, model, or runtime dependency on ERAIS. It is designed for
+humans, local applications, CI, arbitrary agents, and future reasoning systems
+through versioned CLI JSON, HTTP, MCP, SQLite, JSON/JSONL, GraphML, Markdown,
+NotebookLM packs, and static browser artifacts. Higher-priority process
+detection is a configurable shared-host scheduling policy, not an application
+integration. Any future ERAIS use consumes the same public evidence interfaces
+as every other agent.
+
 ---
-_RKC is stewarded by **NeuroForgeIO** and released under the **MIT License**.
-Redistributions must retain the copyright and permission notices required by
-that license. Attribution to NeuroForgeIO is requested, but is not an additional
-license condition._
+_RKC is open source, published and maintained by **NeuroForgeIO**, under the
+**Apache License, Version 2.0**. Copyright 2026 NeuroForgeIO and RKC
+contributors. Redistributed
+works must preserve applicable license and `NOTICE` terms. Third-party materials
+retain their own licenses and ownership._

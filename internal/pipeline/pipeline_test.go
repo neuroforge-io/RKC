@@ -93,10 +93,10 @@ func TestStagedScanMatchesSequentialOracleAndReportsEveryStage(t *testing.T) {
 		},
 	}
 	expectedStages := []string{
-		"coverage", "env-keys", "go-syntax", "inventory", "json-schema",
+		"config-env", "coverage", "env-keys", "go-syntax", "inventory", "json-schema",
 		"manifests", "markdown", "merge", "normalize", "openapi",
 		"python-syntax", "resolve", "scip-semantic", "secret-scan",
-		"typescript-syntax", "validate",
+		"history-import", "trace-import", "typescript-syntax", "validate", "value-flow",
 	}
 
 	for _, testCase := range testCases {

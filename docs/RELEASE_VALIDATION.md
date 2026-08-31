@@ -30,7 +30,7 @@ cryptographic build provenance remains a planned release gate.
 | contracts | `make contracts` | schemas, examples, OpenAPI parity, WIT, SQLite |
 | docs | `make docs-check` | local links and code fences |
 | quality index | `make quality-index` | deterministic all-regular-file accounting plus explicit source/test/documentation/profile/delta denominators; triage evidence, not a replacement for measured coverage gates |
-| licenses | `make licenses` | MIT notice, requested-credit, and third-party obligation boundaries using the version-checked validation interpreter |
+| licenses | `make licenses` | Apache-2.0 ownership/NOTICE and third-party obligation boundaries using the version-checked validation interpreter |
 | model lock | `make model-lock-check` | optional runtime/model identities, hashes, licenses, and null-default policy |
 | build | `make build` | CGO-disabled `rkc` and `rkc-mcp` |
 | plugins | `make plugins` | manifest and lock digest verification |
@@ -76,7 +76,8 @@ associations to a 100% claim; see [`QUALITY_INDEX.md`](QUALITY_INDEX.md).
 Each run retains raw Go data, the deduplicated Go profile, Coverage.py JSON, and
 `summary.json` in a unique directory below `.rkc-coverage/`. Local shared-host
 validation should use `make safe-coverage`; the fail-closed resource guard gives
-priority to ERAIS and bounds the complete test process tree.
+priority to work matching configured higher-priority markers and bounds the
+complete test process tree.
 
 Repository-scale live-load profiling is opt-in because a representative atlas
 is intentionally not committed. Point `RKC_BENCH_ATLAS` at a verified atlas and
@@ -115,8 +116,8 @@ The offline validator:
 
 ## License validation
 
-The dependency-aware license validator fails closed when the required MIT
-third-party notices are missing, altered into an unrecognized form, or replaced
+The dependency-aware license validator fails closed when required project or
+third-party license notices are missing, altered into an unrecognized form, or replaced
 by links. It checks the implemented OpenAPI and official plugin metadata,
 requires `go.mod`, `go.sum`, `third_party/go-modules.lock.json`, and every
 reviewed file under `LICENSES/` to agree with the resolved Go module graph,
@@ -223,7 +224,8 @@ publication, container SBOMs, provenance, or a qualified real-GGUF
 memory/quality target. Those have separate exit gates in the remainder plan.
 
 ---
-_RKC is stewarded by **NeuroForgeIO** and released under the **MIT License**.
-Redistributions must retain the copyright and permission notices required by
-that license. Attribution to NeuroForgeIO is requested, but is not an additional
-license condition._
+_RKC is open source, published and maintained by **NeuroForgeIO**, under the
+**Apache License, Version 2.0**. Copyright 2026 NeuroForgeIO and RKC
+contributors. Redistributed
+works must preserve applicable license and `NOTICE` terms. Third-party materials
+retain their own licenses and ownership._

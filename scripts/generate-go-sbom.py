@@ -520,10 +520,10 @@ def generate(
         "downloadLocation": "https://github.com/neuroforge-io/RKC",
         "filesAnalyzed": False,
         # SPDX 2.3 requires NOASSERTION when filesAnalyzed is false. The
-        # repository's reviewed MIT terms remain the declared license.
+        # repository's reviewed Apache-2.0 terms remain the declared license.
         "licenseConcluded": "NOASSERTION",
-        "licenseDeclared": "MIT",
-        "copyrightText": "Copyright (c) 2026 NeuroForgeIO and RKC contributors",
+        "licenseDeclared": "Apache-2.0",
+        "copyrightText": "Copyright 2026 NeuroForgeIO and RKC contributors",
         "sourceInfo": f"Git commit {source_commit}; Git tree {source_tree}",
         "comment": (
             f"Target platform: {goos}/{goarch}; normalized build settings: "
@@ -593,7 +593,7 @@ def generate(
                 ],
                 "licenseConcluded": "NOASSERTION",
                 "licenseInfoInFiles": ["NOASSERTION"],
-                "copyrightText": "Copyright (c) 2026 NeuroForgeIO and RKC contributors",
+                "copyrightText": "Copyright 2026 NeuroForgeIO and RKC contributors",
             }
         ],
         "relationships": relationships,

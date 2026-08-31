@@ -23,7 +23,10 @@ const (
 	// page of individually valid records into an unbounded allocation.
 	readerMaxObjectJSONBytes = 4 << 20
 	readerMaxPageJSONBytes   = 16 << 20
-	readerMaxBundleJSONBytes = 128 << 20
+	// Compiler-grade SCIP semantics multiply canonical bundle size several
+	// times over (RKC's own full SCIP run produces ~360 MiB), so the durable
+	// reader accepts up to 512 MiB.
+	readerMaxBundleJSONBytes = 512 << 20
 	readerMaxCursorBytes     = 4096
 )
 

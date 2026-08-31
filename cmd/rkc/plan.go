@@ -6,7 +6,11 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"os/signal"
 	"path/filepath"
+	"runtime"
+	"strings"
+	"syscall"
 
 	"github.com/neuroforge-io/RKC/internal/builtinplugins"
 	"github.com/neuroforge-io/RKC/internal/pipeline"
@@ -14,6 +18,15 @@ import (
 )
 
 func runPlan(args []string) error {
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	return runDirectCommandWithAdmission(ctx, "plan", args, runPlanContext)
+}
+
+func runPlanContext(ctx context.Context, args []string) error {
+	if ctx == nil {
+		return errors.New("plan context is required")
+	}
 	configPath := discoverFlagValue(args, "config")
 	cfg, err := loadConfiguration(configPath)
 	if err != nil {
@@ -36,7 +49,10 @@ func runPlan(args []string) error {
 	noGo := fs.Bool("no-go", !cfg.Plugins.GoAST.Enabled, "disable the Go syntax adapter")
 	noTypeScript := fs.Bool("no-typescript", !cfg.Plugins.TypeScriptSyntax.Enabled, "disable JavaScript and TypeScript syntax")
 	scipIndexes := stringList{}
-	fs.Var(&scipIndexes, "scip-index", "compiler-produced SCIP index to include in the plan; repeatable")
+	fs.Var(&scipIndexes, "scip-index", "SCIP index to include; external files remain producer-unverified; repeatable")
+	tracePaths := stringList{}
+	fs.Var(&tracePaths, "trace", "runtime trace file to validate and include in the plan; repeatable")
+	historyPath := fs.String("history", "", "compiled semantic history file to validate and include in the plan")
 	noFrameworks := fs.Bool("no-frameworks", !cfg.Frameworks.Enabled, "disable deterministic framework extractors")
 	noMarkdown := fs.Bool("no-markdown", !cfg.Frameworks.Markdown, "disable Markdown extraction")
 	noOpenAPI := fs.Bool("no-openapi", !cfg.Frameworks.OpenAPIJSON, "disable OpenAPI JSON/YAML extraction")
@@ -106,10 +122,12 @@ func runPlan(args []string) error {
 	if !*noPlugins && !*noPython {
 		pluginDigest = builtinplugins.PythonSHA256()
 	}
-	plan, err := pipeline.Plan(context.Background(), pipeline.Options{
+	plan, err := pipeline.Plan(ctx, pipeline.Options{
 		Root: root, MaxFileBytes: *maxFile, MaxTextBytes: *maxText,
 		MaxRepositoryBytes: *maxRepository, MaxFiles: *maxFiles, Excludes: excludes,
 		SCIPIndexes:       append([]string(nil), scipIndexes...),
+		TracePaths:        append([]string(nil), tracePaths...),
+		HistoryPath:       *historyPath,
 		PythonInterpreter: *python, PluginTimeout: *pluginTimeout,
 		PluginMaxOutput: *pluginOutput, PluginMaxStderr: 2 * 1024 * 1024,
 		PluginMemoryMiB: cfg.Plugins.MemoryLimitMiB, PluginSwapMiB: cfg.Plugins.MemorySwapLimitMiB,
@@ -155,6 +173,22 @@ func runPlan(args []string) error {
 			stage.Reason,
 		)
 	}
+	fmt.Println("Evidence opportunities:")
+	for _, opportunity := range plan.EvidenceOpportunities {
+		fmt.Printf("- %-26s %-26s authority=%s: %s\n",
+			opportunity.Kind, opportunity.Status, opportunity.Authority, opportunity.Detail)
+		if len(opportunity.Command) > 0 {
+			fmt.Printf("  next: %s\n", quoteArgumentVector(opportunity.Command))
+		}
+	}
 	fmt.Println("Planning reads and hashes source for inventory/normalization; it does not execute analyzers or publish output.")
 	return nil
+}
+
+func quoteArgumentVector(arguments []string) string {
+	quoted := make([]string, len(arguments))
+	for index, argument := range arguments {
+		quoted[index] = quoteCommandPath(argument, runtime.GOOS)
+	}
+	return strings.Join(quoted, " ")
 }

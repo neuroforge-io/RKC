@@ -1,8 +1,10 @@
 package graph
 
 import (
+	"encoding/json"
 	"errors"
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/neuroforge-io/RKC/pkg/rkcmodel"
@@ -118,9 +120,19 @@ func TestShortestPathHandlesIdentityMissingBoundsAndDeterministicTies(t *testing
 		t.Fatal(err)
 	}
 	if !path.Found || path.Depth != 2 || path.FromID != "a" || path.ToID != "d" || path.Visited != 4 ||
+		path.Truncated || path.SearchExhausted || path.DepthLimitReached || path.NodeLimitReached ||
 		!reflect.DeepEqual(path.NodeIDs, []string{"a", "b", "d"}) || !reflect.DeepEqual(path.EdgeIDs, []string{"ab", "bd"}) ||
 		!reflect.DeepEqual(nodeIDs(path.Nodes), path.NodeIDs) || !reflect.DeepEqual(edgeIDs(path.Edges), path.EdgeIDs) {
 		t.Fatalf("ShortestPath deterministic route = %+v", path)
+	}
+	foundJSON, err := json.Marshal(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, absent := range []string{"truncated", "depth_limit_reached", "node_limit_reached", "search_exhausted"} {
+		if strings.Contains(string(foundJSON), `"`+absent+`"`) {
+			t.Fatalf("successful path emitted false compatibility field %q: %s", absent, foundJSON)
+		}
 	}
 
 	identity, err := index.ShortestPath("a", "a", TraverseOptions{})
@@ -134,16 +146,24 @@ func TestShortestPathHandlesIdentityMissingBoundsAndDeterministicTies(t *testing
 	}
 
 	tooShallow, err := index.ShortestPath("a", "d", TraverseOptions{Direction: DirectionOutgoing, MaxDepth: 1})
-	if err != nil || tooShallow.Found || tooShallow.Visited != 3 {
+	if err != nil || tooShallow.Found || tooShallow.Visited != 3 || !tooShallow.Truncated ||
+		!tooShallow.DepthLimitReached || tooShallow.NodeLimitReached || tooShallow.SearchExhausted {
 		t.Fatalf("depth-bounded path = %+v, %v", tooShallow, err)
 	}
 	tooSmall, err := index.ShortestPath("a", "d", TraverseOptions{Direction: DirectionOutgoing, MaxNodes: 1})
-	if err != nil || tooSmall.Found || tooSmall.Visited != 1 {
+	if err != nil || tooSmall.Found || tooSmall.Visited != 1 || !tooSmall.Truncated ||
+		tooSmall.DepthLimitReached || !tooSmall.NodeLimitReached || tooSmall.SearchExhausted {
 		t.Fatalf("node-bounded path = %+v, %v", tooSmall, err)
 	}
 	unreachable, err := index.ShortestPath("u", "a", TraverseOptions{Direction: DirectionOutgoing})
-	if err != nil || unreachable.Found || unreachable.Visited != 1 {
+	if err != nil || unreachable.Found || unreachable.Visited != 1 || unreachable.Truncated ||
+		unreachable.DepthLimitReached || unreachable.NodeLimitReached || !unreachable.SearchExhausted {
 		t.Fatalf("unreachable path = %+v, %v", unreachable, err)
+	}
+	unreachableJSON, err := json.Marshal(unreachable)
+	if err != nil || !strings.Contains(string(unreachableJSON), `"search_exhausted":true`) ||
+		strings.Contains(string(unreachableJSON), `"truncated"`) {
+		t.Fatalf("exhaustive path JSON = %s, %v", unreachableJSON, err)
 	}
 }
 

@@ -1,5 +1,6 @@
 /bin/
 /dist/
+/rkc
 /.rkc/
 /.rkc-*/
 /.venv/

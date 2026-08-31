@@ -50,14 +50,20 @@ func TestExtractEnvironmentContractsRedactsAndIsDeterministic(t *testing.T) {
 	if len(byName) != 4 {
 		t.Fatalf("environment nodes = %d (%v), want 4", len(byName), mapKeys(byName))
 	}
-	if got := byName["APP_MODE"]["default"]; got != "from-a" {
-		t.Errorf("duplicate APP_MODE default = %#v, want deterministic first-file value", got)
+	if got := byName["APP_MODE"]["default_sha256"]; got != privateValueDigest("dotenv-default", "from-a") {
+		t.Errorf("duplicate APP_MODE fingerprint = %#v, want deterministic first-file value", got)
 	}
-	if got := byName["DB_PASSWORD"]["default"]; got != "<redacted>" {
-		t.Errorf("secret default = %#v, want <redacted>", got)
+	if _, present := byName["DB_PASSWORD"]["default_sha256"]; present {
+		t.Error("secret default received a guessable fingerprint")
 	}
 	if got := byName["DB_PASSWORD"]["secret_like"]; got != true {
 		t.Errorf("secret_like = %#v, want true", got)
+	}
+	if _, present := byName["APP_MODE"]["default"]; present {
+		t.Error("non-secret default was copied into the atlas")
+	}
+	if got := byName["APP_MODE"]["default_class"]; got != "literal" {
+		t.Errorf("APP_MODE class = %#v, want literal", got)
 	}
 	if got := byName["NO_DEFAULT"]["has_default"]; got != false {
 		t.Errorf("NO_DEFAULT has_default = %#v, want false", got)
@@ -68,6 +74,9 @@ func TestExtractEnvironmentContractsRedactsAndIsDeterministic(t *testing.T) {
 	}
 	if strings.Contains(string(encoded), sensitiveValue) {
 		t.Fatal("sensitive default leaked into extracted fragment")
+	}
+	if strings.Contains(string(encoded), "from-a") || strings.Contains(string(encoded), "from-z") {
+		t.Fatal("ordinary environment default leaked into extracted fragment")
 	}
 }
 

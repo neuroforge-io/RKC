@@ -59,8 +59,8 @@ func runOpenWithAdmissionUsing(
 	}
 	if !guardedChild {
 		// Even a caller already inside a shell-created envelope is re-executed.
-		// The outer Go guard supplies continuous ERAIS pre-emption and proves the
-		// complete transient unit inactive on every exit path.
+		// The outer Go guard supplies continuous priority-workload pre-emption
+		// and proves the complete transient unit inactive on every exit path.
 		return launch(ctx, args)
 	}
 	if err := requireEnvelope(); err != nil {
@@ -296,6 +296,10 @@ func guardedOpenEnvironment(readyFile string) []string {
 		"SSL_CERT_DIR", "SSL_CERT_FILE", "TEMP", "TMP", "TMPDIR",
 		"XDG_CACHE_HOME", "XDG_CONFIG_HOME", "XDG_DATA_HOME",
 		"XDG_RUNTIME_DIR", "XDG_STATE_HOME",
+		// Compiler-indexer tooling (scip-go, scip-python, scip-typescript)
+		// needs module caches and package-manager state to resolve imports.
+		"GOENV", "GOFLAGS", "GOMODCACHE", "GOPATH", "GOPROXY", "GOSUMDB", "GOCACHE",
+		"npm_config_cache",
 	}
 	values := make(map[string]string, len(allowed)+14)
 	for _, name := range allowed {

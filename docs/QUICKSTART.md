@@ -13,13 +13,13 @@ rkc wizard
 ```
 
 The installer builds both CGO-free binaries, installs them under
-`$HOME/.local/bin` by default, preserves the MIT license and attribution notice
+`$HOME/.local/bin` by default, preserves the Apache-2.0 license and NOTICE
 under `$HOME/.local/share/doc/rkc` (including the complete third-party notice),
 and prints an immediately executable first-run command plus a copy-ready PATH
 command when the install directory is not already reachable. Use
 `./install.sh --prefix /another/prefix` for another user-owned destination.
-RKC-owned code and generated tooling are from **NeuroForgeIO** and RKC
-contributors; see [`BRANDING_AND_ATTRIBUTION.md`](BRANDING_AND_ATTRIBUTION.md)
+Original RKC code and generated tooling are copyright 2026 **NeuroForgeIO**;
+see [`BRANDING_AND_ATTRIBUTION.md`](BRANDING_AND_ATTRIBUTION.md)
 for the commercial attribution and third-party license boundary.
 Existing symbolic-link or non-file destinations are rejected.
 
@@ -40,7 +40,15 @@ hard ceiling before any atlas, cache, journal, or snapshot write. An existing
 exact RKC unit is reused; the scratch-container path instead requires a private
 cgroup root to prove an equal-or-tighter hard ceiling, swap/task/weight/OOM
 controls, and lowered per-thread scheduling. Both paths continuously recheck
-the envelope and yield to visible ERAIS/evaluation work. Press Ctrl-C to stop
+the envelope and yield to configured higher-priority workload classes. The
+generic marker set is `torchrun,lm_eval`;
+`RKC_HIGHER_PRIORITY_MARKERS=training,benchmark` replaces it with 1-16 unique
+lower-case ASCII classes, each at most 32 bytes and 255 bytes total. Empty
+retains the default and invalid configuration fails closed. The default `yield`
+policy keeps RKC subordinate while such work merely runs and cancels promptly
+when its aggregate CPU load reaches the configured threshold, while
+`RKC_HIGHER_PRIORITY_POLICY=refuse` restores the strict refusal whenever any
+higher-priority process is visible. Press Ctrl-C to stop
 cleanly, or pass `--no-browser` on a headless host.
 It safely replaces only a previous RKC-owned atlas. The portable default does
 not invoke Python. Protected `open` and direct `quickstart` reject `--python`
@@ -56,10 +64,18 @@ URL-fragment capability only through an owner-private readiness file. The outer
 `open` process validates the receipt, launches the desktop browser outside the
 cgroup through an owner-private redirect, and the browser removes the fragment
 before exchanging it once for its same-origin session token. The OS selects a
-fresh ephemeral loopback port for every `open` session, so a second local atlas
-cannot collide with a familiar fixed port. Browser policy forbids persistent
-workers and manifests. The advanced direct `serve` command retains its explicit
-address option.
+ephemeral loopback port for every `open` session, avoiding deliberate reuse of
+the familiar fixed port. The OS may still reuse an earlier ephemeral port, so
+this is risk reduction rather than proof of a new origin; use a trusted browser
+profile. Browser policy forbids registration of new workers and manifests. The
+advanced direct `serve` command retains its explicit address option.
+
+Once open, use **Browse** to choose a folder and **Analyze this folder** to
+compile it. Success is reported only after the generated `<folder>/.rkc`
+dataset passes the normal canonical, coverage, ownership-marker, and manifest
+checks. RKC then switches every graphical read view and dataset-aware command
+default in one operation. A failed or corrupt analysis leaves the prior atlas
+active.
 
 For a compile-only first run, use `rkc quickstart /path/to/repository`; it
 performs the same scan and quality gates without starting a server. A direct
@@ -156,7 +172,8 @@ scanner or normalized-source redaction.
 `inventory.exclude` values are exact repository-relative paths, not globs. Each
 value excludes that path and its descendants. RKC does not claim to interpret
 `.gitignore`; its generated configuration instead lists explicit safe defaults
-for virtual environments, local RKC model/runtime outputs, `bin`, `dist`, and
+for virtual environments, local RKC model/runtime outputs, the default
+`.rkc-trace.json` and `.rkc-history.json` evidence files, `bin`, `dist`, and
 named root-level coverage/cache outputs. Add another exact path with a repeated
 `--exclude` flag when scanning.
 
@@ -180,13 +197,21 @@ Start with the portable deterministic profile:
 ```
 
 `rkc plan` performs inventory and normalization only, then reports the complete
-16-stage DAG, verified cache hits, misses, disabled stages, and invalidation
+20-stage DAG, verified cache hits, misses, disabled stages, and invalidation
 reasons. Analyzer payloads are stored outside the repository in the operating
 system's user-cache directory. Use `scan --no-cache` when an explicitly clean
 run is required; clean and incremental execution produce the same snapshot
 identity and canonical digest. The scheduler admits concurrent stages within
 the `--stage-workers` and `--stage-memory-mib` bounds; the safe defaults are
 four workers and a 2048 MiB aggregate admission budget.
+
+The plan also lists evidence opportunities for missing compiler semantics,
+runtime capture assertions, and semantic history. It labels compiler-authenticated
+inputs separately from structured assertions. These are exact next-command
+argument vectors with authorization requirements; planning never executes the
+indexer, tests, or Git-history compiler itself. Supplying `--scip-index`,
+repeatable `--trace`, or `--history` validates those inert inputs and marks the
+corresponding opportunity admitted.
 
 Each scan that reaches DAG execution durably records its scheduler and final
 publication outcome in the operating system's owner-only user-cache location,
@@ -339,8 +364,8 @@ lazy until a deep link, diagnostic, symbol detail, or graph navigation needs
 canonical details and evidence.
 
 The responsive GUI covers repository overview, bounded search, entity and
-evidence inspection, graph navigation, diagnostics, coverage, and 19 bounded
-CLI workflows. Normal serving and the default `rkc open` mode remain read-only.
+evidence inspection, graph navigation, diagnostics, coverage, and the bounded
+command catalogue. Normal serving and the default `rkc open` mode remain read-only.
 The protected workbench executes only its explicit allowlist; server lifecycle
 and separately managed model or Python operations stay in their guarded CLI
 paths.
@@ -350,6 +375,13 @@ is:
 ```sh
 rkc open --workbench .
 ```
+
+Use the folder picker to select another folder available to the invoking
+account and run Analyze. The
+same live page then changes to the verified new snapshot—Overview, Search,
+Graph, details, and command defaults cannot diverge onto different datasets.
+Activation failure is terminal for that job and does not replace the previous
+snapshot.
 
 For an already-built atlas, use this low-level advanced route.
 Direct `serve --workbench` requires a nonexistent readiness path in an
@@ -373,8 +405,10 @@ bootstrap, invokes RKC directly without a shell, serializes jobs, and bounds
 both duration and captured output. Commands that could create a separately
 managed Python or model unit fail closed until an aggregate session ceiling is
 proved; use their normal guarded CLI entry points in the meantime.
-This direct route rechecks ERAIS before and after atlas preparation and while
-serving. Prefer `rkc open --workbench` when the outer monitor must pre-empt even
+This direct route rechecks higher-priority work before and after atlas
+preparation and while serving, refusing or stopping under the configured
+policy (load-gated by default, strict with `RKC_HIGHER_PRIORITY_POLICY=refuse`).
+Prefer `rkc open --workbench` when the outer monitor must pre-empt even
 during the initial atlas load.
 
 ## 9. Use MCP
@@ -496,7 +530,8 @@ cache-isolated, byte-identical builds. The coherent output is under
 `dist/release`.
 
 ---
-_RKC is stewarded by **NeuroForgeIO** and released under the **MIT License**.
-Redistributions must retain the copyright and permission notices required by
-that license. Attribution to NeuroForgeIO is requested, but is not an additional
-license condition._
+_RKC is open source, published and maintained by **NeuroForgeIO**, under the
+**Apache License, Version 2.0**. Copyright 2026 NeuroForgeIO and RKC
+contributors. Redistributed
+works must preserve applicable license and `NOTICE` terms. Third-party materials
+retain their own licenses and ownership._

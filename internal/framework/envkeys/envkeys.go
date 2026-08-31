@@ -5,10 +5,12 @@ package envkeys
 
 import (
 	"bufio"
+	"crypto/sha256"
 	"fmt"
 	"path/filepath"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/neuroforge-io/RKC/internal/sourcepath"
@@ -21,7 +23,7 @@ const (
 	// environment-contract fact.
 	PluginID = "rkc.envkeys"
 	// PluginVersion identifies the extractor semantics recorded in evidence.
-	PluginVersion = "0.2.0"
+	PluginVersion = "0.3.0"
 )
 
 var keyPattern = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
@@ -35,8 +37,10 @@ type Options struct {
 }
 
 // Extract parses deterministic dotenv-style assignments into evidence-backed
-// environment-variable nodes. Secret-like defaults are replaced with a marker,
-// unreadable files become diagnostics, and no process environment is consulted.
+// environment-variable nodes. Default values are classified and fingerprinted,
+// never copied into the atlas; secret-like defaults are not fingerprinted so a
+// low-entropy credential cannot be recovered by guessing. Unreadable files
+// become diagnostics, and no process environment is consulted.
 func Extract(options Options) (rkcmodel.Fragment, error) {
 	fragment := rkcmodel.Fragment{}
 	files := append([]pluginapi.FileRef(nil), options.Files...)
@@ -68,10 +72,6 @@ func Extract(options Options) (rkcmodel.Fragment, error) {
 				value = strings.TrimSpace(parts[1])
 			}
 			secret := likelySecret(name)
-			defaultValue := value
-			if secret && defaultValue != "" {
-				defaultValue = "<redacted>"
-			}
 			id := rkcmodel.StableID("node", "environment_variable", name)
 			if _, exists := seen[id]; exists {
 				continue
@@ -83,11 +83,19 @@ func Extract(options Options) (rkcmodel.Fragment, error) {
 				ID: evidenceID, Kind: "declared", Method: "dotenv.assignment", Confidence: 1, Source: source,
 				Tool: PluginID, ToolVersion: PluginVersion, InputDigest: file.SHA256, Detail: name,
 			})
+			attributes := map[string]any{
+				"has_default": value != "", "secret_like": secret, "source_file": file.Path,
+			}
+			if value != "" && !secret {
+				attributes["default_sha256"] = privateValueDigest("dotenv-default", value)
+				attributes["default_class"] = scalarClassification(value)
+				attributes["default_length_bytes"] = len(value)
+			}
 			fragment.Nodes = append(fragment.Nodes, rkcmodel.Node{
 				ID: id, LogicalID: rkcmodel.StableID("logical", "environment_variable", name), Kind: "environment_variable",
 				Name: name, QualifiedName: name, Language: "dotenv", Visibility: "deployment", PublicSurface: false,
 				ArtifactID: file.ArtifactID, Source: source, EvidenceIDs: []string{evidenceID},
-				Attributes: map[string]any{"default": defaultValue, "has_default": value != "", "secret_like": secret, "source_file": file.Path},
+				Attributes: attributes,
 			})
 			fragment.Edges = append(fragment.Edges, rkcmodel.Edge{
 				ID: rkcmodel.StableID("edge", "declares", file.ArtifactID, id, evidenceID), Kind: "declares",
@@ -101,6 +109,32 @@ func Extract(options Options) (rkcmodel.Fragment, error) {
 	}
 	rkcmodel.SortFragment(&fragment)
 	return fragment, nil
+}
+
+func privateValueDigest(domain, value string) string {
+	digest := sha256.Sum256([]byte(PluginID + "\x00" + domain + "\x00" + value))
+	return fmt.Sprintf("%x", digest)
+}
+
+func scalarClassification(value string) string {
+	trimmed := strings.TrimSpace(value)
+	lower := strings.ToLower(trimmed)
+	switch {
+	case trimmed == "":
+		return "empty"
+	case strings.Contains(trimmed, "${") || strings.Contains(trimmed, "$(") || strings.Contains(trimmed, "{{"):
+		return "expression"
+	case lower == "true" || lower == "false" || lower == "yes" || lower == "no" || lower == "on" || lower == "off":
+		return "boolean"
+	case func() bool { _, err := strconv.ParseFloat(trimmed, 64); return err == nil }():
+		return "number"
+	case strings.HasPrefix(lower, "http://") || strings.HasPrefix(lower, "https://"):
+		return "url"
+	case strings.HasPrefix(trimmed, "/") || strings.HasPrefix(trimmed, "./") || strings.HasPrefix(trimmed, "../"):
+		return "path"
+	default:
+		return "literal"
+	}
 }
 
 // IsCandidate reports whether a basename follows RKC's closed set of dotenv

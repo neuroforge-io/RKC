@@ -5,6 +5,7 @@ package manifest
 import (
 	"bufio"
 	"bytes"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -12,6 +13,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/neuroforge-io/RKC/internal/security/secrets"
@@ -24,7 +26,7 @@ const (
 	// PluginID is the stable producer identity attached to manifest facts.
 	PluginID = "rkc.manifest"
 	// PluginVersion identifies the extraction semantics used by this adapter.
-	PluginVersion            = "0.2.0"
+	PluginVersion            = "0.3.0"
 	maxDockerInstructionSize = 4 * 1024 * 1024
 )
 
@@ -107,7 +109,9 @@ func (c *collector) packageJSON(root string, file pluginapi.FileRef) {
 		command := stringValue(scripts[script])
 		id := rkcmodel.StableID("node", "build_target", file.Path, script)
 		evidence := c.addEvidence(file, "package.json.script", "#/scripts/"+escapeJSONPointer(script), script)
-		c.addNode(rkcmodel.Node{ID: id, LogicalID: rkcmodel.StableID("logical", "npm-script", name, script), Kind: "build_target", Name: script, QualifiedName: name + " script " + script, Signature: command, Language: "shell", Visibility: "repository", ArtifactID: file.ArtifactID, Source: source(file, "#/scripts/"+escapeJSONPointer(script)), EvidenceIDs: []string{evidence}, Attributes: map[string]any{"command": command, "ecosystem": "npm"}})
+		attributes := commandMetadata("npm-script", command)
+		attributes["ecosystem"] = "npm"
+		c.addNode(rkcmodel.Node{ID: id, LogicalID: rkcmodel.StableID("logical", "npm-script", name, script), Kind: "build_target", Name: script, QualifiedName: name + " script " + script, Language: "shell", Visibility: "repository", ArtifactID: file.ArtifactID, Source: source(file, "#/scripts/"+escapeJSONPointer(script)), EvidenceIDs: []string{evidence}, Attributes: attributes})
 		c.addEdgeWithEvidence("builds", projectID, id, "declared", evidence, nil)
 	}
 	binaries := mapValue(document["bin"])
@@ -308,14 +312,16 @@ func (c *collector) dockerfile(root string, file pluginapi.FileRef) {
 				if directive == "ARG" {
 					kind = "config_key"
 				}
-				defaultValue := assignment.value
 				secretLike := secrets.IsSecretName(name)
-				if secretLike && defaultValue != "" {
-					defaultValue = "<redacted>"
-				}
 				id := rkcmodel.StableID("node", kind, file.Path, name)
 				evidence := c.addDockerEvidence(file, "dockerfile."+strings.ToLower(directive), instruction, name)
-				c.addNode(rkcmodel.Node{ID: id, LogicalID: rkcmodel.StableID("logical", kind, projectName, name), Kind: kind, Name: name, QualifiedName: file.Path + " " + name, Language: "dockerfile", Visibility: "repository", ArtifactID: file.ArtifactID, Source: sourceRange, EvidenceIDs: []string{evidence}, Attributes: map[string]any{"directive": directive, "default": defaultValue, "has_default": assignment.value != "", "secret_like": secretLike}})
+				attributes := map[string]any{"directive": directive, "has_default": assignment.value != "", "secret_like": secretLike}
+				if assignment.value != "" && !secretLike {
+					attributes["default_sha256"] = manifestValueDigest("docker-default", assignment.value)
+					attributes["default_class"] = scalarClassification(assignment.value)
+					attributes["default_length_bytes"] = len(assignment.value)
+				}
+				c.addNode(rkcmodel.Node{ID: id, LogicalID: rkcmodel.StableID("logical", kind, projectName, name), Kind: kind, Name: name, QualifiedName: file.Path + " " + name, Language: "dockerfile", Visibility: "repository", ArtifactID: file.ArtifactID, Source: sourceRange, EvidenceIDs: []string{evidence}, Attributes: attributes})
 				c.addEdgeWithEvidence("configures", currentStage, id, "declared", evidence, nil)
 			}
 		}
@@ -511,4 +517,55 @@ func joinAfter(values []string, index int) string {
 		return ""
 	}
 	return strings.Join(values[index:], " ")
+}
+
+func manifestValueDigest(domain, value string) string {
+	digest := sha256.Sum256([]byte(PluginID + "\x00" + domain + "\x00" + value))
+	return fmt.Sprintf("%x", digest)
+}
+
+func scalarClassification(value string) string {
+	trimmed := strings.TrimSpace(value)
+	lower := strings.ToLower(trimmed)
+	switch {
+	case trimmed == "":
+		return "empty"
+	case strings.Contains(trimmed, "${") || strings.Contains(trimmed, "$(") || strings.Contains(trimmed, "{{"):
+		return "expression"
+	case lower == "true" || lower == "false" || lower == "yes" || lower == "no" || lower == "on" || lower == "off":
+		return "boolean"
+	case func() bool { _, err := strconv.ParseFloat(trimmed, 64); return err == nil }():
+		return "number"
+	case strings.HasPrefix(lower, "http://") || strings.HasPrefix(lower, "https://"):
+		return "url"
+	case strings.HasPrefix(trimmed, "/") || strings.HasPrefix(trimmed, "./") || strings.HasPrefix(trimmed, "../"):
+		return "path"
+	default:
+		return "literal"
+	}
+}
+
+func commandMetadata(domain, command string) map[string]any {
+	lower := strings.ToLower(command)
+	class := "command"
+	switch {
+	case strings.TrimSpace(command) == "":
+		class = "empty"
+	case strings.Contains(lower, " test") || strings.HasPrefix(strings.TrimSpace(lower), "test ") ||
+		strings.Contains(lower, "pytest") || strings.Contains(lower, "go test"):
+		class = "test"
+	case strings.Contains(lower, "lint") || strings.Contains(lower, "vet") || strings.Contains(lower, "ruff"):
+		class = "quality"
+	case strings.Contains(lower, "deploy") || strings.Contains(lower, "publish") || strings.Contains(lower, "release"):
+		class = "deploy"
+	case strings.Contains(lower, "build") || strings.Contains(lower, "compile"):
+		class = "build"
+	}
+	return map[string]any{
+		"command_sha256":       manifestValueDigest(domain, command),
+		"command_class":        class,
+		"command_length_bytes": len(command),
+		"command_dynamic": strings.Contains(command, "${") || strings.Contains(command, "$(") ||
+			strings.Contains(command, "{{"),
+	}
 }

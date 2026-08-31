@@ -54,6 +54,7 @@ const (
 	maximumLegacyJSONLLineBytes     = 4 * 1024 * 1024
 	maximumLegacyRecordsPerFile     = 250000
 	maximumLegacyRecordsTotal       = 500000
+	snapshotGenerationHeader        = "X-RKC-Snapshot-ID"
 )
 
 type staticSiteAsset struct {
@@ -628,30 +629,50 @@ func (dataset *Dataset) HandlerWithWorkbench(workbench *Workbench) http.Handler 
 		}
 		dataset = &trusted
 	}
+	if workbench != nil {
+		workbench.attachDataset(dataset)
+	}
+	currentDataset := func() *Dataset {
+		if workbench == nil {
+			return dataset
+		}
+		return workbench.currentDataset(dataset)
+	}
+	datasetHandler := func(handler func(*Dataset, http.ResponseWriter, *http.Request)) http.HandlerFunc {
+		return func(w http.ResponseWriter, request *http.Request) {
+			// Resolve the active immutable dataset exactly once for this response.
+			// The browser binds every parallel bootstrap response to this header and
+			// rejects a bundle assembled across an atomic activation boundary.
+			selected := currentDataset()
+			w.Header().Set(snapshotGenerationHeader, selected.Manifest.ID)
+			handler(selected, w, request)
+		}
+	}
 	mux := http.NewServeMux()
-	mux.HandleFunc("GET /api/v1/health", dataset.handleHealth)
-	mux.HandleFunc("GET /api/v1/manifest", dataset.handleManifest)
-	mux.HandleFunc("GET /api/v1/coverage", dataset.handleCoverage)
-	mux.HandleFunc("GET /api/v1/facets", dataset.handleFacets)
-	mux.HandleFunc("GET /api/v1/artifacts", dataset.handleArtifacts)
-	mux.HandleFunc("GET /api/v1/artifacts/{artifactID}", dataset.handleArtifact)
-	mux.HandleFunc("GET /api/v1/nodes", dataset.handleNodes)
-	mux.HandleFunc("GET /api/v1/nodes/{nodeID}", dataset.handleNode)
-	mux.HandleFunc("GET /api/v1/edges", dataset.handleEdges)
-	mux.HandleFunc("GET /api/v1/evidence/{evidenceID}", dataset.handleEvidence)
-	mux.HandleFunc("GET /api/v1/diagnostics", dataset.handleDiagnostics)
-	mux.HandleFunc("GET /api/v1/search", dataset.handleSearch)
-	mux.HandleFunc("GET /api/v1/graph/neighborhood", dataset.handleNeighborhood)
-	mux.HandleFunc("GET /api/v1/graph/path", dataset.handlePath)
-	mux.HandleFunc("GET /api/v1/graph/components", dataset.handleComponents)
-	mux.HandleFunc("GET /api/v1/impact", dataset.handleImpact)
+	mux.HandleFunc("GET /api/v1/health", datasetHandler((*Dataset).handleHealth))
+	mux.HandleFunc("GET /api/v1/manifest", datasetHandler((*Dataset).handleManifest))
+	mux.HandleFunc("GET /api/v1/coverage", datasetHandler((*Dataset).handleCoverage))
+	mux.HandleFunc("GET /api/v1/facets", datasetHandler((*Dataset).handleFacets))
+	mux.HandleFunc("GET /api/v1/artifacts", datasetHandler((*Dataset).handleArtifacts))
+	mux.HandleFunc("GET /api/v1/artifacts/{artifactID}", datasetHandler((*Dataset).handleArtifact))
+	mux.HandleFunc("GET /api/v1/nodes", datasetHandler((*Dataset).handleNodes))
+	mux.HandleFunc("GET /api/v1/nodes/{nodeID}", datasetHandler((*Dataset).handleNode))
+	mux.HandleFunc("GET /api/v1/edges", datasetHandler((*Dataset).handleEdges))
+	mux.HandleFunc("GET /api/v1/evidence/{evidenceID}", datasetHandler((*Dataset).handleEvidence))
+	mux.HandleFunc("GET /api/v1/diagnostics", datasetHandler((*Dataset).handleDiagnostics))
+	mux.HandleFunc("GET /api/v1/search", datasetHandler((*Dataset).handleSearch))
+	mux.HandleFunc("GET /api/v1/graph/neighborhood", datasetHandler((*Dataset).handleNeighborhood))
+	mux.HandleFunc("GET /api/v1/graph/path", datasetHandler((*Dataset).handlePath))
+	mux.HandleFunc("GET /api/v1/graph/components", datasetHandler((*Dataset).handleComponents))
+	mux.HandleFunc("GET /api/v1/impact", datasetHandler((*Dataset).handleImpact))
 	if workbench != nil {
 		mux.HandleFunc("GET /api/v1/workbench/session", workbench.handleSession)
+		mux.HandleFunc("GET /api/v1/workbench/directories", workbench.handleDirectories)
 		mux.HandleFunc("POST /api/v1/workbench/jobs", workbench.handleJobs)
 		mux.HandleFunc("GET /api/v1/workbench/jobs/{jobID}", workbench.handleJob)
 		mux.HandleFunc("DELETE /api/v1/workbench/jobs/{jobID}", workbench.handleCancelJob)
 	}
-	mux.HandleFunc("/", dataset.handleStaticSite)
+	mux.HandleFunc("/", datasetHandler((*Dataset).handleStaticSite))
 	return securityHeaders(mux, workbench != nil)
 }
 

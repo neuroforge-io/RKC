@@ -24,7 +24,10 @@ import (
 
 const (
 	stagePayloadSchemaVersion = "1.0"
-	maximumStagePayloadBytes  = int64(256 << 20)
+	// Compiler-grade SCIP fragments can approach the canonical 512 MiB bundle
+	// ceiling on large repositories. Keep the immutable stage cache aligned so
+	// enabling cache reuse cannot make an otherwise admissible scan fail.
+	maximumStagePayloadBytes = int64(512 << 20)
 )
 
 // StageCache stores immutable stage payloads in CAS and deterministic cache
@@ -264,7 +267,7 @@ func (cache *StageCache) Invalidate(ctx context.Context, key string) error {
 }
 
 func (cache *StageCache) putPayload(payload []byte) (string, error) {
-	if int64(len(payload)) > maximumStagePayloadBytes {
+	if stagePayloadExceedsLimit(int64(len(payload))) {
 		return "", fmt.Errorf(
 			"stage payload is %d bytes; maximum is %d",
 			len(payload), maximumStagePayloadBytes,
@@ -278,6 +281,10 @@ func (cache *StageCache) putPayload(payload []byte) (string, error) {
 		return "", err
 	}
 	return object.Digest, nil
+}
+
+func stagePayloadExceedsLimit(size int64) bool {
+	return size < 0 || size > maximumStagePayloadBytes
 }
 
 func (cache *StageCache) readPayload(digest string) (stageFragmentPayload, error) {

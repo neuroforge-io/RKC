@@ -1,11 +1,12 @@
 # Contributing
 
-RKC accepts contributions under the MIT License using a Developer Certificate
-of Origin sign-off. The license requires retention of its copyright and
-permission notice in copies or substantial portions. NeuroForgeIO credit is
-requested, but is not an additional license condition. The project values
-reproducible facts, explicit uncertainty, and small interfaces over clever
-coupling.
+RKC accepts contributions under the Apache License, Version 2.0, using a
+Developer Certificate of Origin sign-off. Unless explicitly stated otherwise,
+submitted contributions are licensed under Apache-2.0 section 5. Copyright
+remains with each applicable holder; the DCO certifies the right to contribute
+but does not assign ownership to NeuroForgeIO. NeuroForgeIO publishes and
+maintains RKC. The project values reproducible facts, explicit uncertainty, and
+small interfaces over clever coupling.
 
 ## Before opening a change
 
@@ -73,7 +74,8 @@ An official language or framework adapter must include:
 Do not open a public issue for a suspected vulnerability. Follow `SECURITY.md`.
 
 ---
-_RKC is stewarded by **NeuroForgeIO** and released under the **MIT License**.
-Redistributions must retain the copyright and permission notices required by
-that license. Attribution to NeuroForgeIO is requested, but is not an additional
-license condition._
+_RKC is open source, published and maintained by **NeuroForgeIO**, under the
+**Apache License, Version 2.0**. Copyright 2026 NeuroForgeIO and RKC
+contributors. Redistributed
+works must preserve applicable license and `NOTICE` terms. Third-party materials
+retain their own licenses and ownership._

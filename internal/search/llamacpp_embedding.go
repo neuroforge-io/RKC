@@ -77,13 +77,13 @@ type LlamaCPPEmbedder struct {
 func NewLlamaCPPEmbedder(config LlamaCPPEmbeddingConfig) (*LlamaCPPEmbedder, error) {
 	var priorityCheck func() error
 	if !config.UnsafeDisableResourceGuard {
-		if err := resourceguard.CheckHigherPriority(); err != nil {
+		if err := resourceguard.CurrentPriorityCheck()(); err != nil {
 			return nil, err
 		}
 		if err := resourceguard.RequireCurrentProcessLowPriority(); err != nil {
 			return nil, err
 		}
-		priorityCheck = resourceguard.CheckHigherPriority
+		priorityCheck = resourceguard.CurrentPriorityCheck()
 	}
 	expectedExecutable, err := expectedEmbeddingSHA256(
 		config.ExpectedExecutableSHA256, "llama-embedding executable", !config.UnsafeDisableResourceGuard,

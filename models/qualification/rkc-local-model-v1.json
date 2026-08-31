@@ -10,7 +10,7 @@
     "maximum_tasks": 128,
     "maximum_parallel_models": 1,
     "sequential_roles": true,
-    "require_erais_idle": true
+    "require_higher_priority_idle": true
   },
   "generation": {
     "asset_id": "qwen3.5-4b-q4-0-candidate",

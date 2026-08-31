@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/neuroforge-io/RKC/internal/builtinplugins"
+	"github.com/neuroforge-io/RKC/internal/resourceguard"
 )
 
 type doctorCheck struct {
@@ -95,6 +96,7 @@ func runDoctor(args []string) error {
 	}
 	checks = append(checks, gitCheck)
 	checks = append(checks, pythonIsolationCheck(cfg, err))
+	checks = append(checks, higherPriorityPolicyCheck())
 
 	fatalFailures := 0
 	warnings := 0
@@ -133,6 +135,58 @@ func runDoctor(args []string) error {
 		return fmt.Errorf("doctor found %d optional capability warning(s) in strict mode", warnings)
 	}
 	return nil
+}
+
+func higherPriorityPolicyCheck() doctorCheck {
+	markers, markerErr := resourceguard.HigherPriorityMarkersFromEnvironment()
+	if markerErr != nil {
+		return doctorCheck{
+			Name:        "higher-priority-policy",
+			Status:      "fail",
+			Detail:      markerErr.Error() + "; execution fails closed",
+			Fatal:       false,
+			Remediation: "unset RKC_HIGHER_PRIORITY_MARKERS or set 1-16 unique lower-case ASCII markers (32 bytes each, 255 bytes total) separated by commas",
+		}
+	}
+	markerSummary := fmt.Sprintf("%d configured workload marker(s)", len(markers))
+	policy := resourceguard.PolicyYield
+	if rawPolicy, present := os.LookupEnv(resourceguard.HigherPriorityPolicyEnvironment); present && strings.TrimSpace(rawPolicy) != "" {
+		parsed, err := resourceguard.ParseHigherPriorityPolicy(rawPolicy)
+		if err != nil {
+			return doctorCheck{
+				Name:        "higher-priority-policy",
+				Status:      "fail",
+				Detail:      err.Error() + "; execution fails closed to refuse",
+				Fatal:       false,
+				Remediation: "set RKC_HIGHER_PRIORITY_POLICY to yield or refuse",
+			}
+		}
+		policy = parsed
+	}
+	switch policy {
+	case resourceguard.PolicyRefuse:
+		return doctorCheck{
+			Name:   "higher-priority-policy",
+			Status: "pass",
+			Detail: "refuse: RKC does not start while a configured higher-priority workload is visible; " + markerSummary,
+			Fatal:  false,
+		}
+	case resourceguard.PolicyYield:
+		threshold, thresholdErr := resourceguard.LoadMaxFractionFromEnvironment()
+		if thresholdErr != nil {
+			return doctorCheck{
+				Name:        "higher-priority-policy",
+				Status:      "fail",
+				Detail:      thresholdErr.Error() + "; execution fails closed",
+				Fatal:       false,
+				Remediation: "unset RKC_HIGHER_PRIORITY_LOAD_MAX or set it to a number in (0, 16]",
+			}
+		}
+		detail := fmt.Sprintf("yield: RKC stays subordinate and yields when configured higher-priority work reaches %.0f%% of one core; %s", threshold*100, markerSummary)
+		return doctorCheck{Name: "higher-priority-policy", Status: "pass", Detail: detail, Fatal: false}
+	default:
+		return doctorCheck{Name: "higher-priority-policy", Status: "fail", Detail: "internal policy selection is invalid", Fatal: false}
+	}
 }
 
 func pythonIsolationCheck(cfg Configuration, configurationErr error) doctorCheck {

@@ -7,8 +7,8 @@ import (
 
 func TestCommandsAreUniqueValidAndIndependentlyOwned(t *testing.T) {
 	commands := Commands(Context{})
-	if len(commands) != 20 {
-		t.Fatalf("command count = %d, want 20", len(commands))
+	if len(commands) != 25 {
+		t.Fatalf("command count = %d, want 25", len(commands))
 	}
 	seen := make(map[string]bool, len(commands))
 	for _, command := range commands {
@@ -36,6 +36,9 @@ func TestCommandsAreUniqueValidAndIndependentlyOwned(t *testing.T) {
 		"check":      {"--coverage", ".rkc/coverage.json"},
 		"query":      {"--dir", ".rkc", "resource guard"},
 		"synthesize": {"--packet-only=true", "--dir", ".rkc", "--query", "How does this repository work?"},
+		"flow":       {"report", "--dir", ".rkc"},
+		"trace":      {"report", "--dir", ".rkc"},
+		"history":    {"--help"},
 		"snapshots":  {"list", "--help"},
 		"runs":       {"list", "--help"},
 		"plugins":    {"list", "--help"},
@@ -66,6 +69,12 @@ func TestCommandsBindExactDatasetAndCoverageSelections(t *testing.T) {
 	}
 	if got, want := byName["query"].DefaultArgs, []string{"--database", "/tmp/catalogue.sqlite", "--snapshot", "snapshot-1", "resource guard"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("query defaults = %#v, want %#v", got, want)
+	}
+	if got, want := byName["flow"].DefaultArgs, []string{"report", "--database", "/tmp/catalogue.sqlite", "--snapshot", "snapshot-1"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("flow defaults = %#v, want %#v", got, want)
+	}
+	if got, want := byName["trace"].DefaultArgs, []string{"report", "--database", "/tmp/catalogue.sqlite", "--snapshot", "snapshot-1"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("trace defaults = %#v, want %#v", got, want)
 	}
 	context.DatasetArgs[1] = "changed"
 	if byName["query"].DefaultArgs[1] != "/tmp/catalogue.sqlite" {

@@ -1,8 +1,8 @@
 # Operations
 
-RKC-owned operations guidance is released by **NeuroForgeIO** under the
-[MIT License](../LICENSE); retain its copyright and permission notice when
-redistributing substantial portions.
+Original RKC operations guidance is copyright 2026 **NeuroForgeIO** and
+released under [Apache-2.0](../LICENSE); preserve the applicable license and
+`NOTICE` terms when redistributing it.
 
 ## Deployment profiles
 
@@ -34,7 +34,15 @@ rkc open /path/to/repository
 On Linux the installed binary self-reexecutes through the exact one-core,
 nice-19, idle-I/O, 4 GiB pressure / 4.5 GiB hard-memory envelope before any
 atlas, cache, journal, or snapshot write. The outer guard continuously checks
-for higher-priority ERAIS/evaluation work, proves cleanup, and launches the
+for configured higher-priority workload classes under the active policy (the
+generic default is `torchrun,lm_eval`;
+`RKC_HIGHER_PRIORITY_MARKERS=training,benchmark` selects 1-16 unique lower-case
+ASCII markers of at most 32 bytes each and 255 bytes total; empty retains the
+default and invalid configuration fails closed). By
+default `yield`: proceed inside the subordinate envelope while such work merely
+runs, and stop promptly when its CPU load reaches the threshold; set
+`RKC_HIGHER_PRIORITY_POLICY=refuse` for the strict refusal), proves cleanup, and
+launches the
 desktop browser outside the disposable RKC service. `--no-browser` retains the
 printed URL for headless use. The default server is read-only and remains the
 portable macOS/Windows first-run path.
@@ -55,14 +63,19 @@ Running `scripts/with-rkc-limits.sh ./bin/rkc serve --workbench ...` is a
 low-level route for an existing atlas. Direct workbench
 serving requires `--ready-file` beneath an owner-private directory, rejects
 `--open`, and expects a trusted launcher to consume the receipt without logging
-its `browser_url`. It requires port `0` so the OS selects a fresh ephemeral
-loopback origin; fixed ports and non-loopback listeners fail closed. Generated
-browser policy forbids persistent workers and manifests. The readiness receipt
-is the authority for the resulting address.
-Commands that might create a separately managed Python or model unit fail
-closed until the session can prove one aggregate resource ceiling.
-Direct serving checks ERAIS before and after atlas preparation and continuously
-while serving, but `rkc open --workbench` is preferred when the outer monitor
+its `browser_url`. It requires port `0` so the OS selects an ephemeral loopback
+origin instead of deliberately reusing the fixed read-only port; non-loopback
+listeners fail closed. The OS can reuse a prior ephemeral port, so use a trusted
+browser profile. Generated browser policy forbids registration of new workers
+and manifests. The readiness receipt is the authority for the resulting address.
+Commands that might create a separately managed Python/model unit or launch
+acquisition, live-history, or custom helpers fail closed until the session can
+prove one aggregate resource ceiling and descendant cleanup boundary.
+Direct serving re-proves its resource envelope and checks higher-priority work
+before and after atlas preparation and continuously while serving (load-gated
+under the default `yield` policy;
+strict refusal with `RKC_HIGHER_PRIORITY_POLICY=refuse`), but
+`rkc open --workbench` is preferred when the outer monitor
 must be able to terminate work during the initial atlas load itself.
 
 ### CI
@@ -232,7 +245,8 @@ multi-architecture builds and SBOMs, vulnerability scanning, and a
 clean-environment installation test.
 
 ---
-_RKC is stewarded by **NeuroForgeIO** and released under the **MIT License**.
-Redistributions must retain the copyright and permission notices required by
-that license. Attribution to NeuroForgeIO is requested, but is not an additional
-license condition._
+_RKC is open source, published and maintained by **NeuroForgeIO**, under the
+**Apache License, Version 2.0**. Copyright 2026 NeuroForgeIO and RKC
+contributors. Redistributed
+works must preserve applicable license and `NOTICE` terms. Third-party materials
+retain their own licenses and ownership._

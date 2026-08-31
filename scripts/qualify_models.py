@@ -3,7 +3,7 @@
 
 This command never downloads assets and never changes model defaults. It
 requires a previously built pinned runtime, checksum-verified cached models,
-an idle ERAIS workload, and the active low-priority cgroup. Generation and
+no blocking configured higher-priority workload, and the active low-priority cgroup. Generation and
 embedding servers are started sequentially and bind only to authenticated
 loopback sockets.
 """
@@ -136,7 +136,7 @@ def _validate_spec(spec: dict[str, object], lock: model_assets.ModelLock) -> Non
         "maximum_tasks": 128,
         "maximum_parallel_models": 1,
         "sequential_roles": True,
-        "require_erais_idle": True,
+        "require_higher_priority_idle": True,
     }
     for key, expected in expected_resources.items():
         if resources.get(key) != expected:
@@ -1407,7 +1407,7 @@ def main(argv: list[str] | None = None) -> int:
             },
             "resource_guard": {
                 "cgroup_memory_peak_bytes": _current_cgroup_peak(),
-                "erais_idle_at_completion": not model_assets.active_priority_processes(),
+                "higher_priority_workloads_idle_at_completion": not model_assets.active_priority_processes(),
             },
             "generation": generation,
             "embedding": embedding,

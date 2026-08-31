@@ -70,7 +70,7 @@ func TestScanCacheUXAndAdministrativeCommands(t *testing.T) {
 		t.Fatalf("cache inspect = %+v", inspect)
 	}
 	planOutput, err := captureStdout(t, func() error {
-		return runPlan([]string{
+		return runPlanContext(context.Background(), []string{
 			"--cache-dir", cacheDir,
 			"--no-python",
 			"--no-typescript",
@@ -173,7 +173,7 @@ func TestCacheCommandValidation(t *testing.T) {
 		{"one", "two"},
 		{"--definitely-invalid"},
 	} {
-		if err := runPlan(args); err == nil {
+		if err := runPlanContext(context.Background(), args); err == nil {
 			t.Errorf("runPlan(%v) succeeded", args)
 		}
 	}
@@ -193,6 +193,9 @@ func TestCacheCommandValidation(t *testing.T) {
 }
 
 func TestPlanFailsClosedAtConfigurationAndCacheBoundaries(t *testing.T) {
+	if err := runPlanContext(nil, nil); err == nil || !strings.Contains(err.Error(), "context is required") {
+		t.Fatalf("nil plan context = %v", err)
+	}
 	root := t.TempDir()
 	repository := filepath.Join(root, "repository")
 	writeTestFile(t, filepath.Join(repository, "main.go"), "package fixture\n")
@@ -200,7 +203,7 @@ func TestPlanFailsClosedAtConfigurationAndCacheBoundaries(t *testing.T) {
 
 	malformed := filepath.Join(root, "malformed.json")
 	writeTestFile(t, malformed, "{")
-	if err := runPlan([]string{"--config", malformed, "--no-cache", repository}); err == nil ||
+	if err := runPlanContext(context.Background(), []string{"--config", malformed, "--no-cache", repository}); err == nil ||
 		!strings.Contains(err.Error(), "decode configuration") {
 		t.Fatalf("malformed plan configuration = %v", err)
 	}
@@ -213,14 +216,14 @@ func TestPlanFailsClosedAtConfigurationAndCacheBoundaries(t *testing.T) {
 	secondConfig := filepath.Join(root, "second.json")
 	writeTestFile(t, firstConfig, string(configuration))
 	writeTestFile(t, secondConfig, string(configuration))
-	if err := runPlan([]string{
+	if err := runPlanContext(context.Background(), []string{
 		"--config", firstConfig, "--config", secondConfig, "--no-cache", repository,
 	}); err == nil || !strings.Contains(err.Error(), "--config must be supplied only once") {
 		t.Fatalf("repeated plan configuration = %v", err)
 	}
 
 	insideCache := filepath.Join(repository, ".cache-custom")
-	if err := runPlan([]string{
+	if err := runPlanContext(context.Background(), []string{
 		"--cache-dir", insideCache, "--no-plugins", "--no-frameworks", repository,
 	}); !errors.Is(err, safeoutput.ErrUnsafeTarget) {
 		t.Fatalf("repository-contained plan cache = %v", err)
@@ -228,7 +231,7 @@ func TestPlanFailsClosedAtConfigurationAndCacheBoundaries(t *testing.T) {
 
 	cacheFile := filepath.Join(root, "cache-file")
 	writeTestFile(t, cacheFile, "not a directory")
-	if err := runPlan([]string{
+	if err := runPlanContext(context.Background(), []string{
 		"--cache-dir", cacheFile, "--no-plugins", "--no-frameworks", repository,
 	}); err == nil {
 		t.Fatal("regular file was accepted as a plan cache root")
@@ -236,7 +239,7 @@ func TestPlanFailsClosedAtConfigurationAndCacheBoundaries(t *testing.T) {
 
 	cacheRoot := filepath.Join(root, "cache")
 	output, err := captureStdout(t, func() error {
-		return runPlan([]string{
+		return runPlanContext(context.Background(), []string{
 			"--cache-dir", cacheRoot, "--no-frameworks", "--no-secret-scan", repository,
 		})
 	})
@@ -244,7 +247,7 @@ func TestPlanFailsClosedAtConfigurationAndCacheBoundaries(t *testing.T) {
 		t.Fatalf("enabled plan cache output = %q, %v", output, err)
 	}
 
-	if err := runPlan([]string{
+	if err := runPlanContext(context.Background(), []string{
 		"--no-cache", "--max-files", "1", "--no-plugins", "--no-frameworks", repository,
 	}); err == nil || !strings.Contains(err.Error(), "plan inventory") {
 		t.Fatalf("plan inventory limit = %v", err)

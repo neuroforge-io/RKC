@@ -121,7 +121,7 @@ func TestWriteAllProducesCompleteDeterministicRedactedExport(t *testing.T) {
 			t.Fatalf("unexpected NotebookLM generated-file order: %v", notebookManifest.GeneratedFiles)
 		}
 		guide, err := os.ReadFile(filepath.Join(output, "notebooklm", "UPLOAD.md"))
-		if err != nil || !bytes.Contains(guide, []byte("Recommended upload order")) || !bytes.Contains(guide, []byte(markdownText(bundle.Snapshot.ID))) || !bytes.Contains(guide, []byte("NeuroForgeIO")) || !bytes.Contains(guide, []byte("MIT License")) || !bytes.Contains(guide, []byte("No admitted top-level regular text artifact")) || !bytes.Contains(guide, []byte("04_evidence_*.md")) {
+		if err != nil || !bytes.Contains(guide, []byte("Recommended upload order")) || !bytes.Contains(guide, []byte(markdownText(bundle.Snapshot.ID))) || !bytes.Contains(guide, []byte("NeuroForgeIO")) || !bytes.Contains(guide, []byte("Apache-2.0")) || !bytes.Contains(guide, []byte("No admitted top-level regular text artifact")) || !bytes.Contains(guide, []byte("04_evidence_*.md")) {
 			t.Fatalf("invalid NotebookLM upload guide: %q (error %v)", guide, err)
 		}
 		overview, err := os.ReadFile(filepath.Join(output, "notebooklm", "00_repository_overview.md"))
@@ -233,8 +233,8 @@ func TestNormalizedSourcesRejectTraversalSymlinksAndTOCTOU(t *testing.T) {
 
 func TestExportFormattingAndIntegrationHelpers(t *testing.T) {
 	t.Parallel()
-	if !strings.Contains(siteHTML, "NeuroForgeIO") || !strings.Contains(siteHTML, "MIT") {
-		t.Fatal("static atlas is missing NeuroForgeIO/MIT attribution")
+	if !strings.Contains(siteHTML, "NeuroForgeIO") || !strings.Contains(siteHTML, "Apache-2.0") {
+		t.Fatal("static atlas is missing NeuroForgeIO/Apache-2.0 attribution")
 	}
 	bundle := exportFixture(t.TempDir(), "x.go", []byte("x"))
 	coverage := model.BuildCoverage(bundle)
@@ -518,7 +518,7 @@ func TestBrowserAssetsAccessibilityAndSerializationContract(t *testing.T) {
 			":focus-visible", "prefers-reduced-motion", "prefers-contrast",
 			"forced-colors", "@media (max-width: 560px)", ".coverage-grid",
 			"max-height: min(48vh, 420px)", ".command-layout", ".danger",
-			".job-meta",
+			".job-meta", ".folder-controls", ".folder-browser[hidden]",
 		},
 		"app.js": {
 			"handleListKeys", "clearFilters", "aria-selected", "role=\"progressbar\"",
@@ -535,6 +535,7 @@ func TestBrowserAssetsAccessibilityAndSerializationContract(t *testing.T) {
 			"./data/bootstrap.json", "./data/search.json", "ensureFullStaticData",
 			"ensureStaticSearchData", "staticSearchRecords", "searchRevision",
 			"Loading complete offline details",
+			"browseWorkbenchDirectory", "/api/v1/workbench/directories?",
 		},
 	} {
 		content := string(assets[name])

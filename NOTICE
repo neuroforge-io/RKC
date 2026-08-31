@@ -1,16 +1,16 @@
 Repository Knowledge Compiler (RKC)
-Copyright (c) 2026 NeuroForgeIO and RKC contributors
+Copyright 2026 NeuroForgeIO and RKC contributors
 
-This product is developed by NeuroForgeIO and the RKC contributor community:
+RKC is an open-source project created and maintained by NeuroForgeIO:
 https://github.com/neuroforge-io/RKC
 
-RKC-owned source code, documentation, schemas, official plugins, and generated
-examples are released under the MIT License. The license requires copies or
-substantial portions to retain its copyright and permission notice. In
-addition, NeuroForgeIO requests that redistributions retain this NOTICE and
-credit NeuroForgeIO and the RKC contributors. That additional credit is a
-request, not a restriction on commercial use or derivative works.
+This product includes software developed by NeuroForgeIO and RKC contributors.
+NeuroForgeIO is the project publisher and maintainer. Copyright remains with
+each applicable holder; contribution under Apache-2.0 does not itself transfer
+ownership. Third-party dependencies, optional runtimes, model assets, generated
+output, and analyzed repository content retain their respective ownership and
+license terms; see THIRD_PARTY_NOTICES.md and LICENSES/ for the governed
+dependency inventory.
 
-Third-party dependencies, model weights, and optional llama.cpp builds retain
-their own terms. See THIRD_PARTY_NOTICES.md and the corresponding files under
-LICENSES/ for the complete, source-linked inventory.
+This NOTICE is provided for attribution and informational purposes.
+This NOTICE does not modify the Apache License, Version 2.0.

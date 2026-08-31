@@ -13,10 +13,11 @@ from unittest import mock
 
 VALIDATOR = Path(__file__).with_name("validate-docs.py").absolute()
 FOOTER = """---
-_RKC is stewarded by **NeuroForgeIO** and released under the **MIT License**.
-Redistributions must retain the copyright and permission notices required by
-that license. Attribution to NeuroForgeIO is requested, but is not an additional
-license condition._
+_RKC is open source, published and maintained by **NeuroForgeIO**, under the
+**Apache License, Version 2.0**. Copyright 2026 NeuroForgeIO and RKC
+contributors. Redistributed
+works must preserve applicable license and `NOTICE` terms. Third-party materials
+retain their own licenses and ownership._
 """
 
 
@@ -104,7 +105,7 @@ class ValidateDocsTests(unittest.TestCase):
         self.assertEqual(status, 1)
         messages = [issue["message"] for issue in report["issues"]]
         self.assertEqual(
-            messages.count("missing standard NeuroForgeIO/MIT attribution footer"),
+            messages.count("missing standard NeuroForgeIO/Apache-2.0 publisher and contributor footer"),
             2,
         )
 
@@ -151,7 +152,7 @@ class ValidateDocsTests(unittest.TestCase):
         messages = [issue["message"] for issue in report["issues"]]
         self.assertIn("unclosed ``` code fence", messages)
         self.assertIn(
-            "missing standard NeuroForgeIO/MIT attribution footer", messages
+            "missing standard NeuroForgeIO/Apache-2.0 publisher and contributor footer", messages
         )
 
     def test_query_only_link_is_local_noop_and_mixed_fence_stays_open(self) -> None:

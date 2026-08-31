@@ -4,6 +4,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/neuroforge-io/RKC/internal/configenv"
+	"github.com/neuroforge-io/RKC/internal/flow"
+	"github.com/neuroforge-io/RKC/internal/history"
+	"github.com/neuroforge-io/RKC/internal/runtime"
 	"os"
 	"path/filepath"
 	"sort"
@@ -73,6 +77,9 @@ type stagedScanState struct {
 	sourceIdentities map[string]sourceFileIdentity
 	scipInputs       []scipindex.Input
 	scipDigest       string
+	traceInputs      []runtime.TraceInput
+	traceDigest      string
+	historyInput     history.Input
 }
 
 // Scan executes the active compiler as an explicit deterministic DAG. Stage
@@ -115,6 +122,16 @@ func Scan(ctx context.Context, opts Options) (rkcmodel.Bundle, rkcmodel.Coverage
 	if err != nil {
 		return rkcmodel.Bundle{}, rkcmodel.Coverage{}, fmt.Errorf("prepare SCIP indexes: %w", err)
 	}
+	state.traceInputs, state.traceDigest, err = runtime.PrepareTraceInputs(ctx, opts.TracePaths)
+	if err != nil {
+		return rkcmodel.Bundle{}, rkcmodel.Coverage{}, fmt.Errorf("prepare runtime traces: %w", err)
+	}
+	if opts.HistoryPath != "" {
+		state.historyInput, err = history.PrepareInput(ctx, opts.HistoryPath)
+		if err != nil {
+			return rkcmodel.Bundle{}, rkcmodel.Coverage{}, fmt.Errorf("prepare history input: %w", err)
+		}
+	}
 	var cache scheduler.Cache
 	if opts.Cache != nil {
 		cache = opts.Cache
@@ -144,9 +161,9 @@ func Scan(ctx context.Context, opts Options) (rkcmodel.Bundle, rkcmodel.Coverage
 	if err != nil {
 		return rkcmodel.Bundle{}, rkcmodel.Coverage{}, fmt.Errorf("execute scan DAG: %w", err)
 	}
-	if len(report.Results) != 16 {
+	if len(report.Results) != 20 {
 		return rkcmodel.Bundle{}, rkcmodel.Coverage{}, fmt.Errorf(
-			"execute scan DAG: completed %d stages, want 16", len(report.Results),
+			"execute scan DAG: completed %d stages, want 20", len(report.Results),
 		)
 	}
 	if state.bundle.Snapshot.ID == "" || state.coverage.SnapshotID != state.bundle.Snapshot.ID {
@@ -171,7 +188,9 @@ func (state *stagedScanState) stages() []scheduler.Stage {
 			"redact_secrets": !state.opts.DisableSecretScan,
 		}, state.runNormalize),
 		state.analysisStage("env-keys", []string{"normalize"}, map[string]any{
-			"enabled": !state.opts.DisableFrameworks && !state.opts.DisableEnvKeys,
+			"enabled":        !state.opts.DisableFrameworks && !state.opts.DisableEnvKeys,
+			"plugin_id":      envkeys.PluginID,
+			"plugin_version": envkeys.PluginVersion,
 		}, func(file pluginapi.FileRef) bool {
 			return envkeys.IsCandidate(file.Path)
 		}, state.runEnvKeys),
@@ -187,7 +206,9 @@ func (state *stagedScanState) stages() []scheduler.Stage {
 			return file.Language == "json"
 		}, state.runJSONSchema),
 		state.analysisStage("manifests", []string{"normalize"}, map[string]any{
-			"enabled": !state.opts.DisableFrameworks && !state.opts.DisableManifests,
+			"enabled":        !state.opts.DisableFrameworks && !state.opts.DisableManifests,
+			"plugin_id":      manifest.PluginID,
+			"plugin_version": manifest.PluginVersion,
 		}, nil, state.runManifests),
 		state.analysisStage("markdown", []string{"normalize"}, map[string]any{
 			"enabled": !state.opts.DisableFrameworks && !state.opts.DisableMarkdown,
@@ -235,7 +256,30 @@ func (state *stagedScanState) stages() []scheduler.Stage {
 	stages = append(stages,
 		state.stage("merge", append([]string(nil), analysisStageIDs...), nil, state.runMerge),
 		state.stage("resolve", []string{"merge"}, nil, state.runResolve),
-		state.stage("validate", []string{"resolve"}, map[string]any{
+		state.stage("value-flow", []string{"resolve"}, map[string]any{
+			"enabled":        true,
+			"plugin_id":      flow.PluginID,
+			"plugin_version": flow.PluginVersion,
+		}, state.runValueFlow),
+		state.postMergeAnalysisStage("config-env", []string{"value-flow"}, map[string]any{
+			"enabled":        !state.opts.DisableFrameworks,
+			"plugin_id":      configenv.PluginID,
+			"plugin_version": configenv.PluginVersion,
+		}, nil, state.runConfigEnv),
+		state.stage("trace-import", []string{"config-env"}, map[string]any{
+			"enabled":      len(state.traceInputs) > 0,
+			"input_digest": state.traceDigest,
+			"input_count":  len(state.traceInputs),
+			"plugin_id":    runtime.PluginID,
+			"version":      runtime.PluginVersion,
+		}, state.runTraceImport),
+		state.stage("history-import", []string{"trace-import"}, map[string]any{
+			"enabled":      state.historyInput.Path != "",
+			"input_digest": state.historyInput.SHA256,
+			"plugin_id":    history.PluginID,
+			"version":      history.PluginVersion,
+		}, state.runHistoryImport),
+		state.stage("validate", []string{"history-import"}, map[string]any{
 			"schema_version":    rkcmodel.SchemaVersion,
 			"strict_vocabulary": true,
 			"require_evidence":  true,
@@ -283,6 +327,14 @@ func (state *stagedScanState) stageResources(stageID string) scheduler.ResourceR
 	case "merge", "resolve", "validate":
 		return scheduler.ResourceRequest{
 			MemoryMiB: 512, CPU: 1, OpenFiles: 32, IOClass: "normal",
+		}
+	case "value-flow":
+		// The flow pass retains the resolved canonical bundle while building a
+		// separately bounded fact/evidence fragment. Its 256 MiB fragment byte
+		// ceiling is therefore not the complete working-set declaration. A
+		// 512 MiB admission preserves the supported low-memory scan profile.
+		return scheduler.ResourceRequest{
+			MemoryMiB: 512, CPU: 1, Processes: 1, OpenFiles: 128, IOClass: "normal",
 		}
 	case "coverage":
 		return scheduler.ResourceRequest{
@@ -352,6 +404,40 @@ func (state *stagedScanState) analysisStage(
 	return stage
 }
 
+// postMergeAnalysisStage caches a fragment produced after the main merge and
+// applies restored payloads immediately. A normal analysis stage only records
+// its fragment for runMerge; using that contract after runMerge would silently
+// omit cache hits and fresh results from the canonical bundle.
+func (state *stagedScanState) postMergeAnalysisStage(
+	id string,
+	dependencies []string,
+	configuration any,
+	cacheInput func(pluginapi.FileRef) bool,
+	run func(context.Context) (scheduler.Result, error),
+) scheduler.Stage {
+	stage := state.analysisStage(id, dependencies, configuration, cacheInput, run)
+	restore := stage.Restore
+	stage.Restore = func(ctx context.Context, inputs scheduler.Inputs, result scheduler.Result) error {
+		if err := restore(ctx, inputs, result); err != nil {
+			return err
+		}
+		return state.mergeRecordedFragment(id)
+	}
+	return stage
+}
+
+func (state *stagedScanState) mergeRecordedFragment(stageID string) error {
+	state.mu.Lock()
+	fragment, ok := state.fragments[stageID]
+	state.mu.Unlock()
+	if !ok {
+		return fmt.Errorf("post-merge stage %s produced no fragment", stageID)
+	}
+	mergeFragment(&state.bundle, fragment)
+	dedupeBundle(&state.bundle)
+	return nil
+}
+
 func isGoCacheInput(file pluginapi.FileRef) bool {
 	path := filepath.ToSlash(file.Path)
 	base := filepath.Base(path)
@@ -392,12 +478,24 @@ func (state *stagedScanState) runInventory(ctx context.Context) (scheduler.Resul
 	repositoryIdentity := firstNonEmpty(origin, rootName)
 	repositoryID := rkcmodel.StableID("repository", repositoryIdentity)
 	snapshotID := stableSnapshotID(
-		repositoryIdentity, gitInfo.Commit, inv.Digest, state.scipDigest, state.opts,
+		repositoryIdentity,
+		gitInfo.Commit,
+		inv.Digest,
+		state.scipDigest,
+		state.traceDigest,
+		state.historyInput.SHA256,
+		state.opts,
 	)
 	if gitInfo.Dirty {
 		gitInfo.WorkingTreeDigest = inv.Digest
 	}
 	metadata := map[string]string{"scip_input_digest": state.scipDigest}
+	if state.traceDigest != "" {
+		metadata["trace_input_digest"] = state.traceDigest
+	}
+	if state.historyInput.SHA256 != "" {
+		metadata["history_input_digest"] = state.historyInput.SHA256
+	}
 	if origin != "" {
 		metadata["source_reference"] = origin
 	}
@@ -643,9 +741,6 @@ func (state *stagedScanState) runMerge(ctx context.Context) (scheduler.Result, e
 	if err := scipindex.VerifyInputs(ctx, state.scipInputs); err != nil {
 		return scheduler.Result{}, fmt.Errorf("reverify SCIP indexes: %w", err)
 	}
-	if err := reverifyInventoriedSources(state.root, state.files, state.sourceIdentities); err != nil {
-		return scheduler.Result{}, err
-	}
 	for _, stageID := range fragmentMergeOrder {
 		if fragment, ok := state.fragments[stageID]; ok {
 			mergeFragment(&state.bundle, fragment)
@@ -669,7 +764,95 @@ func (state *stagedScanState) runResolve(context.Context) (scheduler.Result, err
 	return state.bundleResult("resolve"), nil
 }
 
-func (state *stagedScanState) runValidate(context.Context) (scheduler.Result, error) {
+// runTraceImport applies validated runtime traces to the bundle: executed
+// spans, observed call edges, runtime evidence, and separate per-test results.
+// Aggregate coverage cannot truthfully attribute a call path to one test.
+func (state *stagedScanState) runTraceImport(ctx context.Context) (scheduler.Result, error) {
+	if len(state.traceInputs) == 0 {
+		return state.disabledResult("trace-import"), nil
+	}
+	traces := make([]runtime.Trace, 0, len(state.traceInputs))
+	for _, input := range state.traceInputs {
+		trace, err := runtime.LoadTrace(ctx, input)
+		if err != nil {
+			return scheduler.Result{}, err
+		}
+		traces = append(traces, trace)
+	}
+	for _, trace := range traces {
+		if _, err := runtime.Import(ctx, &state.bundle, trace); err != nil {
+			return scheduler.Result{}, fmt.Errorf("import trace %s: %w", trace.ID, err)
+		}
+	}
+	dedupeBundle(&state.bundle)
+	return state.bundleResult("trace-import"), nil
+}
+
+// runHistoryImport applies a compiled history to the bundle: symbol lifecycle
+// attributes and conservative supersedes edges for rename refactors.
+func (state *stagedScanState) runHistoryImport(ctx context.Context) (scheduler.Result, error) {
+	if state.historyInput.Path == "" {
+		return state.disabledResult("history-import"), nil
+	}
+	compiled, err := history.ReadCompiledFile(ctx, state.historyInput)
+	if err != nil {
+		return scheduler.Result{}, err
+	}
+	if _, err := history.Import(ctx, &state.bundle, compiled); err != nil {
+		return scheduler.Result{}, fmt.Errorf("import history %s: %w", state.historyInput.SHA256, err)
+	}
+	dedupeBundle(&state.bundle)
+	return state.bundleResult("history-import"), nil
+}
+
+// runConfigEnv compiles build configuration and environment contracts into
+// the graph: Go build tags, CI workflows, Terraform declarations, and
+// environment-variable declarations.
+func (state *stagedScanState) runConfigEnv(ctx context.Context) (scheduler.Result, error) {
+	if state.opts.DisableFrameworks {
+		return state.disabledResult("config-env"), nil
+	}
+	fragment, err := configenv.Extract(ctx, configenv.Options{Root: state.root, Files: state.files})
+	if err != nil {
+		fragment = rkcmodel.Fragment{Diagnostics: []rkcmodel.Diagnostic{
+			adapterError("RKC-CFG-3003", configenv.PluginID, err),
+		}}
+		mergeFragment(&state.bundle, fragment)
+		dedupeBundle(&state.bundle)
+		result := state.bundleResult("config-env")
+		result.DoNotCache = true
+		return result, nil
+	}
+	result, err := state.recordFragment("config-env", fragment, state.files, false)
+	if err != nil {
+		return scheduler.Result{}, err
+	}
+	if err := state.mergeRecordedFragment("config-env"); err != nil {
+		return scheduler.Result{}, err
+	}
+	return result, nil
+}
+
+// runValueFlow compiles the bounded interprocedural control-flow and
+// value-flow graphs over the resolved bundle. It is deterministic and bounded;
+// a diagnostic reports truncation instead of unbounded work.
+func (state *stagedScanState) runValueFlow(ctx context.Context) (scheduler.Result, error) {
+	fragment, stats, err := flow.Analyze(ctx, flow.Options{
+		Root: state.root, Files: state.files, Artifacts: state.bundle.Artifacts, Bundle: state.bundle,
+	})
+	if err != nil {
+		return scheduler.Result{}, err
+	}
+	mergeFragment(&state.bundle, fragment)
+	dedupeBundle(&state.bundle)
+	_ = stats
+	return state.bundleResult("value-flow"), nil
+}
+
+func (state *stagedScanState) runValidate(ctx context.Context) (scheduler.Result, error) {
+	if err := reverifyInventoriedSources(state.root, state.files, state.sourceIdentities); err != nil {
+		return scheduler.Result{}, err
+	}
 	report := rkcmodel.ValidateBundle(state.bundle, rkcmodel.ValidationOptions{
 		StrictVocabulary: true, RequireEvidence: true,
 	})

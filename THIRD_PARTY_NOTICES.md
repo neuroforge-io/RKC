@@ -1,12 +1,13 @@
 # Third-party notices
 
-RKC-owned source code, schemas, documentation, and built-in plugins are licensed
-under the MIT License as stated in [`LICENSE`](LICENSE). The MIT License requires
-copies or substantial portions to retain its copyright and permission notice.
-Attribution to NeuroForgeIO and retention of this notice are requested, but are
-not additional license conditions. RKC welcomes use in commercial products and
-derivative works. Third-party components retain their original licenses;
-inclusion here does not relicense them as MIT.
+Original RKC source code, schemas, documentation, and built-in plugins are
+copyright 2026 NeuroForgeIO and RKC contributors. They are licensed under the
+Apache License, Version 2.0, as stated in [`LICENSE`](LICENSE). NeuroForgeIO
+publishes and maintains the project; copyright remains with each applicable
+holder. RKC welcomes use in commercial products and derivative works subject to
+that license. Third-party components retain their original ownership and
+licenses; inclusion here does not relicense them as Apache-2.0 or make them
+property of NeuroForgeIO or RKC contributors.
 
 ## Components linked into RKC executables
 
@@ -89,11 +90,20 @@ licenses:
   The optional local build retains upstream `LICENSE`; its runtime receipt
   binds that file's path, byte count, SHA-256, `MIT` SPDX expression, and exact
   revision license URL, and reuse fails closed if the file or metadata changes.
-- Qwen3.5-2B and the locked `Qwen3.5-2B-Q4_K_M` GGUF derivative are
-  Apache-2.0 licensed. The quantized file is attributed to Bartowski and the
-  underlying model to Qwen.
-- Qwen3-Embedding-0.6B and its official locked Q8_0 GGUF are Apache-2.0
-  licensed by Qwen.
+The following table is the notice closure for every optional `assets[]` entry
+in the model lock. Asset IDs are the exact join keys used by the validator;
+revision, repository, license URL, byte count, and SHA-256 remain authoritative
+in the lock.
+
+| Locked asset ID | Kind | SPDX license | Upstream ownership / conversion |
+|---|---|---|---|
+| `llama.cpp-b10082-source` | source-archive | `MIT` | `llama.cpp` contributors |
+| `qwen3.5-2b-q4-k-m-candidate` | generation-model | `Apache-2.0` | Qwen model; Bartowski GGUF conversion |
+| `qwen3.5-4b-q4-0-candidate` | generation-model | `Apache-2.0` | Qwen model; Unsloth GGUF conversion |
+| `qwen3.5-0.8b-q4-0-candidate` | generation-model | `Apache-2.0` | Qwen model; `ggml-org` GGUF distribution |
+| `granite-4.0-h-1b-q5-k-m-candidate` | generation-model | `Apache-2.0` | IBM Granite model and GGUF distribution |
+| `gemma-4-e2b-it-qat-q4-0-candidate` | generation-model | `Apache-2.0` | Google Gemma model and QAT GGUF distribution |
+| `qwen3-embedding-0.6b-q8-0-candidate` | embedding-model | `Apache-2.0` | Qwen model and GGUF distribution |
 
 Downloading these components does not add them to an RKC distribution. Anyone
 who redistributes a combined package must preserve each upstream copyright,

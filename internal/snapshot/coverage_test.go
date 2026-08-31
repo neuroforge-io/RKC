@@ -1,6 +1,7 @@
 package snapshot
 
 import (
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -9,6 +10,7 @@ import (
 	"time"
 
 	"github.com/neuroforge-io/RKC/internal/cas"
+	"github.com/neuroforge-io/RKC/pkg/rkcmodel"
 )
 
 func TestTransactionLeaseProvesLivenessAndIdentity(t *testing.T) {
@@ -500,4 +502,354 @@ func TestOpenDetectsCorruptNestedLayouts(t *testing.T) {
 		t.Fatalf("openOwnedStoreRoot(extra marker fields) = %v", err)
 	}
 	_ = store
+}
+
+func TestBuildingValidationRejectsMarkerRecordAndInodeDrift(t *testing.T) {
+	t.Run("marker", func(t *testing.T) {
+		store := openTestStore(t)
+		transaction, err := store.Begin("marker-drift", nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _ = transaction.closeLease() })
+		markerPath := filepath.Join(transaction.dir, buildingMarkerName)
+		if err := os.WriteFile(markerPath, []byte("{}\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if err := transaction.validateBuildingMarker(); !errors.Is(err, ErrBuildingUnowned) {
+			t.Fatalf("validateBuildingMarker(marker drift) = %v", err)
+		}
+	})
+
+	t.Run("record", func(t *testing.T) {
+		store := openTestStore(t)
+		transaction, err := store.Begin("record-drift", nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _ = transaction.closeLease() })
+		recordPath := filepath.Join(transaction.dir, "snapshot.json")
+		if err := os.WriteFile(recordPath, []byte("{\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := validateBuildingDirectory(
+			transaction.dir,
+			transaction.identity,
+			transaction.marker,
+			"building",
+		); !errors.Is(err, ErrBuildingUnowned) || !strings.Contains(err.Error(), "invalid building record") {
+			t.Fatalf("validateBuildingDirectory(record drift) = %v", err)
+		}
+	})
+
+	t.Run("object-binding", func(t *testing.T) {
+		store := openTestStore(t)
+		transaction, err := store.Begin("binding-drift", nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _ = transaction.closeLease() })
+		transaction.record.BundleDigest = cas.DigestBytes([]byte("partial"))
+		if err := transaction.writeRecord(); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := validateBuildingDirectory(
+			transaction.dir,
+			transaction.identity,
+			transaction.marker,
+			"building",
+		); !errors.Is(err, ErrBuildingUnowned) || !strings.Contains(err.Error(), "object binding") {
+			t.Fatalf("validateBuildingDirectory(binding drift) = %v", err)
+		}
+	})
+
+	t.Run("inode", func(t *testing.T) {
+		store := openTestStore(t)
+		transaction, err := store.Begin("inode-drift", nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _ = transaction.closeLease() })
+		original := transaction.dir + "-original"
+		if err := os.Rename(transaction.dir, original); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Mkdir(transaction.dir, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := validateBuildingDirectory(
+			transaction.dir,
+			transaction.identity,
+			transaction.marker,
+			"building",
+		); !errors.Is(err, ErrBuildingUnowned) {
+			t.Fatalf("validateBuildingDirectory(inode drift) = %v", err)
+		}
+	})
+}
+
+func TestTransactionStoragePublicationAndLeaseErrorsFailClosed(t *testing.T) {
+	t.Run("object-store", func(t *testing.T) {
+		store := openTestStore(t)
+		transaction, err := store.Begin("object-store-failure", nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _ = transaction.closeLease() })
+		shaRoot := filepath.Join(store.Root(), "objects", "sha256")
+		if err := os.Rename(shaRoot, shaRoot+"-original"); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(shaRoot, []byte("not a directory"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if err := transaction.WriteBundle(
+			testBundle(transaction.record.SnapshotID, "object-store"),
+		); err == nil {
+			t.Fatal("WriteBundle with replaced object-store layout succeeded")
+		}
+	})
+
+	t.Run("snapshot-layout", func(t *testing.T) {
+		store := openTestStore(t)
+		transaction, err := store.Begin("snapshot-layout-failure", nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _ = transaction.closeLease() })
+		if err := transaction.WriteBundle(
+			testBundle(transaction.record.SnapshotID, "snapshot-layout"),
+		); err != nil {
+			t.Fatal(err)
+		}
+		snapshots := filepath.Join(store.Root(), "snapshots")
+		if err := os.Rename(snapshots, snapshots+"-original"); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Mkdir(snapshots, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := transaction.Commit(); !errors.Is(err, ErrStoreUnowned) {
+			t.Fatalf("Commit(replaced snapshot layout) = %v", err)
+		}
+	})
+
+	t.Run("closed-lease", func(t *testing.T) {
+		store := openTestStore(t)
+		transaction, err := store.Begin("closed-lease-abort", nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := transaction.closeLease(); err != nil {
+			t.Fatal(err)
+		}
+		if err := transaction.Abort("must retain without lease"); !errors.Is(err, ErrBuildingUnowned) {
+			t.Fatalf("Abort(closed lease) = %v", err)
+		}
+		if _, err := os.Lstat(transaction.dir); err != nil {
+			t.Fatalf("Abort(closed lease) removed unproven transaction: %v", err)
+		}
+	})
+}
+
+func TestPublishedValidationRejectsMarkerAndRecordDrift(t *testing.T) {
+	prepare := func(t *testing.T, id string) *Transaction {
+		t.Helper()
+		store := openTestStore(t)
+		transaction, err := store.Begin(id, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _ = transaction.closeLease() })
+		if err := transaction.WriteBundle(testBundle(id, id)); err != nil {
+			t.Fatal(err)
+		}
+		transaction.record.Status = "committed"
+		transaction.record.CommittedAt = time.Now().UTC()
+		if err := transaction.writeRecord(); err != nil {
+			t.Fatal(err)
+		}
+		return transaction
+	}
+
+	t.Run("marker", func(t *testing.T) {
+		transaction := prepare(t, "published-marker-drift")
+		if err := os.WriteFile(
+			filepath.Join(transaction.dir, buildingMarkerName),
+			[]byte("{}\n"),
+			0o644,
+		); err != nil {
+			t.Fatal(err)
+		}
+		if err := validatePublishedDirectory(
+			transaction.dir,
+			transaction.identity,
+			transaction.marker,
+			transaction.record.SnapshotID,
+		); err == nil || !strings.Contains(err.Error(), "ownership marker changed") {
+			t.Fatalf("validatePublishedDirectory(marker drift) = %v", err)
+		}
+	})
+
+	t.Run("record", func(t *testing.T) {
+		transaction := prepare(t, "published-record-drift")
+		if err := os.WriteFile(
+			filepath.Join(transaction.dir, "snapshot.json"),
+			[]byte("{\n"),
+			0o644,
+		); err != nil {
+			t.Fatal(err)
+		}
+		if err := validatePublishedDirectory(
+			transaction.dir,
+			transaction.identity,
+			transaction.marker,
+			transaction.record.SnapshotID,
+		); err == nil || !strings.Contains(err.Error(), "read published snapshot record") {
+			t.Fatalf("validatePublishedDirectory(record drift) = %v", err)
+		}
+	})
+}
+
+func TestStoreAndLayoutIdentityDriftFailsClosed(t *testing.T) {
+	t.Run("store-marker", func(t *testing.T) {
+		store := openTestStore(t)
+		if err := os.WriteFile(
+			filepath.Join(store.Root(), storeMarkerName),
+			[]byte("{}\n"),
+			0o644,
+		); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := store.CurrentID(); !errors.Is(err, ErrStoreUnowned) {
+			t.Fatalf("CurrentID(store marker drift) = %v", err)
+		}
+	})
+
+	for _, name := range []string{"building", "snapshots"} {
+		t.Run(name, func(t *testing.T) {
+			store := openTestStore(t)
+			path := filepath.Join(store.Root(), name)
+			if err := os.Rename(path, path+"-original"); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Mkdir(path, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			var err error
+			if name == "building" {
+				_, err = store.Recover(0)
+			} else {
+				_, _, _, err = store.Load("missing")
+			}
+			if !errors.Is(err, ErrStoreUnowned) {
+				t.Fatalf("%s layout replacement = %v", name, err)
+			}
+		})
+	}
+}
+
+func TestRecoverDefersFreshAbandonedTransaction(t *testing.T) {
+	store := openTestStore(t)
+	transaction, err := store.Begin("fresh-abandoned", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	directoryName := filepath.Base(transaction.dir)
+	if err := transaction.closeLease(); err != nil {
+		t.Fatal(err)
+	}
+
+	removed, err := store.Recover(time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(removed) != 0 {
+		t.Fatalf("Recover(maxAge) removed fresh abandoned transaction: %v", removed)
+	}
+	if _, err := os.Lstat(transaction.dir); err != nil {
+		t.Fatalf("Recover(maxAge) changed fresh transaction: %v", err)
+	}
+
+	removed, err = store.Recover(0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(removed) != 1 || removed[0] != directoryName {
+		t.Fatalf("Recover(0) = %v, want %q", removed, directoryName)
+	}
+}
+
+func TestLoadRejectsNonCanonicalCoverageAndUnknownRecordFields(t *testing.T) {
+	store := openTestStore(t)
+	bundle := testBundle("noncanonical-coverage", "coverage")
+	bundleBytes, err := rkcmodel.CanonicalJSON(bundle)
+	if err != nil {
+		t.Fatal(err)
+	}
+	bundleObject, err := store.CAS().PutBytes(bundleBytes)
+	if err != nil {
+		t.Fatal(err)
+	}
+	coverageBytes, err := json.MarshalIndent(rkcmodel.BuildCoverage(bundle), "", "  ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	coverageObject, err := store.CAS().PutBytes(coverageBytes)
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeRecordForTest(t, store, Record{
+		SnapshotID:     bundle.Snapshot.ID,
+		Status:         "committed",
+		BundleObject:   bundleObject.Digest,
+		CoverageObject: coverageObject.Digest,
+	})
+	if _, _, _, err := store.Load(bundle.Snapshot.ID); err == nil || !strings.Contains(err.Error(), "coverage is not canonical") {
+		t.Fatalf("Load(noncanonical coverage) = %v", err)
+	}
+
+	unknownID := "unknown-record-field"
+	unknownRoot := filepath.Join(store.Root(), "snapshots", unknownID)
+	if err := os.Mkdir(unknownRoot, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(
+		filepath.Join(unknownRoot, "snapshot.json"),
+		[]byte(`{"unknown":true}`),
+		0o644,
+	); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, _, err := store.Load(unknownID); err == nil || !strings.Contains(err.Error(), "unknown field") {
+		t.Fatalf("Load(unknown record field) = %v", err)
+	}
+}
+
+func TestMarkerAndAtomicWriteSafetyLimits(t *testing.T) {
+	root := t.TempDir()
+	marker := ownershipMarker{
+		SchemaVersion: ownershipSchema,
+		Producer:      ownershipProducer,
+		Kind:          buildingMarkerKind,
+		SnapshotID:    strings.Repeat("x", ownershipMarkerMax),
+		DirectoryName: "oversized",
+	}
+	if _, err := writeOwnershipMarker(root, "oversized-marker", marker); err == nil || !strings.Contains(err.Error(), "safety limit") {
+		t.Fatalf("writeOwnershipMarker(oversized) = %v", err)
+	}
+	if _, err := os.Lstat(filepath.Join(root, "oversized-marker")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("oversized ownership marker was published: %v", err)
+	}
+
+	parentFile := filepath.Join(root, "parent-file")
+	if err := os.WriteFile(parentFile, []byte("preserve"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeAtomic(filepath.Join(parentFile, "child"), []byte("data"), 0o600); err == nil {
+		t.Fatal("writeAtomic beneath regular file succeeded")
+	}
+	if data, err := os.ReadFile(parentFile); err != nil || string(data) != "preserve" {
+		t.Fatalf("writeAtomic changed parent file: %q, %v", data, err)
+	}
 }

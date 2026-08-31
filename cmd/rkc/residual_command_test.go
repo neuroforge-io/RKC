@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -13,7 +14,7 @@ func TestResidualPlanCacheAndDefaultPathUX(t *testing.T) {
 	repository := filepath.Join(root, "repository")
 	writeTestFile(t, filepath.Join(repository, "main.go"), "package fixture\n")
 	output, err := captureStdout(t, func() error {
-		return runPlan([]string{
+		return runPlanContext(context.Background(), []string{
 			"--no-cache", "--no-plugins", "--no-frameworks", "--no-secret-scan",
 			repository,
 		})
@@ -22,7 +23,9 @@ func TestResidualPlanCacheAndDefaultPathUX(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, expected := range []string{
-		"Scan plan:", "Stage cache: disabled", "Stages:", "Planning reads and hashes source",
+		"Scan plan:", "Stage cache: disabled", "Stages:", "Evidence opportunities:",
+		"runtime_capture_assertion", "authority=operator_assertion", "rkc", "trace", "capture",
+		"Planning reads and hashes source",
 	} {
 		if !strings.Contains(output, expected) {
 			t.Errorf("text plan missing %q: %s", expected, output)

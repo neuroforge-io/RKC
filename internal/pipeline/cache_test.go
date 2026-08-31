@@ -51,7 +51,7 @@ func TestStageCacheWarmReuseSelectiveInvalidationAndCleanEquivalence(t *testing.
 		t.Fatal(err)
 	}
 	wantWarm := []string{
-		"env-keys", "go-syntax", "json-schema", "manifests",
+		"config-env", "env-keys", "go-syntax", "json-schema", "manifests",
 		"markdown", "openapi", "secret-scan", "typescript-syntax",
 	}
 	if got := cachedStages(warmEvents); !equalStrings(got, wantWarm) {
@@ -117,9 +117,9 @@ func TestStageCacheWarmReuseSelectiveInvalidationAndCleanEquivalence(t *testing.
 	if err != nil {
 		t.Fatal(err)
 	}
-	if afterDryRun.EntryCount != report.EntryCount+3 {
+	if afterDryRun.EntryCount != report.EntryCount+4 {
 		t.Fatalf(
-			"dry-run changed cache or selective miss count unexpected: entries=%d, want %d",
+			"entries=%d, want %d",
 			afterDryRun.EntryCount,
 			report.EntryCount+3,
 		)

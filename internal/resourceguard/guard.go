@@ -26,9 +26,10 @@ var (
 	// ErrRSSLimitExceeded identifies a process stopped after its observed RSS
 	// exceeded the configured hard limit.
 	ErrRSSLimitExceeded = errors.New("model process exceeded its RSS limit")
-	// ErrHigherPriorityActive is returned before process spawn whenever an ERAIS
-	// training or evaluation workload is visible outside RKC's own ancestry.
-	ErrHigherPriorityActive         = errors.New("higher-priority ERAIS work is active")
+	// ErrHigherPriorityActive is returned before process spawn whenever a
+	// configured higher-priority workload blocks admission outside RKC's own
+	// ancestry.
+	ErrHigherPriorityActive         = errors.New("higher-priority workload blocks RKC work")
 	errLauncherExitedWithActiveUnit = errors.New("model launcher exited while its guarded unit was still active")
 )
 
@@ -46,8 +47,13 @@ type Config struct {
 	MaximumRSSBytes     int64
 	UnitPrefix          string
 	UnsafeDisableCgroup bool
+	// HigherPriorityPolicy selects how visible higher-priority workloads admit
+	// this command. PolicyUnset defers to the RKC_HIGHER_PRIORITY_POLICY
+	// environment value.
+	HigherPriorityPolicy Policy
 	// UnsafeDisablePriorityCheck is test-only and is accepted only together
-	// with UnsafeDisableCgroup. Production subprocesses always yield to ERAIS.
+	// with UnsafeDisableCgroup. Production subprocesses always yield to
+	// configured higher-priority workloads.
 	UnsafeDisablePriorityCheck bool
 }
 
@@ -62,11 +68,25 @@ type Command struct {
 
 // NewCommand constructs but does not start a guarded command.
 func NewCommand(ctx context.Context, config Config) (*Command, error) {
-	priorityCheck := CheckHigherPriority
+	priorityCheck := policyPriorityCheck(config.HigherPriorityPolicy)
 	if config.UnsafeDisablePriorityCheck {
 		priorityCheck = func() error { return nil }
 	}
 	return newCommand(ctx, config, priorityCheck)
+}
+
+// policyPriorityCheck returns the admission check selected by a policy. The
+// unset and unknown policies defer to the configured environment value, and
+// an invalid environment value fails closed to the strict check.
+func policyPriorityCheck(policy Policy) func() error {
+	switch policy {
+	case PolicyRefuse:
+		return CheckHigherPriority
+	case PolicyYield:
+		return CheckHigherPriorityYield
+	default:
+		return CurrentPriorityCheck()
+	}
 }
 
 func newCommand(ctx context.Context, config Config, priorityCheck func() error) (*Command, error) {

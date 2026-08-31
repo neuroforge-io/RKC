@@ -291,6 +291,7 @@ func TestRunServePublishesReadyServesAndShutsDownCleanly(t *testing.T) {
 	workbenchReady := filepath.Join(root, "workbench-ready.json")
 	workbenchDone := make(chan error, 1)
 	priorityArrived := make(chan struct{})
+	envelopeReproved := make(chan struct{}, 1)
 	priorityError := fmt.Errorf("%w: deterministic workbench fixture", resourceguard.ErrHigherPriorityActive)
 	admitted := false
 	go func() {
@@ -299,6 +300,13 @@ func TestRunServePublishesReadyServesAndShutsDownCleanly(t *testing.T) {
 			"--workbench", "--workspace", repository, "--workbench-timeout", "2s",
 		}, serveSafetyChecks{
 			requireLowPriority: func() error { return nil },
+			reproveLowPriority: func() error {
+				select {
+				case envelopeReproved <- struct{}{}:
+				default:
+				}
+				return nil
+			},
 			checkHigherPriority: func() error {
 				if !admitted {
 					admitted = true
@@ -336,6 +344,16 @@ func TestRunServePublishesReadyServesAndShutsDownCleanly(t *testing.T) {
 			t.Fatal("workbench readiness receipt was not published")
 		}
 		time.Sleep(10 * time.Millisecond)
+	}
+	select {
+	case <-envelopeReproved:
+	default:
+		t.Fatal("workbench did not re-prove its envelope before readiness")
+	}
+	select {
+	case <-envelopeReproved:
+	case <-time.After(time.Second):
+		t.Fatal("workbench did not periodically re-prove its envelope")
 	}
 	browserURL, err := url.Parse(workbenchReceipt.BrowserURL)
 	if err != nil {
@@ -406,7 +424,7 @@ func TestRunServePublishesReadyServesAndShutsDownCleanly(t *testing.T) {
 	}
 }
 
-func TestMonitorHigherPriorityIsTickDrivenAndCancellationSafe(t *testing.T) {
+func TestMonitorWorkbenchSafetyIsTickDrivenAndCancellationSafe(t *testing.T) {
 	t.Run("arrival", func(t *testing.T) {
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
@@ -415,7 +433,7 @@ func TestMonitorHigherPriorityIsTickDrivenAndCancellationSafe(t *testing.T) {
 		checks := 0
 		done := make(chan error, 1)
 		go func() {
-			done <- monitorHigherPriority(ctx, ticks, func() error {
+			done <- monitorWorkbenchSafety(ctx, ticks, func() error {
 				checks++
 				if checks == 2 {
 					return priorityError
@@ -441,7 +459,7 @@ func TestMonitorHigherPriorityIsTickDrivenAndCancellationSafe(t *testing.T) {
 		called := make(chan struct{}, 1)
 		done := make(chan error, 1)
 		go func() {
-			done <- monitorHigherPriority(ctx, ticks, func() error {
+			done <- monitorWorkbenchSafety(ctx, ticks, func() error {
 				called <- struct{}{}
 				return nil
 			})
@@ -463,6 +481,30 @@ func TestMonitorHigherPriorityIsTickDrivenAndCancellationSafe(t *testing.T) {
 	})
 }
 
+func TestWorkbenchSafetyRecheckFailsClosedOnEnvelopeDrift(t *testing.T) {
+	envelopeError := fmt.Errorf("%w: fixture", resourceguard.ErrLowPriorityEnvelope)
+	priorityChecks := 0
+	err := recheckWorkbenchSafety(func() error { return envelopeError }, func() error {
+		priorityChecks++
+		return nil
+	})
+	if !errors.Is(err, resourceguard.ErrLowPriorityEnvelope) || !strings.Contains(err.Error(), "resource envelope drifted") {
+		t.Fatalf("envelope recheck = %v", err)
+	}
+	if priorityChecks != 0 {
+		t.Fatalf("priority checks after envelope failure = %d", priorityChecks)
+	}
+
+	priorityError := fmt.Errorf("%w: fixture", resourceguard.ErrHigherPriorityActive)
+	err = recheckWorkbenchSafety(func() error { return nil }, func() error { return priorityError })
+	if !errors.Is(err, resourceguard.ErrHigherPriorityActive) || !strings.Contains(err.Error(), "higher-priority admission changed") {
+		t.Fatalf("priority recheck = %v", err)
+	}
+	if err := recheckWorkbenchSafety(nil, func() error { return nil }); err == nil {
+		t.Fatal("nil envelope recheck was accepted")
+	}
+}
+
 func TestServePrioritySafetyIsWorkbenchOnlyAndPrecedesDatasetLoading(t *testing.T) {
 	root := t.TempDir()
 	missingAtlas := filepath.Join(root, "missing-atlas")
@@ -473,6 +515,7 @@ func TestServePrioritySafetyIsWorkbenchOnlyAndPrecedesDatasetLoading(t *testing.
 		"--workbench", "--dir", missingAtlas, "--ready-file", ready,
 	}, serveSafetyChecks{
 		requireLowPriority: func() error { return nil },
+		reproveLowPriority: func() error { return nil },
 		checkHigherPriority: func() error {
 			checks++
 			return priorityError
@@ -497,6 +540,7 @@ func TestServePrioritySafetyIsWorkbenchOnlyAndPrecedesDatasetLoading(t *testing.
 			envelopeChecks++
 			return nil
 		},
+		reproveLowPriority:    func() error { return nil },
 		checkHigherPriority:   func() error { return nil },
 		priorityCheckInterval: time.Second,
 	})

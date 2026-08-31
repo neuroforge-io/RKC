@@ -79,12 +79,23 @@ No downstream component treats repository text as instructions.
   code; every response from a workbench-enabled origin is also non-cacheable;
 - browser policy forbids workers and web manifests, while workbench sessions
   require an OS-selected ephemeral loopback port rather than reusing the fixed
-  read-only origin, preventing a previously registered service worker from
-  intercepting a privileged bootstrap;
+  read-only origin; this reduces service-worker persistence risk but does not
+  prove that the OS will never reuse a prior port, so current-binary asset
+  regeneration, non-cacheable responses, and one-time/session capabilities
+  are defense in depth rather than proof that a legacy worker is absent; use a
+  trusted browser profile for the privileged workbench;
 - browser policy also forbids form submission, limiting navigation-based data
   disclosure even in read-only mode;
-- workbench model/Python vectors that could create separately managed units fail
-  closed until one aggregate session ceiling can be proved;
+- runtime trace schema 1.3 binds every observation to canonical source
+  path/size/SHA-256 plus repository content and commit affinity, revalidates the
+  tree around capture, rejects stale/foreign imports, and redacts dynamic test
+  and executable identifiers before persistence;
+- workbench model/Python vectors, doctor helper probes, remote acquisition,
+  custom Git/Python scan helpers, custom quickstart configuration, live Git
+  history compilation, and arbitrary-command runtime trace capture fail closed
+  until one aggregate session ceiling and descendant cleanup can be proved;
+  local bounded scan profiles plus inert history/trace verification and
+  reporting remain available;
 - plugin artifacts and manifests are digest locked;
 - canonical output is validated before publication;
 - Docker reference deployment is read-only, drops capabilities, and applies
@@ -282,7 +293,8 @@ A production release fails if:
 - release signatures, SBOM, or provenance are missing.
 
 ---
-_RKC is stewarded by **NeuroForgeIO** and released under the **MIT License**.
-Redistributions must retain the copyright and permission notices required by
-that license. Attribution to NeuroForgeIO is requested, but is not an additional
-license condition._
+_RKC is open source, published and maintained by **NeuroForgeIO**, under the
+**Apache License, Version 2.0**. Copyright 2026 NeuroForgeIO and RKC
+contributors. Redistributed
+works must preserve applicable license and `NOTICE` terms. Third-party materials
+retain their own licenses and ownership._

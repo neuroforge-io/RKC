@@ -347,6 +347,65 @@ func TestBuildCoverageAccountsForEvidenceDocumentationAndStatuses(t *testing.T) 
 	}
 }
 
+func TestBuildCoverageSeparatesAssertionsFromAuthenticatedRuntimeEvents(t *testing.T) {
+	assertionBundle := Bundle{
+		Nodes: []Node{
+			{ID: "asserted", Kind: "function", Attributes: map[string]any{
+				"execution_asserted_trace_ids": []string{"assertion"},
+			}},
+			{ID: "not-observed", Kind: "function", Attributes: map[string]any{
+				"execution_not_observed_trace_ids": []string{"assertion"},
+			}},
+			{ID: "orphan", Kind: "function", Attributes: map[string]any{
+				"execution_asserted_trace_ids":     []string{"missing"},
+				"execution_not_observed_trace_ids": []string{"missing"},
+			}},
+			{ID: "assertion-trace", Kind: "trace", Attributes: map[string]any{
+				"trace_id": "assertion", "producer_authenticated": false,
+				"capture_integrity_authenticated": true,
+				"call_observation_available":      true,
+			}},
+		},
+		Edges: []Edge{{
+			ID: "call", Kind: "calls", Resolution: ResolutionCompilerResolved,
+			Attributes: map[string]any{"observed": true, "observed_trace_ids": []string{"assertion"}},
+		}},
+		Evidence: []Evidence{{
+			ID: "asserted-test", Kind: "test_result",
+			Attributes: map[string]any{"trace_id": "assertion", "producer_authenticated": true},
+		}},
+	}
+	got := BuildCoverage(assertionBundle)
+	if got.RuntimeTraces != 1 || got.RuntimeProducerAuthenticatedTraces != 0 ||
+		got.RuntimeAssertionTraces != 1 || got.RuntimeCaptureIntegrityAssertions != 1 ||
+		got.RuntimeFunctionsExecutionAsserted != 1 || got.RuntimeFunctionsNotObserved != 1 ||
+		got.RuntimeProducerAuthenticatedTests != 0 || got.RuntimeCallObservationAvailable || got.RuntimeProducerObservedCallEdges != 0 ||
+		got.RuntimeProducerCallEdgeObservationRatio != 0 {
+		t.Fatalf("assertion crossed runtime authority boundary: %+v", got)
+	}
+
+	authenticated := assertionBundle
+	authenticated.Nodes = append(append([]Node(nil), assertionBundle.Nodes...), Node{
+		ID: "producer-trace", Kind: "trace", Attributes: map[string]any{
+			"trace_id": "producer", "producer_authenticated": true,
+			"call_observation_available": true,
+		},
+	})
+	authenticated.Edges = append([]Edge(nil), assertionBundle.Edges...)
+	authenticated.Edges[0].Attributes = map[string]any{
+		"observed": true, "observed_trace_ids": []string{"producer"},
+	}
+	authenticated.Evidence = []Evidence{{
+		ID: "producer-test", Kind: "test_result", Confidence: 1,
+		Attributes: map[string]any{"trace_id": "producer", "producer_authenticated": true, "status": "pass"},
+	}}
+	got = BuildCoverage(authenticated)
+	if got.RuntimeProducerAuthenticatedTraces != 1 || !got.RuntimeCallObservationAvailable ||
+		got.RuntimeProducerObservedCallEdges != 1 || got.RuntimeProducerAuthenticatedTests != 1 || got.RuntimeProducerCallEdgeObservationRatio != 1 {
+		t.Fatalf("authenticated runtime events were not counted: %+v", got)
+	}
+}
+
 func TestCoverageAndAttributeHelpersHandleZeroAndMalformedValues(t *testing.T) {
 	t.Parallel()
 

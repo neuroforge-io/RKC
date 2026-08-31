@@ -168,7 +168,7 @@ mixed-language demonstration atlas plus a complete-distribution SPDX SBOM.
 |---|---|
 | filesystem bundle/snapshot | transactional SQLite local runtime |
 | portable in-memory lexical index | SQLite FTS5/BM25 query implementation for durable snapshots |
-| journalled 16-stage DAG and verified invalidation cache | additional distributed scheduling |
+| journalled 20-stage DAG and verified invalidation cache | additional distributed scheduling |
 | guarded built-in Python worker | general WASI or OS-sandboxed third-party workers |
 | syntax plus SCIP compiler semantics | measured per-indexer accuracy corpus |
 | compact static browser | chunked TypeScript application with pagination |
@@ -178,7 +178,8 @@ mixed-language demonstration atlas plus a complete-distribution SPDX SBOM.
 | source checksums plus binary/distribution SPDX SBOMs | signed releases, container SBOM, provenance, transparency records |
 
 ---
-_RKC is stewarded by **NeuroForgeIO** and released under the **MIT License**.
-Redistributions must retain the copyright and permission notices required by
-that license. Attribution to NeuroForgeIO is requested, but is not an additional
-license condition._
+_RKC is open source, published and maintained by **NeuroForgeIO**, under the
+**Apache License, Version 2.0**. Copyright 2026 NeuroForgeIO and RKC
+contributors. Redistributed
+works must preserve applicable license and `NOTICE` terms. Third-party materials
+retain their own licenses and ownership._

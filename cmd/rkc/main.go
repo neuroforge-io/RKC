@@ -68,6 +68,8 @@ func dispatch(args []string) error {
 		return runImpact(args[1:])
 	case "components":
 		return runComponents(args[1:])
+	case "counterfactual":
+		return runCounterfactual(args[1:])
 	case "diff":
 		return runDiff(args[1:])
 	case "snapshots":
@@ -76,6 +78,14 @@ func dispatch(args []string) error {
 		return runDoctor(args[1:])
 	case "plugins":
 		return runPlugins(args[1:])
+	case "flow":
+		return runFlow(args[1:])
+	case "trace":
+		return runTrace(args[1:])
+	case "history":
+		return runHistory(args[1:])
+	case "scip":
+		return runScip(args[1:])
 	case "cache":
 		return runCache(args[1:])
 	case "runs":
@@ -103,9 +113,9 @@ func printUsage() {
 
 func printUsageTo(output io.Writer) error {
 	_, err := fmt.Fprint(output, `NeuroForgeIO · Repository Knowledge Compiler
-MIT-licensed open source. Copies or substantial portions must retain the
-copyright and permission notice. NeuroForgeIO credit and NOTICE retention are
-requested; neither is an additional license condition.
+Apache-2.0 open source. Copyright 2026 NeuroForgeIO and RKC contributors.
+Redistributions must preserve the applicable LICENSE and NOTICE terms;
+third-party materials retain their own licenses and ownership.
 
 Usage:
   rkc <command> [options]
@@ -137,11 +147,16 @@ Explore and explain:
   path         Find a bounded graph path between two nodes
   impact       Traverse bounded impact relationships from one node
   components   List strongly connected graph components
+  counterfactual Compare a route after bounded hypothetical node/edge removal
   diff         Compare two compiled atlas snapshots
 
 Storage and extension:
   snapshots    List, show, export, select, or recover snapshots
   plugins      List, validate, lock, or verify plugin manifests
+  scip         Generate, verify, or pin compiler-grade SCIP indexes
+  flow         Trace value-flow origins, sinks, paths, and environment reads
+  trace        Capture, verify, and report runtime execution evidence
+  history      Compile Git history into semantic symbol deltas
   cache        Inspect, verify, or prune the incremental stage cache
   runs         List or strictly inspect durable scheduler run journals
 

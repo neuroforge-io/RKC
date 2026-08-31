@@ -4,7 +4,7 @@
     {
       "id": "rkc.python-ast",
       "version": "0.2.1",
-      "manifest_sha256": "8fc275cf701dec44a4a36c98328f9d11fd65aaa32cd03759ce3bbc5de95a01eb",
+      "manifest_sha256": "472d8615bbcc0bd5f15d6cf742bb1d2b52b19abeea5a04fee7bbb538513c27af",
       "artifact_sha256": "8d547e65df41f5e2d57b9f3fc88c9882a5f48530edd5677c51c39b14863e8912",
       "runtime": "native-worker"
     }

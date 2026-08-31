@@ -1160,11 +1160,11 @@ portable analysis without claiming kernel resource isolation.
 
 ## Licensing
 
-RKC-owned work is MIT-licensed; see `LICENSE`, `NOTICE`, and
-`source/docs/BRANDING_AND_ATTRIBUTION.md`. The license requires copies or
-substantial portions to retain its copyright and permission notice.
-NeuroForgeIO credit and NOTICE retention are requested, but are not additional
-license conditions.
+RKC is published by NeuroForgeIO; copyright 2026 NeuroForgeIO and RKC
+contributors, Apache-2.0 licensed; see
+`LICENSE`, `NOTICE`, and `source/docs/BRANDING_AND_ATTRIBUTION.md`.
+Redistributions must satisfy the Apache License, Version 2.0, including the
+applicable LICENSE, changed-file notice, attribution, and NOTICE obligations.
 Linked third-party components retain their original terms; see
 `THIRD_PARTY_NOTICES.md` and
 `LICENSES/`. The exact audited Go module graph is retained at
@@ -1177,8 +1177,9 @@ stated explicitly in `source/docs/IMPLEMENTATION_STATUS.md` and
 is promoted until its grounded quality and resource gates pass, and team
 tenancy, third-party worker isolation, release signatures, and provenance
 remain separately governed scopes. `SBOM.spdx.json` is the complete
-distribution SBOM for this archive. RKC is developed by NeuroForgeIO and RKC
-contributors under the MIT License.
+distribution SBOM for this archive. RKC is published and maintained by
+NeuroForgeIO under the Apache License, Version 2.0; copyright remains with
+NeuroForgeIO and the applicable RKC contributors.
 """
     with (stage / "README-FIRST.md").open("x", encoding="utf-8") as handle:
         handle.write(content)
@@ -1323,9 +1324,9 @@ def write_distribution_sbom(stage: Path, identity: SourceIdentity) -> None:
                     "packageVerificationCodeValue": component_code
                 },
                 "licenseConcluded": "NOASSERTION",
-                "licenseDeclared": "MIT",
+                "licenseDeclared": "Apache-2.0",
                 "licenseInfoFromFiles": ["NOASSERTION"],
-                "copyrightText": "Copyright (c) 2026 NeuroForgeIO and RKC contributors",
+                "copyrightText": "Copyright 2026 NeuroForgeIO and RKC contributors",
                 "sourceInfo": (
                     f"Git commit {identity.commit}; Git tree {identity.tree}; "
                     f"target {platform}"
@@ -1462,7 +1463,7 @@ def stage_manifest(stage: Path, identity: SourceIdentity) -> None:
         "source_commit": identity.commit,
         "source_tree": identity.tree,
         "source_commit_time_unix": identity.commit_time_unix,
-        "project_license": "MIT",
+        "project_license": "Apache-2.0",
         "third_party_notices": "THIRD_PARTY_NOTICES.md",
         "go_module_lock": GO_MODULE_LOCK.as_posix(),
         "excluded_generated_files": ["MANIFEST.json", "SHA256SUMS.txt"],

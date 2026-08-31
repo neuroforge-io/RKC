@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/neuroforge-io/RKC/internal/lang/scipindex"
 	"github.com/neuroforge-io/RKC/internal/scheduler"
 	"github.com/neuroforge-io/RKC/pkg/rkcmodel"
 )
@@ -35,6 +36,7 @@ func TestSCIPSemanticStageCompilesAndCachesExactIndex(t *testing.T) {
 		scipTestBytes(2, occurrence),
 		scipTestBytes(3, symbolInfo),
 		scipTestString(4, "Rust"),
+		scipTestString(5, "fn main() {}\n"),
 		scipTestVarint(6, 1),
 	)
 	metadata := scipTestMessage(
@@ -51,6 +53,13 @@ func TestSCIPSemanticStageCompilesAndCachesExactIndex(t *testing.T) {
 	)
 	indexPath := filepath.Join(t.TempDir(), "index.scip")
 	if err := os.WriteFile(indexPath, index, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	prepared, _, err := scipindex.PrepareInputs(context.Background(), []string{indexPath})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := scipindex.MarkGeneratedByCurrentProcess(prepared[0]); err != nil {
 		t.Fatal(err)
 	}
 	cache, err := OpenStageCache(filepath.Join(t.TempDir(), "cache"))

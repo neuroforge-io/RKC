@@ -73,6 +73,11 @@ type TraverseOptions struct {
 	MaxDepth          int
 	MaxNodes          int
 	IncludeUnresolved bool
+	// SuppressedNodeIDs and SuppressedEdgeIDs define a derived traversal view.
+	// They never mutate the canonical graph and are primarily used by bounded
+	// structural-counterfactual analysis.
+	SuppressedNodeIDs map[string]struct{}
+	SuppressedEdgeIDs map[string]struct{}
 }
 
 // Neighborhood is a bounded breadth-first projection around one seed. Depths
@@ -121,24 +126,32 @@ func (index *Index) Neighborhood(seedID string, options TraverseOptions) (Neighb
 	return index.materializeNeighborhood(seedID, visited, edges, truncated), nil
 }
 
-// Path reports a bounded shortest-path search, including the inspected-node
-// count when no route is found. NodeIDs and EdgeIDs are ordered from source to
-// destination when Found is true.
+// Path reports a bounded shortest-path search, including whether an absent
+// route is an exhaustive result or an unresolved result cut off by a depth or
+// node cap. NodeIDs and EdgeIDs are ordered from source to destination when
+// Found is true. New search-state fields are omitted from JSON when false for
+// compatibility with existing successful-path consumers.
 type Path struct {
-	Found   bool            `json:"found"`
-	FromID  string          `json:"from_id"`
-	ToID    string          `json:"to_id"`
-	NodeIDs []string        `json:"node_ids,omitempty"`
-	EdgeIDs []string        `json:"edge_ids,omitempty"`
-	Nodes   []rkcmodel.Node `json:"nodes,omitempty"`
-	Edges   []rkcmodel.Edge `json:"edges,omitempty"`
-	Depth   int             `json:"depth,omitempty"`
-	Visited int             `json:"visited"`
+	Found             bool            `json:"found"`
+	FromID            string          `json:"from_id"`
+	ToID              string          `json:"to_id"`
+	NodeIDs           []string        `json:"node_ids,omitempty"`
+	EdgeIDs           []string        `json:"edge_ids,omitempty"`
+	Nodes             []rkcmodel.Node `json:"nodes,omitempty"`
+	Edges             []rkcmodel.Edge `json:"edges,omitempty"`
+	Depth             int             `json:"depth,omitempty"`
+	Visited           int             `json:"visited"`
+	Truncated         bool            `json:"truncated,omitempty"`
+	DepthLimitReached bool            `json:"depth_limit_reached,omitempty"`
+	NodeLimitReached  bool            `json:"node_limit_reached,omitempty"`
+	SearchExhausted   bool            `json:"search_exhausted,omitempty"`
 }
 
 // ShortestPath performs deterministic breadth-first search under the supplied
-// filters and limits. Missing endpoints return ErrNodeNotFound; an unreachable
-// destination is a successful result with Found false.
+// filters and limits. Missing endpoints return ErrNodeNotFound. Found false is
+// accompanied by SearchExhausted when the admissible frontier was fully
+// inspected, or Truncated plus the exact cap flags when route existence remains
+// unresolved.
 func (index *Index) ShortestPath(fromID, toID string, options TraverseOptions) (Path, error) {
 	if _, ok := index.Nodes[fromID]; !ok {
 		return Path{}, ErrNodeNotFound
@@ -155,10 +168,21 @@ func (index *Index) ShortestPath(fromID, toID string, options TraverseOptions) (
 	depth := map[string]int{fromID: 0}
 	queue := []string{fromID}
 	found := false
+	depthLimitReached := false
+	nodeLimitReached := false
 	for len(queue) > 0 && !found {
 		current := queue[0]
 		queue = queue[1:]
 		if depth[current] >= options.MaxDepth {
+			// Merely visiting a node at the configured depth is not truncation.
+			// The depth cap is material only when it suppresses an otherwise
+			// admissible step to a node the search has not inspected.
+			for _, step := range index.steps(current, options) {
+				if _, seen := depth[step.Next]; !seen {
+					depthLimitReached = true
+					break
+				}
+			}
 			continue
 		}
 		for _, step := range index.steps(current, options) {
@@ -166,7 +190,8 @@ func (index *Index) ShortestPath(fromID, toID string, options TraverseOptions) (
 				continue
 			}
 			if len(depth) >= options.MaxNodes {
-				break
+				nodeLimitReached = true
+				continue
 			}
 			depth[step.Next] = depth[current] + 1
 			previous[step.Next] = predecessor{nodeID: current, edgeID: step.Edge.ID}
@@ -177,7 +202,12 @@ func (index *Index) ShortestPath(fromID, toID string, options TraverseOptions) (
 			queue = append(queue, step.Next)
 		}
 	}
-	result := Path{Found: found, FromID: fromID, ToID: toID, Visited: len(depth)}
+	result := Path{
+		Found: found, FromID: fromID, ToID: toID, Visited: len(depth),
+		DepthLimitReached: depthLimitReached, NodeLimitReached: nodeLimitReached,
+	}
+	result.Truncated = result.DepthLimitReached || result.NodeLimitReached
+	result.SearchExhausted = !result.Found && !result.Truncated
 	if !found {
 		return result, nil
 	}
@@ -336,6 +366,15 @@ func (index *Index) steps(nodeID string, options TraverseOptions) []step {
 }
 
 func (index *Index) acceptEdge(edge rkcmodel.Edge, options TraverseOptions) bool {
+	if _, suppressed := options.SuppressedEdgeIDs[edge.ID]; suppressed {
+		return false
+	}
+	if _, suppressed := options.SuppressedNodeIDs[edge.From]; suppressed {
+		return false
+	}
+	if _, suppressed := options.SuppressedNodeIDs[edge.To]; suppressed {
+		return false
+	}
 	if !options.IncludeUnresolved && rkcmodel.NormalizeResolution(edge.Resolution) == rkcmodel.ResolutionUnresolved {
 		return false
 	}

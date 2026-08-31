@@ -3,10 +3,13 @@ info:
   title: Repository Knowledge Compiler Local API
   version: 0.3.0-reference
   license:
-    name: MIT
-    identifier: MIT
+    name: Apache License 2.0
+    identifier: Apache-2.0
   description: |
     Local API implemented by `rkc serve`. It exposes one exported RKC dataset.
+    Every dataset-bound response carries `X-RKC-Snapshot-ID`; clients that
+    combine parallel responses must require one identical value and bind it to
+    the manifest/coverage identities before presenting the result.
     The optional workbench routes exist only when a user explicitly enables the
     token-authenticated, loopback-only command surface under RKC's resource
     guard. The larger multi-repository service contract is retained in
@@ -20,6 +23,8 @@ paths:
       responses:
         '200':
           description: Process and dataset health.
+          headers:
+            X-RKC-Snapshot-ID: { $ref: '#/components/headers/SnapshotID' }
           content:
             application/json:
               schema: { $ref: '#/components/schemas/Health' }
@@ -29,6 +34,8 @@ paths:
       responses:
         '200':
           description: Snapshot manifest.
+          headers:
+            X-RKC-Snapshot-ID: { $ref: '#/components/headers/SnapshotID' }
           content:
             application/json:
               schema: { type: object, additionalProperties: true }
@@ -38,6 +45,8 @@ paths:
       responses:
         '200':
           description: Auditable coverage report.
+          headers:
+            X-RKC-Snapshot-ID: { $ref: '#/components/headers/SnapshotID' }
           content:
             application/json:
               schema: { type: object, additionalProperties: true }
@@ -47,6 +56,8 @@ paths:
       responses:
         '200':
           description: Bounded node, language, and edge-resolution facet values.
+          headers:
+            X-RKC-Snapshot-ID: { $ref: '#/components/headers/SnapshotID' }
           content:
             application/json:
               schema: { type: object, additionalProperties: true }
@@ -234,6 +245,29 @@ paths:
             application/json:
               schema: { type: object, additionalProperties: true }
         '403': { $ref: '#/components/responses/Problem' }
+  /api/v1/workbench/directories:
+    get:
+      operationId: listWorkbenchDirectories
+      description: >-
+        Lists a bounded set of child directories for the local graphical
+        folder picker. Symlink entries are not followed during enumeration.
+      parameters:
+        - $ref: '#/components/parameters/WorkbenchToken'
+        - name: path
+          in: query
+          description: Absolute path or a path relative to the workbench workspace.
+          schema: { type: string, maxLength: 4096 }
+      responses:
+        '200':
+          description: Canonical selected directory, parent, and bounded children.
+          headers:
+            Cache-Control:
+              schema: { type: string }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/WorkbenchDirectoryListing' }
+        '400': { $ref: '#/components/responses/Problem' }
+        '403': { $ref: '#/components/responses/Problem' }
   /api/v1/workbench/jobs:
     post:
       operationId: createWorkbenchJob
@@ -299,6 +333,11 @@ paths:
         '404': { $ref: '#/components/responses/Problem' }
         '409': { $ref: '#/components/responses/Problem' }
 components:
+  headers:
+    SnapshotID:
+      description: Immutable dataset generation selected once for this response.
+      required: true
+      schema: { type: string, minLength: 1 }
   parameters:
     Limit:
       name: limit
@@ -404,9 +443,30 @@ components:
         error: { type: string }
         cleanup_scope: { type: string, enum: [process_group, direct_process] }
       additionalProperties: true
+    WorkbenchDirectoryEntry:
+      type: object
+      required: [name, path]
+      additionalProperties: false
+      properties:
+        name: { type: string }
+        path: { type: string }
+    WorkbenchDirectoryListing:
+      type: object
+      required: [path, directories, truncated]
+      additionalProperties: false
+      properties:
+        path: { type: string }
+        parent: { type: string }
+        directories:
+          type: array
+          maxItems: 256
+          items: { $ref: '#/components/schemas/WorkbenchDirectoryEntry' }
+        truncated: { type: boolean }
   responses:
     ItemPage:
       description: A bounded result page.
+      headers:
+        X-RKC-Snapshot-ID: { $ref: '#/components/headers/SnapshotID' }
       content:
         application/json:
           schema: { $ref: '#/components/schemas/ItemPage' }

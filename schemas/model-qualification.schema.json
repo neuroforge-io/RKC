@@ -58,7 +58,7 @@
         "maximum_tasks",
         "maximum_parallel_models",
         "sequential_roles",
-        "require_erais_idle"
+        "require_higher_priority_idle"
       ],
       "properties": {
         "cpu_cores": {
@@ -82,7 +82,7 @@
         "sequential_roles": {
           "const": true
         },
-        "require_erais_idle": {
+        "require_higher_priority_idle": {
           "const": true
         }
       }

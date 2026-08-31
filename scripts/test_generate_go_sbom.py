@@ -234,7 +234,7 @@ class GenerateGoSBOMTests(unittest.TestCase):
         self.assertEqual(first["files"][0]["licenseInfoInFiles"], ["NOASSERTION"])
         self.assertFalse(first["packages"][0]["filesAnalyzed"])
         self.assertEqual(first["packages"][0]["licenseConcluded"], "NOASSERTION")
-        self.assertEqual(first["packages"][0]["licenseDeclared"], "MIT")
+        self.assertEqual(first["packages"][0]["licenseDeclared"], "Apache-2.0")
         self.assertIn(digest, first["documentNamespace"])
         self.assertIn(self.source_tree[:16], first["documentNamespace"])
         self.assertEqual(first["packages"][1]["licenseConcluded"], "NOASSERTION")

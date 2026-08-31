@@ -90,6 +90,62 @@ def fixture_asset(payload: bytes) -> model_assets.Asset:
 
 
 class ModelAssetTests(unittest.TestCase):
+    def test_priority_marker_environment_is_bounded_private_and_customizable(
+        self,
+    ) -> None:
+        self.assertEqual(
+            model_assets.configured_priority_markers({}),
+            (b"torchrun", b"lm_eval"),
+        )
+        self.assertEqual(
+            model_assets.configured_priority_markers(
+                {
+                    model_assets.HIGHER_PRIORITY_MARKERS_ENVIRONMENT: (
+                        "critical_train,batch2"
+                    )
+                }
+            ),
+            (b"critical_train", b"batch2"),
+        )
+        invalid = (
+            "critical_train,",
+            "critical_train,critical_train",
+            "CriticalTrain",
+            "critical-train",
+            "_critical",
+            "a" * (model_assets.MAX_HIGHER_PRIORITY_MARKER_LENGTH + 1),
+            "a" * (model_assets.MAX_HIGHER_PRIORITY_MARKER_BYTES + 1),
+            "a," * model_assets.MAX_HIGHER_PRIORITY_MARKER_COUNT + "a",
+        )
+        for value in invalid:
+            with self.subTest(value_length=len(value)):
+                with self.assertRaises(model_assets.PriorityBlocked):
+                    model_assets.parse_priority_markers(value)
+        sentinel = "SUPER_SECRET_MARKER_CONFIGURATION"
+        with self.assertRaises(model_assets.PriorityBlocked) as raised:
+            model_assets.parse_priority_markers(sentinel)
+        self.assertNotIn(sentinel, str(raised.exception))
+
+        names = (b"critical_train",)
+        self.assertTrue(
+            model_assets._matches_priority_process(
+                202,
+                b"python /workspace/critical_train/train.py",
+                b"python3",
+                set(),
+                names,
+            )
+        )
+        self.assertFalse(
+            model_assets._matches_priority_process(
+                202,
+                b"python /workspace/erais/train.py",
+                b"python3",
+                set(),
+                names,
+            )
+        )
+
     def test_priority_match_ignores_wrapper_ancestor_only(self) -> None:
         ancestors = {100, 101}
         wrapper = b"/bin/bash -lc echo erais; run child"

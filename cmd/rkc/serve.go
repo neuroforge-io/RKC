@@ -29,13 +29,15 @@ func runServe(args []string) (resultErr error) {
 func runServeWithContext(ctx context.Context, args []string) (resultErr error) {
 	return runServeWithSafety(ctx, args, serveSafetyChecks{
 		requireLowPriority:    resourceguard.RequireCurrentProcessLowPriority,
-		checkHigherPriority:   resourceguard.CheckHigherPriority,
+		reproveLowPriority:    resourceguard.RequireCurrentProcessReusableLowPriority,
+		checkHigherPriority:   resourceguard.CurrentPriorityCheck(),
 		priorityCheckInterval: time.Second,
 	})
 }
 
 type serveSafetyChecks struct {
 	requireLowPriority    func() error
+	reproveLowPriority    func() error
 	checkHigherPriority   func() error
 	priorityCheckInterval time.Duration
 }
@@ -87,7 +89,7 @@ func runServeWithSafety(ctx context.Context, args []string, safety serveSafetyCh
 	}
 	var executable string
 	if *workbenchEnabled {
-		if safety.requireLowPriority == nil || safety.checkHigherPriority == nil || safety.priorityCheckInterval <= 0 {
+		if safety.requireLowPriority == nil || safety.reproveLowPriority == nil || safety.checkHigherPriority == nil || safety.priorityCheckInterval <= 0 {
 			return errors.New("workbench safety checks are unavailable")
 		}
 		if err := safety.requireLowPriority(); err != nil {
@@ -112,12 +114,12 @@ func runServeWithSafety(ctx context.Context, args []string, safety serveSafetyCh
 		if err := dataset.PrepareWorkbenchBrowser(); err != nil {
 			return err
 		}
-		// Loading and validating a large atlas can take long enough for ERAIS to
-		// start after initial admission. Recheck immediately before any listener
-		// or bootstrap capability is published; the outer `rkc open` guard also
-		// monitors and can terminate this child throughout the load itself.
-		if err := safety.checkHigherPriority(); err != nil {
-			return fmt.Errorf("workbench priority changed during dataset preparation: %w", err)
+		// Loading and validating a large atlas can take long enough for
+		// higher-priority work to start after initial admission. Recheck before
+		// any listener or bootstrap capability is published; the outer `rkc open`
+		// guard also monitors and can terminate this child throughout the load.
+		if err := recheckWorkbenchSafety(safety.reproveLowPriority, safety.checkHigherPriority); err != nil {
+			return fmt.Errorf("workbench safety changed during dataset preparation: %w", err)
 		}
 		commandContext := servedWorkbenchCommandContext(dataset.Root, dataset.Manifest.ID, *database)
 		workbench, err = server.NewWorkbench(server.WorkbenchConfig{
@@ -160,19 +162,21 @@ func runServeWithSafety(ctx context.Context, args []string, safety serveSafetyCh
 	}
 	serveDone := make(chan error, 1)
 	go func() { serveDone <- httpServer.Serve(listener) }()
-	var priorityDone <-chan error
+	var safetyDone <-chan error
 	if workbench != nil {
 		monitorContext, stopMonitor := context.WithCancel(ctx)
 		priorityTicker := time.NewTicker(safety.priorityCheckInterval)
 		monitorDone := make(chan error, 1)
 		go func() {
-			monitorDone <- monitorHigherPriority(monitorContext, priorityTicker.C, safety.checkHigherPriority)
+			monitorDone <- monitorWorkbenchSafety(monitorContext, priorityTicker.C, func() error {
+				return recheckWorkbenchSafety(safety.reproveLowPriority, safety.checkHigherPriority)
+			})
 		}()
 		defer func() {
 			priorityTicker.Stop()
 			stopMonitor()
 		}()
-		priorityDone = monitorDone
+		safetyDone = monitorDone
 	}
 	if *openBrowser {
 		if !loopbackListenAddress(*addr) {
@@ -189,7 +193,7 @@ func runServeWithSafety(ctx context.Context, args []string, safety serveSafetyCh
 			return nil
 		}
 		return err
-	case priorityErr := <-priorityDone:
+	case safetyErr := <-safetyDone:
 		// Stop and reap command jobs before giving HTTP connections their grace
 		// period. That makes higher-priority arrival a real compute preemption,
 		// not merely a refusal to accept new browser requests.
@@ -197,28 +201,28 @@ func runServeWithSafety(ctx context.Context, args []string, safety serveSafetyCh
 		workbenchErr := workbench.Close(closeContext)
 		cancel()
 		workbenchClosed = true
-		return errors.Join(priorityErr, workbenchErr, shutdownHTTPServer(httpServer, serveDone))
+		return errors.Join(safetyErr, workbenchErr, shutdownHTTPServer(httpServer, serveDone))
 	case <-ctx.Done():
 		shutdownErr := shutdownHTTPServer(httpServer, serveDone)
-		if priorityDone == nil {
+		if safetyDone == nil {
 			return shutdownErr
 		}
 		// The monitor derives from ctx, so it must report before shutdown is
 		// considered complete. Waiting here preserves a simultaneously observed
 		// higher-priority error instead of racing it against user cancellation.
-		var priorityErr error
+		var safetyErr error
 		select {
-		case priorityErr = <-priorityDone:
+		case safetyErr = <-safetyDone:
 		case <-time.After(2 * time.Second):
-			priorityErr = errors.New("workbench priority monitor did not stop within the shutdown bound")
+			safetyErr = errors.New("workbench safety monitor did not stop within the shutdown bound")
 		}
-		return errors.Join(priorityErr, shutdownErr)
+		return errors.Join(safetyErr, shutdownErr)
 	}
 }
 
-func monitorHigherPriority(ctx context.Context, ticks <-chan time.Time, check func() error) error {
+func monitorWorkbenchSafety(ctx context.Context, ticks <-chan time.Time, check func() error) error {
 	if check == nil || ticks == nil {
-		return errors.New("higher-priority monitor is unavailable")
+		return errors.New("workbench safety monitor is unavailable")
 	}
 	for {
 		select {
@@ -226,13 +230,26 @@ func monitorHigherPriority(ctx context.Context, ticks <-chan time.Time, check fu
 			return nil
 		case _, ok := <-ticks:
 			if !ok {
-				return errors.New("higher-priority monitor stopped unexpectedly")
+				return errors.New("workbench safety monitor stopped unexpectedly")
 			}
 			if err := check(); err != nil {
 				return err
 			}
 		}
 	}
+}
+
+func recheckWorkbenchSafety(reproveEnvelope, checkHigherPriority func() error) error {
+	if reproveEnvelope == nil || checkHigherPriority == nil {
+		return errors.New("workbench safety recheck is unavailable")
+	}
+	if err := reproveEnvelope(); err != nil {
+		return fmt.Errorf("resource envelope drifted: %w", err)
+	}
+	if err := checkHigherPriority(); err != nil {
+		return fmt.Errorf("higher-priority admission changed: %w", err)
+	}
+	return nil
 }
 
 func shutdownHTTPServer(httpServer *http.Server, serveDone <-chan error) error {
@@ -285,7 +302,7 @@ func validateServeAddress(address string, allowRemote, workbench bool) error {
 	if workbench {
 		_, port, err := net.SplitHostPort(address)
 		if err != nil || port != "0" {
-			return errors.New("workbench requires ephemeral port 0 so every browser origin is fresh")
+			return errors.New("workbench requires ephemeral port 0 to avoid deliberately reusing the fixed read-only browser origin")
 		}
 	}
 	if _, _, err := net.SplitHostPort(address); err == nil && !loopback && !allowRemote {

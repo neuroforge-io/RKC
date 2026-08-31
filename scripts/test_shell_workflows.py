@@ -100,6 +100,141 @@ class ShellWorkflowTests(unittest.TestCase):
             environment["PATH"] = os.pathsep.join(
                 (str(binary_dir), "/usr/bin", "/bin")
             )
+
+            def run_guard() -> subprocess.CompletedProcess[str]:
+                return subprocess.run(
+                    ["/bin/sh", str(ROOT / "scripts/with-rkc-limits.sh"), "true"],
+                    cwd=ROOT,
+                    env=environment,
+                    check=False,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    text=True,
+                    timeout=10,
+                )
+
+            refusal = os.environ.copy()
+            refusal["PATH"] = environment["PATH"]
+            refusal["RKC_HIGHER_PRIORITY_POLICY"] = "refuse"
+            refused = subprocess.run(
+                ["/bin/sh", str(ROOT / "scripts/with-rkc-limits.sh"), "true"],
+                cwd=ROOT,
+                env=refusal,
+                check=False,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                timeout=10,
+            )
+            self.assertEqual(refused.returncode, 75, refused.stderr)
+            self.assertIn("pid=999999 class=erais", refused.stderr)
+            self.assertIn("pid=888888 class=erais", refused.stderr)
+
+            yielded = run_guard()
+            self.assertEqual(yielded.returncode, 0, yielded.stderr)
+            self.assertIn("yield policy", yielded.stderr)
+            self.assertIn("pid=999999 class=erais", yielded.stderr)
+            self.assertIn("pid=888888 class=erais", yielded.stderr)
+
+            custom = refusal.copy()
+            custom["RKC_HIGHER_PRIORITY_MARKERS"] = "critical_train"
+            custom_result = subprocess.run(
+                ["/bin/sh", str(ROOT / "scripts/with-rkc-limits.sh"), "true"],
+                cwd=ROOT,
+                env=custom,
+                check=False,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                timeout=10,
+            )
+            self.assertEqual(custom_result.returncode, 75, custom_result.stderr)
+            self.assertIn("pid=999999 class=critical_train", custom_result.stderr)
+            self.assertNotIn("class=erais", custom_result.stderr)
+        self.assertNotIn(sentinel, refused.stderr)
+        self.assertNotIn("/private/project", refused.stderr)
+        self.assertNotIn("pid=NOT_A_PID", refused.stderr)
+        self.assertNotIn(sentinel, yielded.stderr)
+        self.assertNotIn("/private/project", yielded.stderr)
+        self.assertNotIn("pid=NOT_A_PID", yielded.stderr)
+
+    def test_resource_guard_rejects_invalid_marker_configuration_privately(
+        self,
+    ) -> None:
+        sentinel = "SUPER_SECRET_MARKER_CONFIGURATION"
+        invalid_values = (
+            "critical_train,",
+            "critical_train,critical_train",
+            "CriticalTrain",
+            "critical-train",
+            "_critical",
+            "a" * 33,
+            "a" * 256,
+            "a," * 16 + "a",
+            sentinel,
+        )
+        for value in invalid_values:
+            with self.subTest(value_length=len(value)):
+                environment = os.environ.copy()
+                environment["RKC_HIGHER_PRIORITY_MARKERS"] = value
+                result = subprocess.run(
+                    [
+                        "/bin/sh",
+                        str(ROOT / "scripts/with-rkc-limits.sh"),
+                        "true",
+                    ],
+                    cwd=ROOT,
+                    env=environment,
+                    check=False,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    text=True,
+                    timeout=10,
+                )
+                self.assertEqual(result.returncode, 2, result.stderr)
+                self.assertIn("RKC_HIGHER_PRIORITY_MARKERS", result.stderr)
+                self.assertNotIn(value, result.stderr)
+                self.assertNotIn(sentinel, result.stderr)
+
+    def test_resource_guard_propagates_priority_contract_to_service(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            binary_dir = Path(temporary)
+            scripts = {
+                "pgrep": "#!/bin/sh\nexit 1\n",
+                "ps": "#!/bin/sh\nprintf '1\\n'\n",
+                "readlink": "#!/bin/sh\nexit 1\n",
+                "systemd-run": (
+                    "#!/bin/sh\n"
+                    "case \" $* \" in "
+                    "*' --setenv=RKC_HIGHER_PRIORITY_POLICY=yield '*) ;; "
+                    "*) exit 91 ;; esac\n"
+                    "case \" $* \" in "
+                    "*' --setenv=RKC_HIGHER_PRIORITY_MARKERS="
+                    "critical_train,batch2 '*) ;; *) exit 92 ;; esac\n"
+                    "case \" $* \" in "
+                    "*' --setenv=RKC_HIGHER_PRIORITY_LOAD_MAX=0.25 '*) ;; "
+                    "*) exit 93 ;; esac\n"
+                    "exit 0\n"
+                ),
+            }
+            for name in ("ionice", "nice", "choom"):
+                scripts[name] = "#!/bin/sh\nexit 0\n"
+            for name, body in scripts.items():
+                path = binary_dir / name
+                path.write_text(body, encoding="utf-8")
+                path.chmod(0o700)
+            environment = os.environ.copy()
+            environment.update(
+                {
+                    "PATH": os.pathsep.join((str(binary_dir), "/usr/bin", "/bin")),
+                    "RKC_RESOURCE_GUARD_MODE": "service",
+                    "RKC_HIGHER_PRIORITY_POLICY": "yield",
+                    "RKC_HIGHER_PRIORITY_MARKERS": "critical_train,batch2",
+                    "RKC_HIGHER_PRIORITY_LOAD_MAX": "0.25",
+                    "XDG_RUNTIME_DIR": temporary,
+                    "DBUS_SESSION_BUS_ADDRESS": "unix:path=/tmp/fixture-bus",
+                }
+            )
             result = subprocess.run(
                 ["/bin/sh", str(ROOT / "scripts/with-rkc-limits.sh"), "true"],
                 cwd=ROOT,
@@ -110,12 +245,7 @@ class ShellWorkflowTests(unittest.TestCase):
                 text=True,
                 timeout=10,
             )
-        self.assertEqual(result.returncode, 75, result.stderr)
-        self.assertIn("pid=999999 class=erais", result.stderr)
-        self.assertIn("pid=888888 class=erais", result.stderr)
-        self.assertNotIn(sentinel, result.stderr)
-        self.assertNotIn("/private/project", result.stderr)
-        self.assertNotIn("pid=NOT_A_PID", result.stderr)
+        self.assertEqual(result.returncode, 0, result.stderr)
 
 
 if __name__ == "__main__":

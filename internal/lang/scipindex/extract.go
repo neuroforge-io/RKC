@@ -24,7 +24,7 @@ const (
 	// PluginID is the stable producer identity attached to imported SCIP facts.
 	PluginID = "rkc.scip"
 	// PluginVersion identifies RKC's bounded SCIP import semantics.
-	PluginVersion = "1.0.0"
+	PluginVersion = "1.1.0"
 
 	maximumDocuments   = 200_000
 	maximumSymbols     = 500_000
@@ -62,6 +62,7 @@ type extractor struct {
 	diagnostics map[string]rkcmodel.Diagnostic
 	parsed      map[string]map[string]struct{}
 	counts      indexCounts
+	documents   map[string]sourceIdentity
 
 	input    Input
 	metadata metadata
@@ -143,6 +144,7 @@ func (extractor *extractor) extractIndex(input Input) error {
 	)
 	extractor.input = input
 	extractor.metadata = metadata{}
+	extractor.documents = map[string]sourceIdentity{}
 	metadataSeen := false
 	firstField := true
 	for {
@@ -171,6 +173,9 @@ func (extractor *extractor) extractIndex(input Input) error {
 			}
 			extractor.metadata, err = parseMetadata(message)
 			if err != nil {
+				return fmt.Errorf("decode SCIP metadata in %q: %w", input.Path, err)
+			}
+			if _, err := projectRootDigest(extractor.metadata.projectRoot); err != nil {
 				return fmt.Errorf("decode SCIP metadata in %q: %w", input.Path, err)
 			}
 			metadataSeen = true
@@ -228,6 +233,9 @@ func (extractor *extractor) extractIndex(input Input) error {
 			input.Path, actualDigest, input.SHA256,
 		)
 	}
+	if err := extractor.verifySourceBinding(); err != nil {
+		return fmt.Errorf("verify SCIP source affinity for %q: %w", input.Path, err)
+	}
 	after, err := os.Lstat(input.Path)
 	if err != nil || !sameFileSnapshot(before, after) {
 		return fmt.Errorf("SCIP index %q changed while importing", input.Path)
@@ -251,17 +259,28 @@ func (extractor *extractor) extractDocument(document document) error {
 	if extractor.counts.occurrences > maximumOccurrences {
 		return fmt.Errorf("SCIP inputs exceed the %d-occurrence limit", maximumOccurrences)
 	}
-	canonical, err := sourcepath.ResolveRelative("", document.path)
-	if err != nil || canonical != document.path {
-		return fmt.Errorf("relative_path is not canonical and repository-contained")
+	canonical, contained := classifyDocumentPath(document.path)
+	if !canonical {
+		return fmt.Errorf("relative_path is not canonical")
+	}
+	if !contained {
+		return fmt.Errorf("relative_path escapes the repository")
 	}
 	file, ok := extractor.files[document.path]
 	if !ok {
 		return fmt.Errorf("relative_path does not identify an inventoried text artifact")
 	}
+	fileDigest := strings.ToLower(file.SHA256)
+	if !validDigest(fileDigest) || file.SizeBytes < 0 {
+		return errors.New("inventoried source identity is unavailable")
+	}
 	artifact, ok := extractor.artifacts[document.path]
 	if !ok || artifact.ID != file.ArtifactID {
 		return errors.New("relative_path artifact identity is unavailable")
+	}
+	if artifact.SizeBytes != file.SizeBytes ||
+		(artifact.SHA256 != "" && !strings.EqualFold(artifact.SHA256, fileDigest)) {
+		return errors.New("artifact and source inventory identities disagree")
 	}
 	source, err := sourcepath.ReadFile(extractor.root, document.path)
 	if err != nil {
@@ -270,10 +289,30 @@ func (extractor *extractor) extractDocument(document document) error {
 	if int64(len(source)) != file.SizeBytes {
 		return errors.New("source size changed after inventory")
 	}
+	sourceDigest := sha256.Sum256(source)
+	if hex.EncodeToString(sourceDigest[:]) != fileDigest {
+		return errors.New("source digest changed after inventory")
+	}
+	if _, duplicate := extractor.documents[document.path]; duplicate {
+		return errors.New("SCIP index contains a duplicate document path")
+	}
+	identity := sourceIdentity{
+		path: document.path, sha256: fileDigest, sizeBytes: file.SizeBytes,
+	}
+	if document.textPresent {
+		embeddedDigest := sha256.Sum256([]byte(document.text))
+		if int64(len(document.text)) != file.SizeBytes ||
+			hex.EncodeToString(embeddedDigest[:]) != fileDigest {
+			return errors.New("SCIP embedded document text does not match the inventoried source")
+		}
+	} else {
+		return errors.New("SCIP document has no embedded text; an editable sidecar cannot prove compiler/source causality, so regenerate it with 'rkc scip generate'")
+	}
 	mapper, err := newPositionMapper(source, document.positionEncoding)
 	if err != nil && len(document.occurrences) > 0 {
 		return err
 	}
+	extractor.documents[document.path] = identity
 	language := normalizeLanguage(document.language, file.Language)
 	definitions := make([]definitionContext, 0)
 	definitionBySymbol := map[string]occurrence{}
@@ -312,7 +351,10 @@ func (extractor *extractor) extractDocument(document document) error {
 		}
 	}
 	copyArtifact := artifact
-	copyArtifact.Status = "semantic_parsed"
+	copyArtifact.Status = "syntax_parsed"
+	if extractor.input.compilerAuthenticated {
+		copyArtifact.Status = "semantic_parsed"
+	}
 	if copyArtifact.Attributes == nil {
 		copyArtifact.Attributes = map[string]string{}
 	} else {
@@ -325,11 +367,38 @@ func (extractor *extractor) extractDocument(document document) error {
 	copyArtifact.Attributes["semantic_parser"] = "scip"
 	copyArtifact.Attributes["semantic_indexer"] = extractor.toolName()
 	copyArtifact.Attributes["semantic_index_sha256"] = extractor.input.SHA256
+	copyArtifact.Attributes["semantic_authority"] = extractor.producerAuthentication()
 	extractor.fragment.Artifacts = append(extractor.fragment.Artifacts, copyArtifact)
 	if extractor.parsed[artifact.ID] == nil {
 		extractor.parsed[artifact.ID] = map[string]struct{}{}
 	}
 	extractor.parsed[artifact.ID][extractor.input.SHA256] = struct{}{}
+	return nil
+}
+
+func (extractor *extractor) verifySourceBinding() error {
+	binding := extractor.input.SourceBinding
+	if binding == nil {
+		return nil
+	}
+	if err := validateSourceBinding(*binding, extractor.input); err != nil {
+		return err
+	}
+	projectDigest, err := projectRootDigest(extractor.metadata.projectRoot)
+	if err != nil {
+		return err
+	}
+	if binding.ProjectRootSHA256 != projectDigest {
+		return errors.New("source-affinity receipt does not match SCIP project_root metadata")
+	}
+	identities := make([]sourceIdentity, 0, len(extractor.documents))
+	for _, identity := range extractor.documents {
+		identities = append(identities, identity)
+	}
+	if binding.DocumentCount != len(identities) ||
+		binding.SourceSHA256 != sourceIdentityDigest(identities) {
+		return errors.New("source-affinity receipt is stale or belongs to a different repository")
+	}
 	return nil
 }
 
@@ -369,10 +438,11 @@ func (extractor *extractor) addSymbol(
 		name = symbolDisplayName(symbol.symbol)
 	}
 	attributes := map[string]any{
-		"scip_symbol":           symbol.symbol,
-		"scip_kind":             symbol.kind,
-		"compiler_indexer":      extractor.toolName(),
-		"compiler_index_sha256": extractor.input.SHA256,
+		"scip_symbol":             symbol.symbol,
+		"scip_kind":               symbol.kind,
+		"compiler_indexer":        extractor.toolName(),
+		"compiler_index_sha256":   extractor.input.SHA256,
+		"producer_authentication": extractor.producerAuthentication(),
 	}
 	if documentation := strings.TrimSpace(strings.Join(symbol.documentation, "\n\n")); documentation != "" {
 		attributes["documentation"] = documentation
@@ -386,11 +456,15 @@ func (extractor *extractor) addSymbol(
 	if roles&roleTest != 0 {
 		attributes["test"] = true
 	}
+	visibility := "imported_unverified"
+	if extractor.input.compilerAuthenticated {
+		visibility = "compiler_indexed"
+	}
 	node := rkcmodel.Node{
 		ID: id, LogicalID: rkcmodel.StableID("logical", "scip", symbol.symbol),
 		Kind: kind, Name: name, QualifiedName: symbol.symbol,
 		Signature: strings.TrimSpace(symbol.signature), Language: language,
-		Visibility: "compiler_indexed", ArtifactID: extractor.files[path].ArtifactID,
+		Visibility: visibility, ArtifactID: extractor.files[path].ArtifactID,
 		Source: source, EvidenceIDs: evidenceIDs, Attributes: attributes,
 	}
 	extractor.upsertNode(node)
@@ -505,12 +579,16 @@ func (extractor *extractor) ensureSymbol(path, language, symbol string, syntaxKi
 	node := rkcmodel.Node{
 		ID: id, LogicalID: rkcmodel.StableID("logical", "scip", symbol),
 		Kind: kind, Name: symbolDisplayName(symbol), QualifiedName: symbol,
-		Language: language, Visibility: "compiler_indexed",
+		Language: language, Visibility: "imported_unverified",
 		Attributes: map[string]any{
 			"scip_symbol": symbol, "syntax_kind": syntaxKind,
-			"compiler_indexer":      extractor.toolName(),
-			"compiler_index_sha256": extractor.input.SHA256,
+			"compiler_indexer":        extractor.toolName(),
+			"compiler_index_sha256":   extractor.input.SHA256,
+			"producer_authentication": extractor.producerAuthentication(),
 		},
+	}
+	if extractor.input.compilerAuthenticated {
+		node.Visibility = "compiler_indexed"
 	}
 	extractor.upsertNode(node)
 	return id
@@ -548,12 +626,27 @@ func (extractor *extractor) upsertNode(node rkcmodel.Node) {
 	if current.Source == nil {
 		current.Source = node.Source
 	}
+	compilerAuthenticated := compilerAuthenticatedAttributes(current.Attributes) ||
+		compilerAuthenticatedAttributes(node.Attributes)
+	if compilerAuthenticated {
+		current.Visibility = "compiler_indexed"
+	} else if current.Visibility == "" {
+		current.Visibility = node.Visibility
+	}
 	current.EvidenceIDs = appendUnique(current.EvidenceIDs, node.EvidenceIDs...)
 	if current.Attributes == nil {
 		current.Attributes = map[string]any{}
 	}
 	for key, value := range node.Attributes {
+		if key == "producer_authentication" {
+			continue
+		}
 		current.Attributes[key] = value
+	}
+	if compilerAuthenticated {
+		current.Attributes["producer_authentication"] = "pinned_current_process"
+	} else {
+		current.Attributes["producer_authentication"] = "unverified_external"
 	}
 	extractor.nodes[node.ID] = current
 }
@@ -573,10 +666,21 @@ func (extractor *extractor) addEvidence(
 	id := rkcmodel.StableID(
 		"evidence", PluginID, extractor.input.SHA256, method, path, detail, rangeIdentity,
 	)
+	kind := "syntax_inferred"
+	confidence := 0.75
+	if extractor.input.compilerAuthenticated {
+		kind = "compiler_resolved"
+		confidence = 1
+	}
+	copyAttributes := make(map[string]any, len(attributes)+1)
+	for key, value := range attributes {
+		copyAttributes[key] = value
+	}
+	copyAttributes["producer_authentication"] = extractor.producerAuthentication()
 	extractor.evidence[id] = rkcmodel.Evidence{
-		ID: id, Kind: "compiler_resolved", Method: method, Confidence: 1,
+		ID: id, Kind: kind, Method: method, Confidence: confidence,
 		Source: source, Tool: extractor.toolName(), ToolVersion: extractor.metadata.toolVersion,
-		InputDigest: extractor.input.SHA256, Detail: detail, Attributes: attributes,
+		InputDigest: extractor.input.SHA256, Detail: detail, Attributes: copyAttributes,
 	}
 	return id
 }
@@ -592,20 +696,66 @@ func (extractor *extractor) addEdge(
 	id := rkcmodel.StableID("edge", kind, from, to)
 	current, ok := extractor.edges[id]
 	if !ok {
+		resolution := rkcmodel.ResolutionSyntaxInferred
+		confidence := 0.75
+		if extractor.input.compilerAuthenticated {
+			resolution = rkcmodel.ResolutionCompilerResolved
+			confidence = 1
+		}
 		current = rkcmodel.Edge{
 			ID: id, Kind: kind, From: from, To: to,
-			Resolution: rkcmodel.ResolutionCompilerResolved,
-			Confidence: 1, Producer: PluginID,
+			Resolution: resolution,
+			Confidence: confidence, Producer: PluginID,
 		}
+	}
+	if extractor.input.compilerAuthenticated {
+		current.Resolution = rkcmodel.ResolutionCompilerResolved
+		current.Confidence = 1
 	}
 	current.EvidenceIDs = appendUnique(current.EvidenceIDs, evidenceIDs...)
 	if current.Attributes == nil {
 		current.Attributes = map[string]any{}
 	}
 	for key, value := range attributes {
+		if key == "producer_authentication" {
+			continue
+		}
 		current.Attributes[key] = value
 	}
+	if current.Resolution == rkcmodel.ResolutionCompilerResolved {
+		current.Attributes["producer_authentication"] = "pinned_current_process"
+	} else {
+		current.Attributes["producer_authentication"] = "unverified_external"
+	}
 	extractor.edges[id] = current
+}
+
+func compilerAuthenticatedAttributes(attributes map[string]any) bool {
+	if attributes == nil {
+		return false
+	}
+	value, _ := attributes["producer_authentication"].(string)
+	return value == "pinned_current_process"
+}
+
+// classifyDocumentPath reports whether a SCIP document path is canonical and
+// remains within the repository, as required by the SCIP specification.
+func classifyDocumentPath(path string) (canonical, contained bool) {
+	if path == "" || strings.IndexByte(path, 0) >= 0 {
+		return false, false
+	}
+	native := filepath.FromSlash(path)
+	if filepath.IsAbs(native) || filepath.VolumeName(native) != "" {
+		return false, false
+	}
+	cleaned := filepath.ToSlash(filepath.Clean(filepath.Join("", native)))
+	if cleaned != path {
+		return false, false
+	}
+	if cleaned == "." || cleaned == ".." || strings.HasPrefix(cleaned, "../") || strings.HasPrefix(cleaned, "/") {
+		return false, false
+	}
+	return true, true
 }
 
 func (extractor *extractor) addDiagnostic(
@@ -635,8 +785,9 @@ func (extractor *extractor) addDiagnostic(
 		Source: source, Stage: "semantic_parse",
 		Plugin: extractor.toolName() + "@" + extractor.metadata.toolVersion,
 		Attributes: map[string]any{
-			"compiler_source":   diagnostic.source,
-			"scip_index_sha256": extractor.input.SHA256,
+			"compiler_source":         diagnostic.source,
+			"scip_index_sha256":       extractor.input.SHA256,
+			"producer_authentication": extractor.producerAuthentication(),
 		},
 	}
 }
@@ -663,6 +814,13 @@ func (extractor *extractor) toolName() string {
 		return PluginID
 	}
 	return name
+}
+
+func (extractor *extractor) producerAuthentication() string {
+	if extractor.input.compilerAuthenticated {
+		return "pinned_current_process"
+	}
+	return "unverified_external"
 }
 
 func occurrenceEdgeKinds(roles int32) []string {

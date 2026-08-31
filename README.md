@@ -4,7 +4,7 @@
 invent the map.**
 
 [![CI](https://github.com/neuroforge-io/RKC/actions/workflows/ci.yml/badge.svg)](https://github.com/neuroforge-io/RKC/actions/workflows/ci.yml)
-[![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 
 RKC compiles a local directory or Git repository into an immutable,
 evidence-backed atlas. Search symbols and signatures, follow compiler-resolved
@@ -25,9 +25,9 @@ is required for the default local workflow.
 
 The governing rule is deliberately unromantic:
 
-> Parsers, compilers, manifests, indexes, and authorized runtime observations
-> establish facts. A language model may explain bounded facts, but it may not
-> invent repository truth.
+> Deterministic analyzers and producer-authenticated evidence establish facts.
+> Structured assertions remain explicitly lower authority. A language model
+> may explain bounded facts, but it may not invent repository truth.
 
 ## Why RKC
 
@@ -45,11 +45,12 @@ The governing rule is deliberately unromantic:
 - **Hostile-repository posture.** Normal scans do not execute repository code.
   Inputs, outputs, caches, journals, snapshots, and optional models have
   explicit containment and resource contracts.
-- **Portable and commercially usable.** RKC-owned code is MIT-licensed; copies
-  or substantial portions retain its copyright and permission notice, while
-  NeuroForgeIO credit is requested. RKC builds CGO-free binaries and retains
-  deterministic SPDX evidence. Third-party components remain separately
-  attributed.
+- **Portable and commercially usable.** Copyright 2026 NeuroForgeIO and RKC
+  contributors; NeuroForgeIO publishes and maintains the Apache-2.0-licensed
+  project. RKC builds CGO-free binaries and retains
+  deterministic SPDX evidence. Redistributions preserve the applicable
+  license and `NOTICE`; third-party components remain separately owned and
+  licensed.
 
 ## Implemented now
 
@@ -77,14 +78,17 @@ The reference build provides:
   MCP paths with immutable migrations, verified module hashes, CGO-disabled
   build gates, read-only consumers, and strict database-open health checks;
 - crash-safe filesystem snapshots and content-addressed object storage;
-- a 16-stage deterministic scan DAG with cancellation propagation, isolated
+- a 20-stage deterministic scan DAG with cancellation propagation, isolated
   analyzer fragments, bounded CPU/memory/process/open-file admission, ownership
   receipts, verified CAS payload caching,
   selective language/configuration invalidation, clean-scan equivalence tests,
   and `plan` plus cache inspect/verify/prune commands;
 - ranked lexical search, qualification-gated semantic and hybrid retrieval,
   graph neighbourhoods, shortest paths, impact traversal, strongly connected
-  components, and semantic snapshot diffs;
+  components, bounded non-authoritative counterfactual route comparison, and
+  semantic snapshot diffs;
+- bounded interprocedural Go control/value flow, configuration and environment
+  contracts, digest-bound runtime assertions, and semantic Git history;
 - deterministic Markdown documentation, normalized/redacted source envelopes,
   NotebookLM packs, JSONL, SARIF, GraphML, Mermaid, CSV, and a static browser;
 - a read-only HTTP API and Model Context Protocol server;
@@ -147,8 +151,11 @@ boundaries are maintained in
   performed by the package builder.
 - [`docs/QUALITY_INDEX.md`](docs/QUALITY_INDEX.md): deterministic test,
   documentation, profiling, and change-delta inventory for maintainers.
+- [`docs/COUNTERFACTUAL_ANALYSIS.md`](docs/COUNTERFACTUAL_ANALYSIS.md): bounded,
+  evidence-linked structural interventions and their truth boundary.
 - [`docs/BRANDING_AND_ATTRIBUTION.md`](docs/BRANDING_AND_ATTRIBUTION.md):
-  NeuroForgeIO identity, MIT terms, commercial use, and third-party boundaries.
+  NeuroForgeIO identity, Apache-2.0 terms, commercial use, and third-party
+  boundaries.
 - [`docs/implementation-plan.md`](docs/implementation-plan.md): original complete
   product specification, retained and extended.
 - [`docs/backlog.md`](docs/backlog.md): stable engineering issue catalogue.
@@ -179,8 +186,18 @@ reused instead of creating a sibling allowance. The only additional reuse path
 is a private, constrained container whose cgroup root proves the one-core,
 4.5 GiB hard-memory, 256 MiB swap, 128-task, low-weight, and OOM contracts before
 RKC lowers and rechecks every thread's scheduling priority. Admission and
-continuous monitoring yield to visible ERAIS or evaluation work before RKC can
-create an atlas, cache, journal, or snapshot. The browser opener runs outside
+continuous monitoring treat visible configured workload classes as explicitly
+higher-priority. The generic default is `torchrun,lm_eval`;
+`RKC_HIGHER_PRIORITY_MARKERS=training,benchmark` replaces it with 1-16 unique
+lower-case ASCII classes of at most 32 bytes each and 255 bytes total. An unset
+or empty value keeps the default, while malformed, duplicate, or oversized configuration fails
+closed without exposing process command lines or working directories. Under the
+default `yield` policy RKC stays inside its
+subordinate envelope while such work merely runs, and refuses or promptly
+cancels as soon as its aggregate CPU load reaches the configured threshold
+(50% of one core by default); `RKC_HIGHER_PRIORITY_POLICY=refuse` restores the
+strict behavior of refusing whenever any higher-priority process is visible.
+`rkc doctor` validates the marker contract and reports the active policy. The browser opener runs outside
 that disposable service, so stopping RKC does not place the desktop browser
 inside RKC's cgroup. Direct `scan` requires an explicit final
 `--no-python=true` or `--no-plugins=true` setting; the shorter true form
@@ -193,6 +210,13 @@ immutable snapshots in `<folder>/.rkc-state`. On a trusted single-user Linux
 checkout, `rkc open --workbench <folder>` explicitly adds the guarded local
 command center. The static first-run path remains the portable default on
 macOS and Windows while equivalent native workbench admission remains open.
+
+Inside the workbench, choose another folder with **Browse**, then select
+**Analyze this folder**. RKC compiles that folder into its owned `.rkc` atlas,
+verifies the immutable snapshot and publication manifests, and only then
+switches Overview, Search, Graph, and dataset-aware command defaults together.
+If analysis or identity validation fails, the previous atlas stays active and
+the job is visibly failed; the GUI never labels stale data as the new folder.
 
 The opt-in workbench is a trusted-user local command launcher, not a filesystem
 sandbox. Its session token grants RKC commands the invoking account's file
@@ -229,6 +253,22 @@ rkc quickstart --scip-index /path/to/index.scip /path/to/repository
 
 Repeat `--scip-index` for polyglot workspaces. The same flag is available on
 `plan` and `scan`, and in the GUI command center.
+
+Indexes can also be generated first-class through `rkc scip`: pin an indexer
+to its exact digest, then let `scan`/`quickstart`/`open` generate and import
+compiler semantics automatically:
+
+```sh
+rkc scip pin --language go --tool "$(command -v scip-go)" --version v0.2.7
+rkc quickstart --scip-generate go /path/to/repository
+```
+
+`rkc scip languages` lists the supported routes (Go, Python, TypeScript,
+Rust, C/C++, JVM, .NET, Ruby), `rkc scip verify` strictly validates any index,
+and generation runs inside the same low-priority envelope and configured
+priority-workload policy as scans. On RKC's own source, importing compiler-grade Go semantics
+raises relationship resolution from 31.4% to 84.9% (a 12.5x increase in
+resolved edges) and marks 246 Go files as compiler-parsed.
 
 The generated `.rkc` atlas is portable and the `.rkc-state` directory retains
 immutable local snapshots. Both paths are explicit default inventory
@@ -352,6 +392,22 @@ entry point is:
 rkc open --workbench .
 ```
 
+The graphical folder picker can then analyze any folder available to the
+invoking account. A successful Analyze job atomically activates the verified new
+atlas across overview, search, entity, graph, and command views; a corrupt or
+incomplete output cannot replace the currently visible dataset.
+
+The workbench exposes the safe allowlisted command surface, not every terminal
+operation yet. It rejects trace capture, SCIP index generation, model
+execution, doctor helper probes, remote scan acquisition, custom Git/Python
+scan helpers, custom quickstart configuration, live Git history compilation,
+Python workers, nested servers, and any other command whose detached descendants
+cannot be proved contained by the current per-job process-group boundary.
+Existing trace/SCIP/history files can still be verified, reported, and imported. Full
+GUI parity remains an explicit release gate until those subprocess workflows
+have kernel-enforced per-job containment; the interface does not pretend a
+rejected operation succeeded.
+
 For an existing atlas, the low-level advanced route is to
 keep the server loopback-only and start it inside RKC's fail-closed resource
 envelope. Direct `serve --workbench` requires a nonexistent `--ready-file`
@@ -378,15 +434,22 @@ the workbench until one aggregate session ceiling is proved. Guarded model CLI
 paths remain available; public direct Python analysis stays disabled and uses
 separately generated SCIP input as the compiler-grade route for now.
 
-The low-level route checks ERAIS before and after atlas preparation and during
-the server lifetime, while remaining cgroup-subordinate throughout. Prefer
+The low-level route checks higher-priority work before and after atlas
+preparation and during the server lifetime, while remaining cgroup-subordinate
+throughout; under the default `yield` policy an idle higher-priority process
+does not block serving, and measurable load still stops it promptly. Prefer
 `rkc open --workbench` when continuous outer-process pre-emption during the
 initial atlas load is required.
 
 Workbench serving always uses an OS-selected ephemeral loopback port. Combined
 with browser policy that forbids workers and manifests and with current-binary
-UI regeneration, this prevents browser code left by an older or imported atlas
-on the familiar read-only origin from intercepting a privileged session.
+UI regeneration, this avoids deliberate reuse of the familiar read-only origin
+and materially reduces exposure to browser code left by an older or imported
+atlas. Ephemeral allocation is risk reduction, not proof that an OS will never
+reuse a prior port. Current-binary regeneration, non-cacheable responses, and
+one-time/session capabilities provide additional defenses, but cannot prove the
+absence of a legacy worker if a browser origin is coincidentally reused; open a
+privileged workbench only in a trusted browser profile.
 Every live `serve` path regenerates executable UI bytes from the current RKC
 binary and validated bundle; persisted `site/` files remain a portable static
 export but are never treated as authenticated publisher code by the server.
@@ -552,6 +615,53 @@ Measured self-analysis and an immutable scan of the recent
 `img2threejs/img2threejs` project are recorded in
 [`docs/SHOWCASE_2026-07-27.md`](docs/SHOWCASE_2026-07-27.md).
 
+## Flow, runtime evidence, and history
+
+The same graph answers deeper questions:
+
+```sh
+rkc flow report --dir .rkc                       # call graphs, CFGs, value flow
+rkc flow origins --dir .rkc --node <id>          # where can this value originate?
+rkc flow sinks --dir .rkc --node <id>            # can a user input reach this sink?
+rkc flow env --dir .rkc --name DATABASE_URL      # what runs when this env var is set?
+
+rkc trace capture --dir . --environment-key FEATURE_FLAG -- go test ./... # bounded capture; env names are opt-in
+rkc scan --trace .rkc-trace.json --no-python --out .rkc --state-dir .rkc-state . # portable operator assertion
+rkc trace report --dir .rkc                      # possibility vs observations/assertions
+
+rkc history build --dir . --out .rkc-history.json # semantic symbol deltas
+rkc history symbol --name Greet --dir .
+rkc scan --history .rkc-history.json --no-python --out .rkc --state-dir .rkc-state .
+
+rkc counterfactual --dir .rkc --from <node> --to <node> --without-edge <edge-id>
+```
+
+The two default evidence filenames are explicit inventory exclusions, so a
+follow-up scan cannot silently process the evidence files it just generated.
+Runtime trace schema 1.3 also binds canonical source SHA-256 identities and the
+repository content/commit state; stale or foreign traces fail closed. These
+bindings prove integrity and affinity, not who produced a portable file. A
+separately supplied trace is therefore confidence-0.5 `user_asserted`
+evidence, never canonical runtime observation. Same-process capture proves
+only that RKC produced the exact record; it still cannot authenticate the
+command-output producer. No current trace path emits `runtime_observed` or
+`test_result` evidence.
+The `value-flow` stage compiles bounded call graphs, per-function CFGs, and
+value-flow edges (origins, package/type-authoritative sources and sinks, and
+environment reads). Sanitizer-like names remain low-confidence hypotheses and
+never count as protection in lineage. The `trace-import` stage records positive
+and negative statement-coverage claims as trace-scoped assertions and never
+marks functions canonically executed. It deliberately does not promote covered call
+edges: `rkc trace report` labels call-event observation unavailable until a
+real call-event source exists. The
+`config-env` stage compiles build tags, CI workflows, Terraform declarations,
+and environment contracts into the same graph, and `history-import` stamps
+symbol lifecycles and rename refactors. `counterfactual` compares the baseline
+route with a derived view that omits exact facts; it never mutates the atlas and
+never presents bounded reachability as proof of runtime causation. See
+[`docs/FLOW_AND_RUNTIME.md`](docs/FLOW_AND_RUNTIME.md) and
+[`docs/HISTORY.md`](docs/HISTORY.md).
+
 ## Configuration
 
 Generate a complete configuration file:
@@ -580,8 +690,8 @@ The reference inventory does not interpret `.gitignore`. Each
 `inventory.exclude` entry is one exact repository-relative path and excludes
 that path plus its descendants; glob syntax is not supported. Safe defaults
 explicitly omit `.venv`, `venv`, RKC model/runtime/download/generated trees
-(including `.rkc-coverage`), `bin`, `dist`, and named root-level coverage and
-cache outputs. Additional paths
+(including `.rkc-coverage`), `.rkc-trace.json`, `.rkc-history.json`, `bin`,
+`dist`, and named root-level coverage and cache outputs. Additional paths
 can be supplied with repeated `--exclude` flags and remain visible as explicit
 exclusion records in the atlas.
 
@@ -688,7 +798,8 @@ the same atomically published generation. Verification preserves the prior
 rebuilds binaries, SBOMs, and demo inputs in two detached checkouts with separate
 Go build and module caches, uses implementation-independent stored ZIP entries,
 and requires final byte equality before one atomic `dist/release` swap. The safe
-target gives priority to ERAIS and applies the same one-core, 4 GiB operating /
+target gives priority to configured higher-priority workload classes and
+applies the same one-core, 4 GiB operating /
 4.5 GiB hard cgroup to release verification, cross-compilation, SBOM
 rebinding, and ZIP assembly.
 
@@ -710,18 +821,18 @@ gate.
 
 ## License
 
-RKC-owned work is MIT-licensed and may be used in commercial products and
-derivative works. The MIT License requires copies or substantial portions to
-retain its copyright and permission notice. NeuroForgeIO additionally requests
-that redistributions retain [`NOTICE`](NOTICE) and credit NeuroForgeIO and the
-RKC contributors; this request adds no restriction. Third-party and model terms
-remain separate and are listed in
+Copyright 2026 NeuroForgeIO and RKC contributors. NeuroForgeIO publishes and
+maintains RKC under the [Apache License, Version 2.0](LICENSE). Commercial use
+and derivative works are welcome under that license. Redistributions must satisfy its applicable
+license, changed-file notice, attribution, and [`NOTICE`](NOTICE) obligations.
+Third-party and model terms remain separate and are listed in
 [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md).
 Third-party compilers, parsers, language servers, grammars, plugins, and model
 weights retain their own licenses and are not bundled by this project.
 
 ---
-_RKC is stewarded by **NeuroForgeIO** and released under the **MIT License**.
-Redistributions must retain the copyright and permission notices required by
-that license. Attribution to NeuroForgeIO is requested, but is not an additional
-license condition._
+_RKC is open source, published and maintained by **NeuroForgeIO**, under the
+**Apache License, Version 2.0**. Copyright 2026 NeuroForgeIO and RKC
+contributors. Redistributed
+works must preserve applicable license and `NOTICE` terms. Third-party materials
+retain their own licenses and ownership._

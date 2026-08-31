@@ -59,13 +59,14 @@ class LicenseValidationTests(unittest.TestCase):
     def root_fixture(self) -> None:
         self.write(
             "LICENSE",
-            "MIT License\nPermission is hereby granted\n"
-            "THE SOFTWARE IS PROVIDED\n",
+            "Apache License\nVersion 2.0, January 2004\n"
+            "Grant of Patent License\nEND OF TERMS AND CONDITIONS\n",
         )
         self.write(
             "NOTICE",
             "Repository Knowledge Compiler (RKC)\n"
-            "Copyright (c) 2026 NeuroForgeIO and RKC contributors\n",
+            "Copyright 2026 NeuroForgeIO and RKC contributors\n"
+            "does not modify the Apache License, Version 2.0\n",
         )
         self.write(
             "LICENSES/Go.txt",
@@ -78,13 +79,15 @@ class LicenseValidationTests(unittest.TestCase):
         )
         self.write(
             "THIRD_PARTY_NOTICES.md",
-            "RKC-owned source code MIT License NeuroForgeIO commercial products\n"
+            "Original RKC source code Apache License, Version 2.0\n"
+            "copyright 2026 NeuroForgeIO and RKC contributors commercial products\n"
+            "does not relicense them as Apache-2.0; ownership remains separate\n"
             "Go runtime and standard library BSD-3-Clause LICENSES/Go.txt\n"
             "modernc.org/sqlite v1.54.0 modernc.org/libc v1.74.1\n"
             "gopkg.in/yaml.v3 v3.0.1\n"
             "third_party/go-modules.lock.json LICENSES/go-modules/\n"
             "do not bundle model weights\nllama.cpp is MIT licensed\n"
-            "Qwen3.5-2B Qwen3-Embedding-0.6B models/models.lock.json\n",
+            "Locked asset ID Upstream ownership / conversion models/models.lock.json\n",
         )
         self.write("go.sum", "fixture.test/module v1.0.0 h1:fixture\n")
         self.write("third_party/go-modules.lock.json", "{}\n")
@@ -384,71 +387,25 @@ class LicenseValidationTests(unittest.TestCase):
         self.assertFalse(LICENSES.CHECKS[-1]["ok"])
         self.assertIn("cannot read UTF-8 text", LICENSES.CHECKS[-1]["detail"])
 
-    def test_attribution_language_rejects_extra_mandatory_credit(self) -> None:
+    def test_attribution_language_rejects_stale_first_party_mit_claims(self) -> None:
         surface = Path("surface.md")
         with mock.patch.object(
             LICENSES, "ATTRIBUTION_LANGUAGE_FILES", (surface,)
         ):
             for wording in (
-                "MIT requires retention of its copyright and permission notice. "
-                "NeuroForgeIO credit is requested, not an additional condition.\n",
-                "NeuroForgeIO requests that redistributions retain NOTICE and "
-                "credit RKC contributors.\n",
-                "NOTICE retention and NeuroForgeIO credit are requested; neither "
-                "is a license condition.\n",
-                "Users are not required to credit NeuroForgeIO.\n",
-                "No user must credit NeuroForgeIO.\n",
-                "RKC is MIT-licensed with optional attribution.\n",
-                "Attribution to NeuroForgeIO is voluntary.\n",
-                "Users do not have to credit NeuroForgeIO.\n",
-                "Users do not need to credit NeuroForgeIO.\n",
-                "Users are not required to retain NOTICE.\n",
-                "No user must retain NOTICE.\n",
-                "RKC is MIT-licensed with attribution, which is not required.\n",
-                "Crediting NeuroForgeIO is not necessary.\n",
-                "Acknowledging NeuroForgeIO is entirely discretionary.\n",
-                "NeuroForgeIO credit is explicitly requested rather than "
-                "required.\n",
-                "NeuroForgeIO credit is requested and is not an additional\n"
-                "license condition.\n",
+                "Copyright 2026 NeuroForgeIO and RKC contributors.\n",
+                "RKC is licensed under Apache-2.0.\n",
+                "Redistributions must preserve applicable LICENSE and NOTICE terms.\n",
             ):
                 self.write(str(surface), wording)
                 LICENSES.validate_attribution_language()
                 self.assertTrue(LICENSES.CHECKS[-1]["ok"], wording)
 
             for wording in (
-                "MIT-licensed open source with attribution.\n",
                 "RKC is MIT-licensed with simple attribution.\n",
-                "Retain NOTICE when redistributing.\n",
-                "Retain NOTICE and credit NeuroForgeIO in redistributions.\n",
-                "Users must provide attribution to NeuroForgeIO.\n",
-                "Attribution to NeuroForgeIO is mandatory.\n",
-                "NeuroForgeIO credit is required.\n",
-                "The MIT license requires NeuroForgeIO credit.\n",
-                "Commercial use is permitted provided that users credit "
-                "NeuroForgeIO.\n",
-                "Redistributors need to credit NeuroForgeIO.\n",
-                "Redistributors have to credit NeuroForgeIO.\n",
-                "Attribution to NeuroForgeIO is obligatory.\n",
-                "Users are obliged to credit NeuroForgeIO.\n",
-                "Users are obligated to credit NeuroForgeIO.\n",
-                "Commercial use requires crediting NeuroForgeIO.\n",
-                "Users must acknowledge NeuroForgeIO.\n",
-                "Attribution to NeuroForgeIO is compulsory.\n",
-                "NeuroForgeIO credit is a prerequisite.\n",
-                "Use is prohibited unless NeuroForgeIO is credited.\n",
-                "Commercial use is allowed only if you credit NeuroForgeIO.\n",
-                "Commercial products must display the NeuroForgeIO name.\n",
-                "Redistribution is permitted only after naming NeuroForgeIO.\n",
-                "Users are obliged to mention NeuroForgeIO.\n",
-                "Crediting NeuroForgeIO is optional and mandatory for "
-                "distribution.\n",
-                "NeuroForgeIO credit is requested. Retain NOTICE and credit "
-                "NeuroForgeIO.\n",
-                "Attribution to NeuroForgeIO is requested, but users must credit "
-                "NeuroForgeIO.\n",
-                "NeuroForgeIO credit is requested and is not discussed here\n"
-                "and NeuroForgeIO credit is mandatory.\n",
+                "RKC-owned work remains under the MIT License.\n",
+                "NeuroForgeIO/MIT identity.\n",
+                "NOTICE retention is requested.\n",
             ):
                 self.write(str(surface), wording)
                 LICENSES.validate_attribution_language()
@@ -474,11 +431,11 @@ class LicenseValidationTests(unittest.TestCase):
     def test_declared_metadata_happy_and_invalid_paths(self) -> None:
         self.write(
             "api/openapi.yaml",
-            "license:\n  name: MIT\n  identifier: MIT\n",
+            "license:\n  name: Apache License 2.0\n  identifier: Apache-2.0\n",
         )
         self.write(
             "plugins/official/plugin.json",
-            json.dumps({"plugin": {"id": "rkc.official", "license": "MIT"}}),
+            json.dumps({"plugin": {"id": "rkc.official", "license": "Apache-2.0"}}),
         )
         self.write(
             "plugins/external/plugin.json",
@@ -503,6 +460,11 @@ class LicenseValidationTests(unittest.TestCase):
                     ],
                 }
             ),
+        )
+        self.write(
+            "THIRD_PARTY_NOTICES.md",
+            "| `source` | source-archive | `MIT` | upstream |\n"
+            "| `model` | generation-model | `Apache-2.0` | upstream |\n",
         )
         LICENSES.validate_declared_metadata()
         self.assertFalse(LICENSES.ERRORS, LICENSES.ERRORS)
@@ -536,10 +498,50 @@ class LicenseValidationTests(unittest.TestCase):
         LICENSES.validate_declared_metadata()
         self.assertGreaterEqual(len(LICENSES.ERRORS), 2)
 
+    def test_declared_metadata_requires_notice_row_for_every_model_asset(self) -> None:
+        self.write(
+            "api/openapi.yaml",
+            "license:\n  name: Apache License 2.0\n  identifier: Apache-2.0\n",
+        )
+        self.write(
+            "models/models.lock.json",
+            json.dumps(
+                {
+                    "llama_cpp": {"license_spdx": "MIT"},
+                    "assets": [
+                        {
+                            "id": "source",
+                            "kind": "source-archive",
+                            "license_spdx": "MIT",
+                        },
+                        {
+                            "id": "model",
+                            "kind": "generation-model",
+                            "license_spdx": "Apache-2.0",
+                        },
+                    ],
+                }
+            ),
+        )
+        self.write(
+            "THIRD_PARTY_NOTICES.md",
+            "| `source` | source-archive | `MIT` | upstream |\n",
+        )
+
+        LICENSES.validate_declared_metadata()
+
+        closure = next(
+            check
+            for check in LICENSES.CHECKS
+            if check["name"] == "optional model notice closure"
+        )
+        self.assertFalse(closure["ok"])
+        self.assertIn("model: exact kind/SPDX notice row is missing", closure["detail"])
+
     def test_declared_metadata_rejects_missing_and_malformed_model_lock(self) -> None:
         self.write(
             "api/openapi.yaml",
-            "license:\n  name: MIT\n  identifier: MIT\n",
+            "license:\n  name: Apache License 2.0\n  identifier: Apache-2.0\n",
         )
 
         LICENSES.validate_declared_metadata()

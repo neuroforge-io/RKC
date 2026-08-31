@@ -117,13 +117,13 @@ func NewLlamaCPPProvider(config LlamaCPPConfig) (*LlamaCPPProvider, error) {
 	}
 	var priorityCheck func() error
 	if !config.UnsafeDisableResourceGuard {
-		if err := resourceguard.CheckHigherPriority(); err != nil {
+		if err := resourceguard.CurrentPriorityCheck()(); err != nil {
 			return nil, err
 		}
 		if err := resourceguard.RequireCurrentProcessLowPriority(); err != nil {
 			return nil, err
 		}
-		priorityCheck = resourceguard.CheckHigherPriority
+		priorityCheck = resourceguard.CurrentPriorityCheck()
 	}
 	model, err := bindModel(config.ModelPath, config.ExpectedModelSHA256, priorityCheck)
 	if err != nil {

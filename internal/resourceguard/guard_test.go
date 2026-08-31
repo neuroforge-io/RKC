@@ -75,13 +75,24 @@ func TestHigherPriorityDetectionExcludesAncestorsAndAvoidsSubstrings(t *testing.
 		{pid: 21, parentPID: 1, commandLine: "python -m LM_EVAL --tasks x"},
 		{pid: 22, parentPID: 1, commandLine: "TORCHRUN train.py"},
 	}
-	err := checkHigherPriority(processes, 10)
+	markers := strings.Split(DefaultHigherPriorityMarkers, ",")
+	err := checkHigherPriority(processes, 10, markers)
 	if !errors.Is(err, ErrHigherPriorityActive) || !strings.Contains(err.Error(), "pid=21 marker=lm_eval") ||
 		!strings.Contains(err.Error(), "pid=22 marker=torchrun") || strings.Contains(err.Error(), "pid=20") {
 		t.Fatalf("priority conflicts = %v", err)
 	}
-	if err := checkHigherPriority(processes[:4], 10); err != nil {
+	if err := checkHigherPriority(processes[:4], 10, markers); err != nil {
 		t.Fatalf("ancestors or substring caused false positive: %v", err)
+	}
+	customProcesses := []processSnapshot{
+		{pid: 31, parentPID: 1, arguments: []string{"python", "/srv/critical_train/run.py"}},
+		{pid: 32, parentPID: 1, arguments: []string{"python", "/srv/erais/train.py"}},
+	}
+	customErr := checkHigherPriority(customProcesses, 99, []string{"critical_train"})
+	if !errors.Is(customErr, ErrHigherPriorityActive) ||
+		!strings.Contains(customErr.Error(), "pid=31 marker=critical_train") ||
+		strings.Contains(customErr.Error(), "pid=32") {
+		t.Fatalf("custom priority conflicts = %v", customErr)
 	}
 	if commandHasMarker("llama-cli --offline --model model.gguf --prompt explain ERAIS safely", "erais") {
 		t.Fatal("a model prompt was mistaken for a higher-priority process")
@@ -172,7 +183,7 @@ func TestProcSnapshotParsing(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(root, "not-a-pid"), nil, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	processes, err := procProcessSnapshots(root)
+	processes, err := procProcessSnapshots(root, []string{"erais"})
 	if err != nil || len(processes) != 1 || processes[0].pid != 42 || processes[0].parentPID != 7 ||
 		processes[0].commandLine != "python -m ERais" || strings.Join(processes[0].arguments, "|") != "python|-m|ERais" || processes[0].cwdMarker != "erais" {
 		t.Fatalf("proc snapshots = %+v, %v", processes, err)
@@ -185,14 +196,15 @@ func TestProcSnapshotParsing(t *testing.T) {
 }
 
 func TestPrioritySnapshotFailuresAreHermetic(t *testing.T) {
-	if _, err := procProcessSnapshots(filepath.Join(t.TempDir(), "missing")); err == nil {
+	markers := strings.Split(DefaultHigherPriorityMarkers, ",")
+	if _, err := procProcessSnapshots(filepath.Join(t.TempDir(), "missing"), markers); err == nil {
 		t.Fatal("missing proc root was accepted")
 	}
 	cycle := []processSnapshot{{pid: 10, parentPID: 9}, {pid: 9, parentPID: 10}}
-	if err := checkHigherPriority(cycle, 10); err != nil {
+	if err := checkHigherPriority(cycle, 10, markers); err != nil {
 		t.Fatalf("ancestor cycle produced a false conflict: %v", err)
 	}
-	if err := checkHigherPriority(nil, 10); err != nil {
+	if err := checkHigherPriority(nil, 10, markers); err != nil {
 		t.Fatalf("missing self snapshot produced a false conflict: %v", err)
 	}
 
@@ -221,7 +233,7 @@ func TestPrioritySnapshotFailuresAreHermetic(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(invalidStat, "stat"), []byte("invalid"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	processes, err := procProcessSnapshots(root)
+	processes, err := procProcessSnapshots(root, markers)
 	if err != nil || len(processes) != 0 {
 		t.Fatalf("unstable proc fixtures = %+v, %v", processes, err)
 	}
