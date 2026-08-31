@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"math"
 	"os"
@@ -254,6 +255,19 @@ func TestLlamaCPPEmbedderBoundsCancellationAndIdentity(t *testing.T) {
 			t.Fatalf("model mutation = %v", err)
 		}
 	})
+	t.Run("bounded process failure detail", func(t *testing.T) {
+		executable, model := embeddingFixture(t, `printf '%s\n' 'bounded fixture failure' >&2; exit 7`)
+		embedder, err := NewLlamaCPPEmbedder(LlamaCPPEmbeddingConfig{
+			Executable: executable, ModelPath: model, MaximumRSSBytes: 128 << 20, UnsafeDisableResourceGuard: true,
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _ = embedder.Close() })
+		if _, err := embedder.Embed(context.Background(), []string{"text"}); err == nil || !strings.Contains(err.Error(), "bounded fixture failure") {
+			t.Fatalf("process failure detail = %v", err)
+		}
+	})
 }
 
 func TestParseLlamaEmbeddingStrictProtocol(t *testing.T) {
@@ -297,6 +311,191 @@ func TestEmbeddingBufferStringAndClosedBinding(t *testing.T) {
 	}
 	if got := (&boundRegularFile{}).referencePath(); got != "" {
 		t.Fatalf("closed bound-file reference = %q", got)
+	}
+}
+
+func TestEmbeddingConfigurationDigestAndSmallHelperBoundaries(t *testing.T) {
+	t.Parallel()
+	if descriptor := (*LlamaCPPEmbedder)(nil).Descriptor(); descriptor != (EmbeddingDescriptor{}) {
+		t.Fatalf("nil descriptor = %+v", descriptor)
+	}
+	for name, config := range map[string]LlamaCPPEmbeddingConfig{
+		"production threads": {ModelPath: "model.gguf", Threads: 2},
+		"timeout":            {ModelPath: "model.gguf", Timeout: 31 * time.Minute, UnsafeDisableResourceGuard: true},
+		"production RSS":     {ModelPath: "model.gguf", MaximumRSSBytes: 4608*1024*1024 + 1},
+	} {
+		if _, err := normalizeLlamaCPPEmbeddingConfig(config); err == nil {
+			t.Fatalf("normalize accepted invalid %s configuration", name)
+		}
+	}
+	validDigest := strings.Repeat("a", 64)
+	for name, value := range map[string]string{
+		"whitespace": " " + validDigest,
+		"uppercase":  strings.ToUpper(validDigest),
+		"prefix":     "sha256:" + validDigest,
+		"length":     "abcd",
+		"non-hex":    strings.Repeat("z", 64),
+	} {
+		if _, err := expectedEmbeddingSHA256(value, "fixture", false); err == nil {
+			t.Fatalf("accepted invalid %s digest", name)
+		}
+	}
+	if _, err := expectedEmbeddingSHA256("", "fixture", true); err == nil || !strings.Contains(err.Error(), "is required") {
+		t.Fatalf("missing required digest = %v", err)
+	}
+	if value, err := expectedEmbeddingSHA256("", "fixture", false); err != nil || value != "" {
+		t.Fatalf("optional digest = %q, %v", value, err)
+	}
+	if value, err := expectedEmbeddingSHA256(validDigest, "fixture", true); err != nil || value != validDigest {
+		t.Fatalf("valid digest = %q, %v", value, err)
+	}
+	if got := (*secureEmbeddingInput)(nil).referencePath(); got != "" {
+		t.Fatalf("nil secure-input reference = %q", got)
+	}
+	if err := (*secureEmbeddingInput)(nil).closeAndRemove(); err != nil {
+		t.Fatalf("nil secure-input cleanup = %v", err)
+	}
+	if got := minimum(2, 1); got != 1 {
+		t.Fatalf("minimum right branch = %d", got)
+	}
+	defaults, err := normalizeLlamaCPPEmbeddingConfig(LlamaCPPEmbeddingConfig{
+		ModelPath: "model.gguf", UnsafeDisableResourceGuard: true,
+	})
+	if err != nil || defaults.MaximumRSSBytes != 4608*1024*1024 || defaults.Executable != "llama-embedding" {
+		t.Fatalf("normalized defaults = %+v, %v", defaults, err)
+	}
+	embedder := &LlamaCPPEmbedder{}
+	for _, dimensions := range []int{0, 65537} {
+		if err := embedder.acceptDimensions(dimensions); err == nil || !strings.Contains(err.Error(), "outside the supported range") {
+			t.Fatalf("accepted invalid dimensions %d: %v", dimensions, err)
+		}
+	}
+	decoder := json.NewDecoder(strings.NewReader(`1 trailing`))
+	var value int
+	if err := decoder.Decode(&value); err != nil {
+		t.Fatal(err)
+	}
+	if err := requireJSONEOF(decoder); err == nil {
+		t.Fatal("malformed trailing JSON was accepted")
+	}
+	if err := validateLlamaEmbedding(make([]float32, 65537)); err == nil || !strings.Contains(err.Error(), "too many dimensions") {
+		t.Fatalf("oversized embedding vector = %v", err)
+	}
+}
+
+func TestEmbeddingBoundedBufferOverflowIsPrefixPreservingAndSticky(t *testing.T) {
+	t.Parallel()
+	buffer := &embeddingBoundedBuffer{limit: 8}
+	if written, err := buffer.Write([]byte("123456")); err != nil || written != 6 {
+		t.Fatalf("initial write = %d, %v", written, err)
+	}
+	if written, err := buffer.Write([]byte("7890")); !errors.Is(err, errEmbeddingOutputTooLarge) || written != 2 {
+		t.Fatalf("overflowing write = %d, %v", written, err)
+	}
+	if got := buffer.String(); got != "12345678" {
+		t.Fatalf("bounded prefix = %q", got)
+	}
+	if written, err := buffer.Write([]byte("later")); !errors.Is(err, errEmbeddingOutputTooLarge) || written != 0 {
+		t.Fatalf("sticky overflow write = %d, %v", written, err)
+	}
+	exhausted := &embeddingBoundedBuffer{}
+	if written, err := exhausted.Write([]byte("x")); !errors.Is(err, errEmbeddingOutputTooLarge) || written != 0 {
+		t.Fatalf("zero-limit write = %d, %v", written, err)
+	}
+}
+
+func TestBoundRegularFileValidationRejectsIncompleteAndUnsafeFiles(t *testing.T) {
+	t.Parallel()
+	if _, err := bindRegularFile("", false, false, nil); err == nil || !strings.Contains(err.Error(), "path is required") {
+		t.Fatalf("empty path = %v", err)
+	}
+	if _, err := bindRegularFile("rkc-definitely-missing-embedding-binary", true, false, nil); err == nil {
+		t.Fatal("missing PATH executable was accepted")
+	}
+	if err := verifyBoundRegularFile(nil, nil); err == nil || !strings.Contains(err.Error(), "closed or incomplete") {
+		t.Fatalf("nil bound-file verification = %v", err)
+	}
+	if _, err := hashOpenBoundFile(nil, nil); err == nil || !strings.Contains(err.Error(), "closed or incomplete") {
+		t.Fatalf("nil bound-file hash = %v", err)
+	}
+
+	root := t.TempDir()
+	if _, err := bindRegularFile(root, false, false, nil); err == nil || !strings.Contains(err.Error(), "regular file") {
+		t.Fatalf("directory binding = %v", err)
+	}
+	writable := filepath.Join(root, "writable.bin")
+	if err := os.WriteFile(writable, []byte("fixture"), 0o622); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(writable, 0o622); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := bindRegularFile(writable, false, false, nil); err == nil || !strings.Contains(err.Error(), "group/other writable") {
+		t.Fatalf("writable binding = %v", err)
+	}
+	if runtime.GOOS != "windows" {
+		notExecutable := filepath.Join(root, "not-executable")
+		if err := os.WriteFile(notExecutable, []byte("fixture"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := bindRegularFile(notExecutable, true, false, nil); err == nil || !strings.Contains(err.Error(), "no execute permission") {
+			t.Fatalf("non-executable binding = %v", err)
+		}
+	}
+}
+
+func TestBoundRegularFileReverificationDetectsPostBindDrift(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("POSIX permission verification")
+	}
+	root := t.TempDir()
+	writeAndBind := func(t *testing.T, name, contents string, mode os.FileMode, executable, requireGGUF bool) boundRegularFile {
+		t.Helper()
+		path := filepath.Join(root, name)
+		if err := os.WriteFile(path, []byte(contents), mode); err != nil {
+			t.Fatal(err)
+		}
+		bound, err := bindRegularFile(path, executable, requireGGUF, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _ = bound.close() })
+		return bound
+	}
+
+	writable := writeAndBind(t, "writable-after-bind", "fixture", 0o600, false, false)
+	if err := os.Chmod(writable.path, 0o622); err != nil {
+		t.Fatal(err)
+	}
+	if err := verifyBoundRegularFile(&writable, nil); err == nil || !strings.Contains(err.Error(), "became group/other writable") {
+		t.Fatalf("post-bind writable file = %v", err)
+	}
+
+	executable := writeAndBind(t, "executable-after-bind", "#!/bin/sh\n", 0o700, true, false)
+	if err := os.Chmod(executable.path, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := verifyBoundRegularFile(&executable, nil); err == nil || !strings.Contains(err.Error(), "lost execute permission") {
+		t.Fatalf("post-bind executable mode = %v", err)
+	}
+
+	model := writeAndBind(t, "model-after-bind.gguf", "GGUFfixture", 0o600, false, true)
+	if err := os.WriteFile(model.path, []byte("NOPEfixture"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	digest, err := hashOpenBoundFile(&model, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	model.digest = digest
+	if err := verifyBoundRegularFile(&model, nil); err == nil || !strings.Contains(err.Error(), "GGUF magic changed") {
+		t.Fatalf("post-bind GGUF magic = %v", err)
+	}
+
+	priority := writeAndBind(t, "priority-check", "fixture", 0o600, false, false)
+	sentinel := errors.New("priority revoked")
+	if _, err := hashOpenBoundFile(&priority, func() error { return sentinel }); !errors.Is(err, sentinel) {
+		t.Fatalf("priority-check failure = %v", err)
 	}
 }
 

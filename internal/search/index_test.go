@@ -255,6 +255,266 @@ func TestSafePreallocationCapacityRejectsIntegerOverflow(t *testing.T) {
 	}
 }
 
+func TestBoundedBundleBuildersBindCorpusAndRejectOversizedBodies(t *testing.T) {
+	bundle := rkcmodel.Bundle{
+		Snapshot: rkcmodel.Snapshot{ID: "bounded-snapshot"},
+		Artifacts: []rkcmodel.Artifact{{
+			ID: "source", Kind: "file", Path: "README.md", Text: true, Status: "text",
+		}},
+	}
+	repositoryIndex, err := BuildFromBundleWithArtifactBodiesBounded(bundle, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if repositoryIndex.SnapshotID != bundle.Snapshot.ID || repositoryIndex.CorpusVersion != RepositoryTextCorpusVersion {
+		t.Fatalf("bounded repository index binding = %+v", repositoryIndex)
+	}
+	metadataIndex, err := BuildFromBundleBounded(bundle)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if metadataIndex.SnapshotID != bundle.Snapshot.ID || metadataIndex.CorpusVersion != "" {
+		t.Fatalf("bounded metadata index binding = %+v", metadataIndex)
+	}
+	if unbounded := BuildFromBundleWithArtifactBodies(bundle, nil); unbounded.CorpusVersion != RepositoryTextCorpusVersion {
+		t.Fatalf("nil body map lost repository corpus binding: %+v", unbounded)
+	}
+
+	oversized := strings.Repeat("x", MaximumIndexedDocumentBytes+1)
+	oversizedNode := rkcmodel.Bundle{Nodes: []rkcmodel.Node{{
+		ID: "node", Attributes: map[string]any{"docstring": oversized},
+	}}}
+	if _, err := BuildFromBundleBounded(oversizedNode); err == nil || !strings.Contains(err.Error(), "per-document limit") {
+		t.Fatalf("oversized metadata-only bundle = %v", err)
+	}
+	if _, err := BuildFromBundleWithArtifactBodiesBounded(bundle, map[string]string{"source": oversized}); err == nil || !strings.Contains(err.Error(), "per-document limit") {
+		t.Fatalf("oversized repository body bundle = %v", err)
+	}
+}
+
+func TestMatchesQueryAppliesInlineFiltersAndExplicitOverrides(t *testing.T) {
+	t.Parallel()
+	document := Document{
+		ID: "node", ObjectType: "node", Kind: "function", Language: "go",
+		Path: "internal/search/index.go",
+	}
+	if !MatchesQuery(document, Query{Text: "kind:function lang:go type:node path:internal/"}) {
+		t.Fatal("matching inline filters rejected the document")
+	}
+	if MatchesQuery(document, Query{Text: "lang:python"}) {
+		t.Fatal("mismatched inline language admitted the document")
+	}
+	explicit := Query{
+		Text:        "kind:class lang:python type:artifact path:vendor/",
+		Kinds:       map[string]struct{}{"function": {}},
+		Languages:   map[string]struct{}{"go": {}},
+		ObjectTypes: map[string]struct{}{"node": {}},
+		PathPrefix:  "internal/",
+	}
+	if !MatchesQuery(document, explicit) {
+		t.Fatal("explicit filters did not take precedence over inline filters")
+	}
+}
+
+func TestValidateBundleObjectIDsRejectsAmbiguousCollisions(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name   string
+		bundle rkcmodel.Bundle
+		want   string
+	}{
+		{
+			name:   "duplicate nodes",
+			bundle: rkcmodel.Bundle{Nodes: []rkcmodel.Node{{ID: "shared"}, {ID: "shared"}}},
+			want:   "duplicated by nodes",
+		},
+		{
+			name:   "duplicate artifacts",
+			bundle: rkcmodel.Bundle{Artifacts: []rkcmodel.Artifact{{ID: "shared"}, {ID: "shared"}}},
+			want:   "duplicated by artifacts",
+		},
+		{
+			name:   "duplicate documents",
+			bundle: rkcmodel.Bundle{Documents: []rkcmodel.Document{{ID: "shared"}, {ID: "shared"}}},
+			want:   "duplicated by documents",
+		},
+		{
+			name: "node and document",
+			bundle: rkcmodel.Bundle{
+				Nodes: []rkcmodel.Node{{ID: "shared"}}, Documents: []rkcmodel.Document{{ID: "shared"}},
+			},
+			want: "shared by node and document",
+		},
+		{
+			name: "artifact and document",
+			bundle: rkcmodel.Bundle{
+				Artifacts: []rkcmodel.Artifact{{ID: "shared"}}, Documents: []rkcmodel.Document{{ID: "shared"}},
+			},
+			want: "shared by artifact and document",
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			err := ValidateBundleObjectIDs(test.bundle)
+			if err == nil || !strings.Contains(err.Error(), test.want) {
+				t.Fatalf("ValidateBundleObjectIDs(%s) = %v, want error containing %q", test.name, err, test.want)
+			}
+		})
+	}
+}
+
+func TestValidateBundleIndexRejectsAccountingAndCanonicalDrift(t *testing.T) {
+	t.Parallel()
+	bundle := rkcmodel.Bundle{
+		Snapshot: rkcmodel.Snapshot{ID: "validation-snapshot"},
+		Nodes: []rkcmodel.Node{{
+			ID: "node", Kind: "function", Name: "SearchGraph", QualifiedName: "pkg.SearchGraph",
+			Attributes: map[string]any{"summary": "shared retrieval"},
+		}},
+	}
+	valid := BuildFromBundle(bundle)
+	clone := func(t *testing.T) *Index {
+		t.Helper()
+		encoded, err := json.Marshal(valid)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var candidate Index
+		if err := json.Unmarshal(encoded, &candidate); err != nil {
+			t.Fatal(err)
+		}
+		return &candidate
+	}
+	if err := ValidateBundleIndex(nil, bundle, false); err == nil || !strings.Contains(err.Error(), "index is nil") {
+		t.Fatalf("nil index = %v", err)
+	}
+	tests := []struct {
+		name   string
+		want   string
+		mutate func(*Index)
+	}{
+		{name: "version", want: "unsupported search index version", mutate: func(index *Index) { index.Version = "future" }},
+		{name: "corpus version", want: "unsupported search corpus version", mutate: func(index *Index) { index.CorpusVersion = "future" }},
+		{name: "missing maps", want: "maps are missing", mutate: func(index *Index) { index.Documents = nil }},
+		{name: "document set", want: "document set", mutate: func(index *Index) { index.Documents["extra"] = Document{ID: "extra"} }},
+		{name: "missing canonical document", want: "missing canonical document", mutate: func(index *Index) {
+			delete(index.Documents, "node")
+			index.Documents["other"] = Document{ID: "other"}
+		}},
+		{name: "document identity", want: "differs from canonical identity", mutate: func(index *Index) {
+			document := index.Documents["node"]
+			document.Title = "Different"
+			index.Documents["node"] = document
+		}},
+		{name: "document length", want: "document length is invalid", mutate: func(index *Index) { index.DocumentLength["node"]++ }},
+		{name: "missing posting", want: "missing posting", mutate: func(index *Index) { delete(index.Postings, "search") }},
+		{name: "invalid posting", want: "posting \"search\" is invalid", mutate: func(index *Index) { index.Postings["search"][0].TermCount++ }},
+		{name: "document accounting", want: "document accounting", mutate: func(index *Index) { index.DocumentCount++ }},
+		{name: "average length", want: "average document length", mutate: func(index *Index) { index.AverageLength++ }},
+		{name: "empty posting list", want: "empty posting list", mutate: func(index *Index) { index.Postings["extra"] = nil }},
+		{name: "unknown posting document", want: "references an unknown document", mutate: func(index *Index) {
+			index.Postings["extra"] = []Posting{{DocumentID: "missing"}}
+		}},
+		{name: "posting count", want: "posting count does not match", mutate: func(index *Index) {
+			index.Postings["extra"] = []Posting{{DocumentID: "node"}}
+		}},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			candidate := clone(t)
+			test.mutate(candidate)
+			err := ValidateBundleIndex(candidate, bundle, false)
+			if err == nil || !strings.Contains(err.Error(), test.want) {
+				t.Fatalf("ValidateBundleIndex(%s) = %v, want error containing %q", test.name, err, test.want)
+			}
+		})
+	}
+
+	twoNodeBundle := bundle
+	twoNodeBundle.Nodes = append(append([]rkcmodel.Node(nil), bundle.Nodes...), rkcmodel.Node{
+		ID: "node-two", Kind: "function", Name: "OtherGraph", QualifiedName: "pkg.OtherGraph",
+		Attributes: map[string]any{"summary": "shared retrieval"},
+	})
+	unsorted := BuildFromBundle(twoNodeBundle)
+	unsorted.Postings["extra"] = []Posting{{DocumentID: "node-two"}, {DocumentID: "node"}}
+	if err := ValidateBundleIndex(unsorted, twoNodeBundle, false); err == nil || !strings.Contains(err.Error(), "unsorted") {
+		t.Fatalf("unsorted posting list = %v", err)
+	}
+}
+
+func TestValidateResourceEnvelopeRejectsCheapBoundaryViolations(t *testing.T) {
+	t.Parallel()
+	if isAdmittedTextArtifact(rkcmodel.Artifact{Text: true, Status: "binary"}) {
+		t.Fatal("unsupported text status was admitted")
+	}
+	tests := []struct {
+		name  string
+		index *Index
+		want  string
+	}{
+		{name: "nil", index: nil, want: "index is nil"},
+		{
+			name: "oversized document",
+			index: &Index{Documents: map[string]Document{
+				"large": {ID: "large", Body: strings.Repeat("x", MaximumIndexedDocumentBytes+1)},
+			}},
+			want: "per-document limit",
+		},
+		{
+			name: "oversized term",
+			index: &Index{Postings: map[string][]Posting{
+				strings.Repeat("t", MaximumIndexedTermBytes+1): nil,
+			}},
+			want: "term exceeds",
+		},
+		{
+			name:  "negative document length",
+			index: &Index{DocumentLength: map[string]int{"negative": -1}},
+			want:  "token corpus limit",
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			err := ValidateResourceEnvelope(test.index)
+			if err == nil || !strings.Contains(err.Error(), test.want) {
+				t.Fatalf("ValidateResourceEnvelope(%s) = %v, want error containing %q", test.name, err, test.want)
+			}
+		})
+	}
+}
+
+func TestBoundedMatchExcerptAndCaseFoldBoundaries(t *testing.T) {
+	t.Parallel()
+	if excerpt, start, end := boundedMatchExcerpt("value", []string{"value"}, 0); excerpt != "" || start != 0 || end != 0 {
+		t.Fatalf("zero-sized excerpt = %q, %d, %d", excerpt, start, end)
+	}
+	if excerpt, start, end := boundedMatchExcerpt("short", []string{"short"}, 10); excerpt != "short" || start != 0 || end != 5 {
+		t.Fatalf("short excerpt = %q, %d, %d", excerpt, start, end)
+	}
+	value := "0123456789xyzQ"
+	if excerpt, start, end := boundedMatchExcerpt(value, []string{"q"}, 6); excerpt != "89xyzQ" || start != 8 || end != len(value) {
+		t.Fatalf("tail excerpt = %q, %d, %d", excerpt, start, end)
+	}
+	if excerpt, start, end := boundedMatchExcerpt(value, []string{"absent"}, 6); excerpt != "012345" || start != 0 || end != 6 {
+		t.Fatalf("no-match excerpt = %q, %d, %d", excerpt, start, end)
+	}
+	if got := indexFoldASCII("value", ""); got != -1 {
+		t.Fatalf("empty ASCII term index = %d", got)
+	}
+	if got := indexFoldASCII("ABC", "bc"); got != 1 {
+		t.Fatalf("ASCII case-fold index = %d", got)
+	}
+	if got := indexFoldUnicode("value", ""); got != -1 {
+		t.Fatalf("empty Unicode term index = %d", got)
+	}
+	if got := indexFoldUnicode("café", "thé"); got != -1 {
+		t.Fatalf("missing Unicode term index = %d", got)
+	}
+	if excerpt, start, end := boundedMatchExcerpt("界界A界", []string{"a"}, 5); excerpt != "界A" || start != 3 || end != 7 {
+		t.Fatalf("UTF-8 boundary excerpt = %q, %d, %d", excerpt, start, end)
+	}
+}
+
 func TestBuildIsDeterministicAndPreservesBoostedFieldTraces(t *testing.T) {
 	t.Parallel()
 
