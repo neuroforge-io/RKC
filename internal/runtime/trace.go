@@ -42,7 +42,7 @@ import (
 const PluginID = "rkc.runtime"
 
 // PluginVersion identifies the trace capture/import semantics.
-const PluginVersion = "1.6.0"
+const PluginVersion = "1.7.0"
 
 const maximumCurrentProcessCaptureIntegrities = 4096
 
@@ -451,6 +451,11 @@ func Capture(ctx context.Context, options CaptureOptions) (CaptureResult, error)
 	if strings.TrimSpace(options.Repository) == "" {
 		return CaptureResult{}, errors.New("trace capture repository is required")
 	}
+	repositoryRoot, err := filepath.Abs(options.Repository)
+	if err != nil {
+		return CaptureResult{}, fmt.Errorf("resolve trace capture repository: %w", err)
+	}
+	options.Repository = repositoryRoot
 	if len(options.Command) == 0 || strings.TrimSpace(options.Command[0]) == "" {
 		return CaptureResult{}, errors.New("trace capture command is required")
 	}

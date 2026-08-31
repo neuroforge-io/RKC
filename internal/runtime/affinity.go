@@ -15,6 +15,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/neuroforge-io/RKC/internal/gitworktree"
 	"github.com/neuroforge-io/RKC/internal/inventory"
 	"github.com/neuroforge-io/RKC/internal/sourceorigin"
 	"github.com/neuroforge-io/RKC/internal/sourcepath"
@@ -247,6 +248,20 @@ type gitAffinity struct {
 }
 
 func traceGitAffinity(ctx context.Context, root string) (gitAffinity, error) {
+	if !gitworktree.AffinityEnvironmentIsPaired() {
+		return gitAffinity{unavailable: true}, nil
+	}
+	topLevelOutput, err := traceGitOutputRaw(ctx, root, "rev-parse", "--show-toplevel")
+	if err != nil {
+		if ctx.Err() != nil {
+			return gitAffinity{}, ctx.Err()
+		}
+		return gitAffinity{unavailable: true}, nil
+	}
+	topLevel, topLevelOK := gitworktree.ParseTopLevelOutput(topLevelOutput)
+	if !topLevelOK || !gitworktree.IsExactRoot(root, topLevel) {
+		return gitAffinity{unavailable: true}, nil
+	}
 	commit, err := traceGitOutput(ctx, root, "rev-parse", "HEAD")
 	if err != nil {
 		if ctx.Err() != nil {
@@ -272,6 +287,11 @@ func traceGitAffinity(ctx context.Context, root string) (gitAffinity, error) {
 }
 
 func traceGitOutput(ctx context.Context, root string, args ...string) (string, error) {
+	output, err := traceGitOutputRaw(ctx, root, args...)
+	return strings.TrimSpace(string(output)), err
+}
+
+func traceGitOutputRaw(ctx context.Context, root string, args ...string) ([]byte, error) {
 	commandArgs := append([]string{"-c", "core.hooksPath=/dev/null", "-C", root}, args...)
 	command := exec.CommandContext(ctx, "git", commandArgs...)
 	command.Env = append(os.Environ(),
@@ -280,12 +300,12 @@ func traceGitOutput(ctx context.Context, root string, args ...string) (string, e
 	var output boundedBuffer
 	command.Stdout = &output
 	if err := command.Run(); err != nil {
-		return "", err
+		return nil, err
 	}
 	if output.truncated {
-		return "", errors.New("Git metadata exceeded the runtime evidence bound")
+		return nil, errors.New("Git metadata exceeded the runtime evidence bound")
 	}
-	return strings.TrimSpace(string(output.bytes())), nil
+	return output.bytes(), nil
 }
 
 func sameRepositoryAffinity(left, right TraceRepository) bool {
