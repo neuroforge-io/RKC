@@ -867,10 +867,58 @@ func (state *stagedScanState) runValidate(ctx context.Context) (scheduler.Result
 			}
 		}
 		return scheduler.Result{}, fmt.Errorf(
-			"canonical bundle validation failed with %d error diagnostic(s)", errorCount,
+			"canonical bundle validation failed with %d error diagnostic(s) (codes: %s)",
+			errorCount,
+			validationErrorCodeSummary(report.Diagnostics, 8),
 		)
 	}
 	return state.bundleResult("validate"), nil
+}
+
+func validationErrorCodeSummary(diagnostics []rkcmodel.Diagnostic, limit int) string {
+	counts := map[string]int{}
+	total := 0
+	for _, diagnostic := range diagnostics {
+		if diagnostic.Severity != "error" && diagnostic.Severity != "fatal" {
+			continue
+		}
+		code := strings.TrimSpace(diagnostic.Code)
+		if code == "" {
+			code = "unknown"
+		}
+		counts[code]++
+		total++
+	}
+	type codeCount struct {
+		code  string
+		count int
+	}
+	ordered := make([]codeCount, 0, len(counts))
+	for code, count := range counts {
+		ordered = append(ordered, codeCount{code: code, count: count})
+	}
+	sort.Slice(ordered, func(i, j int) bool {
+		if ordered[i].count != ordered[j].count {
+			return ordered[i].count > ordered[j].count
+		}
+		return ordered[i].code < ordered[j].code
+	})
+	if limit <= 0 || limit > len(ordered) {
+		limit = len(ordered)
+	}
+	parts := make([]string, 0, limit+1)
+	included := 0
+	for _, item := range ordered[:limit] {
+		parts = append(parts, fmt.Sprintf("%s=%d", item.code, item.count))
+		included += item.count
+	}
+	if included < total {
+		parts = append(parts, fmt.Sprintf("other=%d", total-included))
+	}
+	if len(parts) == 0 {
+		return "none"
+	}
+	return strings.Join(parts, ",")
 }
 
 func (state *stagedScanState) runCoverage(context.Context) (scheduler.Result, error) {

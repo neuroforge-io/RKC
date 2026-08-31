@@ -464,8 +464,18 @@ func TestStagedFailureContracts(t *testing.T) {
 	}
 
 	if _, err := state.runValidate(context.Background()); err == nil ||
-		!strings.Contains(err.Error(), "canonical bundle validation failed") {
+		!strings.Contains(err.Error(), "canonical bundle validation failed") ||
+		!strings.Contains(err.Error(), "codes: RKC-MOD-") {
 		t.Fatalf("runValidate(invalid bundle) = %v", err)
+	}
+	if got := validationErrorCodeSummary([]rkcmodel.Diagnostic{
+		{Severity: "warning", Code: "IGNORED"},
+		{Severity: "error", Code: "B"},
+		{Severity: "fatal", Code: "A"},
+		{Severity: "error", Code: "B"},
+		{Severity: "error", Code: "C"},
+	}, 2); got != "B=2,A=1,other=1" {
+		t.Fatalf("validationErrorCodeSummary = %q", got)
 	}
 }
 

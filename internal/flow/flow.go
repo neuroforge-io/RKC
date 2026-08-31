@@ -37,7 +37,7 @@ import (
 const PluginID = "rkc.flow"
 
 // PluginVersion identifies the bounded flow-analysis semantics.
-const PluginVersion = "1.0.0"
+const PluginVersion = "1.1.0"
 
 // Bounds keep every analysis pass deterministic and bounded regardless of
 // repository size or adversarial input.

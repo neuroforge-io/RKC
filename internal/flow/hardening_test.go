@@ -22,6 +22,24 @@ func analyzeFlowWithLimits(t *testing.T, source string, configure func(*analysis
 	if err != nil {
 		t.Fatal(err)
 	}
+	knownNodes := make(map[string]struct{}, len(bundle.Nodes)+len(bundle.Artifacts)+len(fragment.Nodes))
+	for _, node := range bundle.Nodes {
+		knownNodes[node.ID] = struct{}{}
+	}
+	for _, artifact := range bundle.Artifacts {
+		knownNodes[artifact.ID] = struct{}{}
+	}
+	for _, node := range fragment.Nodes {
+		knownNodes[node.ID] = struct{}{}
+	}
+	for _, edge := range fragment.Edges {
+		if _, exists := knownNodes[edge.From]; !exists {
+			t.Fatalf("flow edge %s has missing source %s", edge.ID, edge.From)
+		}
+		if _, exists := knownNodes[edge.To]; !exists {
+			t.Fatalf("flow edge %s has missing target %s", edge.ID, edge.To)
+		}
+	}
 	return fragment, stats
 }
 
@@ -33,6 +51,39 @@ func requireFlowDiagnostic(t *testing.T, fragment rkcmodel.Fragment, code string
 		}
 	}
 	t.Fatalf("diagnostic %s missing: %+v", code, fragment.Diagnostics)
+}
+
+func TestFlowEndpointGuardOmitsOrphansWithoutClaimingABound(t *testing.T) {
+	analyzer := newGoAnalyzer(context.Background(), Options{Bundle: rkcmodel.Bundle{
+		Nodes: []rkcmodel.Node{{ID: "source", Kind: "value", Name: "source"}},
+	}}, &callGraph{byFunction: map[string][]callSite{}, functionByID: map[string]rkcmodel.Node{}}, defaultAnalysisLimits)
+	if analyzer.addEdge("flows_to", "source", "missing", "declared", nil) {
+		t.Fatal("edge with a missing target was admitted")
+	}
+	if len(analyzer.fragment.Edges) != 0 || analyzer.stats.BoundedExceeded != 0 {
+		t.Fatalf("orphan guard emitted edges or claimed a bound: edges=%d bounded=%d", len(analyzer.fragment.Edges), analyzer.stats.BoundedExceeded)
+	}
+	requireFlowDiagnostic(t, analyzer.fragment, "RKC-FLOW-2033")
+}
+
+func TestDeferredBindingsRespectPerFunctionEdgeBound(t *testing.T) {
+	fragment, stats := analyzeFlowWithLimits(t, `package main
+
+func target(first, second int) {}
+
+func caller(first, second int) {
+	target(first, second)
+}
+`, func(limits *analysisLimits) {
+		limits.flowEdgesPerFunc = 1
+	})
+	if stats.BindsToEdges != 1 {
+		t.Fatalf("deferred binds_to = %d, want 1 under the caller edge bound", stats.BindsToEdges)
+	}
+	if stats.BoundedExceeded == 0 {
+		t.Fatal("deferred binding truncation did not report a bound")
+	}
+	requireFlowDiagnostic(t, fragment, "RKC-FLOW-2020")
 }
 
 func TestCallGraphPreservesEvidenceOnlyCallSpan(t *testing.T) {

@@ -76,6 +76,7 @@ type valueFlowBuilder struct {
 }
 
 type callResultValue struct {
+	callerID string
 	valueID  string
 	targetID string
 	spelling string
@@ -94,6 +95,10 @@ func (analyzer *goAnalyzer) buildValueFlow(function rkcmodel.Node, fset *token.F
 		root: analyzer.options.Root, imports: goImportAliases(file),
 	}
 	builder.run()
+	analyzer.flowEdgesByFunction[function.ID] = builder.flowEdges
+	if builder.boundReported {
+		analyzer.deferredBoundSeen[function.ID] = struct{}{}
+	}
 	return !builder.bounded
 }
 
@@ -125,12 +130,16 @@ func (builder *valueFlowBuilder) registerParameters() {
 			continue
 		}
 		name, _ := entry["name"].(string)
-		if name == "" {
-			continue
+		displayName := name
+		if displayName == "" {
+			displayName = "parameter_" + strconv.Itoa(position)
 		}
 		attributes := map[string]any{
 			"parameter": name, "position": position,
 			"parameter_type": entry["type"],
+		}
+		if name == "" {
+			attributes["unnamed"] = true
 		}
 		if sourceParams[name] {
 			attributes["flow_role"] = roleSource
@@ -138,7 +147,7 @@ func (builder *valueFlowBuilder) registerParameters() {
 		valueID := builder.newValueWithID(
 			parameterID(builder.function.ID, position),
 			builder.function.QualifiedName+"#parameter"+strconv.Itoa(position),
-			roleParameter, name, attributes,
+			roleParameter, displayName, attributes,
 		)
 		if valueID == "" {
 			return
@@ -146,8 +155,10 @@ func (builder *valueFlowBuilder) registerParameters() {
 		if sourceParams[name] {
 			builder.analyzer.stats.Sources++
 		}
-		builder.paramValues[name] = valueID
-		builder.currentValues[name] = valueID
+		if name != "" {
+			builder.paramValues[name] = valueID
+			builder.currentValues[name] = valueID
+		}
 	}
 }
 
@@ -466,15 +477,10 @@ func (builder *valueFlowBuilder) analyzeCallExpr(expression ast.Expr) string {
 			continue
 		}
 		args = append(args, argValue{position: position, valueID: argID})
-		if resolved && targetID != "" {
-			builder.addFlowEdge("binds_to", argID, parameterID(targetID, position), map[string]any{
-				"position": position, "spelling": spelling,
-			})
-		}
 	}
 	if resolved && targetID != "" {
 		builder.analyzer.pendingCallResults = append(builder.analyzer.pendingCallResults, callResultValue{
-			valueID: resultID, targetID: targetID, spelling: spelling, args: args,
+			callerID: builder.function.ID, valueID: resultID, targetID: targetID, spelling: spelling, args: args,
 		})
 	}
 	if envName, isEnv := builder.environmentName(targetID, resolved, call); isEnv {
@@ -747,15 +753,79 @@ func (analyzer *goAnalyzer) emitCallBindings() {
 		if analyzer.flowEdgeLimitHit || analyzer.factBudgetHit() {
 			return
 		}
+		// Callee parameters may be analyzed after their callers, or omitted by
+		// a configured bound. Publish a binding only after the complete pass has
+		// established that the canonical parameter node actually exists.
+		for _, argument := range callResult.args {
+			parameter, exists := analyzer.callParameterID(callResult.targetID, argument.position)
+			if !exists {
+				continue
+			}
+			analyzer.addDeferredCallEdge(callResult, "binds_to", argument.valueID, parameter, map[string]any{
+				"position": argument.position, "spelling": callResult.spelling,
+			})
+		}
 		for index := 0; index < analyzer.limits.valueNodesPerFunc; index++ {
 			returnID := returnValueID(callResult.targetID, index)
 			if _, exists := analyzer.seenNodes[returnID]; exists {
-				analyzer.addEdge("returns_to", returnID, callResult.valueID, "declared", map[string]any{
+				analyzer.addDeferredCallEdge(callResult, "returns_to", returnID, callResult.valueID, map[string]any{
 					"spelling": callResult.spelling, "return_index": index,
 				})
 			}
 		}
 	}
+}
+
+func (analyzer *goAnalyzer) callParameterID(targetID string, actualPosition int) (string, bool) {
+	target, exists := analyzer.callGraph.functionByID[targetID]
+	if !exists || actualPosition < 0 {
+		return "", false
+	}
+	arguments, ok := target.Attributes["arguments"].([]any)
+	if !ok || len(arguments) == 0 {
+		return "", false
+	}
+	formalPosition := actualPosition
+	if formalPosition >= len(arguments) {
+		variadic, _ := target.Attributes["variadic"].(bool)
+		if !variadic {
+			return "", false
+		}
+		formalPosition = len(arguments) - 1
+	}
+	parameter := parameterID(targetID, formalPosition)
+	if _, exists := analyzer.nodeByID[parameter]; !exists {
+		return "", false
+	}
+	return parameter, true
+}
+
+func (analyzer *goAnalyzer) addDeferredCallEdge(call callResultValue, kind, from, to string, attributes map[string]any) bool {
+	if analyzer.flowEdgesByFunction[call.callerID] >= analyzer.limits.flowEdgesPerFunc {
+		analyzer.noteDeferredFunctionBound(call.callerID)
+		return false
+	}
+	if analyzer.addEdge(kind, from, to, "declared", attributes) {
+		analyzer.flowEdgesByFunction[call.callerID]++
+		return true
+	}
+	return false
+}
+
+func (analyzer *goAnalyzer) noteDeferredFunctionBound(functionID string) {
+	if _, seen := analyzer.deferredBoundSeen[functionID]; seen {
+		return
+	}
+	analyzer.deferredBoundSeen[functionID] = struct{}{}
+	analyzer.stats.BoundedExceeded++
+	qualifiedName := functionID
+	if function, exists := analyzer.nodeByID[functionID]; exists && function.QualifiedName != "" {
+		qualifiedName = function.QualifiedName
+	}
+	analyzer.addDiagnostic(
+		"RKC-FLOW-2020",
+		"function "+qualifiedName+" exceeded a per-function value-flow bound; remaining facts omitted",
+	)
 }
 
 func returnValueID(functionID string, index int) string {

@@ -127,6 +127,23 @@ func flowAnalyze(t *testing.T, source string) (rkcmodel.Bundle, Stats) {
 	bundle.Evidence = append(bundle.Evidence, fragment.Evidence...)
 	bundle.Diagnostics = append(bundle.Diagnostics, fragment.Diagnostics...)
 	rkcmodel.SortBundle(&bundle)
+	nodeIDs := make(map[string]struct{}, len(bundle.Nodes))
+	for _, node := range bundle.Nodes {
+		nodeIDs[node.ID] = struct{}{}
+	}
+	// The production pipeline represents every artifact as a same-ID graph
+	// node before adapters run; the focused fixture keeps only Artifact records.
+	for _, artifact := range bundle.Artifacts {
+		nodeIDs[artifact.ID] = struct{}{}
+	}
+	for _, edge := range bundle.Edges {
+		if _, ok := nodeIDs[edge.From]; !ok {
+			t.Fatalf("edge %s has missing source %s", edge.ID, edge.From)
+		}
+		if _, ok := nodeIDs[edge.To]; !ok {
+			t.Fatalf("edge %s has missing target %s", edge.ID, edge.To)
+		}
+	}
 	_ = artifactID
 	return bundle, stats
 }
@@ -252,6 +269,61 @@ func handler() error {
 	}
 	if report.CallEdges == 0 || report.CallEdgesResolved == 0 {
 		t.Fatalf("report call edges = %d/%d", report.CallEdges, report.CallEdgesResolved)
+	}
+}
+
+func TestFlowBindsToCanonicalUnnamedParameter(t *testing.T) {
+	source := `package main
+
+func target(int) {}
+
+func caller(value int) {
+	target(value)
+}
+`
+	bundle, stats := flowAnalyze(t, source)
+	if stats.BindsToEdges != 1 {
+		t.Fatalf("binds_to = %d, want 1 for the canonical unnamed parameter", stats.BindsToEdges)
+	}
+	parameter := parameterID(rkcmodel.StableID("node", "function", "example.com/demo.target"), 0)
+	parameterNode, exists := nodeByID(bundle, parameter)
+	if !exists || parameterNode.Attributes["unnamed"] != true || parameterNode.Name == "" {
+		t.Fatalf("unnamed parameter node = %+v, exists=%v", parameterNode, exists)
+	}
+	found := false
+	for _, edge := range bundle.Edges {
+		if edge.Kind == "binds_to" && edge.To == parameter {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatal("binding to canonical unnamed parameter is missing")
+	}
+}
+
+func TestFlowMapsVariadicActualsToFinalFormal(t *testing.T) {
+	source := `package main
+
+func target(prefix string, values ...int) {}
+
+func caller() {
+	target("x", 1, 2, 3)
+}
+`
+	bundle, stats := flowAnalyze(t, source)
+	if stats.BindsToEdges != 4 {
+		t.Fatalf("binds_to = %d, want 4 positional bindings", stats.BindsToEdges)
+	}
+	targetID := rkcmodel.StableID("node", "function", "example.com/demo.target")
+	variadicParameter := parameterID(targetID, 1)
+	bindings := 0
+	for _, edge := range bundle.Edges {
+		if edge.Kind == "binds_to" && edge.To == variadicParameter {
+			bindings++
+		}
+	}
+	if bindings != 3 {
+		t.Fatalf("variadic parameter bindings = %d, want 3", bindings)
 	}
 }
 

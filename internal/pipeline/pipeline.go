@@ -379,7 +379,11 @@ func scanSequential(ctx context.Context, opts Options) (rkcmodel.Bundle, rkcmode
 				errorCount++
 			}
 		}
-		return rkcmodel.Bundle{}, rkcmodel.Coverage{}, fmt.Errorf("canonical bundle validation failed with %d error diagnostic(s)", errorCount)
+		return rkcmodel.Bundle{}, rkcmodel.Coverage{}, fmt.Errorf(
+			"canonical bundle validation failed with %d error diagnostic(s) (codes: %s)",
+			errorCount,
+			validationErrorCodeSummary(report.Diagnostics, 8),
+		)
 	}
 	coverage := rkcmodel.BuildCoverage(bundle)
 	return bundle, coverage, nil

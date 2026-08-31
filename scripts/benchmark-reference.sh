@@ -29,6 +29,8 @@ WORK=$(mktemp -d "${TMPDIR:-/tmp}/rkc-benchmark.XXXXXX")
 trap 'rm -rf "$WORK"' EXIT INT TERM
 START=$(python3 -c 'import time; print(time.monotonic_ns())')
 set -- ./bin/rkc scan \
+  --no-cache \
+  --runs-dir "$WORK/runs" \
   --no-python \
   --out "$OUT/atlas" \
   --exclude .cache \

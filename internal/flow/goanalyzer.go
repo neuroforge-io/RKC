@@ -25,11 +25,12 @@ type goAnalyzer struct {
 	fragment  rkcmodel.Fragment
 	stats     Stats
 
-	seenNodes map[string]struct{}
-	seenEdges map[string]struct{}
-	nodeByID  map[string]rkcmodel.Node
-	artifacts map[string]rkcmodel.Artifact
-	boundSeen map[string]struct{}
+	seenNodes    map[string]struct{}
+	seenEdges    map[string]struct{}
+	nodeByID     map[string]rkcmodel.Node
+	artifacts    map[string]rkcmodel.Artifact
+	boundSeen    map[string]struct{}
+	omissionSeen map[string]struct{}
 
 	cfgBlockLimitHit   bool
 	cfgEdgeLimitHit    bool
@@ -39,10 +40,12 @@ type goAnalyzer struct {
 	factRecordLimitHit bool
 	factByteLimitHit   bool
 
-	fileASTs           map[string]*ast.File
-	fileSets           map[string]*token.FileSet
-	fileMissing        map[string]struct{}
-	pendingCallResults []callResultValue
+	fileASTs            map[string]*ast.File
+	fileSets            map[string]*token.FileSet
+	fileMissing         map[string]struct{}
+	pendingCallResults  []callResultValue
+	flowEdgesByFunction map[string]int
+	deferredBoundSeen   map[string]struct{}
 }
 
 func newGoAnalyzer(ctx context.Context, options Options, graph *callGraph, limits analysisLimits) *goAnalyzer {
@@ -51,9 +54,11 @@ func newGoAnalyzer(ctx context.Context, options Options, graph *callGraph, limit
 		limits:    limits,
 		seenNodes: map[string]struct{}{}, seenEdges: map[string]struct{}{},
 		nodeByID: map[string]rkcmodel.Node{}, artifacts: map[string]rkcmodel.Artifact{},
-		boundSeen: map[string]struct{}{},
-		fileASTs:  map[string]*ast.File{}, fileSets: map[string]*token.FileSet{},
-		fileMissing: map[string]struct{}{},
+		boundSeen: map[string]struct{}{}, omissionSeen: map[string]struct{}{},
+		fileASTs: map[string]*ast.File{}, fileSets: map[string]*token.FileSet{},
+		fileMissing:         map[string]struct{}{},
+		flowEdgesByFunction: map[string]int{},
+		deferredBoundSeen:   map[string]struct{}{},
 	}
 	for _, node := range options.Bundle.Nodes {
 		analyzer.nodeByID[node.ID] = node
@@ -236,6 +241,9 @@ func (analyzer *goAnalyzer) addEdgeWithID(id, kind, from, to, resolution string,
 	if _, exists := analyzer.seenEdges[id]; exists {
 		return false
 	}
+	if !analyzer.edgeEndpointsAvailable(from, to) {
+		return false
+	}
 	if kind == "precedes" {
 		if analyzer.stats.CFGEdges >= analyzer.limits.cfgEdgesTotal {
 			analyzer.cfgEdgeLimitHit = true
@@ -288,7 +296,7 @@ func (analyzer *goAnalyzer) addEdgeWithID(id, kind, from, to, resolution string,
 // canonical truth layer. It deliberately emits related_to/syntax_inferred at
 // low confidence, never a sanitizes edge and never a traversable flow fact.
 func (analyzer *goAnalyzer) addSanitizerHypothesis(from, to string, attributes map[string]any) bool {
-	if from == "" || to == "" {
+	if from == "" || to == "" || !analyzer.edgeEndpointsAvailable(from, to) {
 		return false
 	}
 	id := rkcmodel.StableID("edge", "related_to", "sanitizer_name_hypothesis", from, to)
@@ -317,6 +325,26 @@ func (analyzer *goAnalyzer) addSanitizerHypothesis(from, to string, attributes m
 	analyzer.fragment.Edges = append(analyzer.fragment.Edges, edge)
 	analyzer.fragment.Evidence = append(analyzer.fragment.Evidence, evidence)
 	return true
+}
+
+func (analyzer *goAnalyzer) edgeEndpointsAvailable(from, to string) bool {
+	if _, sourceExists := analyzer.nodeByID[from]; !sourceExists {
+		analyzer.noteOmission("RKC-FLOW-2032", "omitted flow edge because its source node is unavailable")
+		return false
+	}
+	if _, targetExists := analyzer.nodeByID[to]; !targetExists {
+		analyzer.noteOmission("RKC-FLOW-2033", "omitted flow edge because its target node is unavailable")
+		return false
+	}
+	return true
+}
+
+func (analyzer *goAnalyzer) noteOmission(code, message string) {
+	if _, exists := analyzer.omissionSeen[code]; exists {
+		return
+	}
+	analyzer.omissionSeen[code] = struct{}{}
+	analyzer.addDiagnostic(code, message)
 }
 
 func (analyzer *goAnalyzer) addDiagnostic(code, message string) {

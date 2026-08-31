@@ -42,6 +42,11 @@ SHELL_WORKFLOWS = (
 
 
 class ShellWorkflowTests(unittest.TestCase):
+    def test_reference_benchmark_uses_private_clean_scan_state(self) -> None:
+        text = (ROOT / "scripts/benchmark-reference.sh").read_text(encoding="utf-8")
+        self.assertIn("--no-cache", text)
+        self.assertIn('--runs-dir "$WORK/runs"', text)
+
     def test_workflows_exist_have_strict_mode_and_parse(self) -> None:
         discovered = {"install.sh"} | {
             path.relative_to(ROOT).as_posix() for path in (ROOT / "scripts").glob("*.sh")
