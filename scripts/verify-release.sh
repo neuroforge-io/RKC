@@ -232,7 +232,26 @@ SOURCE_TREE=$(git rev-parse --verify "${SOURCE_COMMIT}^{tree}")
 SOURCE_COMMIT_TIME=$(git show -s --format=%ct "$SOURCE_COMMIT")
 prepare_validation_output "$OUT"
 WORK=$(mktemp -d "${TMPDIR:-/tmp}/rkc-release-verification.XXXXXX")
-trap 'rm -rf "$WORK"' EXIT INT TERM
+cleanup_inner_work() {
+  # Go's module cache intentionally creates read-only directories. Restore
+  # owner permissions before removing the private verification workspace so a
+  # successful or interrupted run cannot leak cache trees into the temp area.
+  find "$WORK" -type d -exec chmod u+rwx {} + 2>/dev/null || true
+  rm -rf "$WORK"
+}
+trap cleanup_inner_work EXIT INT TERM
+GO_BUILD_CACHE=$WORK/go-build-cache
+GO_MODULE_CACHE=$WORK/go-module-cache
+GO_TEMP=$WORK/go-tmp
+mkdir -p "$GO_BUILD_CACHE" "$GO_MODULE_CACHE" "$GO_TEMP"
+# A release proof must not depend on mutable per-user caches. In particular, a
+# concurrent `go clean -cache` must not be able to invalidate a long race run.
+# The module cache is private as well so dependency removal or repair in another
+# process cannot change the verified input set beneath this immutable checkout.
+export GOCACHE="$GO_BUILD_CACHE"
+export GOMODCACHE="$GO_MODULE_CACHE"
+export GOTMPDIR="$GO_TEMP"
+export GOWORK=off
 STEPS="$WORK/steps.tsv"
 : >"$STEPS"
 START=$(date +%s)

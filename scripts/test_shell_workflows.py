@@ -100,6 +100,7 @@ class ShellWorkflowTests(unittest.TestCase):
             environment["PATH"] = os.pathsep.join(
                 (str(binary_dir), "/usr/bin", "/bin")
             )
+            environment["RKC_HIGHER_PRIORITY_MARKERS"] = "erais"
 
             def run_guard() -> subprocess.CompletedProcess[str]:
                 return subprocess.run(
@@ -116,6 +117,7 @@ class ShellWorkflowTests(unittest.TestCase):
             refusal = os.environ.copy()
             refusal["PATH"] = environment["PATH"]
             refusal["RKC_HIGHER_PRIORITY_POLICY"] = "refuse"
+            refusal["RKC_HIGHER_PRIORITY_MARKERS"] = "erais"
             refused = subprocess.run(
                 ["/bin/sh", str(ROOT / "scripts/with-rkc-limits.sh"), "true"],
                 cwd=ROOT,

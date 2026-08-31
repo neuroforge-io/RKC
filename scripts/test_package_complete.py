@@ -1407,6 +1407,30 @@ class CompletePackageTests(unittest.TestCase):
         self.assertIn('mv "$WORK/evidence" "$RELEASE_STAGE/evidence"', reproducible)
         self.assertIn('--destination "$ROOT/dist/evidence"', verifier)
         self.assertIn("prior evidence is unchanged", verifier)
+        self.assertIn('export GOCACHE="$GO_BUILD_CACHE"', verifier)
+        self.assertIn('export GOMODCACHE="$GO_MODULE_CACHE"', verifier)
+        self.assertIn('export GOTMPDIR="$GO_TEMP"', verifier)
+        self.assertIn("export GOWORK=off", verifier)
+        self.assertIn("GO_BUILD_CACHE=$WORK/go-build-cache", verifier)
+        self.assertIn("GO_MODULE_CACHE=$WORK/go-module-cache", verifier)
+        self.assertIn("GO_TEMP=$WORK/go-tmp", verifier)
+        self.assertIn(
+            'mkdir -p "$GO_BUILD_CACHE" "$GO_MODULE_CACHE" "$GO_TEMP"',
+            verifier,
+        )
+        self.assertIn(
+            'find "$WORK" -type d -exec chmod u+rwx {} +', verifier
+        )
+        self.assertIn("trap cleanup_inner_work EXIT INT TERM", verifier)
+        inner_work = verifier.index(
+            'WORK=$(mktemp -d "${TMPDIR:-/tmp}/rkc-release-verification.XXXXXX")'
+        )
+        cache_setup = verifier.index("GO_BUILD_CACHE=$WORK/go-build-cache")
+        self.assertLess(inner_work, cache_setup)
+        self.assertLess(
+            cache_setup,
+            verifier.index("run_step go-modules"),
+        )
         self.assertIn('"$ROOT/.venv/bin/python"', verifier)
         self.assertIn("RKC_VALIDATION_PYTHON", verifier)
         self.assertIn("python-environment", verifier)

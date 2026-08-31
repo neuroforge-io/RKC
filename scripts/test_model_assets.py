@@ -148,9 +148,12 @@ class ModelAssetTests(unittest.TestCase):
 
     def test_priority_match_ignores_wrapper_ancestor_only(self) -> None:
         ancestors = {100, 101}
+        markers = (b"erais", b"torchrun", b"lm_eval")
         wrapper = b"/bin/bash -lc echo erais; run child"
         self.assertFalse(
-            model_assets._matches_priority_process(100, wrapper, b"bash", ancestors)
+            model_assets._matches_priority_process(
+                100, wrapper, b"bash", ancestors, markers
+            )
         )
         self.assertTrue(
             model_assets._matches_priority_process(
@@ -158,6 +161,7 @@ class ModelAssetTests(unittest.TestCase):
                 b"/usr/bin/torchrun train.py",
                 b"torchrun",
                 ancestors,
+                markers,
             )
         )
         self.assertTrue(
@@ -166,6 +170,7 @@ class ModelAssetTests(unittest.TestCase):
                 b"python /workspace/priority-project/erais/train.py",
                 b"python3",
                 ancestors,
+                markers,
             )
         )
         self.assertFalse(
@@ -174,6 +179,7 @@ class ModelAssetTests(unittest.TestCase):
                 b"llama-cli --offline --model gemma.gguf --prompt explain ERAIS safely",
                 b"llama-cli",
                 ancestors,
+                markers,
             )
         )
 
@@ -467,7 +473,10 @@ class ModelAssetTests(unittest.TestCase):
             ).encode(),
             stderr=b"",
         )
-        with mock.patch.object(model_assets.sys, "platform", "darwin"):
+        with mock.patch.dict(
+            os.environ,
+            {model_assets.HIGHER_PRIORITY_MARKERS_ENVIRONMENT: "erais"},
+        ), mock.patch.object(model_assets.sys, "platform", "darwin"):
             matches = model_assets.active_priority_processes()
         self.assertEqual(matches, [(123, "erais")])
         with mock.patch.object(
@@ -481,7 +490,10 @@ class ModelAssetTests(unittest.TestCase):
         self.assertNotIn(sentinel, diagnostic)
         self.assertNotIn("/private/project", diagnostic)
         run.side_effect = FileNotFoundError("pgrep")
-        with mock.patch.object(
+        with mock.patch.dict(
+            os.environ,
+            {model_assets.HIGHER_PRIORITY_MARKERS_ENVIRONMENT: "erais"},
+        ), mock.patch.object(
             model_assets.sys, "platform", "darwin"
         ), self.assertRaises(model_assets.PriorityBlocked):
             model_assets.active_priority_processes()
@@ -506,7 +518,10 @@ class ModelAssetTests(unittest.TestCase):
                     return proc / name.removeprefix("/proc/")
                 return real_path(value)
 
-            with mock.patch.object(
+            with mock.patch.dict(
+                os.environ,
+                {model_assets.HIGHER_PRIORITY_MARKERS_ENVIRONMENT: "erais"},
+            ), mock.patch.object(
                 model_assets, "Path", side_effect=mapped
             ), mock.patch.object(model_assets, "_ancestor_pids", return_value={999}):
                 matches = model_assets.active_priority_processes()
