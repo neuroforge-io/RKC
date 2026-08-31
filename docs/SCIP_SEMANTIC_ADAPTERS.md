@@ -29,7 +29,11 @@ rkc scip pin --language python --tool "$(command -v scip-python)" --version v0.6
 
 # Generate and strictly validate an index:
 rkc scip generate --language go .
-rkc scip generate --language python --tool-args index . --project-name myapp .
+rkc scip generate --language python \
+  --tool-args=index --tool-args=. \
+  --tool-args=--project-name=myapp \
+  --tool-args=--project-version=1.0.0 \
+  .
 
 # Validate an existing index without a repository:
 rkc scip verify --index /absolute/path/index.scip
@@ -184,7 +188,12 @@ The importer:
   repository truth, while top-level external symbol metadata remains external;
 - requires an explicit SCIP position encoding: 1 for UTF-8 bytes, 2 for UTF-16
   code units, or 3 for UTF-32 code points. Unspecified (0) and unknown values
-  fail closed rather than risking incorrect source spans;
+  fail closed rather than risking incorrect source spans. The sole compatibility
+  exception is same-process generation by a digest-pinned `scip-python` 0.6.6
+  producer: its older schema omits the field while its Pyright/TypeScript
+  implementation emits UTF-16 code-unit offsets, so RKC source-seals the output
+  with encoding 2 and then repeats strict validation. Bare imports, unpinned
+  generation, other producers, and unknown encodings never receive this repair;
 - rejects symbolic-link index inputs and source path components;
 - caps each index at 512 MiB, the aggregate at 1 GiB, the input count at 64,
   and document/message/string/entity counts at bounded limits;

@@ -96,15 +96,40 @@ func minimalValidIndex() []byte {
 }
 
 func validSCIPMetadata() []byte {
+	return validSCIPMetadataFor("test-indexer", "1.0")
+}
+
+func validSCIPMetadataFor(tool, version string) []byte {
 	metadata := scipMessage(
 		scipFieldBytes(2, scipMessage(
-			scipFieldString(1, "test-indexer"),
-			scipFieldString(2, "1.0"),
+			scipFieldString(1, tool),
+			scipFieldString(2, version),
 		)),
 		scipFieldString(3, "file:///repo"),
 		scipFieldVarint(4, 1),
 	)
 	return metadata
+}
+
+func validPythonSourceIndexWithoutPositionEncoding(source string) []byte {
+	return validPythonSourceIndexWithoutPositionEncodingFor(source, "scip-python", "0.6.6")
+}
+
+func validPythonSourceIndexWithoutPositionEncodingFor(source, tool, version string) []byte {
+	occurrence := scipMessage(
+		scipLegacyRange(1, 0, 0, 3),
+		scipFieldString(2, "scip-python python rkc-test 1.0 run()."),
+		scipFieldVarint(3, 1),
+	)
+	document := scipMessage(
+		scipFieldString(1, "main.py"),
+		scipFieldBytes(2, occurrence),
+		scipFieldString(4, "Python"),
+	)
+	return scipMessage(
+		scipFieldBytes(1, validSCIPMetadataFor(tool, version)),
+		scipFieldBytes(2, document),
+	)
 }
 
 func validSourceIndex(source string, embedText bool) []byte {
@@ -369,6 +394,112 @@ func TestScipGeneratePublishesValidatedIndex(t *testing.T) {
 	}
 	if inputs[0].SourceBinding == nil || inputs[0].SourceBinding.SourceSHA256 == "" {
 		t.Fatalf("generated source binding was not auto-loaded: %+v", inputs[0])
+	}
+}
+
+func TestScipGenerateAuthenticatesLegacyScipPythonPositionEncoding(t *testing.T) {
+	directory := t.TempDir()
+	repository := filepath.Join(directory, "repo")
+	if err := os.Mkdir(repository, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	source := "def run():\n    return 1\n"
+	if err := os.WriteFile(filepath.Join(repository, "main.py"), []byte(source), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	indexBytes := validPythonSourceIndexWithoutPositionEncoding(source)
+	tool := writeFakeIndexer(t, directory, "printf '"+hex.EncodeToString(indexBytes)+"' | xxd -r -p > index.scip\n")
+	lockPath := filepath.Join(directory, "indexers.lock.json")
+	if err := runScipPin([]string{
+		"--language", "python", "--tool", tool, "--version", "0.6.6", "--lock", lockPath,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	out := filepath.Join(directory, "out")
+	if err := runScipGenerate(context.Background(), []string{
+		"--language", "python", "--tool", tool, "--lock", lockPath, "--out", out, repository,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	published := filepath.Join(out, "python.scip")
+	inputs, _, err := scipindex.PrepareInputs(context.Background(), []string{published})
+	if err != nil || len(inputs) != 1 {
+		t.Fatalf("prepare adapted scip-python index = %v, %v", inputs, err)
+	}
+	if !inputs[0].CompilerAuthenticated() {
+		t.Fatal("pinned same-process scip-python output lost compiler authentication")
+	}
+	if inputs[0].SourceBinding == nil || inputs[0].SourceBinding.DocumentCount != 1 ||
+		inputs[0].SourceBinding.SourceSHA256 == "" {
+		t.Fatalf("adapted scip-python source binding = %+v", inputs[0].SourceBinding)
+	}
+	inspection, err := scipindex.Inspect(context.Background(), inputs[0])
+	if err != nil || inspection.Tool != "scip-python" || inspection.Documents != 1 {
+		t.Fatalf("inspect adapted scip-python index = %+v, %v", inspection, err)
+	}
+	// The same ambiguous producer output is not adapted through the explicit
+	// unpinned bypass. Compatibility is evidence of a pinned producer, not a
+	// general weakening of external SCIP admission.
+	err = runScipGenerate(context.Background(), []string{
+		"--language", "python", "--tool", tool, "--no-pin-check",
+		"--lock", filepath.Join(directory, "missing-unpinned-lock.json"),
+		"--out", filepath.Join(directory, "unverified"), repository,
+	})
+	if err == nil || !strings.Contains(err.Error(), "position_encoding") {
+		t.Fatalf("unverified ambiguous scip-python index = %v", err)
+	}
+}
+
+func TestScipGenerateLegacyScipPythonCompatibilityRequiresExactProducer(t *testing.T) {
+	tests := []struct {
+		name            string
+		lockVersion     string
+		metadataTool    string
+		metadataVersion string
+		want            string
+	}{
+		{
+			name: "lock version mismatch", lockVersion: "0.6.5",
+			metadataTool: "scip-python", metadataVersion: "0.6.6", want: "position_encoding",
+		},
+		{
+			name: "metadata version mismatch", lockVersion: "v0.6.6",
+			metadataTool: "scip-python", metadataVersion: "0.6.5", want: "requires producer scip-python 0.6.6",
+		},
+		{
+			name: "metadata tool mismatch", lockVersion: "0.6.6",
+			metadataTool: "other-python", metadataVersion: "0.6.6", want: "requires producer scip-python 0.6.6",
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			directory := t.TempDir()
+			repository := filepath.Join(directory, "repo")
+			if err := os.Mkdir(repository, 0o700); err != nil {
+				t.Fatal(err)
+			}
+			source := "def run():\n    return 1\n"
+			if err := os.WriteFile(filepath.Join(repository, "main.py"), []byte(source), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			indexBytes := validPythonSourceIndexWithoutPositionEncodingFor(
+				source, test.metadataTool, test.metadataVersion,
+			)
+			tool := writeFakeIndexer(t, directory, "printf '"+hex.EncodeToString(indexBytes)+"' | xxd -r -p > index.scip\n")
+			lockPath := filepath.Join(directory, "indexers.lock.json")
+			if err := runScipPin([]string{
+				"--language", "python", "--tool", tool, "--version", test.lockVersion, "--lock", lockPath,
+			}); err != nil {
+				t.Fatal(err)
+			}
+			err := runScipGenerate(context.Background(), []string{
+				"--language", "python", "--tool", tool, "--lock", lockPath,
+				"--out", filepath.Join(directory, "out"), repository,
+			})
+			if err == nil || !strings.Contains(err.Error(), test.want) {
+				t.Fatalf("producer mismatch = %v, want error containing %q", err, test.want)
+			}
+		})
 	}
 }
 

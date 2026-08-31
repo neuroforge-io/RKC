@@ -1,6 +1,7 @@
 package scipindex
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -97,8 +98,28 @@ func SealRepositorySources(
 	snapshot SourceSnapshot,
 	output io.Writer,
 ) error {
+	return SealRepositorySourcesWithDefaultPositionEncoding(ctx, root, input, snapshot, 0, output)
+}
+
+// SealRepositorySourcesWithDefaultPositionEncoding is the same source-affinity
+// seal with one narrowly scoped compatibility route for a digest-pinned
+// same-process indexer whose historical schema omitted Document.position_encoding.
+// A nonzero default is applied only to documents that report encoding zero;
+// explicit encodings are preserved and unsupported values still fail strict
+// post-seal inspection. External SCIP imports never use this route.
+func SealRepositorySourcesWithDefaultPositionEncoding(
+	ctx context.Context,
+	root string,
+	input Input,
+	snapshot SourceSnapshot,
+	defaultPositionEncoding int32,
+	output io.Writer,
+) error {
 	if ctx == nil || output == nil {
 		return errors.New("SCIP source sealing requires a context and output")
+	}
+	if defaultPositionEncoding < 0 || defaultPositionEncoding > 3 {
+		return errors.New("SCIP default position encoding must be zero or a supported explicit encoding")
 	}
 	absolute, err := filepath.Abs(root)
 	if err != nil {
@@ -157,7 +178,9 @@ func SealRepositorySources(
 			if err != nil {
 				return fmt.Errorf("read SCIP document for source sealing: %w", err)
 			}
-			sealed, err := sealDocumentSource(ctx, absolute, snapshot, documentBytes)
+			sealed, err := sealDocumentSource(
+				ctx, absolute, snapshot, documentBytes, defaultPositionEncoding,
+			)
 			if err != nil {
 				return err
 			}
@@ -255,10 +278,21 @@ func sealDocumentSource(
 	root string,
 	snapshot SourceSnapshot,
 	message []byte,
+	defaultPositionEncoding int32,
 ) ([]byte, error) {
 	document, err := parseDocument(message)
 	if err != nil {
 		return nil, fmt.Errorf("decode SCIP document for source sealing: %w", err)
+	}
+	if document.positionEncoding == 0 && defaultPositionEncoding != 0 {
+		message, err = applyDefaultPositionEncoding(message, uint64(defaultPositionEncoding))
+		if err != nil {
+			return nil, fmt.Errorf("normalize generated SCIP document position encoding: %w", err)
+		}
+		document, err = parseDocument(message)
+		if err != nil {
+			return nil, fmt.Errorf("decode normalized SCIP document: %w", err)
+		}
 	}
 	canonical, contained := classifyDocumentPath(document.path)
 	if !canonical || !contained {
@@ -288,6 +322,65 @@ func sealDocumentSource(
 	sealed = appendProtoVarint(sealed, uint64(len(source)))
 	sealed = append(sealed, source...)
 	return sealed, nil
+}
+
+func applyDefaultPositionEncoding(message []byte, fallback uint64) ([]byte, error) {
+	if fallback < 1 || fallback > 3 {
+		return nil, errors.New("SCIP fallback position encoding is unsupported")
+	}
+	reader := newMessageReader(message)
+	var output bytes.Buffer
+	encodingSeen := false
+	for {
+		field, wire, done, err := reader.next()
+		if err != nil {
+			return nil, err
+		}
+		if done {
+			break
+		}
+		if field == 6 {
+			if encodingSeen {
+				return nil, errors.New("SCIP document contains duplicate position_encoding fields")
+			}
+			if err := requireWire(field, wire, 0); err != nil {
+				return nil, err
+			}
+			value, err := reader.varint()
+			if err != nil {
+				return nil, err
+			}
+			if value == 0 {
+				value = fallback
+			}
+			if err := writeWireKey(&output, field, wire); err != nil {
+				return nil, err
+			}
+			if err := writeProtoVarint(&output, value); err != nil {
+				return nil, err
+			}
+			encodingSeen = true
+			continue
+		}
+		if err := writeWireKey(&output, field, wire); err != nil {
+			return nil, err
+		}
+		if err := copyWireValue(reader, &output, wire); err != nil {
+			return nil, err
+		}
+	}
+	if !encodingSeen {
+		if err := writeWireKey(&output, 6, 0); err != nil {
+			return nil, err
+		}
+		if err := writeProtoVarint(&output, fallback); err != nil {
+			return nil, err
+		}
+	}
+	if int64(output.Len()) > maximumDocumentBytes {
+		return nil, fmt.Errorf("normalized SCIP document exceeds the %d-byte limit", maximumDocumentBytes)
+	}
+	return output.Bytes(), nil
 }
 
 func readAdmittedSource(ctx context.Context, root string, admitted sourceIdentity) ([]byte, error) {

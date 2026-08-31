@@ -27,16 +27,22 @@ import (
 // default argument vector is the canonical index command; --tool-args replaces
 // it exactly when a project needs different flags.
 type scipLanguageDescriptor struct {
-	name        string
-	aliases     []string
-	tool        string
-	defaultArgs []string
-	note        string
+	name                      string
+	aliases                   []string
+	tool                      string
+	defaultArgs               []string
+	generatedPositionEncoding int32
+	generatedEncodingVersion  string
+	note                      string
 }
 
 var scipLanguageSpecs = []scipLanguageDescriptor{
 	{name: "go", tool: "scip-go", defaultArgs: []string{"index", "./..."}, note: "compiler-grade Go indexing through go/packages"},
-	{name: "python", tool: "scip-python", defaultArgs: []string{"index", "."}, note: "pyright-backed Python indexing"},
+	// scip-python 0.6.6 is built on Pyright's TypeScript implementation and
+	// emits UTF-16 code-unit offsets through an older SCIP schema that omits
+	// Document.position_encoding. Only digest-pinned, same-process generation
+	// may fill that producer invariant; inert external indexes remain strict.
+	{name: "python", tool: "scip-python", defaultArgs: []string{"index", "."}, generatedPositionEncoding: 2, generatedEncodingVersion: "0.6.6", note: "pyright-backed Python indexing"},
 	{name: "typescript", aliases: []string{"ts"}, tool: "scip-typescript", defaultArgs: []string{"index"}, note: "TypeScript and JavaScript indexing"},
 	{name: "javascript", aliases: []string{"js"}, tool: "scip-typescript", defaultArgs: []string{"index"}, note: "TypeScript and JavaScript indexing"},
 	{name: "rust", tool: "rust-analyzer", defaultArgs: []string{"scip", "."}, note: "Rust indexing through rust-analyzer"},
@@ -272,19 +278,26 @@ func runScipGenerate(ctx context.Context, args []string) error {
 	if err != nil {
 		return fmt.Errorf("prepared indexer output %q is invalid: %w", produced, err)
 	}
-	if _, err := scipindex.Inspect(ctx, inputs[0]); err != nil {
-		return fmt.Errorf("indexer output %q failed strict validation: %w", produced, err)
-	}
 	sealed, err := os.CreateTemp("", "rkc-scip-sealed-*.scip")
 	if err != nil {
 		return fmt.Errorf("create private sealed SCIP output: %w", err)
 	}
 	sealedPath := sealed.Name()
 	defer os.Remove(sealedPath)
-	sealErr := scipindex.SealRepositorySources(ctx, root, inputs[0], sourceSnapshot, sealed)
+	defaultPositionEncoding := int32(0)
+	if pinned && !*noPinCheck &&
+		normalizeSCIPVersion(entry.Version) == spec.generatedEncodingVersion {
+		defaultPositionEncoding = spec.generatedPositionEncoding
+	}
+	sealErr := scipindex.SealRepositorySourcesWithDefaultPositionEncoding(
+		ctx, root, inputs[0], sourceSnapshot, defaultPositionEncoding, sealed,
+	)
 	closeErr := sealed.Close()
-	if sealErr != nil || closeErr != nil {
-		return errors.Join(sealErr, closeErr)
+	if combined := errors.Join(sealErr, closeErr); combined != nil {
+		return fmt.Errorf(
+			"indexer output %q failed strict validation or source-sealed output close: %w",
+			produced, combined,
+		)
 	}
 	inputs, _, err = scipindex.PrepareInputs(ctx, []string{sealedPath})
 	if err != nil {
@@ -293,6 +306,14 @@ func runScipGenerate(ctx context.Context, args []string) error {
 	inspection, err := scipindex.Inspect(ctx, inputs[0])
 	if err != nil {
 		return fmt.Errorf("source-sealed indexer output failed strict validation: %w", err)
+	}
+	if defaultPositionEncoding != 0 &&
+		(inspection.Tool != spec.tool || normalizeSCIPVersion(inspection.ToolVersion) != spec.generatedEncodingVersion) {
+		return fmt.Errorf(
+			"generated position-encoding compatibility for %s requires producer %s %s; got %s %s",
+			spec.name, spec.tool, spec.generatedEncodingVersion,
+			inspection.Tool, inspection.ToolVersion,
+		)
 	}
 	sourceBinding, err := scipindex.BuildSourceBinding(ctx, root, inputs[0])
 	if err != nil {
@@ -349,6 +370,10 @@ func runScipGenerate(ctx context.Context, args []string) error {
 		inspection.Documents, inspection.Symbols, inspection.Occurrences, inspection.ExternalDocuments)
 	fmt.Printf("Import: rkc scan --scip-index %s [options] %s\n", published, root)
 	return nil
+}
+
+func normalizeSCIPVersion(version string) string {
+	return strings.TrimPrefix(strings.TrimSpace(version), "v")
 }
 
 func validateSCIPOutputName(value string) error {

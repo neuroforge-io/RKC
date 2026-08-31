@@ -126,3 +126,69 @@ func TestSealRepositorySourcesRejectsCompilerTextForDifferentBytes(t *testing.T)
 		t.Fatalf("foreign compiler text was not rejected: %v", err)
 	}
 }
+
+func TestApplyDefaultPositionEncodingIsNarrowAndDeterministic(t *testing.T) {
+	tests := []struct {
+		name     string
+		document []byte
+		want     int32
+	}{
+		{
+			name:     "missing",
+			document: message(fieldString(1, "main.py"), fieldString(4, "Python")),
+			want:     2,
+		},
+		{
+			name: "explicit zero",
+			document: message(
+				fieldString(1, "main.py"), fieldString(4, "Python"), fieldVarint(6, 0),
+			),
+			want: 2,
+		},
+		{
+			name: "explicit encoding is preserved",
+			document: message(
+				fieldString(1, "main.py"), fieldString(4, "Python"), fieldVarint(6, 1),
+			),
+			want: 1,
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			first, err := applyDefaultPositionEncoding(test.document, 2)
+			if err != nil {
+				t.Fatal(err)
+			}
+			parsed, err := parseDocument(first)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if parsed.positionEncoding != test.want {
+				t.Fatalf("position encoding = %d, want %d", parsed.positionEncoding, test.want)
+			}
+			second, err := applyDefaultPositionEncoding(first, 2)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !bytes.Equal(first, second) {
+				t.Fatal("position-encoding normalization is not idempotent")
+			}
+		})
+	}
+}
+
+func TestApplyDefaultPositionEncodingRejectsAmbiguousOrInvalidInput(t *testing.T) {
+	duplicate := message(
+		fieldString(1, "main.py"),
+		fieldVarint(6, 0),
+		fieldVarint(6, 2),
+	)
+	if _, err := applyDefaultPositionEncoding(duplicate, 2); err == nil || !strings.Contains(err.Error(), "duplicate") {
+		t.Fatalf("duplicate encoding fields were not rejected: %v", err)
+	}
+	for _, fallback := range []uint64{0, 4} {
+		if _, err := applyDefaultPositionEncoding(message(fieldString(1, "main.py")), fallback); err == nil {
+			t.Fatalf("unsupported fallback %d was not rejected", fallback)
+		}
+	}
+}
