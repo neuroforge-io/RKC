@@ -1414,6 +1414,9 @@ class CompletePackageTests(unittest.TestCase):
         self.assertIn("GO_BUILD_CACHE=$WORK/go-build-cache", verifier)
         self.assertIn("GO_MODULE_CACHE=$WORK/go-module-cache", verifier)
         self.assertIn("GO_TEMP=$WORK/go-tmp", verifier)
+        self.assertIn("INNER_TEMP=$WORK/temp", verifier)
+        self.assertIn('mkdir -m 0700 "$INNER_TEMP"', verifier)
+        self.assertIn('TMPDIR="$INNER_TEMP"', verifier)
         self.assertIn(
             'mkdir -p "$GO_BUILD_CACHE" "$GO_MODULE_CACHE" "$GO_TEMP"',
             verifier,

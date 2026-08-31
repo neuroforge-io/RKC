@@ -184,6 +184,8 @@ if [ "${RKC_RELEASE_VERIFY_INNER:-0}" != 1 ]; then
   mkdir -p "$ROOT/dist"
   WORK=$(mktemp -d "$ROOT/dist/.rkc-release-verification.XXXXXX")
   trap 'rm -rf "$WORK"' EXIT INT TERM
+  INNER_TEMP=$WORK/temp
+  mkdir -m 0700 "$INNER_TEMP"
   SOURCE=$WORK/source
   git clone --quiet --no-hardlinks --no-checkout -- "$ROOT" "$SOURCE"
   git -C "$SOURCE" -c advice.detachedHead=false checkout --quiet --detach "$SOURCE_COMMIT"
@@ -194,7 +196,7 @@ if [ "${RKC_RELEASE_VERIFY_INNER:-0}" != 1 ]; then
     echo "release verification: private source checkout does not match immutable HEAD" >&2
     exit 1
   fi
-  if RKC_RELEASE_VERIFY_INNER=1 PYTHON="$VALIDATION_PYTHON" \
+  if RKC_RELEASE_VERIFY_INNER=1 PYTHON="$VALIDATION_PYTHON" TMPDIR="$INNER_TEMP" \
     sh "$SOURCE/scripts/verify-release.sh"; then
     verification_status=0
   else
