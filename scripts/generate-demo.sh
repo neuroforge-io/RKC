@@ -65,6 +65,24 @@ run_and_publish() {
     --repository-root "$ROOT" \
     --mode 0644
 }
-run_and_publish demo-scan.txt "$WORK/rkc" scan --no-python --out "$OUT" --force "$SOURCE/examples"
+scan_demo_fixture() {
+  # Git evidence is authoritative only when the requested scan root is the
+  # exact work-tree root. Keep the release demo small by explicitly excluding
+  # every top-level entry except examples, rather than scanning the examples
+  # subdirectory and accidentally inheriting its parent checkout's identity.
+  set -- "$WORK/rkc" scan --no-python --out "$OUT" --force
+  for candidate in "$SOURCE"/.[!.]* "$SOURCE"/..?* "$SOURCE"/*; do
+    if [ ! -e "$candidate" ] && [ ! -L "$candidate" ]; then
+      continue
+    fi
+    name=${candidate##*/}
+    if [ "$name" != examples ]; then
+      set -- "$@" --exclude "$name"
+    fi
+  done
+  set -- "$@" "$SOURCE"
+  "$@"
+}
+run_and_publish demo-scan.txt scan_demo_fixture
 run_and_publish demo-check.txt "$WORK/rkc" check --coverage "$OUT/coverage.json" --min-inventory-accounting 1 --min-symbol-evidence 1 --min-edge-resolution 0.5 --max-errors 0 --max-high-confidence-secrets 0
-run_and_publish demo-synthesis.txt "$WORK/rkc" synthesize --dir "$OUT" --repo-root "$SOURCE/examples" --packet-only --query Login --limit 1 --force
+run_and_publish demo-synthesis.txt "$WORK/rkc" synthesize --dir "$OUT" --repo-root "$SOURCE" --packet-only --query Login --limit 1 --force

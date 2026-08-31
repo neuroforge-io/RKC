@@ -42,6 +42,21 @@ SHELL_WORKFLOWS = (
 
 
 class ShellWorkflowTests(unittest.TestCase):
+    def test_release_demo_scans_the_exact_git_root(self) -> None:
+        text = (ROOT / "scripts/generate-demo.sh").read_text(encoding="utf-8")
+        self.assertIn(
+            'set -- "$WORK/rkc" scan --no-python --out "$OUT" --force', text
+        )
+        self.assertIn('if [ "$name" != examples ]; then', text)
+        self.assertIn('set -- "$@" --exclude "$name"', text)
+        self.assertIn('set -- "$@" "$SOURCE"', text)
+        self.assertIn("run_and_publish demo-scan.txt scan_demo_fixture", text)
+        self.assertIn('--repo-root "$SOURCE"', text)
+        self.assertNotIn(
+            'scan --no-python --out "$OUT" --force "$SOURCE/examples"', text
+        )
+        self.assertNotIn('--repo-root "$SOURCE/examples"', text)
+
     def test_reference_benchmark_uses_private_clean_scan_state(self) -> None:
         text = (ROOT / "scripts/benchmark-reference.sh").read_text(encoding="utf-8")
         self.assertIn("--no-cache", text)
