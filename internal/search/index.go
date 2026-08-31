@@ -5,21 +5,58 @@
 package search
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"io"
 	"math"
 	"os"
 	"path/filepath"
+	"reflect"
 	"sort"
+	"strconv"
 	"strings"
 	"unicode"
+	"unicode/utf8"
 
+	"github.com/neuroforge-io/RKC/internal/security/secrets"
 	"github.com/neuroforge-io/RKC/pkg/rkcmodel"
 )
 
 // IndexVersion is the persisted schema version emitted by Build and accepted by
 // Load. It does not authenticate index contents.
 const IndexVersion = "1"
+
+// RepositoryTextCorpusVersion identifies a derived corpus whose admitted text
+// artifact documents contain the complete secret-redacted repository body.
+// The corpus is snapshot-bound and can be validated independently of postings.
+const RepositoryTextCorpusVersion = "repository-text-v1"
+
+// MaximumResultBodyBytes bounds one returned search document body. The full
+// body remains indexed; result serialization and downstream context assembly
+// receive an explicit truncation reason instead of unbounded repository text.
+const MaximumResultBodyBytes = 64 * 1024
+
+// The search resource envelope is enforced while building and is preflighted
+// before a persisted index is decoded by a live server. The serialized-byte
+// limit alone is not a memory guarantee because JSON maps and postings amplify
+// in memory; all limits below are therefore independent and cumulative.
+const (
+	MaximumPersistedIndexBytes     int64 = 1536 * 1024 * 1024
+	MaximumIndexedTextBytes        int64 = 768 * 1024 * 1024
+	MaximumIndexedDocumentBytes          = 8 * 1024 * 1024
+	MaximumIndexDocuments                = 500_000
+	MaximumDistinctTerms                 = 2_000_000
+	MaximumTermDictionaryBytes     int64 = 256 * 1024 * 1024
+	MaximumPostings                      = 8_000_000
+	MaximumPostingFieldValues            = 16_000_000
+	MaximumDocumentMetadataEntries       = 2_000_000
+	MaximumTokenOccurrences              = 128_000_000
+	MaximumIndexedTermBytes              = 1_024
+)
+
+const repositoryTextBodyKind = "secret-redacted-repository-text"
 
 // Document is one searchable node, artifact, or parsed document. Build indexes
 // ID, Title, QualifiedName, Signature, Path, Kind, Language, and Body with fixed
@@ -51,6 +88,8 @@ type Posting struct {
 // search invariants, and Load does not repair or fully validate them.
 type Index struct {
 	Version        string               `json:"version"`
+	SnapshotID     string               `json:"snapshot_id,omitempty"`
+	CorpusVersion  string               `json:"corpus_version,omitempty"`
 	Documents      map[string]Document  `json:"documents"`
 	Postings       map[string][]Posting `json:"postings"`
 	DocumentLength map[string]int       `json:"document_length"`
@@ -104,10 +143,64 @@ type termFields struct {
 }
 
 // BuildFromBundle derives search documents from bundle nodes, artifacts, and
-// parsed documents. Node bodies include only string docstring, summary,
-// description, and purpose attributes; document bodies include headings and
-// plain text. Edges, evidence, claims, and other attributes are not indexed.
+// parsed documents. It does not have repository file bytes, so artifact bodies
+// contain metadata only. Exporters that have verified source access should use
+// BuildFromBundleWithArtifactBodies instead.
 func BuildFromBundle(bundle rkcmodel.Bundle) *Index {
+	return buildFromBundle(bundle, nil)
+}
+
+// BuildFromBundleWithArtifactBodies derives the same canonical object corpus
+// as BuildFromBundle and enriches admitted text artifacts with complete,
+// caller-supplied secret-redacted bodies. Bodies are keyed by canonical
+// artifact ID; unknown entries are ignored. The resulting index records an
+// explicit corpus version and snapshot binding for validation at load time.
+func BuildFromBundleWithArtifactBodies(bundle rkcmodel.Bundle, secretRedactedBodies map[string]string) *Index {
+	if secretRedactedBodies == nil {
+		secretRedactedBodies = map[string]string{}
+	}
+	return buildFromBundle(bundle, secretRedactedBodies)
+}
+
+// BuildFromBundleWithArtifactBodiesBounded constructs the complete repository
+// corpus while enforcing the live-server resource envelope during indexing.
+// Export paths must use this variant so they fail before publishing an index
+// that cannot be loaded safely by the same release.
+func BuildFromBundleWithArtifactBodiesBounded(bundle rkcmodel.Bundle, secretRedactedBodies map[string]string) (*Index, error) {
+	if secretRedactedBodies == nil {
+		secretRedactedBodies = map[string]string{}
+	}
+	index, err := BuildBounded(documentsFromBundle(bundle, secretRedactedBodies))
+	if err != nil {
+		return nil, err
+	}
+	index.SnapshotID = bundle.Snapshot.ID
+	index.CorpusVersion = RepositoryTextCorpusVersion
+	return index, nil
+}
+
+// BuildFromBundleBounded constructs the metadata-only corpus under the same
+// deterministic resource envelope used for repository-text exports.
+func BuildFromBundleBounded(bundle rkcmodel.Bundle) (*Index, error) {
+	index, err := BuildBounded(documentsFromBundle(bundle, nil))
+	if err != nil {
+		return nil, err
+	}
+	index.SnapshotID = bundle.Snapshot.ID
+	return index, nil
+}
+
+func buildFromBundle(bundle rkcmodel.Bundle, secretRedactedBodies map[string]string) *Index {
+	documents := documentsFromBundle(bundle, secretRedactedBodies)
+	index := Build(documents)
+	index.SnapshotID = bundle.Snapshot.ID
+	if secretRedactedBodies != nil {
+		index.CorpusVersion = RepositoryTextCorpusVersion
+	}
+	return index
+}
+
+func documentsFromBundle(bundle rkcmodel.Bundle, secretRedactedBodies map[string]string) []Document {
 	documents := make([]Document, 0, safePreallocationCapacity(
 		len(bundle.Nodes), len(bundle.Artifacts), len(bundle.Documents),
 	))
@@ -133,14 +226,20 @@ func BuildFromBundle(bundle rkcmodel.Bundle) *Index {
 		documents = append(documents, Document{
 			ID: node.ID, ObjectType: "node", Kind: node.Kind, Language: node.Language,
 			Title: node.Name, QualifiedName: node.QualifiedName, Signature: node.Signature,
-			Path: path, Body: strings.Join(bodyParts, "\n"),
+			Path: path, Body: redactSearchText(strings.Join(bodyParts, "\n")),
 		})
 	}
 	for _, artifact := range bundle.Artifacts {
+		body := artifact.MediaType + " " + artifact.Status
+		var metadata map[string]string
+		if sourceBody, ok := secretRedactedBodies[artifact.ID]; ok && isAdmittedTextArtifact(artifact) {
+			body = sourceBody
+			metadata = repositoryTextMetadata(artifact, sourceBody)
+		}
 		documents = append(documents, Document{
 			ID: artifact.ID, ObjectType: "artifact", Kind: artifact.Kind, Language: artifact.Language,
 			Title: filepath.Base(artifact.Path), QualifiedName: artifact.Path, Path: artifact.Path,
-			Body: artifact.MediaType + " " + artifact.Status,
+			Body: body, Metadata: metadata,
 		})
 	}
 	for _, document := range bundle.Documents {
@@ -153,10 +252,275 @@ func BuildFromBundle(bundle rkcmodel.Bundle) *Index {
 		}
 		documents = append(documents, Document{
 			ID: document.ID, ObjectType: "document", Kind: document.Kind, Title: document.Title,
-			QualifiedName: document.Path, Path: document.Path, Body: body.String(),
+			QualifiedName: document.Path, Path: document.Path, Body: redactSearchText(body.String()),
 		})
 	}
-	return Build(documents)
+	return documents
+}
+
+func redactSearchText(value string) string {
+	if value == "" {
+		return ""
+	}
+	data := []byte(value)
+	return string(secrets.Redact(data, secrets.Scan(data)))
+}
+
+// ValidateBundleObjectIDs rejects ambiguous identity collapse before a trusted
+// search projection is built. RKC deliberately represents each artifact as a
+// graph node with the same ID; that exact node/artifact pair is one canonical
+// object and the richer artifact search document intentionally coalesces it.
+// Every other same-ID pair is rejected instead of applying map
+// last-writer-wins semantics.
+func ValidateBundleObjectIDs(bundle rkcmodel.Bundle) error {
+	nodes := make(map[string]rkcmodel.Node, len(bundle.Nodes))
+	for _, node := range bundle.Nodes {
+		if _, duplicate := nodes[node.ID]; duplicate {
+			return fmt.Errorf("search object ID %q is duplicated by nodes", node.ID)
+		}
+		nodes[node.ID] = node
+	}
+	artifacts := make(map[string]rkcmodel.Artifact, len(bundle.Artifacts))
+	for _, artifact := range bundle.Artifacts {
+		if _, duplicate := artifacts[artifact.ID]; duplicate {
+			return fmt.Errorf("search object ID %q is duplicated by artifacts", artifact.ID)
+		}
+		if node, shared := nodes[artifact.ID]; shared && !isCanonicalArtifactNodeAlias(node, artifact) {
+			return fmt.Errorf("search object ID %q is shared by node and artifact but is not a canonical artifact-node alias", artifact.ID)
+		}
+		artifacts[artifact.ID] = artifact
+	}
+	documents := make(map[string]struct{}, len(bundle.Documents))
+	for _, document := range bundle.Documents {
+		if _, duplicate := documents[document.ID]; duplicate {
+			return fmt.Errorf("search object ID %q is duplicated by documents", document.ID)
+		}
+		if _, shared := nodes[document.ID]; shared {
+			return fmt.Errorf("search object ID %q is shared by node and document", document.ID)
+		}
+		if _, shared := artifacts[document.ID]; shared {
+			return fmt.Errorf("search object ID %q is shared by artifact and document", document.ID)
+		}
+		documents[document.ID] = struct{}{}
+	}
+	return nil
+}
+
+func isCanonicalArtifactNodeAlias(node rkcmodel.Node, artifact rkcmodel.Artifact) bool {
+	return node.ID == artifact.ID &&
+		node.ArtifactID == artifact.ID &&
+		node.Kind == artifact.Kind
+}
+
+func isAdmittedTextArtifact(artifact rkcmodel.Artifact) bool {
+	if !artifact.Text {
+		return false
+	}
+	switch artifact.Status {
+	case "text", "parsed", "syntax_parsed", "semantic_parsed":
+		return true
+	default:
+		return false
+	}
+}
+
+func repositoryTextMetadata(artifact rkcmodel.Artifact, body string) map[string]string {
+	digest := sha256.Sum256([]byte(body))
+	return map[string]string{
+		"rkc_body_kind":              repositoryTextBodyKind,
+		"rkc_body_sha256":            hex.EncodeToString(digest[:]),
+		"rkc_secret_redacted":        "true",
+		"rkc_source_artifact_sha256": artifact.SHA256,
+	}
+}
+
+// ValidateBundleIndex proves that index objects and postings are a mechanical
+// projection of bundle. When requireRepositoryText is true, every admitted
+// text artifact must carry the versioned secret-redacted body metadata.
+func ValidateBundleIndex(index *Index, bundle rkcmodel.Bundle, requireRepositoryText bool) error {
+	if index == nil {
+		return fmt.Errorf("search index is nil")
+	}
+	if index.Version != IndexVersion {
+		return fmt.Errorf("unsupported search index version %s", index.Version)
+	}
+	if index.SnapshotID != bundle.Snapshot.ID {
+		return fmt.Errorf("search index snapshot does not match the canonical bundle")
+	}
+	if requireRepositoryText && index.CorpusVersion != RepositoryTextCorpusVersion {
+		return fmt.Errorf("search index is missing the repository text corpus")
+	}
+	if index.CorpusVersion != "" && index.CorpusVersion != RepositoryTextCorpusVersion {
+		return fmt.Errorf("unsupported search corpus version %s", index.CorpusVersion)
+	}
+	if err := ValidateBundleObjectIDs(bundle); err != nil {
+		return err
+	}
+
+	if index.Documents == nil || index.Postings == nil || index.DocumentLength == nil {
+		return fmt.Errorf("search index maps are missing")
+	}
+	if err := ValidateResourceEnvelope(index); err != nil {
+		return err
+	}
+	expectedDocuments := documentsFromBundle(bundle, nil)
+	expectedByID := make(map[string]Document, len(expectedDocuments))
+	for _, document := range expectedDocuments {
+		expectedByID[document.ID] = document
+	}
+	if len(index.Documents) != len(expectedByID) {
+		return fmt.Errorf("search index document set does not match the canonical bundle")
+	}
+	artifacts := make(map[string]rkcmodel.Artifact, len(bundle.Artifacts))
+	for _, artifact := range bundle.Artifacts {
+		artifacts[artifact.ID] = artifact
+	}
+	documentIDs := make([]string, 0, len(expectedByID))
+	for id := range expectedByID {
+		documentIDs = append(documentIDs, id)
+	}
+	sort.Strings(documentIDs)
+	var totalLength int
+	expectedPostingCount := 0
+	for _, id := range documentIDs {
+		expected := expectedByID[id]
+		actual, ok := index.Documents[id]
+		if !ok {
+			return fmt.Errorf("search index is missing canonical document %q", id)
+		}
+		normalized := actual
+		artifact, artifactDocument := artifacts[id]
+		artifactDocument = artifactDocument && expected.ObjectType == "artifact"
+		enriched := artifactDocument && actual.Metadata["rkc_body_kind"] == repositoryTextBodyKind
+		if enriched {
+			if !isAdmittedTextArtifact(artifact) || !reflect.DeepEqual(actual.Metadata, repositoryTextMetadata(artifact, actual.Body)) {
+				return fmt.Errorf("search index artifact body metadata is invalid for %q", id)
+			}
+			normalized.Body = expected.Body
+			normalized.Metadata = expected.Metadata
+		} else if requireRepositoryText && artifactDocument && isAdmittedTextArtifact(artifact) {
+			return fmt.Errorf("search index is missing repository text for %q", id)
+		}
+		if !reflect.DeepEqual(normalized, expected) {
+			return fmt.Errorf("search index document differs from canonical identity %q", id)
+		}
+		built := buildDocument(actual)
+		if index.DocumentLength[id] != built.length {
+			return fmt.Errorf("search index document length is invalid for %q", id)
+		}
+		totalLength += built.length
+		for term, fields := range built.terms {
+			postings := index.Postings[term]
+			position := sort.Search(len(postings), func(position int) bool {
+				return postings[position].DocumentID >= id
+			})
+			if position >= len(postings) || postings[position].DocumentID != id {
+				return fmt.Errorf("search index is missing posting %q for %q", term, id)
+			}
+			fieldNames := make([]string, 0, len(fields.fields))
+			for field := range fields.fields {
+				fieldNames = append(fieldNames, field)
+			}
+			sort.Strings(fieldNames)
+			posting := postings[position]
+			if posting.TermCount != fields.count || posting.FieldBoost != fields.boost || !reflect.DeepEqual(posting.Fields, fieldNames) {
+				return fmt.Errorf("search index posting %q is invalid for %q", term, id)
+			}
+			expectedPostingCount++
+		}
+	}
+	if index.DocumentCount != len(expectedByID) || len(index.DocumentLength) != len(expectedByID) {
+		return fmt.Errorf("search index document accounting does not match its documents")
+	}
+	wantAverage := 0.0
+	if len(expectedByID) > 0 {
+		wantAverage = float64(totalLength) / float64(len(expectedByID))
+	}
+	if index.AverageLength != wantAverage {
+		return fmt.Errorf("search index average document length is invalid")
+	}
+	actualPostingCount := 0
+	for term, postings := range index.Postings {
+		if term == "" || len(postings) == 0 {
+			return fmt.Errorf("search index contains an empty posting list")
+		}
+		previous := ""
+		for _, posting := range postings {
+			if _, ok := index.Documents[posting.DocumentID]; !ok || (previous != "" && previous >= posting.DocumentID) {
+				return fmt.Errorf("search index posting list %q is unsorted or references an unknown document", term)
+			}
+			previous = posting.DocumentID
+			actualPostingCount++
+		}
+	}
+	if actualPostingCount != expectedPostingCount {
+		return fmt.Errorf("search index posting count does not match its documents")
+	}
+	return nil
+}
+
+// ValidateResourceEnvelope verifies the decoded index accounting limits. Live
+// loading also performs a streaming preflight before decode; this second check
+// makes the invariant explicit for in-memory callers and validated exports.
+func ValidateResourceEnvelope(index *Index) error {
+	if index == nil {
+		return fmt.Errorf("search index is nil")
+	}
+	if len(index.Documents) > MaximumIndexDocuments {
+		return fmt.Errorf("search document count %d exceeds the %d-document limit", len(index.Documents), MaximumIndexDocuments)
+	}
+	var textBytes int64
+	metadataEntries := 0
+	for id, document := range index.Documents {
+		bytes, err := documentIndexedTextBytes(document)
+		if err != nil {
+			return err
+		}
+		if bytes > MaximumIndexedDocumentBytes {
+			return fmt.Errorf("search document %q has %d indexed text bytes, above the %d-byte per-document limit", id, bytes, MaximumIndexedDocumentBytes)
+		}
+		if bytes > MaximumIndexedTextBytes-textBytes {
+			return fmt.Errorf("search corpus indexed text exceeds the %d-byte limit", MaximumIndexedTextBytes)
+		}
+		textBytes += bytes
+		if len(document.Metadata) > MaximumDocumentMetadataEntries-metadataEntries {
+			return fmt.Errorf("search document metadata exceeds the %d-entry corpus limit", MaximumDocumentMetadataEntries)
+		}
+		metadataEntries += len(document.Metadata)
+	}
+	if len(index.Postings) > MaximumDistinctTerms {
+		return fmt.Errorf("search term count %d exceeds the %d-term limit", len(index.Postings), MaximumDistinctTerms)
+	}
+	var dictionaryBytes int64
+	postingCount := 0
+	postingFieldValues := 0
+	for term, postings := range index.Postings {
+		if len(term) > MaximumIndexedTermBytes {
+			return fmt.Errorf("search term exceeds the %d-byte term limit", MaximumIndexedTermBytes)
+		}
+		if int64(len(term)) > MaximumTermDictionaryBytes-dictionaryBytes {
+			return fmt.Errorf("search term dictionary exceeds the %d-byte limit", MaximumTermDictionaryBytes)
+		}
+		dictionaryBytes += int64(len(term))
+		if len(postings) > MaximumPostings-postingCount {
+			return fmt.Errorf("search posting count exceeds the %d-posting limit", MaximumPostings)
+		}
+		postingCount += len(postings)
+		for _, posting := range postings {
+			if len(posting.Fields) > MaximumPostingFieldValues-postingFieldValues {
+				return fmt.Errorf("search posting fields exceed the %d-value corpus limit", MaximumPostingFieldValues)
+			}
+			postingFieldValues += len(posting.Fields)
+		}
+	}
+	tokenOccurrences := 0
+	for id, length := range index.DocumentLength {
+		if length < 0 || length > MaximumTokenOccurrences-tokenOccurrences {
+			return fmt.Errorf("search document length for %q exceeds the %d-token corpus limit", id, MaximumTokenOccurrences)
+		}
+		tokenOccurrences += length
+	}
+	return nil
 }
 
 func safePreallocationCapacity(lengths ...int) int {
@@ -176,9 +540,44 @@ func safePreallocationCapacity(lengths ...int) int {
 // posting lists, and field names, and indexes only the fields documented on
 // Document.
 func Build(documents []Document) *Index {
+	index, _ := buildIndex(documents, false)
+	return index
+}
+
+// BuildBounded constructs the same deterministic index as Build while failing
+// as soon as the shared production resource envelope would be exceeded.
+func BuildBounded(documents []Document) (*Index, error) {
+	return buildIndex(documents, true)
+}
+
+func buildIndex(documents []Document, bounded bool) (*Index, error) {
+	if bounded && len(documents) > MaximumIndexDocuments {
+		return nil, fmt.Errorf("search document count %d exceeds the %d-document limit", len(documents), MaximumIndexDocuments)
+	}
 	documentsByID := make(map[string]Document, len(documents))
 	for _, document := range documents {
 		documentsByID[document.ID] = document
+	}
+	if bounded {
+		var indexedTextBytes int64
+		metadataEntries := 0
+		for _, document := range documentsByID {
+			bytes, err := documentIndexedTextBytes(document)
+			if err != nil {
+				return nil, err
+			}
+			if bytes > MaximumIndexedDocumentBytes {
+				return nil, fmt.Errorf("search document %q has %d indexed text bytes, above the %d-byte per-document limit", document.ID, bytes, MaximumIndexedDocumentBytes)
+			}
+			if bytes > MaximumIndexedTextBytes-indexedTextBytes {
+				return nil, fmt.Errorf("search corpus indexed text exceeds the %d-byte limit", MaximumIndexedTextBytes)
+			}
+			indexedTextBytes += bytes
+			if len(document.Metadata) > MaximumDocumentMetadataEntries-metadataEntries {
+				return nil, fmt.Errorf("search document metadata exceeds the %d-entry corpus limit", MaximumDocumentMetadataEntries)
+			}
+			metadataEntries += len(document.Metadata)
+		}
 	}
 	documentIDs := make([]string, 0, len(documentsByID))
 	for id := range documentsByID {
@@ -191,13 +590,38 @@ func Build(documents []Document) *Index {
 		DocumentLength: map[string]int{}, DocumentCount: len(documentIDs),
 	}
 	var totalLength int
+	postingCount := 0
+	postingFieldValues := 0
+	var termDictionaryBytes int64
 	for _, id := range documentIDs {
 		document := documentsByID[id]
 		built := buildDocument(document)
+		if bounded && built.length > MaximumTokenOccurrences-totalLength {
+			return nil, fmt.Errorf("search corpus token occurrences exceed the %d-token limit", MaximumTokenOccurrences)
+		}
 		index.Documents[document.ID] = document
 		index.DocumentLength[document.ID] = built.length
 		totalLength += built.length
 		for term, fields := range built.terms {
+			if bounded {
+				if _, exists := index.Postings[term]; !exists {
+					if len(index.Postings) >= MaximumDistinctTerms {
+						return nil, fmt.Errorf("search term count exceeds the %d-term limit", MaximumDistinctTerms)
+					}
+					if int64(len(term)) > MaximumTermDictionaryBytes-termDictionaryBytes {
+						return nil, fmt.Errorf("search term dictionary exceeds the %d-byte limit", MaximumTermDictionaryBytes)
+					}
+					termDictionaryBytes += int64(len(term))
+				}
+				if postingCount >= MaximumPostings {
+					return nil, fmt.Errorf("search posting count exceeds the %d-posting limit", MaximumPostings)
+				}
+				postingCount++
+				if len(fields.fields) > MaximumPostingFieldValues-postingFieldValues {
+					return nil, fmt.Errorf("search posting fields exceed the %d-value corpus limit", MaximumPostingFieldValues)
+				}
+				postingFieldValues += len(fields.fields)
+			}
 			fieldNames := make([]string, 0, len(fields.fields))
 			for field := range fields.fields {
 				fieldNames = append(fieldNames, field)
@@ -214,7 +638,31 @@ func Build(documents []Document) *Index {
 	for term := range index.Postings {
 		sort.Slice(index.Postings[term], func(i, j int) bool { return index.Postings[term][i].DocumentID < index.Postings[term][j].DocumentID })
 	}
-	return index
+	return index, nil
+}
+
+func documentIndexedTextBytes(document Document) (int64, error) {
+	values := []string{
+		document.ID, document.ObjectType, document.Kind, document.Language,
+		document.Title, document.QualifiedName, document.Signature, document.Path,
+		document.Body,
+	}
+	var total int64
+	for _, value := range values {
+		if int64(len(value)) > MaximumIndexedTextBytes-total {
+			return 0, fmt.Errorf("search document %q indexed text byte count overflows its resource envelope", document.ID)
+		}
+		total += int64(len(value))
+	}
+	for key, value := range document.Metadata {
+		for _, text := range []string{key, value} {
+			if int64(len(text)) > MaximumIndexedTextBytes-total {
+				return 0, fmt.Errorf("search document %q metadata byte count overflows its resource envelope", document.ID)
+			}
+			total += int64(len(text))
+		}
+	}
+	return total, nil
 }
 
 func buildDocument(document Document) builderDoc {
@@ -324,9 +772,10 @@ func (index *Index) Search(query Query) Response {
 
 	hits := make([]Hit, 0, len(accumulators))
 	for id, current := range accumulators {
+		document := index.Documents[id]
 		reasons := keys(current.reasons)
 		matchedTerms := keys(current.terms)
-		hits = append(hits, Hit{Document: index.Documents[id], Score: roundScore(current.score), Reasons: reasons, Terms: matchedTerms})
+		hits = append(hits, Hit{Document: document, Score: roundScore(current.score), Reasons: reasons, Terms: matchedTerms})
 	}
 	sort.Slice(hits, func(i, j int) bool {
 		if hits[i].Score == hits[j].Score {
@@ -340,7 +789,117 @@ func (index *Index) Search(query Query) Response {
 	if truncated {
 		hits = hits[:query.Limit]
 	}
+	for position := range hits {
+		document := hits[position].Document
+		if len(document.Body) <= MaximumResultBodyBytes {
+			continue
+		}
+		excerpt, start, end := boundedMatchExcerpt(
+			document.Body, hits[position].Terms, MaximumResultBodyBytes,
+		)
+		document.Body = excerpt
+		document.Metadata = cloneMetadata(document.Metadata)
+		document.Metadata["rkc_excerpt_start_byte"] = strconv.Itoa(start)
+		document.Metadata["rkc_excerpt_end_byte"] = strconv.Itoa(end)
+		hits[position].Document = document
+		hits[position].Reasons = unique(append(hits[position].Reasons, "body:excerpt", "body:truncated"))
+		sort.Strings(hits[position].Reasons)
+	}
 	return Response{Query: query.Text, Hits: hits, Truncated: truncated, Mode: "embedded-bm25-lexical", IndexVersion: index.Version}
+}
+
+func boundedMatchExcerpt(value string, terms []string, maximum int) (string, int, int) {
+	if maximum <= 0 {
+		return "", 0, 0
+	}
+	if len(value) <= maximum {
+		return value, 0, len(value)
+	}
+	match := -1
+	for _, term := range terms {
+		position := indexFoldASCII(value, term)
+		if position >= 0 && (match < 0 || position < match) {
+			match = position
+		}
+	}
+	if match < 0 {
+		match = 0
+	}
+	start := match - maximum/3
+	if start < 0 {
+		start = 0
+	}
+	if start > len(value)-maximum {
+		start = len(value) - maximum
+	}
+	for start > 0 && !utf8.RuneStart(value[start]) {
+		start--
+	}
+	end := start + maximum
+	if end > len(value) {
+		end = len(value)
+	}
+	for end > start && end < len(value) && !utf8.RuneStart(value[end]) {
+		end--
+	}
+	return strings.ToValidUTF8(value[start:end], ""), start, end
+}
+
+func indexFoldASCII(value, term string) int {
+	if term == "" {
+		return -1
+	}
+	for _, char := range term {
+		if char > unicode.MaxASCII {
+			return indexFoldUnicode(value, term)
+		}
+	}
+	for start := 0; start+len(term) <= len(value); start++ {
+		matched := true
+		for offset := range len(term) {
+			left, right := value[start+offset], term[offset]
+			if left >= 'A' && left <= 'Z' {
+				left += 'a' - 'A'
+			}
+			if right >= 'A' && right <= 'Z' {
+				right += 'a' - 'A'
+			}
+			if left != right {
+				matched = false
+				break
+			}
+		}
+		if matched {
+			return start
+		}
+	}
+	return -1
+}
+
+func indexFoldUnicode(value, term string) int {
+	wantedRunes := utf8.RuneCountInString(term)
+	if wantedRunes == 0 {
+		return -1
+	}
+	for start := range value {
+		end := start
+		for count := 0; count < wantedRunes && end < len(value); count++ {
+			_, width := utf8.DecodeRuneInString(value[end:])
+			end += width
+		}
+		if utf8.RuneCountInString(value[start:end]) == wantedRunes && strings.EqualFold(value[start:end], term) {
+			return start
+		}
+	}
+	return -1
+}
+
+func cloneMetadata(source map[string]string) map[string]string {
+	result := make(map[string]string, len(source)+2)
+	for key, value := range source {
+		result[key] = value
+	}
+	return result
 }
 
 // MatchesQuery applies the same explicit and inline kind/language/type/path
@@ -375,10 +934,6 @@ func (index *Index) Save(path string) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return err
 	}
-	data, err := json.Marshal(index)
-	if err != nil {
-		return err
-	}
 	temp, err := os.CreateTemp(filepath.Dir(path), ".search-index-")
 	if err != nil {
 		return err
@@ -391,8 +946,10 @@ func (index *Index) Save(path string) error {
 			_ = os.Remove(tempPath)
 		}
 	}()
-	if _, err := temp.Write(data); err != nil {
-		return err
+	bounded := &maximumIndexWriter{writer: temp, maximum: MaximumPersistedIndexBytes}
+	encoder := json.NewEncoder(bounded)
+	if err := encoder.Encode(index); err != nil {
+		return fmt.Errorf("encode bounded search index: %w", err)
 	}
 	if err := temp.Sync(); err != nil {
 		return err
@@ -405,6 +962,21 @@ func (index *Index) Save(path string) error {
 	}
 	committed = true
 	return nil
+}
+
+type maximumIndexWriter struct {
+	writer  io.Writer
+	written int64
+	maximum int64
+}
+
+func (writer *maximumIndexWriter) Write(data []byte) (int, error) {
+	if writer.maximum <= 0 || int64(len(data)) > writer.maximum-writer.written {
+		return 0, fmt.Errorf("persisted search index exceeds the %d-byte limit", writer.maximum)
+	}
+	written, err := writer.writer.Write(data)
+	writer.written += int64(written)
+	return written, err
 }
 
 // Load reads the entire file without a size bound, accepts unknown JSON fields,
@@ -497,7 +1069,12 @@ func tokenize(value string) []string {
 		if len(current) == 0 {
 			return
 		}
-		term := strings.ToLower(string(current))
+		candidate := string(current)
+		if len(candidate) > MaximumIndexedTermBytes {
+			current = current[:0]
+			return
+		}
+		term := strings.ToLower(candidate)
 		if len(term) > 1 || unicode.IsDigit(current[0]) {
 			terms = append(terms, term)
 		}

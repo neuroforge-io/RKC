@@ -1,6 +1,7 @@
 package search
 
 import (
+	"bytes"
 	"encoding/json"
 	"math"
 	"os"
@@ -10,9 +11,25 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"unicode/utf8"
 
 	"github.com/neuroforge-io/RKC/pkg/rkcmodel"
 )
+
+func TestMaximumIndexWriterFailsBeforeCrossingLimit(t *testing.T) {
+	t.Parallel()
+	var output bytes.Buffer
+	writer := &maximumIndexWriter{writer: &output, maximum: 3}
+	if written, err := writer.Write([]byte("ab")); err != nil || written != 2 {
+		t.Fatalf("initial bounded write = %d, %v", written, err)
+	}
+	if written, err := writer.Write([]byte("cd")); err == nil || written != 0 || !strings.Contains(err.Error(), "3-byte limit") {
+		t.Fatalf("overflowing bounded write = %d, %v", written, err)
+	}
+	if output.String() != "ab" {
+		t.Fatalf("bounded writer crossed its limit: %q", output.String())
+	}
+}
 
 func TestBuildFromBundleIndexesCanonicalObjectTypesAndSelectedText(t *testing.T) {
 	t.Parallel()
@@ -55,6 +72,174 @@ func TestBuildFromBundleIndexesCanonicalObjectTypesAndSelectedText(t *testing.T)
 		if len(index.Postings[term]) == 0 {
 			t.Errorf("expected posting for %q", term)
 		}
+	}
+}
+
+func TestBuildFromBundleRedactsNodeAndParsedDocumentSecrets(t *testing.T) {
+	t.Parallel()
+	secret := "sk_live_" + strings.Repeat("a", 32)
+	bundle := rkcmodel.Bundle{
+		Nodes: []rkcmodel.Node{{
+			ID: "node", Kind: "function", Name: "Login",
+			Attributes: map[string]any{"docstring": "api_key=" + secret},
+		}},
+		Documents: []rkcmodel.Document{{
+			ID: "document", Kind: "guide", Title: "Guide", Path: "docs/guide.md",
+			Sections: []rkcmodel.DocumentSection{{Heading: "Example", PlainText: "access_token=" + secret}},
+		}},
+	}
+	index := BuildFromBundle(bundle)
+	for _, id := range []string{"node", "document"} {
+		body := index.Documents[id].Body
+		if strings.Contains(body, secret) || !strings.Contains(body, "***") {
+			t.Fatalf("%s body was not secret-redacted: %q", id, body)
+		}
+	}
+	if response := index.Search(Query{Text: secret}); len(response.Hits) != 0 {
+		t.Fatalf("secret literal remained searchable: %+v", response)
+	}
+}
+
+func TestRepositoryTextCorpusIsSearchableSnapshotBoundAndRecomputed(t *testing.T) {
+	t.Parallel()
+	bundle := rkcmodel.Bundle{
+		Snapshot: rkcmodel.Snapshot{ID: "snapshot-text"},
+		Artifacts: []rkcmodel.Artifact{
+			{ID: "source", Kind: "file", Path: "config/service.yaml", Language: "yaml", MediaType: "application/yaml", SHA256: strings.Repeat("a", 64), Text: true, Status: "parsed"},
+			{ID: "binary", Kind: "file", Path: "assets/model.bin", MediaType: "application/octet-stream", SHA256: strings.Repeat("b", 64), Status: "binary"},
+		},
+	}
+	index := BuildFromBundleWithArtifactBodies(bundle, map[string]string{
+		"source":  "counterfactual routing threshold: 0.75\napi_key: ********",
+		"binary":  "BINARY_SENTINEL_MUST_NOT_BE_INDEXED",
+		"unknown": "UNKNOWN_SENTINEL_MUST_NOT_BE_INDEXED",
+	})
+	if index.SnapshotID != bundle.Snapshot.ID || index.CorpusVersion != RepositoryTextCorpusVersion {
+		t.Fatalf("repository text corpus binding = %+v", index)
+	}
+	if err := ValidateBundleIndex(index, bundle, true); err != nil {
+		t.Fatal(err)
+	}
+	response := index.Search(Query{Text: "counterfactual threshold", ObjectTypes: map[string]struct{}{"artifact": {}}})
+	if len(response.Hits) != 1 || response.Hits[0].Document.ID != "source" || !contains(response.Hits[0].Reasons, "body:counterfactual") {
+		t.Fatalf("repository body search = %+v", response)
+	}
+	for _, forbidden := range []string{"BINARY_SENTINEL_MUST_NOT_BE_INDEXED", "UNKNOWN_SENTINEL_MUST_NOT_BE_INDEXED"} {
+		if hits := index.Search(Query{Text: forbidden}).Hits; len(hits) != 0 {
+			t.Fatalf("inadmissible body %q was indexed: %+v", forbidden, hits)
+		}
+	}
+
+	for name, mutate := range map[string]func(*Index){
+		"snapshot": func(candidate *Index) { candidate.SnapshotID = "other" },
+		"body": func(candidate *Index) {
+			document := candidate.Documents["source"]
+			document.Body += " tampered"
+			candidate.Documents["source"] = document
+		},
+		"metadata": func(candidate *Index) {
+			document := candidate.Documents["source"]
+			document.Metadata["rkc_secret_redacted"] = "false"
+			candidate.Documents["source"] = document
+		},
+		"posting": func(candidate *Index) { candidate.Postings["counterfactual"][0].TermCount++ },
+	} {
+		t.Run(name, func(t *testing.T) {
+			data, err := json.Marshal(index)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var candidate Index
+			if err := json.Unmarshal(data, &candidate); err != nil {
+				t.Fatal(err)
+			}
+			mutate(&candidate)
+			if err := ValidateBundleIndex(&candidate, bundle, true); err == nil {
+				t.Fatal("tampered repository text index was accepted")
+			}
+		})
+	}
+
+	metadataOnly := BuildFromBundle(bundle)
+	if err := ValidateBundleIndex(metadataOnly, bundle, false); err != nil {
+		t.Fatal(err)
+	}
+	if err := ValidateBundleIndex(metadataOnly, bundle, true); err == nil {
+		t.Fatal("metadata-only index satisfied the repository text contract")
+	}
+}
+
+func TestValidateBundleIndexRejectsCrossTypeDuplicateIDs(t *testing.T) {
+	t.Parallel()
+	bundle := rkcmodel.Bundle{
+		Snapshot: rkcmodel.Snapshot{ID: "snapshot-shared-id"},
+		Nodes:    []rkcmodel.Node{{ID: "shared", Kind: "function", Name: "SupersededNode"}},
+		Artifacts: []rkcmodel.Artifact{{
+			ID: "shared", Kind: "file", Path: "main.go", Language: "go", MediaType: "text/x-go",
+			SHA256: strings.Repeat("a", 64), Text: true, Status: "syntax_parsed",
+		}},
+	}
+	index := BuildFromBundleWithArtifactBodies(bundle, map[string]string{"shared": "package fixture\n// searchable body\n"})
+	if err := ValidateBundleObjectIDs(bundle); err == nil || !strings.Contains(err.Error(), "shared by node and artifact") {
+		t.Fatalf("cross-type duplicate identity was accepted: %v", err)
+	}
+	if err := ValidateBundleIndex(index, bundle, true); err == nil || !strings.Contains(err.Error(), "shared by node and artifact") {
+		t.Fatalf("duplicate-ID index was accepted: %v", err)
+	}
+}
+
+func TestValidateBundleIndexCoalescesCanonicalArtifactNodeAlias(t *testing.T) {
+	t.Parallel()
+	artifact := rkcmodel.Artifact{
+		ID: "shared", Kind: "file", Path: "main.go", Language: "go", MediaType: "text/x-go",
+		SHA256: strings.Repeat("a", 64), Text: true, Status: "syntax_parsed",
+	}
+	bundle := rkcmodel.Bundle{
+		Snapshot: rkcmodel.Snapshot{ID: "snapshot-artifact-alias"},
+		Nodes: []rkcmodel.Node{{
+			ID: artifact.ID, ArtifactID: artifact.ID, Kind: artifact.Kind,
+			Name: "main.go", QualifiedName: artifact.Path, Language: artifact.Language,
+		}},
+		Artifacts: []rkcmodel.Artifact{artifact},
+	}
+	index := BuildFromBundleWithArtifactBodies(bundle, map[string]string{"shared": "package fixture\n"})
+	if err := ValidateBundleObjectIDs(bundle); err != nil {
+		t.Fatalf("canonical artifact-node alias was rejected: %v", err)
+	}
+	if err := ValidateBundleIndex(index, bundle, true); err != nil {
+		t.Fatalf("coalesced artifact-node index was rejected: %v", err)
+	}
+	if index.DocumentCount != 1 || index.Documents[artifact.ID].ObjectType != "artifact" {
+		t.Fatalf("canonical artifact-node alias was not deterministically coalesced: %+v", index)
+	}
+}
+
+func TestSearchIndexesFullRepositoryBodyButBoundsReturnedUTF8(t *testing.T) {
+	t.Parallel()
+	bundle := rkcmodel.Bundle{
+		Snapshot: rkcmodel.Snapshot{ID: "snapshot-large-text"},
+		Artifacts: []rkcmodel.Artifact{{
+			ID: "source", Kind: "file", Path: "docs/large.md", Language: "markdown",
+			SHA256: strings.Repeat("a", 64), Text: true, Status: "text",
+		}},
+	}
+	body := strings.Repeat("界", MaximumResultBodyBytes/2) + " distalneedle"
+	index := BuildFromBundleWithArtifactBodies(bundle, map[string]string{"source": body})
+	response := index.Search(Query{Text: "distalneedle"})
+	if len(response.Hits) != 1 || len(response.Hits[0].Document.Body) > MaximumResultBodyBytes ||
+		!utf8.ValidString(response.Hits[0].Document.Body) ||
+		!strings.Contains(response.Hits[0].Document.Body, "distalneedle") ||
+		!contains(response.Hits[0].Reasons, "body:excerpt") ||
+		!contains(response.Hits[0].Reasons, "body:truncated") {
+		t.Fatalf("bounded repository body result = %+v", response)
+	}
+	start, startErr := strconv.Atoi(response.Hits[0].Document.Metadata["rkc_excerpt_start_byte"])
+	end, endErr := strconv.Atoi(response.Hits[0].Document.Metadata["rkc_excerpt_end_byte"])
+	if startErr != nil || endErr != nil || start < 0 || end <= start || end > len(body) || response.Hits[0].Document.Body != body[start:end] {
+		t.Fatalf("invalid excerpt receipt start=%d end=%d errors=%v/%v metadata=%v", start, end, startErr, endErr, response.Hits[0].Document.Metadata)
+	}
+	if index.Documents["source"].Body != body {
+		t.Fatal("search mutated the indexed full repository body")
 	}
 }
 
@@ -111,6 +296,17 @@ func TestBuildIsDeterministicAndPreservesBoostedFieldTraces(t *testing.T) {
 	empty := Build(nil)
 	if empty.DocumentCount != 0 || empty.AverageLength != 0 || len(empty.Documents) != 0 || len(empty.Postings) != 0 {
 		t.Fatalf("empty Build() = %+v", empty)
+	}
+}
+
+func TestSearchMatchExcerptUsesUnicodeCaseFolding(t *testing.T) {
+	t.Parallel()
+	body := strings.Repeat("prefix ", MaximumResultBodyBytes/7+100) + "ÉCLAIR evidence"
+	index := Build([]Document{{ID: "unicode", ObjectType: "artifact", Body: body}})
+	response := index.Search(Query{Text: "éclair"})
+	if len(response.Hits) != 1 || !strings.Contains(response.Hits[0].Document.Body, "ÉCLAIR") ||
+		!contains(response.Hits[0].Reasons, "body:excerpt") {
+		t.Fatalf("Unicode-folded match excerpt = %+v", response)
 	}
 }
 

@@ -738,6 +738,58 @@ func TestLoadRebuildsPersistedSearchIndexFromValidatedBundle(t *testing.T) {
 	}
 }
 
+func TestLoadUsesOnlyValidatedRepositoryTextSearchIndex(t *testing.T) {
+	t.Parallel()
+	bundle := richDataset().Bundle
+	root := writeVerifiedServerAtlas(t, bundle)
+	loaded, err := Load(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if loaded.Search.CorpusVersion != search.RepositoryTextCorpusVersion {
+		t.Fatalf("loaded search corpus version = %q", loaded.Search.CorpusVersion)
+	}
+	response := loaded.Search.Search(search.Query{
+		Text: "repository body", ObjectTypes: map[string]struct{}{"artifact": {}}, Limit: 10,
+	})
+	if len(response.Hits) != 1 || response.Hits[0].Document.ID != "artifact-a" {
+		t.Fatalf("repository text search response = %+v", response)
+	}
+	httpResponse := httptest.NewRecorder()
+	loaded.Handler().ServeHTTP(httpResponse, httptest.NewRequest(http.MethodGet, "/api/v1/search?q=repository+body&object_types=artifact&limit=10", nil))
+	if httpResponse.Code != http.StatusOK {
+		t.Fatalf("repository-body API search status=%d body=%s", httpResponse.Code, httpResponse.Body.String())
+	}
+	if got := httpResponse.Header().Get(snapshotGenerationHeader); got != loaded.Manifest.ID {
+		t.Fatalf("repository-body API snapshot header=%q want %q", got, loaded.Manifest.ID)
+	}
+	var apiResponse search.Response
+	if err := json.Unmarshal(httpResponse.Body.Bytes(), &apiResponse); err != nil {
+		t.Fatal(err)
+	}
+	if len(apiResponse.Hits) != 1 || apiResponse.Hits[0].Document.ID != "artifact-a" || apiResponse.Hits[0].Document.ObjectType != "artifact" || !strings.Contains(strings.Join(apiResponse.Hits[0].Reasons, " "), "body:") {
+		t.Fatalf("repository-body API search response = %+v", apiResponse)
+	}
+
+	path := filepath.Join(root, "search", "index.json")
+	var persisted search.Index
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(data, &persisted); err != nil {
+		t.Fatal(err)
+	}
+	document := persisted.Documents["artifact-a"]
+	document.Body += " injected-without-recomputed-postings"
+	persisted.Documents["artifact-a"] = document
+	writeServerJSON(t, path, persisted)
+	rewriteServerExportManifest(t, root, bundle.Snapshot.ID)
+	if _, err := Load(root); err == nil || !strings.Contains(err.Error(), "repository text search index") {
+		t.Fatalf("tampered derived search index error = %v", err)
+	}
+}
+
 func TestLoadLegacyBundle(t *testing.T) {
 	t.Parallel()
 	bundle := richDataset().Bundle
@@ -853,7 +905,9 @@ func TestServerParsingHelpers(t *testing.T) {
 }
 
 func richDataset() *Dataset {
-	artifact := model.Artifact{ID: "artifact-a", Path: "src/a.go", Kind: "file", Language: "go", Status: "syntax_parsed", Text: true}
+	source := []byte("Alpha repository body\n")
+	digest := sha256.Sum256(source)
+	artifact := model.Artifact{ID: "artifact-a", Path: "src/a.go", Kind: "file", Language: "go", Status: "syntax_parsed", Text: true, SizeBytes: int64(len(source)), SHA256: hex.EncodeToString(digest[:])}
 	evidence := model.Evidence{ID: "evidence-a", Kind: "syntax_inferred", Method: "test", Confidence: 1, Source: &model.SourceRange{ArtifactID: artifact.ID, Path: artifact.Path, StartLine: 1, EndLine: 1}}
 	a := model.Node{ID: "a", LogicalID: "logical-a", Kind: "function", Name: "Alpha", QualifiedName: "pkg.Alpha", Language: "go", ArtifactID: artifact.ID, EvidenceIDs: []string{evidence.ID}}
 	b := model.Node{ID: "b", LogicalID: "logical-b", Kind: "function", Name: "Beta", QualifiedName: "pkg.Beta", Language: "go", ArtifactID: artifact.ID}
@@ -878,7 +932,20 @@ func richDataset() *Dataset {
 func writeVerifiedServerAtlas(t *testing.T, bundle model.Bundle) string {
 	t.Helper()
 	root := filepath.Join(t.TempDir(), "atlas")
-	if err := rkcexport.WriteAll(bundle, model.BuildCoverage(bundle), rkcexport.Options{Root: t.TempDir(), Output: root}); err != nil {
+	repository := t.TempDir()
+	for _, artifact := range bundle.Artifacts {
+		if !artifact.Text {
+			continue
+		}
+		path := filepath.Join(repository, filepath.FromSlash(artifact.Path))
+		if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte("Alpha repository body\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := rkcexport.WriteAll(bundle, model.BuildCoverage(bundle), rkcexport.Options{Root: repository, Output: root}); err != nil {
 		t.Fatal(err)
 	}
 	writeServerJSON(t, filepath.Join(root, safeoutput.MarkerName), safeoutput.Marker{

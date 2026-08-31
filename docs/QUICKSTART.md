@@ -434,12 +434,27 @@ snapshot:
   `serve`/`open`, or augmented by the explicitly protected Linux workbench; its
   bounded bootstrap avoids making the complete graph an initial page-load tax;
 - `notebooklm/` — ordered Markdown sources plus `manifest.json` and
-  `UPLOAD.md` for NotebookLM-style notebooks and agent context windows.
+  `UPLOAD.md` for NotebookLM-style notebooks and agent context windows. For a
+  direct scan with an exact verified source checkout, the
+  `05_repository_sources_*.md` files contain every admitted textual code,
+  configuration, and documentation body with its repository path and hashes;
+  probable credential material is always redacted in these broad-use packs.
+  An export from a stored snapshot without that checkout is explicitly marked
+  metadata-only in both `UPLOAD.md` and `manifest.json`.
 
 Open `notebooklm/UPLOAD.md` first. It records the exact source count, byte
 sizes, recommended upload order, grounding rules, and how to coalesce packs
 with `--notebook-pack-bytes` when a service imposes a source-count limit. The
-exporter never silently truncates a record. Google maintains NotebookLM's
+exporter never silently truncates a record. The same verified, redacted bodies
+feed the snapshot-bound lexical index, so terminal and live-Web-UI searches can
+find terms that occur only inside repository files. Search results bound the
+returned body around a matched term while retaining full-text matching. The
+4,000,000-byte default is an enforced per-pack limit: if one record cannot fit,
+export fails with an actionable error instead of exceeding the configured
+limit. Index construction and live loading also enforce aggregate text,
+document, term, posting, token, and streaming pre-decode budgets; persisted
+indexes above 1.5 GiB fail closed. Larger corpora require the still-planned
+sharded index. Google maintains NotebookLM's
 supported source types and plan-specific quotas in its
 [NotebookLM help center](https://support.google.com/gemininotebook/answer/16215270).
 

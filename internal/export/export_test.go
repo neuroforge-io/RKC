@@ -16,6 +16,7 @@ import (
 
 	"github.com/neuroforge-io/RKC/internal/model"
 	"github.com/neuroforge-io/RKC/internal/safeoutput"
+	searchindex "github.com/neuroforge-io/RKC/internal/search"
 )
 
 func TestWriteAllProducesCompleteDeterministicRedactedExport(t *testing.T) {
@@ -31,19 +32,35 @@ func TestWriteAllProducesCompleteDeterministicRedactedExport(t *testing.T) {
 		t.Fatal(err)
 	}
 	bundle := exportFixture(root, "src/login.go", source)
+	bundle.Nodes[1].Attributes["docstring"] = "Logs a user in. api_key=" + secret
+	bundle.Documents = append(bundle.Documents, model.Document{
+		ID: "document-1", Kind: "guide", Title: "Operator guide", Path: "docs/operator.md",
+		Sections: []model.DocumentSection{{Heading: "Private example", PlainText: "access_token=" + secret}},
+	})
+	config := []byte("counterfactual_mode: grounded\n")
+	configPath := filepath.Join(root, "config", "service.yaml")
+	if err := os.MkdirAll(filepath.Dir(configPath), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(configPath, config, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	configArtifact := notebookArtifact("config/service.yaml", config, true, "parsed")
+	configArtifact.Language = "yaml"
+	bundle.Artifacts = append(bundle.Artifacts, configArtifact)
 	coverage := model.BuildCoverage(bundle)
 
 	first := filepath.Join(t.TempDir(), "atlas-one")
 	second := filepath.Join(t.TempDir(), "atlas-two")
 	for _, output := range []string{first, second} {
-		if err := WriteAll(bundle, coverage, Options{Root: root, Output: output, IncludeSources: true, NotebookMaxSize: 256}); err != nil {
+		if err := WriteAll(bundle, coverage, Options{Root: root, Output: output, IncludeSources: true, NotebookMaxSize: 4_096}); err != nil {
 			t.Fatal(err)
 		}
 		for _, relative := range []string{
 			"rkc.manifest.json", "rkc.execution.json", "rkc.export-policy.json", "coverage.json", "bundle.json",
 			"graph/nodes.jsonl", "search/index.json", "docs/README.md", "docs/symbols/function-1.md",
 			"normalized/src/login.go.md", "normalized/redactions.json", "notebooklm/manifest.json",
-			"notebooklm/UPLOAD.md", "notebooklm/04_evidence_001.md",
+			"notebooklm/UPLOAD.md", "notebooklm/04_evidence_001.md", "notebooklm/05_repository_sources_001.md",
 			"site/index.html", "site/styles.css", "site/app.js", "site/data/atlas.json",
 			"site/data/bootstrap.json", "site/data/search.json",
 			"integrations/diagnostics.sarif.json", "integrations/graph.graphml", "integrations/architecture.mmd",
@@ -67,6 +84,34 @@ func TestWriteAllProducesCompleteDeterministicRedactedExport(t *testing.T) {
 		}
 		if bytes.Contains(normalized, []byte(secret)) || !bytes.Contains(normalized, []byte("***")) {
 			t.Fatalf("normalized source was not redacted: %s", normalized)
+		}
+		sourcePackPaths, err := filepath.Glob(filepath.Join(output, "notebooklm", "05_repository_sources_*.md"))
+		var sourcePack []byte
+		for _, sourcePackPath := range sourcePackPaths {
+			part, readErr := os.ReadFile(sourcePackPath)
+			if readErr != nil {
+				t.Fatal(readErr)
+			}
+			sourcePack = append(sourcePack, part...)
+		}
+		if err != nil || len(sourcePackPaths) == 0 || bytes.Contains(sourcePack, []byte(secret)) || !bytes.Contains(sourcePack, []byte("***")) ||
+			!bytes.Contains(sourcePack, []byte("Repository path: config/service\\.yaml")) ||
+			!bytes.Contains(sourcePack, []byte("counterfactual_mode: grounded")) ||
+			!bytes.Contains(sourcePack, []byte("func Login()")) || bytes.Count(sourcePack, []byte(untrustedRepositoryDataNotice)) != len(sourcePackPaths) {
+			t.Fatalf("NotebookLM repository source pack is incomplete or unsafe: %q (error %v)", sourcePack, err)
+		}
+		persistedSearch, err := searchindex.Load(filepath.Join(output, "search", "index.json"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := searchindex.ValidateBundleIndex(persistedSearch, bundle, true); err != nil {
+			t.Fatal(err)
+		}
+		if hits := persistedSearch.Search(searchindex.Query{Text: "counterfactual grounded", ObjectTypes: map[string]struct{}{"artifact": {}}}).Hits; len(hits) != 1 || hits[0].Document.ID != configArtifact.ID {
+			t.Fatalf("normalized configuration body is not searchable: %+v", hits)
+		}
+		if hits := persistedSearch.Search(searchindex.Query{Text: secret}).Hits; len(hits) != 0 {
+			t.Fatalf("secret literal was searchable: %+v", hits)
 		}
 		manifestData, err := os.ReadFile(filepath.Join(output, "rkc-export-manifest.json"))
 		if err != nil {
@@ -98,13 +143,17 @@ func TestWriteAllProducesCompleteDeterministicRedactedExport(t *testing.T) {
 				Bytes  int64  `json:"bytes"`
 				SHA256 string `json:"sha256"`
 			} `json:"source_files"`
-			LicenseIncluded bool   `json:"license_included"`
-			UploadGuide     string `json:"upload_guide"`
+			LicenseIncluded          bool   `json:"license_included"`
+			UploadGuide              string `json:"upload_guide"`
+			RepositoryTextFiles      int    `json:"repository_text_files"`
+			RepositoryTextBytes      int64  `json:"repository_text_bytes"`
+			RepositoryTextRedactions int    `json:"repository_text_redactions"`
+			PackingLimitEnforced     bool   `json:"packing_limit_enforced"`
 		}
 		if err := json.Unmarshal(notebookManifestData, &notebookManifest); err != nil {
 			t.Fatal(err)
 		}
-		if notebookManifest.SourceCount != len(notebookManifest.SourceFiles) || notebookManifest.SourceCount < 5 || notebookManifest.SourceBytes <= 0 || notebookManifest.MaxSourceBytes <= 0 || notebookManifest.UploadGuide != "UPLOAD.md" || notebookManifest.LicenseIncluded {
+		if notebookManifest.SourceCount != len(notebookManifest.SourceFiles) || notebookManifest.SourceCount < 6 || notebookManifest.SourceBytes <= 0 || notebookManifest.MaxSourceBytes <= 0 || notebookManifest.UploadGuide != "UPLOAD.md" || notebookManifest.LicenseIncluded || notebookManifest.RepositoryTextFiles != 2 || notebookManifest.RepositoryTextBytes != int64(len(source)+len(config)) || notebookManifest.RepositoryTextRedactions < 1 || !notebookManifest.PackingLimitEnforced {
 			t.Fatalf("invalid NotebookLM manifest: %+v", notebookManifest)
 		}
 		for index, sourceFile := range notebookManifest.SourceFiles {
@@ -116,8 +165,11 @@ func TestWriteAllProducesCompleteDeterministicRedactedExport(t *testing.T) {
 			if sourceFile.Bytes != int64(len(data)) || sourceFile.SHA256 != hex.EncodeToString(digest[:]) || (index > 0 && notebookManifest.SourceFiles[index-1].Path >= sourceFile.Path) {
 				t.Fatalf("invalid NotebookLM source inventory entry: %+v", sourceFile)
 			}
+			if bytes.Contains(data, []byte(secret)) {
+				t.Fatalf("NotebookLM source %s retained a secret literal", sourceFile.Path)
+			}
 		}
-		if strings.Join(notebookManifest.GeneratedFiles, "|") != "00_repository_overview.md|01_coverage_and_diagnostics.md|02_symbols_*.md|03_relationships_*.md|04_evidence_*.md|UPLOAD.md" {
+		if strings.Join(notebookManifest.GeneratedFiles, "|") != "00_repository_overview.md|01_coverage_and_diagnostics.md|02_symbols_*.md|03_relationships_*.md|04_evidence_*.md|05_repository_sources_*.md|UPLOAD.md" {
 			t.Fatalf("unexpected NotebookLM generated-file order: %v", notebookManifest.GeneratedFiles)
 		}
 		guide, err := os.ReadFile(filepath.Join(output, "notebooklm", "UPLOAD.md"))
@@ -144,6 +196,25 @@ func TestWriteAllProducesCompleteDeterministicRedactedExport(t *testing.T) {
 	readExportJSON(t, filepath.Join(second, "rkc-export-manifest.json"), &secondManifest)
 	if firstManifest.CanonicalFilesDigest != secondManifest.CanonicalFilesDigest || firstManifest.CanonicalBytes != secondManifest.CanonicalBytes {
 		t.Fatalf("identical exports differ: %+v vs %+v", firstManifest, secondManifest)
+	}
+}
+
+func TestRepositoryTextSearchExportRejectsCrossTypeDuplicateIDs(t *testing.T) {
+	t.Parallel()
+	bundle := model.Bundle{
+		Snapshot: model.Snapshot{ID: "snapshot-duplicate"},
+		Nodes:    []model.Node{{ID: "shared", Kind: "function", Name: "Node"}},
+		Artifacts: []model.Artifact{{
+			ID: "shared", Kind: "file", Path: "main.go", Language: "go",
+		}},
+	}
+	path := filepath.Join(t.TempDir(), "search", "index.json")
+	err := writeRepositoryTextSearchIndex(path, bundle, nil)
+	if err == nil || !strings.Contains(err.Error(), "shared by node and artifact") {
+		t.Fatalf("duplicate search identity was accepted: %v", err)
+	}
+	if _, statErr := os.Stat(path); !os.IsNotExist(statErr) {
+		t.Fatalf("duplicate search export created a file: %v", statErr)
 	}
 }
 
@@ -274,11 +345,14 @@ func TestExportFormattingAndIntegrationHelpers(t *testing.T) {
 		}
 	}
 	output := t.TempDir()
-	if err := writePacks(output, "pack", "Title", []string{strings.Repeat("a", 220), strings.Repeat("b", 220)}, 250); err != nil {
+	if err := writePacks(output, "pack", "Title", []string{strings.Repeat("a", 300), strings.Repeat("b", 300)}, 512); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := os.Stat(filepath.Join(output, "pack_002.md")); err != nil {
 		t.Fatalf("pack split missing: %v", err)
+	}
+	if err := writePacks(output, "oversized", "Title", []string{strings.Repeat("x", 600)}, 512); err == nil || !strings.Contains(err.Error(), "above the 512-byte pack limit") {
+		t.Fatalf("oversized record was not rejected: %v", err)
 	}
 	if err := writeCSV(filepath.Join(output, "bad.csv"), []string{"h"}, func(*csv.Writer) error { return errors.New("row failure") }); err == nil {
 		t.Fatal("writeCSV swallowed row error")
@@ -402,7 +476,7 @@ func TestNotebookLicensePacksAreVerifiedRedactedAndOrdered(t *testing.T) {
 		t.Fatal(err)
 	}
 	directory := filepath.Join(output, "notebooklm")
-	pack, err := os.ReadFile(filepath.Join(directory, "05_license_and_attribution_001.md"))
+	pack, err := os.ReadFile(filepath.Join(directory, "06_license_and_attribution_001.md"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -413,7 +487,7 @@ func TestNotebookLicensePacksAreVerifiedRedactedAndOrdered(t *testing.T) {
 		t.Fatalf("license inclusion or redaction boundary failed:\n%s", pack)
 	}
 	guide, err := os.ReadFile(filepath.Join(directory, "UPLOAD.md"))
-	if err != nil || !bytes.Contains(guide, []byte("Verified admitted top-level license")) || !bytes.Contains(guide, []byte("05_license_and_attribution_*.md")) {
+	if err != nil || !bytes.Contains(guide, []byte("Verified admitted top-level license")) || !bytes.Contains(guide, []byte("06_license_and_attribution_*.md")) {
 		t.Fatalf("license upload guidance = %q, error %v", guide, err)
 	}
 	var manifest struct {
@@ -421,7 +495,7 @@ func TestNotebookLicensePacksAreVerifiedRedactedAndOrdered(t *testing.T) {
 		LicenseIncluded bool     `json:"license_included"`
 	}
 	readExportJSON(t, filepath.Join(directory, "manifest.json"), &manifest)
-	if !manifest.LicenseIncluded || strings.Join(manifest.GeneratedFiles, "|") != "00_repository_overview.md|01_coverage_and_diagnostics.md|02_symbols_*.md|03_relationships_*.md|04_evidence_*.md|05_license_and_attribution_*.md|UPLOAD.md" {
+	if !manifest.LicenseIncluded || strings.Join(manifest.GeneratedFiles, "|") != "00_repository_overview.md|01_coverage_and_diagnostics.md|02_symbols_*.md|03_relationships_*.md|04_evidence_*.md|05_repository_sources_*.md|06_license_and_attribution_*.md|UPLOAD.md" {
 		t.Fatalf("license manifest = %+v", manifest)
 	}
 
@@ -437,13 +511,16 @@ func TestNotebookBundleOmitsLicensePackAndStatesAbsence(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()
 	source := []byte("package fixture\n")
+	if err := os.WriteFile(filepath.Join(root, "source.go"), source, 0o600); err != nil {
+		t.Fatal(err)
+	}
 	bundle := exportFixture(root, "source.go", source)
 	output := filepath.Join(t.TempDir(), "atlas")
 	if err := writeNotebookBundle(bundle, model.BuildCoverage(bundle), Options{Root: root, Output: output, NotebookMaxSize: 1_000_000}); err != nil {
 		t.Fatal(err)
 	}
 	directory := filepath.Join(output, "notebooklm")
-	matches, err := filepath.Glob(filepath.Join(directory, "05_license_and_attribution_*.md"))
+	matches, err := filepath.Glob(filepath.Join(directory, "06_license_and_attribution_*.md"))
 	if err != nil || len(matches) != 0 {
 		t.Fatalf("unexpected absent-license packs: %v, error %v", matches, err)
 	}
@@ -455,8 +532,30 @@ func TestNotebookBundleOmitsLicensePackAndStatesAbsence(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if bytes.Contains(manifestData, []byte("05_license_and_attribution_*.md")) || !bytes.Contains(manifestData, []byte(`"license_included": false`)) {
+	if bytes.Contains(manifestData, []byte("06_license_and_attribution_*.md")) || !bytes.Contains(manifestData, []byte(`"license_included": false`)) {
 		t.Fatalf("absent-license manifest is misleading: %s", manifestData)
+	}
+}
+
+func TestNotebookBundleDisclosesMetadataOnlySnapshotExport(t *testing.T) {
+	t.Parallel()
+	output := filepath.Join(t.TempDir(), "atlas")
+	bundle := model.Bundle{Snapshot: model.Snapshot{ID: "stored-snapshot"}}
+	if err := writeNotebookBundle(bundle, model.BuildCoverage(bundle), Options{Output: output, NotebookMaxSize: 1_000_000}); err != nil {
+		t.Fatal(err)
+	}
+	guide, err := os.ReadFile(filepath.Join(output, "notebooklm", "UPLOAD.md"))
+	if err != nil || !bytes.Contains(guide, []byte("Repository-text limitation")) ||
+		!bytes.Contains(guide, []byte("stored snapshot without its exact source checkout")) {
+		t.Fatalf("metadata-only NotebookLM disclosure = %q, error %v", guide, err)
+	}
+	var manifest struct {
+		RepositoryTextStatus string `json:"repository_text_status"`
+		RepositoryTextFiles  int    `json:"repository_text_files"`
+	}
+	readExportJSON(t, filepath.Join(output, "notebooklm", "manifest.json"), &manifest)
+	if manifest.RepositoryTextFiles != 0 || manifest.RepositoryTextStatus != "unavailable_without_verified_source_root" {
+		t.Fatalf("metadata-only NotebookLM manifest = %+v", manifest)
 	}
 }
 
@@ -558,10 +657,12 @@ func TestBrowserAssetsAccessibilityAndSerializationContract(t *testing.T) {
 		t.Fatal("browser renderList implementation is missing")
 	}
 	renderList := app[renderListStart:renderListEnd]
-	apiRanking := strings.Index(renderList, "if(state.api){")
-	apiAppend := strings.Index(renderList, "for(const node of sourceNodes)candidates.push({node,score:0})")
+	apiSearchRanking := strings.Index(renderList, "if(usingAPISearch){")
+	apiSearchAppend := strings.Index(renderList, "for(const result of state.apiSearchResults)candidates.push(")
+	apiNodeRanking := strings.Index(renderList, "else if(state.api){")
+	apiNodeAppend := strings.Index(renderList, "for(const node of sourceNodes)candidates.push({objectType:'node',id:node.id,value:node})")
 	localHaystack := strings.Index(renderList, "const haystack=node.search_text||[node.id,node.name")
-	if apiRanking < 0 || apiAppend < apiRanking || localHaystack < apiAppend {
+	if apiSearchRanking < 0 || apiSearchAppend < apiSearchRanking || apiNodeRanking < apiSearchAppend || apiNodeAppend < apiNodeRanking || localHaystack < apiNodeAppend {
 		t.Fatal("browser does not preserve authoritative API search results before local static filtering")
 	}
 	if !strings.Contains(renderList, "node.source?.path") || !strings.Contains(renderList, "Object.values(node.attributes||{})") {

@@ -90,7 +90,7 @@ func runScanContext(ctx context.Context, args []string) (resultErr error) {
 	noJSONLGraph := fs.Bool("no-jsonl-graph", !cfg.Exports.JSONLGraph, "omit per-record JSONL graph exports; bundle.json remains canonical")
 	noSearchIndex := fs.Bool("no-search-index", !cfg.Exports.SearchIndex || !cfg.Search.Enabled, "omit the persisted lexical search index")
 	noIntegrations := fs.Bool("no-integrations", !cfg.Exports.Integrations, "omit SARIF, GraphML, Mermaid, and CSV integration exports")
-	notebookPackBytes := fs.Int("notebook-pack-bytes", cfg.Exports.NotebookPackBytes, "target maximum NotebookLM pack bytes")
+	notebookPackBytes := fs.Int("notebook-pack-bytes", cfg.Exports.NotebookPackBytes, "hard maximum bytes for each NotebookLM pack")
 	force := fs.Bool("force", false, "replace an existing generated output directory")
 	jsonSummary := fs.Bool("json", false, "print machine-readable summary")
 	failOnErrors := fs.Bool("fail-on-errors", false, "fail after publishing when error diagnostics exist")

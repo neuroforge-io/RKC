@@ -105,10 +105,18 @@ repository-current selectors; read paths open the existing database read-only.
 ## Search and graph
 
 The persisted lexical index ranks exact names, qualified names, signatures,
-paths, and textual fields. It supports language, kind, object-type, and path
-filters. Graph operations include neighbourhood traversal, shortest paths,
-reverse impact, and strongly connected components with bounded node/depth
-limits.
+paths, generated textual fields, and, for direct source-bound exports,
+complete admitted repository text after mandatory secret redaction. Its corpus
+is snapshot-bound and mechanically
+revalidated before a live server trusts its objects or postings. It supports
+language, kind, object-type, and path filters, and returns bounded match-centred
+body excerpts while retaining full-text matching. Export and serving enforce
+aggregate document/text/term/posting/token budgets, a streaming pre-decode
+allocation preflight, and the same 1.5 GiB persisted-index ceiling. Stored
+snapshots exported without their exact checkout are explicitly metadata-only;
+larger-corpus sharding remains future work. Graph operations include neighbourhood
+traversal, shortest paths, reverse impact, and strongly connected components
+with bounded node/depth limits.
 
 ## Local model path
 

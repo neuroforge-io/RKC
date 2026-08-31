@@ -69,6 +69,10 @@ func WriteAll(bundle model.Bundle, coverage model.Coverage, opts Options) error 
 	if err := writeJSON(filepath.Join(opts.Output, "bundle.json"), canonical); err != nil {
 		return err
 	}
+	repositoryText, err := loadRepositoryTextBodies(canonical, opts)
+	if err != nil {
+		return err
+	}
 	if !opts.DisableJSONLGraph {
 		graphDir := filepath.Join(opts.Output, "graph")
 		if err := os.MkdirAll(graphDir, 0o755); err != nil {
@@ -107,14 +111,14 @@ func WriteAll(bundle model.Bundle, coverage model.Coverage, opts Options) error 
 		if err := os.MkdirAll(searchDir, 0o755); err != nil {
 			return err
 		}
-		if err := search.BuildFromBundle(canonical).Save(filepath.Join(searchDir, "index.json")); err != nil {
+		if err := writeRepositoryTextSearchIndex(filepath.Join(searchDir, "index.json"), canonical, repositoryText); err != nil {
 			return fmt.Errorf("write search index: %w", err)
 		}
 	}
-	if err := writeDocs(canonical, coverage, opts); err != nil {
+	if err := writeDocs(canonical, coverage, opts, repositoryText); err != nil {
 		return err
 	}
-	if err := writeNotebookBundle(canonical, coverage, opts); err != nil {
+	if err := writeNotebookBundleWithBodies(canonical, coverage, opts, repositoryText); err != nil {
 		return err
 	}
 	if !opts.DisableStaticSite {
@@ -133,7 +137,7 @@ func WriteAll(bundle model.Bundle, coverage model.Coverage, opts Options) error 
 	return nil
 }
 
-func writeDocs(bundle model.Bundle, coverage model.Coverage, opts Options) error {
+func writeDocs(bundle model.Bundle, coverage model.Coverage, opts Options, repositoryText map[string]repositoryTextBody) error {
 	docsDir := filepath.Join(opts.Output, "docs")
 	symbolsDir := filepath.Join(docsDir, "symbols")
 	if err := os.MkdirAll(symbolsDir, 0o755); err != nil {
@@ -168,7 +172,7 @@ func writeDocs(bundle model.Bundle, coverage model.Coverage, opts Options) error
 	}
 
 	if opts.IncludeSources {
-		if err := writeNormalizedSources(bundle, opts); err != nil {
+		if err := writeNormalizedSourcesWithBodies(bundle, opts, repositoryText); err != nil {
 			return err
 		}
 	}
@@ -176,6 +180,10 @@ func writeDocs(bundle model.Bundle, coverage model.Coverage, opts Options) error
 }
 
 func writeNormalizedSources(bundle model.Bundle, opts Options) error {
+	return writeNormalizedSourcesWithBodies(bundle, opts, nil)
+}
+
+func writeNormalizedSourcesWithBodies(bundle model.Bundle, opts Options, repositoryText map[string]repositoryTextBody) error {
 	base := filepath.Join(opts.Output, "normalized")
 	type redactionRecord struct {
 		Path        string  `json:"path"`
@@ -187,16 +195,26 @@ func writeNormalizedSources(bundle model.Bundle, opts Options) error {
 	}
 	var redactions []redactionRecord
 	for _, artifact := range bundle.Artifacts {
-		if !artifact.Text || (artifact.Status != "text" && artifact.Status != "parsed" && artifact.Status != "syntax_parsed" && artifact.Status != "semantic_parsed") {
+		if !isNormalizedTextArtifact(artifact) {
 			continue
 		}
-		data, err := readVerifiedArtifact(opts.Root, artifact)
-		if err != nil {
-			return fmt.Errorf("read normalized source %q: %w", artifact.Path, err)
+		var data []byte
+		var findings []secrets.Finding
+		if body, ok := repositoryText[artifact.ID]; ok && !opts.UnsafeIncludeSecrets {
+			data = []byte(body.Text)
+			findings = body.Findings
+		} else {
+			var err error
+			data, err = readVerifiedArtifact(opts.Root, artifact)
+			if err != nil {
+				return fmt.Errorf("read normalized source %q: %w", artifact.Path, err)
+			}
+			findings = secrets.Scan(data)
+			if !opts.UnsafeIncludeSecrets {
+				data = secrets.Redact(data, findings)
+			}
 		}
-		findings := secrets.Scan(data)
 		if !opts.UnsafeIncludeSecrets {
-			data = secrets.Redact(data, findings)
 			for _, finding := range findings {
 				redactions = append(redactions, redactionRecord{Path: artifact.Path, Kind: finding.Kind, Confidence: finding.Confidence, Fingerprint: finding.Fingerprint, StartLine: finding.StartLine, EndLine: finding.EndLine})
 			}
@@ -240,6 +258,90 @@ func writeNormalizedSources(bundle model.Bundle, opts Options) error {
 	})
 }
 
+type repositoryTextBody struct {
+	Text     string
+	SHA256   string
+	Findings []secrets.Finding
+}
+
+func isNormalizedTextArtifact(artifact model.Artifact) bool {
+	if !artifact.Text {
+		return false
+	}
+	switch artifact.Status {
+	case "text", "parsed", "syntax_parsed", "semantic_parsed":
+		return true
+	default:
+		return false
+	}
+}
+
+func loadRepositoryTextBodies(bundle model.Bundle, opts Options) (map[string]repositoryTextBody, error) {
+	if strings.TrimSpace(opts.Root) == "" {
+		return nil, nil
+	}
+	var admittedBytes int64
+	for _, artifact := range bundle.Artifacts {
+		if !isNormalizedTextArtifact(artifact) {
+			continue
+		}
+		if artifact.SizeBytes < 0 || artifact.SizeBytes > search.MaximumIndexedDocumentBytes {
+			return nil, fmt.Errorf("repository text %q has %d bytes, above the %d-byte indexed-document limit", artifact.Path, artifact.SizeBytes, search.MaximumIndexedDocumentBytes)
+		}
+		if artifact.SizeBytes > search.MaximumIndexedTextBytes-admittedBytes {
+			return nil, fmt.Errorf("admitted repository text exceeds the %d-byte search/export resource limit", search.MaximumIndexedTextBytes)
+		}
+		admittedBytes += artifact.SizeBytes
+	}
+	bodies := make(map[string]repositoryTextBody, len(bundle.Artifacts))
+	for _, artifact := range bundle.Artifacts {
+		if !isNormalizedTextArtifact(artifact) {
+			continue
+		}
+		data, err := readVerifiedArtifact(opts.Root, artifact)
+		if err != nil {
+			return nil, fmt.Errorf("read repository text %q: %w", artifact.Path, err)
+		}
+		findings := secrets.Scan(data)
+		redacted := secrets.Redact(data, findings)
+		digest := sha256.Sum256(redacted)
+		bodies[artifact.ID] = repositoryTextBody{
+			Text: string(redacted), SHA256: hex.EncodeToString(digest[:]), Findings: findings,
+		}
+	}
+	return bodies, nil
+}
+
+func repositoryTextSearchBodies(bodies map[string]repositoryTextBody) map[string]string {
+	text := make(map[string]string, len(bodies))
+	for id, body := range bodies {
+		text[id] = body.Text
+	}
+	return text
+}
+
+// writeRepositoryTextSearchIndex keeps the potentially large lexical index
+// scoped to serialization. The trusted deterministic builder is tested and
+// the persisted index is independently revalidated when a server loads it, so
+// rebuilding a second complete posting corpus here would add memory and CPU
+// without strengthening the export boundary.
+func writeRepositoryTextSearchIndex(path string, bundle model.Bundle, bodies map[string]repositoryTextBody) error {
+	if err := search.ValidateBundleObjectIDs(bundle); err != nil {
+		return fmt.Errorf("validate search object identities: %w", err)
+	}
+	var index *search.Index
+	var err error
+	if bodies == nil {
+		index, err = search.BuildFromBundleBounded(bundle)
+	} else {
+		index, err = search.BuildFromBundleWithArtifactBodiesBounded(bundle, repositoryTextSearchBodies(bodies))
+	}
+	if err != nil {
+		return fmt.Errorf("build bounded search index: %w", err)
+	}
+	return index.Save(path)
+}
+
 func readVerifiedArtifact(root string, artifact model.Artifact) ([]byte, error) {
 	relative, err := canonicalRelativePath(artifact.Path)
 	if err != nil {
@@ -277,19 +379,29 @@ func readVerifiedArtifact(root string, artifact model.Artifact) ([]byte, error) 
 	if err != nil {
 		return nil, err
 	}
+	if artifact.SizeBytes < 0 || opened.Size() != artifact.SizeBytes || artifact.SizeBytes == int64(^uint64(0)>>1) {
+		return nil, errors.New("artifact content changed after inventory (size differs)")
+	}
+	if len(artifact.SHA256) != sha256.Size*2 || artifact.SHA256 != strings.ToLower(artifact.SHA256) {
+		return nil, errors.New("artifact has no canonical inventoried SHA-256")
+	}
+	if _, err := hex.DecodeString(artifact.SHA256); err != nil {
+		return nil, errors.New("artifact has no canonical inventoried SHA-256")
+	}
 	after, err := os.Lstat(candidate)
 	if err != nil || !os.SameFile(before, opened) || !os.SameFile(opened, after) {
 		return nil, errors.New("artifact identity changed while opening")
 	}
-	data, err := io.ReadAll(file)
+	data, err := io.ReadAll(io.LimitReader(file, artifact.SizeBytes+1))
 	if err != nil {
 		return nil, err
 	}
-	if artifact.SHA256 != "" {
-		digest := sha256.Sum256(data)
-		if hex.EncodeToString(digest[:]) != artifact.SHA256 {
-			return nil, errors.New("artifact content changed after inventory")
-		}
+	if int64(len(data)) != artifact.SizeBytes {
+		return nil, errors.New("artifact content changed after inventory (size differs)")
+	}
+	digest := sha256.Sum256(data)
+	if hex.EncodeToString(digest[:]) != artifact.SHA256 {
+		return nil, errors.New("artifact content changed after inventory")
 	}
 	return data, nil
 }
@@ -463,7 +575,7 @@ func notebookRepositoryOverview(bundle model.Bundle, coverage model.Coverage) st
 			fmt.Fprintf(&b, "\n%d additional public-surface nodes are omitted from this bounded sample.\n", len(publicNodes)-visibleNodes)
 		}
 	}
-	b.WriteString("\nContinue with [`01_coverage_and_diagnostics.md`](01_coverage_and_diagnostics.md), then use the `02_symbols_*.md`, `03_relationships_*.md`, and `04_evidence_*.md` packs for cited detail. License and notice packs appear as `05_license_and_attribution_*.md` only when verified top-level artifacts were admitted.\n")
+	b.WriteString("\nContinue with [`01_coverage_and_diagnostics.md`](01_coverage_and_diagnostics.md), then use the `02_symbols_*.md`, `03_relationships_*.md`, and `04_evidence_*.md` packs for cited detail. When this atlas was built from an exact verified source checkout, admitted secret-redacted repository text appears in `05_repository_sources_*.md`; license and notice packs appear as `06_license_and_attribution_*.md` only when verified top-level artifacts were admitted.\n")
 	return b.String()
 }
 
@@ -574,14 +686,22 @@ func writeRelations(b *strings.Builder, title string, edges []model.Edge, outgoi
 }
 
 func writeNotebookBundle(bundle model.Bundle, coverage model.Coverage, opts Options) error {
+	repositoryText, err := loadRepositoryTextBodies(bundle, opts)
+	if err != nil {
+		return err
+	}
+	return writeNotebookBundleWithBodies(bundle, coverage, opts, repositoryText)
+}
+
+func writeNotebookBundleWithBodies(bundle model.Bundle, coverage model.Coverage, opts Options, repositoryText map[string]repositoryTextBody) error {
 	dir := filepath.Join(opts.Output, "notebooklm")
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return err
 	}
-	if err := os.WriteFile(filepath.Join(dir, "00_repository_overview.md"), []byte(notebookRepositoryOverview(bundle, coverage)), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "00_repository_overview.md"), redactNotebookText(notebookRepositoryOverview(bundle, coverage)), 0o644); err != nil {
 		return err
 	}
-	if err := os.WriteFile(filepath.Join(dir, "01_coverage_and_diagnostics.md"), []byte(notebookDiagnostics(bundle, coverage)), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "01_coverage_and_diagnostics.md"), redactNotebookText(notebookDiagnostics(bundle, coverage)), 0o644); err != nil {
 		return err
 	}
 	if err := writeNotebookSymbolPacks(dir, bundle, opts.NotebookMaxSize); err != nil {
@@ -593,7 +713,11 @@ func writeNotebookBundle(bundle model.Bundle, coverage model.Coverage, opts Opti
 	if err := writeNotebookEvidencePacks(dir, bundle, opts.NotebookMaxSize); err != nil {
 		return err
 	}
-	licenseIncluded, err := writeNotebookLicensePacks(dir, bundle, opts)
+	repositoryTextStats, err := writeNotebookRepositoryTextPacks(dir, bundle, repositoryText, opts.NotebookMaxSize)
+	if err != nil {
+		return err
+	}
+	licenseIncluded, err := writeNotebookLicensePacksWithBodies(dir, bundle, opts, repositoryText)
 	if err != nil {
 		return err
 	}
@@ -601,26 +725,35 @@ func writeNotebookBundle(bundle model.Bundle, coverage model.Coverage, opts Opti
 	if err != nil {
 		return err
 	}
-	if err := os.WriteFile(filepath.Join(dir, "UPLOAD.md"), []byte(notebookUploadGuide(bundle, sources, totalBytes, maxBytes, opts.NotebookMaxSize, licenseIncluded)), 0o644); err != nil {
+	sourceRootAvailable := strings.TrimSpace(opts.Root) != ""
+	if err := os.WriteFile(filepath.Join(dir, "UPLOAD.md"), redactNotebookText(notebookUploadGuide(bundle, sources, totalBytes, maxBytes, opts.NotebookMaxSize, repositoryTextStats.Files > 0, sourceRootAvailable, licenseIncluded)), 0o644); err != nil {
 		return err
 	}
 	generatedFiles := []string{"00_repository_overview.md", "01_coverage_and_diagnostics.md", "02_symbols_*.md", "03_relationships_*.md", "04_evidence_*.md"}
+	if repositoryTextStats.Files > 0 {
+		generatedFiles = append(generatedFiles, "05_repository_sources_*.md")
+	}
 	if licenseIncluded {
-		generatedFiles = append(generatedFiles, "05_license_and_attribution_*.md")
+		generatedFiles = append(generatedFiles, "06_license_and_attribution_*.md")
 	}
 	generatedFiles = append(generatedFiles, "UPLOAD.md")
 	manifest := map[string]any{
-		"snapshot_id":          bundle.Snapshot.ID,
-		"generated_files":      generatedFiles,
-		"packing_target_bytes": opts.NotebookMaxSize,
-		"source_count":         len(sources),
-		"source_bytes":         totalBytes,
-		"max_source_bytes":     maxBytes,
-		"source_files":         sources,
-		"license_included":     licenseIncluded,
-		"upload_guide":         "UPLOAD.md",
-		"excluded_files":       []string{"manifest.json", "UPLOAD.md"},
-		"note":                 "Upload limits vary by NotebookLM plan and can change independently of this exporter; UPLOAD.md explains the deterministic source order and trust boundary.",
+		"snapshot_id":                bundle.Snapshot.ID,
+		"generated_files":            generatedFiles,
+		"packing_target_bytes":       opts.NotebookMaxSize,
+		"packing_limit_enforced":     true,
+		"source_count":               len(sources),
+		"source_bytes":               totalBytes,
+		"max_source_bytes":           maxBytes,
+		"source_files":               sources,
+		"repository_text_files":      repositoryTextStats.Files,
+		"repository_text_bytes":      repositoryTextStats.Bytes,
+		"repository_text_redactions": repositoryTextStats.Redactions,
+		"repository_text_status":     notebookRepositoryTextStatus(repositoryTextStats.Files > 0, sourceRootAvailable),
+		"license_included":           licenseIncluded,
+		"upload_guide":               "UPLOAD.md",
+		"excluded_files":             []string{"manifest.json", "UPLOAD.md"},
+		"note":                       "Upload limits vary by NotebookLM plan and can change independently of this exporter; UPLOAD.md explains the deterministic source order and trust boundary.",
 	}
 	return writeJSON(filepath.Join(dir, "manifest.json"), manifest)
 }
@@ -697,22 +830,36 @@ func readStableRegularFile(path string) ([]byte, os.FileInfo, error) {
 	return data, openedAfter, nil
 }
 
-func notebookUploadGuide(bundle model.Bundle, sources []notebookSource, totalBytes, maxBytes int64, target int, licenseIncluded bool) string {
+func notebookUploadGuide(bundle model.Bundle, sources []notebookSource, totalBytes, maxBytes int64, target int, repositoryTextIncluded, sourceRootAvailable, licenseIncluded bool) string {
 	var b strings.Builder
 	b.WriteString("# Upload this RKC atlas to an LLM notebook\n\n")
 	b.WriteString("This directory is a deterministic, citation-oriented Markdown export of one RKC snapshot. It is suitable for NotebookLM and other notebook or agent systems that accept Markdown sources.\n\n")
+	if repositoryTextIncluded {
+		b.WriteString("Verified, secret-redacted repository text is included.\n\n")
+	} else if !sourceRootAvailable {
+		b.WriteString("**Repository-text limitation:** this export contains structural metadata and evidence but no verified repository source bodies. This occurs when an export is created from a stored snapshot without its exact source checkout. For a complete NotebookLM corpus, run `rkc scan` against the exact checkout and use that atlas's `notebooklm/` directory.\n\n")
+	} else {
+		b.WriteString("No admitted textual artifacts were present in the verified source checkout, so no repository-source pack was generated.\n\n")
+	}
 	b.WriteString("RKC is published by NeuroForgeIO; copyright 2026 NeuroForgeIO and RKC contributors, licensed under Apache-2.0. Repository and third-party content retains its own terms; this export does not relicense it.\n\n")
 	if licenseIncluded {
-		b.WriteString("Verified admitted top-level license and notice artifacts are included in `05_license_and_attribution_*.md`. Review those repository-provided terms before reuse.\n\n")
+		b.WriteString("Verified admitted top-level license and notice artifacts are included in `06_license_and_attribution_*.md`. Review those repository-provided terms before reuse.\n\n")
 	} else {
 		b.WriteString("No admitted top-level regular text artifact named `LICENSE*`, `COPYING*`, `NOTICE*`, or `THIRD_PARTY_NOTICES*` was included. Determine the repository and third-party terms from authoritative sources before reuse.\n\n")
 	}
-	fmt.Fprintf(&b, "- Snapshot: `%s`\n- Markdown sources: %d\n- Total source bytes: %d\n- Largest source: %d bytes\n- Packing target: %d bytes (a target, not a hard truncation)\n\n", markdownText(bundle.Snapshot.ID), len(sources), totalBytes, maxBytes, target)
+	fmt.Fprintf(&b, "- Snapshot: `%s`\n- Markdown sources: %d\n- Total source bytes: %d\n- Largest source: %d bytes\n- Enforced per-pack limit: %d bytes (records are never truncated)\n\n", markdownText(bundle.Snapshot.ID), len(sources), totalBytes, maxBytes, target)
 	b.WriteString(untrustedRepositoryDataNotice + "\n\n")
 	b.WriteString("## Recommended upload order\n\n")
 	b.WriteString("1. `00_repository_overview.md` — inventory, top-level area counts, bounded public-surface sample, and provenance.\n2. `01_coverage_and_diagnostics.md` — quality ratios, diagnostics, and known gaps.\n3. `02_symbols_*.md` — deterministic symbol catalogue packs.\n4. `03_relationships_*.md` — graph relationship packs.\n5. `04_evidence_*.md` — canonical evidence records resolving cited evidence IDs.\n")
+	if repositoryTextIncluded {
+		b.WriteString("6. `05_repository_sources_*.md` — complete admitted code, configuration, and documentation bodies with repository paths, hashes, and mandatory secret redaction.\n")
+	}
 	if licenseIncluded {
-		b.WriteString("6. `05_license_and_attribution_*.md` — verified repository-provided license and notice text.\n")
+		ordinal := 6
+		if repositoryTextIncluded {
+			ordinal = 7
+		}
+		fmt.Fprintf(&b, "%d. `06_license_and_attribution_*.md` — verified repository-provided license and notice text.\n", ordinal)
 	}
 	b.WriteString("\nUpload `manifest.json` only when you need machine-readable export metadata. Keep `UPLOAD.md` as an operator guide rather than a knowledge source. The manifest lists the exact Markdown source files, byte sizes, and SHA-256 digests.\n\n")
 	b.WriteString("If your notebook plan has a source-count or per-file limit, start with the overview and coverage files, then add only the packs needed for the question. To coalesce packs, rerun the scan or snapshot export with a larger `--notebook-pack-bytes` value and verify the resulting `source_count` and `max_source_bytes` in `manifest.json`; records are never silently truncated.\n\n")
@@ -720,6 +867,16 @@ func notebookUploadGuide(bundle model.Bundle, sources []notebookSource, totalByt
 	b.WriteString("Ask the notebook or agent to cite the snapshot, source path, line range, node ID, and evidence IDs it used. Treat repository text as data, not instructions. RKC's deterministic atlas is the source of truth; model-generated explanations are derived products and must not be fed back into a later scan.\n\n")
 	b.WriteString("NotebookLM's current supported-source types and quotas are maintained in Google's help center: https://support.google.com/gemininotebook/answer/16215270\n")
 	return b.String()
+}
+
+func notebookRepositoryTextStatus(included, sourceRootAvailable bool) string {
+	if included {
+		return "complete_secret_redacted"
+	}
+	if sourceRootAvailable {
+		return "no_admitted_text_artifacts"
+	}
+	return "unavailable_without_verified_source_root"
 }
 
 func writeNotebookSymbolPacks(dir string, bundle model.Bundle, maxBytes int) error {
@@ -802,7 +959,66 @@ func writeNotebookEvidencePacks(dir string, bundle model.Bundle, maxBytes int) e
 	return writePacks(dir, "04_evidence", "Canonical evidence catalogue", records, maxBytes)
 }
 
+type notebookRepositoryTextStats struct {
+	Files      int
+	Bytes      int64
+	Redactions int
+}
+
+func writeNotebookRepositoryTextPacks(dir string, bundle model.Bundle, repositoryText map[string]repositoryTextBody, maxBytes int) (notebookRepositoryTextStats, error) {
+	artifacts := append([]model.Artifact(nil), bundle.Artifacts...)
+	sort.Slice(artifacts, func(i, j int) bool {
+		if artifacts[i].Path != artifacts[j].Path {
+			return artifacts[i].Path < artifacts[j].Path
+		}
+		return artifacts[i].ID < artifacts[j].ID
+	})
+	writer := newNotebookPackWriter(dir, "05_repository_sources", "Secret-redacted repository source", maxBytes)
+	var stats notebookRepositoryTextStats
+	for _, artifact := range artifacts {
+		body, ok := repositoryText[artifact.ID]
+		if !ok || isNotebookLicenseArtifact(artifact) {
+			continue
+		}
+		var record strings.Builder
+		fmt.Fprintf(&record, "## %s\n\n", markdownText(artifact.Path))
+		fmt.Fprintf(&record, "- Repository path: %s\n", markdownText(artifact.Path))
+		fmt.Fprintf(&record, "- Artifact ID: %s\n", markdownText(artifact.ID))
+		fmt.Fprintf(&record, "- Content ID: %s\n", markdownText(artifact.ContentID))
+		fmt.Fprintf(&record, "- Language: %s\n", markdownText(artifact.Language))
+		fmt.Fprintf(&record, "- Media type: %s\n", markdownText(artifact.MediaType))
+		fmt.Fprintf(&record, "- Analysis status: %s\n", markdownText(artifact.Status))
+		fmt.Fprintf(&record, "- Inventoried SHA-256: %s\n", markdownText(artifact.SHA256))
+		fmt.Fprintf(&record, "- Exported-text SHA-256: %s\n", body.SHA256)
+		fmt.Fprintf(&record, "- Potential secret findings redacted: %d\n", len(body.Findings))
+		record.WriteString("- Secret redaction applied: true\n")
+		record.WriteString("\nRepository-provided text (secret-redacted):\n\n")
+		record.WriteString(markdownFencedBlock(body.Text, artifact.Language))
+		if err := writer.Add(record.String()); err != nil {
+			return stats, err
+		}
+		stats.Files++
+		stats.Bytes += int64(len(body.Text))
+		stats.Redactions += len(body.Findings)
+	}
+	if err := writer.Close(); err != nil {
+		return stats, err
+	}
+	return stats, nil
+}
+
 func writeNotebookLicensePacks(dir string, bundle model.Bundle, opts Options) (bool, error) {
+	repositoryText, err := loadRepositoryTextBodies(bundle, opts)
+	if err != nil {
+		return false, err
+	}
+	return writeNotebookLicensePacksWithBodies(dir, bundle, opts, repositoryText)
+}
+
+func writeNotebookLicensePacksWithBodies(dir string, bundle model.Bundle, opts Options, repositoryText map[string]repositoryTextBody) (bool, error) {
+	if strings.TrimSpace(opts.Root) == "" {
+		return false, nil
+	}
 	artifacts := make([]model.Artifact, 0)
 	for _, artifact := range bundle.Artifacts {
 		if isNotebookLicenseArtifact(artifact) {
@@ -817,31 +1033,26 @@ func writeNotebookLicensePacks(dir string, bundle model.Bundle, opts Options) (b
 	})
 	records := make([]string, 0)
 	for _, artifact := range artifacts {
-		data, err := readVerifiedArtifact(opts.Root, artifact)
-		if err != nil {
-			return false, fmt.Errorf("read NotebookLM license source %q: %w", artifact.Path, err)
+		body, ok := repositoryText[artifact.ID]
+		if !ok {
+			return false, fmt.Errorf("read NotebookLM license source %q: verified secret-redacted repository text is missing", artifact.Path)
 		}
-		findings := secrets.Scan(data)
-		if !opts.UnsafeIncludeSecrets {
-			data = secrets.Redact(data, findings)
-		}
-		digest := sha256.Sum256(data)
 		var b strings.Builder
 		fmt.Fprintf(&b, "## %s\n\n", markdownText(artifact.Path))
 		fmt.Fprintf(&b, "- Repository path: %s\n", markdownText(artifact.Path))
 		fmt.Fprintf(&b, "- Artifact ID: %s\n", markdownText(artifact.ID))
 		fmt.Fprintf(&b, "- Inventoried SHA-256: %s\n", markdownText(artifact.SHA256))
-		fmt.Fprintf(&b, "- Exported-text SHA-256: %s\n", hex.EncodeToString(digest[:]))
-		fmt.Fprintf(&b, "- Potential secret findings: %d\n", len(findings))
-		fmt.Fprintf(&b, "- Secret redaction applied: %t\n", !opts.UnsafeIncludeSecrets)
+		fmt.Fprintf(&b, "- Exported-text SHA-256: %s\n", body.SHA256)
+		fmt.Fprintf(&b, "- Potential secret findings: %d\n", len(body.Findings))
+		b.WriteString("- Secret redaction applied: true\n")
 		b.WriteString("\nRepository-provided license or attribution text:\n\n")
-		b.WriteString(markdownFencedBlock(string(data), artifact.Language))
+		b.WriteString(markdownFencedBlock(body.Text, artifact.Language))
 		records = append(records, b.String())
 	}
 	if len(records) == 0 {
 		return false, nil
 	}
-	if err := writePacks(dir, "05_license_and_attribution", "Repository license and attribution", records, opts.NotebookMaxSize); err != nil {
+	if err := writePacks(dir, "06_license_and_attribution", "Repository license and attribution", records, opts.NotebookMaxSize); err != nil {
 		return false, err
 	}
 	return true, nil
@@ -866,36 +1077,86 @@ func isNotebookLicenseArtifact(artifact model.Artifact) bool {
 }
 
 func writePacks(dir, prefix, title string, records []string, maxBytes int) error {
-	part := 1
-	var b strings.Builder
-	start := func() {
-		b.Reset()
-		fmt.Fprintf(&b, "# %s, part %03d\n\n", markdownText(title), part)
-		b.WriteString(untrustedRepositoryDataNotice + "\n\n")
-	}
-	flush := func() error {
-		if b.Len() == 0 {
-			return nil
-		}
-		name := fmt.Sprintf("%s_%03d.md", prefix, part)
-		if err := os.WriteFile(filepath.Join(dir, name), []byte(b.String()), 0o644); err != nil {
+	writer := newNotebookPackWriter(dir, prefix, title, maxBytes)
+	writer.start()
+	for _, record := range records {
+		if err := writer.Add(record); err != nil {
 			return err
 		}
-		part++
+	}
+	return writer.Close()
+}
+
+type notebookPackWriter struct {
+	dir, prefix, title string
+	maxBytes           int
+	part               int
+	recordsInPart      int
+	started            bool
+	buffer             strings.Builder
+}
+
+func newNotebookPackWriter(dir, prefix, title string, maxBytes int) *notebookPackWriter {
+	return &notebookPackWriter{dir: dir, prefix: prefix, title: title, maxBytes: maxBytes, part: 1}
+}
+
+func (writer *notebookPackWriter) start() {
+	writer.buffer.Reset()
+	fmt.Fprintf(&writer.buffer, "# %s, part %03d\n\n", markdownText(writer.title), writer.part)
+	writer.buffer.WriteString(untrustedRepositoryDataNotice + "\n\n")
+	writer.recordsInPart = 0
+	writer.started = true
+}
+
+func (writer *notebookPackWriter) Add(record string) error {
+	if !writer.started {
+		writer.start()
+	}
+	redacted := redactNotebookText(record)
+	if writer.buffer.Len()+len(redacted)+1 > writer.maxBytes && writer.recordsInPart == 0 {
+		return fmt.Errorf(
+			"NotebookLM %s record requires %d bytes including its pack header, above the %d-byte pack limit; reduce the admitted source size or raise --notebook-pack-bytes",
+			writer.prefix, writer.buffer.Len()+len(redacted)+1, writer.maxBytes,
+		)
+	}
+	if writer.buffer.Len()+len(redacted)+1 > writer.maxBytes && writer.recordsInPart > 0 {
+		if err := writer.flush(); err != nil {
+			return err
+		}
+		writer.start()
+		if writer.buffer.Len()+len(redacted)+1 > writer.maxBytes {
+			return fmt.Errorf(
+				"NotebookLM %s record requires %d bytes including its pack header, above the %d-byte pack limit; reduce the admitted source size or raise --notebook-pack-bytes",
+				writer.prefix, writer.buffer.Len()+len(redacted)+1, writer.maxBytes,
+			)
+		}
+	}
+	writer.buffer.Write(redacted)
+	writer.buffer.WriteString("\n")
+	writer.recordsInPart++
+	return nil
+}
+
+func redactNotebookText(value string) []byte {
+	data := []byte(value)
+	return secrets.Redact(data, secrets.Scan(data))
+}
+
+func (writer *notebookPackWriter) Close() error {
+	if !writer.started {
 		return nil
 	}
-	start()
-	for _, record := range records {
-		if b.Len()+len(record) > maxBytes && b.Len() > 200 {
-			if err := flush(); err != nil {
-				return err
-			}
-			start()
-		}
-		b.WriteString(record)
-		b.WriteString("\n")
+	return writer.flush()
+}
+
+func (writer *notebookPackWriter) flush() error {
+	name := fmt.Sprintf("%s_%03d.md", writer.prefix, writer.part)
+	if err := os.WriteFile(filepath.Join(writer.dir, name), []byte(writer.buffer.String()), 0o644); err != nil {
+		return err
 	}
-	return flush()
+	writer.part++
+	writer.started = false
+	return nil
 }
 
 func notebookDiagnostics(bundle model.Bundle, coverage model.Coverage) string {
@@ -1202,6 +1463,7 @@ func writeExportManifest(root, snapshotID string) error {
 	var files []exportFile
 	var total int64
 	var canonicalTotal int64
+	hashBuffer := make([]byte, 32*1024)
 	err := filepath.WalkDir(root, func(path string, entry os.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			return walkErr
@@ -1209,7 +1471,7 @@ func writeExportManifest(root, snapshotID string) error {
 		if entry.IsDir() || path == manifestPath || entry.Name() == safeoutput.MarkerName {
 			return nil
 		}
-		data, err := os.ReadFile(path)
+		size, digest, err := hashStableExportFile(path, hashBuffer)
 		if err != nil {
 			return err
 		}
@@ -1217,15 +1479,20 @@ func writeExportManifest(root, snapshotID string) error {
 		if err != nil {
 			return err
 		}
-		sum := sha256.Sum256(data)
 		relative = filepath.ToSlash(relative)
 		canonical := relative != "rkc.execution.json"
 		files = append(files, exportFile{
-			Path: relative, Size: int64(len(data)), SHA256: hex.EncodeToString(sum[:]), Canonical: canonical,
+			Path: relative, Size: size, SHA256: digest, Canonical: canonical,
 		})
-		total += int64(len(data))
+		if size > int64(^uint64(0)>>1)-total {
+			return errors.New("export byte total overflows int64")
+		}
+		total += size
 		if canonical {
-			canonicalTotal += int64(len(data))
+			if size > int64(^uint64(0)>>1)-canonicalTotal {
+				return errors.New("canonical export byte total overflows int64")
+			}
+			canonicalTotal += size
 		}
 		return nil
 	})
@@ -1252,6 +1519,44 @@ func writeExportManifest(root, snapshotID string) error {
 		CanonicalBytes:       canonicalTotal,
 		CanonicalFilesDigest: hex.EncodeToString(canonicalSum[:]),
 	})
+}
+
+func hashStableExportFile(path string, copyBuffer []byte) (int64, string, error) {
+	before, err := os.Lstat(path)
+	if err != nil {
+		return 0, "", err
+	}
+	if !before.Mode().IsRegular() || before.Mode()&os.ModeSymlink != 0 {
+		return 0, "", errors.New("export contains a non-regular file")
+	}
+	file, err := os.Open(path)
+	if err != nil {
+		return 0, "", err
+	}
+	defer file.Close()
+	opened, err := file.Stat()
+	if err != nil || !sameFileState(before, opened) {
+		return 0, "", errors.New("export file identity changed while opening")
+	}
+	hash := sha256.New()
+	// Hide os.File.WriteTo so io.CopyBuffer reuses the one bounded manifest
+	// scratch buffer instead of allocating a new buffer for every export file.
+	reader := struct{ io.Reader }{file}
+	size, err := io.CopyBuffer(hash, reader, copyBuffer)
+	if err != nil {
+		return 0, "", err
+	}
+	after, err := file.Stat()
+	pathAfter, pathErr := os.Lstat(path)
+	if err != nil || pathErr != nil || !sameFileState(opened, after) || !sameFileState(after, pathAfter) || after.Size() != size {
+		return 0, "", errors.New("export file changed while hashing")
+	}
+	return size, hex.EncodeToString(hash.Sum(nil)), nil
+}
+
+func sameFileState(left, right os.FileInfo) bool {
+	return left != nil && right != nil && os.SameFile(left, right) &&
+		left.Mode() == right.Mode() && left.Size() == right.Size() && left.ModTime().Equal(right.ModTime())
 }
 
 func writeJSON(path string, value any) error {
@@ -1463,7 +1768,7 @@ const siteHTML = `<!doctype html>
 <main>
   <aside aria-label="Repository entity explorer">
     <label class="search-label" for="search">Search repository entities</label>
-    <input id="search" type="search" placeholder="Name, signature, path, language" autocomplete="off" aria-describedby="search-help result-summary">
+    <input id="search" type="search" placeholder="Name, signature, path, language, repository text" autocomplete="off" aria-describedby="search-help result-summary">
     <p id="search-help" class="help-text">Press <kbd>/</kbd> to search. Use <kbd>Down Arrow</kbd> to enter the results.</p>
     <div class="filters">
       <label class="sr-only" for="kind">Filter by node kind</label>
@@ -1566,6 +1871,7 @@ kbd { padding: 1px 5px; color: var(--text); background: var(--panel2); border: 1
 .entity.active, .entity[aria-selected="true"] { border-color: var(--accent2); background: var(--panel); box-shadow: inset 3px 0 0 var(--accent2); }
 .entity .line { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
 .entity .name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.entity .excerpt { display: -webkit-box; margin-top: 5px; overflow: hidden; color: var(--muted); font-size: 12px; line-height: 1.35; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
 .badge { display: inline-flex; align-items: center; padding: 2px 7px; border-radius: 999px; border: 1px solid var(--line); color: var(--muted); font-size: 11px; white-space: nowrap; }
 section { min-width: 0; padding: 24px; overflow: auto; }
 .loading, .empty { padding: 48px; text-align: center; color: var(--muted); }
@@ -1695,12 +2001,12 @@ footer { display: flex; justify-content: space-between; gap: 16px; padding: 12px
 
 const siteJS = `'use strict';
 const commandCatalog=__RKC_COMMAND_CATALOG__;
-const state={bundle:null,coverage:null,nodes:new Map(),artifacts:new Map(),evidence:new Map(),outgoing:new Map(),incoming:new Map(),selected:null,view:'overview',results:[],workbench:null,commandName:'quickstart',repositoryFolder:'',directoryListing:null,activationNotice:null,api:false,facets:null,listTruncated:false,diagnosticsTruncated:false,searchTimer:null,searchRevision:0,atlasRevision:0,staticBootstrap:false,staticLoad:null,staticSearchRecords:null,staticSearchByID:new Map(),staticSearchLoad:null};
+const state={bundle:null,coverage:null,nodes:new Map(),artifacts:new Map(),evidence:new Map(),outgoing:new Map(),incoming:new Map(),selected:null,selectedArtifact:null,selectedArtifactContext:null,view:'overview',results:[],apiSearchResults:null,workbench:null,commandName:'quickstart',repositoryFolder:'',directoryListing:null,activationNotice:null,api:false,facets:null,listTruncated:false,diagnosticsTruncated:false,searchTimer:null,searchRevision:0,atlasRevision:0,staticBootstrap:false,staticLoad:null,staticSearchRecords:null,staticSearchByID:new Map(),staticSearchLoad:null};
 const maximumGraphNeighbors=32,maximumGraphNodesShown=16;
 const snapshotGenerationHeader='X-RKC-Snapshot-ID',snapshotGenerationErrorCode='RKC_SNAPSHOT_GENERATION_CHANGED',maximumSnapshotLoadAttempts=3;
 const $=id=>document.getElementById(id);
 const esc=value=>String(value??'').replace(/[&<>"']/g,ch=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch]));
-const label=node=>node?.qualified_name||node?.name||node?.id||'unknown';
+const label=node=>node?.qualified_name||node?.name||node?.title||node?.id||'unknown';
 const compactGraphLabel=node=>{const value=label(node),parts=value.split(/[/.]/).filter(Boolean),leaf=parts[parts.length-1]||value,parent=parts[parts.length-2]||'';return truncate(parent&&leaf.length<10?parent+'.'+leaf:leaf,14)};
 const number=value=>new Intl.NumberFormat().format(value||0);
 
@@ -1906,15 +2212,41 @@ function scheduleListRefresh(){
 
 async function refreshAPIList(revision){
   const parameters=new URLSearchParams({limit:'200'}),query=$('search').value.trim(),kind=$('kind').value,language=$('language').value;
-  if(query)parameters.set('q',query);if(kind)parameters.set('kind',kind);if(language)parameters.set('language',language);
+  if(query)parameters.set('q',query);if(kind)parameters.set(query?'kinds':'kind',kind);if(language)parameters.set(query?'languages':'language',language);
   $('result-summary').textContent='Searching bounded index…';
   try{
+    if(query){
+      parameters.set('limit','50');
+      parameters.set('object_types','node,artifact');
+      const response=await fetchJSON('/api/v1/search?'+parameters);
+      if(revision!==state.searchRevision)return;
+      if(!Array.isArray(response.hits))throw new Error('Search response is invalid');
+      state.apiSearchResults=response.hits.map(hit=>normaliseAPISearchHit(hit,query));state.listTruncated=Boolean(response.truncated);
+      renderList();return;
+    }
     const response=await fetchJSON('/api/v1/nodes?'+parameters);
     if(revision!==state.searchRevision)return;
+    state.apiSearchResults=null;
     state.bundle.nodes=response.items||[];state.listTruncated=Boolean(response.truncated);
     for(const node of state.bundle.nodes)state.nodes.set(node.id,node);
     renderList();
   }catch(error){if(revision===state.searchRevision)$('result-summary').textContent='Search failed: '+String(error?.message||error)}
+}
+
+function normaliseAPISearchHit(hit,query){
+  const document=hit?.document,objectType=document?.object_type;
+  if(!document||typeof document.id!=='string'||!document.id||!['node','artifact'].includes(objectType))throw new Error('Search hit has an invalid repository object');
+  const terms=Array.isArray(hit.terms)?hit.terms.filter(value=>typeof value==='string').slice(0,24):[];
+  const reasons=Array.isArray(hit.reasons)?hit.reasons.filter(value=>typeof value==='string').slice(0,24):[];
+  return {id:document.id,object_type:objectType,kind:String(document.kind||''),language:String(document.language||''),title:String(document.title||document.qualified_name||document.path||document.id),qualified_name:String(document.qualified_name||''),signature:String(document.signature||''),path:String(document.path||''),score:Number.isFinite(hit.score)?hit.score:0,terms,reasons,excerpt:boundedSearchExcerpt(document.body,[...terms,...String(query||'').split(/\s+/)]),repository_text:document.metadata?.rkc_secret_redacted==='true'};
+}
+
+function boundedSearchExcerpt(value,terms){
+  const text=String(value||'').replace(/\s+/g,' ').trim();if(!text)return'';
+  const lower=text.toLowerCase(),positions=(terms||[]).map(term=>lower.indexOf(String(term||'').toLowerCase())).filter(index=>index>=0),match=positions.length?Math.min(...positions):0,maximum=360;
+  if(text.length<=maximum)return text;
+  const start=Math.max(0,Math.min(text.length-maximum,match-Math.floor(maximum/3))),end=Math.min(text.length,start+maximum);
+  return (start?'…':'')+text.slice(start,end)+(end<text.length?'…':'');
 }
 
 function handleListKeys(event){
@@ -1922,7 +2254,7 @@ function handleListKeys(event){
   const options=[...$('list').querySelectorAll('[role="option"]')];
   if(event.key==='Enter'||event.key===' '){
     const active=document.activeElement;
-    if(active?.getAttribute('role')==='option'&&active.dataset.id){event.preventDefault();selectNode(active.dataset.id)}
+    if(active?.getAttribute('role')==='option'&&active.dataset.id){event.preventDefault();selectSearchResult(active.dataset.objectType||'node',active.dataset.id)}
     return;
   }
   let index=options.indexOf(document.activeElement);
@@ -2009,6 +2341,7 @@ function setView(view,focusContent=true){
   else if(view==='commands')renderCommands();
   else if(view==='graph'&&state.selected)renderGraph(state.selected);
   else if(view==='symbol'&&state.selected)renderSymbol(state.selected);
+  else if(view==='symbol'&&state.selectedArtifact)renderArtifact(state.selectedArtifact);
   else renderSelectionPrompt(view);
   if(focusContent)$('content').focus({preventScroll:true});
 }
@@ -2023,7 +2356,7 @@ function selectNode(id,view='symbol',focusContent=true){
   if(!state.api&&state.staticBootstrap)return ensureFullStaticData().then(()=>selectNode(id,view,focusContent));
   if(state.api&&!state.nodes.has(id))return loadAPINode(id).then(()=>selectNode(id,view,focusContent));
   if(!state.nodes.has(id))return;
-  state.selected=id;
+  state.selected=id;state.selectedArtifact=null;state.selectedArtifactContext=null;
   const encoded=encodeURIComponent(id);
   if(location.hash.slice(1)!==encoded)location.hash=encoded;
   renderList();
@@ -2041,15 +2374,34 @@ async function loadAPINode(id){
   state.incoming.set(id,detail.incoming_edges||[]);
 }
 
+function selectSearchResult(objectType,id,focusContent=true){
+  if(objectType==='node')return selectNode(id,'symbol',focusContent);
+  if(objectType!=='artifact')return;
+  const result=(state.apiSearchResults||[]).find(item=>item.object_type==='artifact'&&item.id===id);
+  if(result)return selectArtifactSearchResult(result,focusContent);
+}
+
+async function selectArtifactSearchResult(result,focusContent=true){
+  const atlasRevision=state.atlasRevision,detail=await fetchJSON('/api/v1/artifacts/'+encodeURIComponent(result.id));
+  if(atlasRevision!==state.atlasRevision)throw snapshotGenerationError('Artifact detail completed after the active atlas generation changed.');
+  if(!detail?.artifact||detail.artifact.id!==result.id||!Array.isArray(detail.nodes))throw new Error('Artifact detail response is invalid');
+  state.artifacts.set(detail.artifact.id,detail.artifact);
+  const nodeIDs=[];for(const node of detail.nodes){if(node?.id){state.nodes.set(node.id,node);nodeIDs.push(node.id)}}
+  state.selected=null;state.selectedArtifact=result.id;state.selectedArtifactContext={...result,node_ids:nodeIDs};
+  history.replaceState(null,'',location.pathname+location.search);renderList();setView('symbol',focusContent);
+}
+
 function renderList(){
   if(!state.bundle)return;
   const query=$('search').value.trim().toLowerCase(),kind=$('kind').value,language=$('language').value;
-  const terms=query.split(/\s+/).filter(Boolean),candidates=[],usingStaticSearch=!state.api&&state.staticBootstrap&&filtersActive()&&Array.isArray(state.staticSearchRecords),sourceNodes=usingStaticSearch?state.staticSearchRecords:state.bundle.nodes;
-  if(state.api){
+  const terms=query.split(/\s+/).filter(Boolean),candidates=[],usingAPISearch=state.api&&Array.isArray(state.apiSearchResults),usingStaticSearch=!state.api&&state.staticBootstrap&&filtersActive()&&Array.isArray(state.staticSearchRecords),sourceNodes=usingStaticSearch?state.staticSearchRecords:state.bundle.nodes;
+  if(usingAPISearch){
+    for(const result of state.apiSearchResults)candidates.push({objectType:result.object_type,id:result.id,value:result});
+  }else if(state.api){
     // The API already applied every requested filter and returned ranked
     // results. Re-filtering here can discard path/documentation matches, while
     // re-sorting can corrupt the server's ranking.
-    for(const node of sourceNodes)candidates.push({node,score:0});
+    for(const node of sourceNodes)candidates.push({objectType:'node',id:node.id,value:node});
   }else{
     for(const node of sourceNodes){
       if(kind&&node.kind!==kind)continue;
@@ -2063,21 +2415,21 @@ function renderList(){
         if((node.name||'').toLowerCase().startsWith(query))score+=30;
         score+=terms.filter(term=>(node.signature||'').toLowerCase().includes(term)).length*5;
       }
-      candidates.push({node,score});
+      candidates.push({objectType:'node',id:node.id,value:node,score});
     }
-    candidates.sort((a,b)=>b.score-a.score||label(a.node).localeCompare(label(b.node)));
+    candidates.sort((a,b)=>b.score-a.score||label(a.value).localeCompare(label(b.value)));
   }
-  state.results=candidates.slice(0,1000).map(item=>item.node.id);
-  $('result-summary').textContent=number(candidates.length)+' loaded matching entities'+((state.listTruncated&&!usingStaticSearch)||candidates.length>state.results.length?' · bounded result window':'');
+  state.results=candidates.slice(0,1000);
+  $('result-summary').textContent=number(candidates.length)+' loaded matching '+(usingAPISearch?'repository results':'entities')+((state.listTruncated&&!usingStaticSearch)||candidates.length>state.results.length?' · bounded result window':'');
   $('clear-filters').hidden=!filtersActive();
   $('list').hidden=!state.results.length;
   $('list-empty').hidden=Boolean(state.results.length);
-  $('list-empty').textContent=filtersActive()?'No entities match these filters. Clear the filters to restore the full list.':'This snapshot contains no repository entities.';
-  $('list').innerHTML=state.results.map(id=>{
-    const node=(state.staticBootstrap?state.staticSearchByID.get(id):null)||state.nodes.get(id),selected=id===state.selected;
-    return '<button type="button" class="entity '+(selected?'active':'')+'" role="option" aria-selected="'+String(selected)+'" tabindex="-1" data-id="'+esc(id)+'"><div class="line"><span class="kind">'+esc(node.kind)+'</span><span class="badge">'+esc(node.language||'n/a')+'</span></div><div class="name">'+esc(label(node))+'</div><div class="muted mono">'+esc(node.path||node.source?.path||state.artifacts.get(node.artifact_id)?.path||'')+'</div></button>';
+  $('list-empty').textContent=filtersActive()?'No repository symbols or files match these filters. Clear the filters to restore the full list.':'This snapshot contains no repository entities.';
+  $('list').innerHTML=state.results.map(item=>{
+    const value=item.value,selected=item.objectType==='artifact'?item.id===state.selectedArtifact:item.id===state.selected,artifact=item.objectType==='artifact',name=artifact?(value.title||value.path||value.id):label(value),path=value.path||value.source?.path||state.artifacts.get(value.artifact_id)?.path||'',excerpt=artifact&&value.excerpt?'<div class="excerpt">'+esc(value.excerpt)+'</div>':'';
+    return '<button type="button" class="entity '+(selected?'active':'')+'" role="option" aria-selected="'+String(selected)+'" tabindex="-1" data-object-type="'+esc(item.objectType)+'" data-id="'+esc(item.id)+'"><div class="line"><span class="kind">'+esc(artifact?'artifact · '+(value.kind||'file'):value.kind)+'</span><span class="badge">'+esc(value.language||'n/a')+'</span></div><div class="name">'+esc(name)+'</div><div class="muted mono">'+esc(path)+'</div>'+excerpt+'</button>';
   }).join('');
-  for(const element of $('list').querySelectorAll('[data-id]'))element.addEventListener('click',()=>selectNode(element.dataset.id));
+  for(const element of $('list').querySelectorAll('[data-id]'))element.addEventListener('click',()=>selectSearchResult(element.dataset.objectType||'node',element.dataset.id));
 }
 
 function renderOverview(){
@@ -2085,13 +2437,20 @@ function renderOverview(){
   const languages=state.facets?.languages||countBy((bundle.artifacts||[]).filter(artifact=>artifact.language),artifact=>artifact.language);
   const kinds=state.facets?.node_kinds||countBy(bundle.nodes,node=>node.kind),resolutions=state.facets?.edge_resolutions||countBy(bundle.edges||[],edge=>edge.resolution);
 	const activation=state.activationNotice?'<div class="diagnostic note" role="status"><b>Atlas activated:</b> '+esc(state.activationNotice.root_name)+' · snapshot <span class="mono">'+esc(short(state.activationNotice.snapshot_id))+'</span>. Overview, search, graph, and command defaults now use this validated snapshot.</div>':'';
-	$('content').innerHTML=activation+'<div class="card"><span class="eyebrow">Start here</span><h2>Explore '+esc(bundle.snapshot.root_name)+'</h2><ol class="onboarding"><li>Search by symbol, signature, path, language, or kind.</li><li>Select an entity to inspect its source, relationships, and evidence.</li><li>Use Graph for a bounded neighbourhood, Diagnostics for findings, and Coverage for proof ratios.</li></ol><div class="grid">'+stat('Content digest',short(bundle.snapshot.content_digest))+stat('Git commit',short(bundle.snapshot.git?.commit||'unavailable'))+stat('Schema',bundle.snapshot.schema_version)+stat('Tool',(bundle.snapshot.tool?.name||'rkc')+' '+(bundle.snapshot.tool?.version||''))+'</div></div><div class="grid"><div class="card"><h3>Language inventory</h3>'+bars(languages)+'</div><div class="card"><h3>Node vocabulary</h3>'+bars(kinds)+'</div></div><div class="card"><h3>Relationship resolution</h3>'+bars(resolutions)+'</div><div class="card"><h3>Trust posture</h3><p>Facts are stored as nodes, edges, and evidence. Compiler-resolved facts remain distinguishable from syntax inference, and unresolved relationships remain explicit. Generated prose, when present, remains a claim with evidence identifiers rather than becoming repository truth.</p><div class="grid">'+stat('Inventory accounting',percent(coverage.inventory_accounting_ratio))+stat('Semantic artifacts',number(coverage.artifacts_semantically_parsed))+stat('Compiler evidence',number(coverage.evidence_kinds?.compiler_resolved||0))+stat('Symbol evidence',percent(coverage.symbol_evidence_ratio))+stat('Edge resolution',percent(coverage.edge_resolution_ratio))+stat('Claim citation',coverage.claims_total?percent(coverage.claim_citation_ratio):'n/a')+'</div></div>';
+	$('content').innerHTML=activation+'<div class="card"><span class="eyebrow">Start here</span><h2>Explore '+esc(bundle.snapshot.root_name)+'</h2><ol class="onboarding"><li>Search by symbol, signature, path, language, kind, or indexed repository text.</li><li>Select a symbol or file to inspect its grounded source identity, relationships, and evidence.</li><li>Use Graph for a bounded neighbourhood, Diagnostics for findings, and Coverage for proof ratios.</li></ol><div class="grid">'+stat('Content digest',short(bundle.snapshot.content_digest))+stat('Git commit',short(bundle.snapshot.git?.commit||'unavailable'))+stat('Schema',bundle.snapshot.schema_version)+stat('Tool',(bundle.snapshot.tool?.name||'rkc')+' '+(bundle.snapshot.tool?.version||''))+'</div></div><div class="grid"><div class="card"><h3>Language inventory</h3>'+bars(languages)+'</div><div class="card"><h3>Node vocabulary</h3>'+bars(kinds)+'</div></div><div class="card"><h3>Relationship resolution</h3>'+bars(resolutions)+'</div><div class="card"><h3>Trust posture</h3><p>Facts are stored as nodes, edges, and evidence. Compiler-resolved facts remain distinguishable from syntax inference, and unresolved relationships remain explicit. Generated prose, when present, remains a claim with evidence identifiers rather than becoming repository truth.</p><div class="grid">'+stat('Inventory accounting',percent(coverage.inventory_accounting_ratio))+stat('Semantic artifacts',number(coverage.artifacts_semantically_parsed))+stat('Compiler evidence',number(coverage.evidence_kinds?.compiler_resolved||0))+stat('Symbol evidence',percent(coverage.symbol_evidence_ratio))+stat('Edge resolution',percent(coverage.edge_resolution_ratio))+stat('Claim citation',coverage.claims_total?percent(coverage.claim_citation_ratio):'n/a')+'</div></div>';
 }
 
 function renderSymbol(id){
   const node=state.nodes.get(id);if(!node){renderSelectionPrompt('symbol');return}
   const artifact=state.artifacts.get(node.artifact_id),evidence=(node.evidence_ids||[]).map(value=>state.evidence.get(value)).filter(Boolean),outgoing=state.outgoing.get(id)||[],incoming=state.incoming.get(id)||[],attributes=node.attributes||{};
   $('content').innerHTML='<div class="card"><span class="kind">'+esc(node.kind)+'</span><h2>'+esc(label(node))+'</h2><div class="grid">'+stat('Language',node.language||'n/a')+stat('Visibility',node.visibility||'n/a')+stat('Stability',node.stability||'n/a')+stat('Public surface',node.public_surface?'yes':'no')+'</div>'+(node.signature?'<h3>Signature</h3><pre>'+esc(node.signature)+'</pre>':'')+'<p class="mono">'+esc(node.id)+'</p></div>'+sourceCard(node,artifact)+argumentCard(attributes.arguments)+attributeCard(attributes)+'<div class="grid"><div class="card"><h3>Outgoing relationships ('+outgoing.length+')</h3>'+edges(outgoing,true)+'</div><div class="card"><h3>Incoming relationships ('+incoming.length+')</h3>'+edges(incoming,false)+'</div></div><div class="card"><h3>Evidence ('+evidence.length+')</h3>'+(evidence.length?evidence.map(evidenceRow).join(''):'<p class="muted">No evidence records are attached to this entity.</p>')+'</div>';
+  wireNodeButtons('symbol');
+}
+
+function renderArtifact(id){
+  const artifact=state.artifacts.get(id),context=state.selectedArtifactContext;if(!artifact||!context){renderSelectionPrompt('symbol');return}
+  const nodes=(context.node_ids||[]).map(nodeID=>state.nodes.get(nodeID)).filter(Boolean),matched=context.excerpt?'<div class="card"><h3>'+(context.repository_text?'Matched repository text':'Matched indexed artifact context')+'</h3><p class="pre-wrap">'+esc(context.excerpt)+'</p><p class="muted">Bounded search excerpt · matched terms '+esc((context.terms||[]).join(', ')||'n/a')+' · ranking evidence '+esc((context.reasons||[]).join(', ')||'n/a')+'</p></div>':'';
+  $('content').innerHTML='<div class="card"><span class="kind">artifact · '+esc(artifact.kind||'file')+'</span><h2>'+esc(artifact.path)+'</h2><div class="grid">'+stat('Language',artifact.language||'n/a')+stat('Status',artifact.status||'n/a')+stat('Media type',artifact.media_type||'n/a')+stat('Size',number(artifact.size_bytes)+' bytes')+stat('Lines',artifact.line_count||'n/a')+stat('Text',artifact.text?'yes':'no')+'</div><p class="mono">'+esc(artifact.id)+'</p></div>'+matched+'<div class="card"><h3>Grounded artifact identity</h3><div class="grid">'+stat('Path',artifact.path)+stat('SHA-256',short(artifact.sha256||''))+stat('Generated',artifact.generated?'yes':'no')+stat('Vendored',artifact.vendored?'yes':'no')+stat('Executable',artifact.executable?'yes':'no')+stat('License',artifact.license_expression||'n/a')+'</div></div><div class="card"><h3>Symbols in this artifact ('+nodes.length+')</h3>'+(nodes.length?nodes.map(node=>'<button type="button" class="link-button" data-node="'+esc(node.id)+'">'+esc(label(node))+' · '+esc(node.kind)+'</button><br>').join(''):'<p class="muted">No symbol records are attached to this artifact.</p>')+'</div>';
   wireNodeButtons('symbol');
 }
 
@@ -2290,7 +2649,7 @@ async function loadActivatedWorkbenchDataset(identity){
   if(!identity?.snapshot_id||!identity?.repository_root||!identity?.atlas_root)throw new Error('The server did not return a complete activated dataset identity.');
 	const atlasRevision=advanceAtlasGeneration();
 	try{
-	  state.selected=null;state.results=[];state.staticLoad=null;state.staticSearchLoad=null;state.staticSearchRecords=null;state.staticSearchByID=new Map();
+	  state.selected=null;state.selectedArtifact=null;state.selectedArtifactContext=null;state.results=[];state.apiSearchResults=null;state.staticLoad=null;state.staticSearchLoad=null;state.staticSearchRecords=null;state.staticSearchByID=new Map();
 	  $('search').value='';$('kind').value='';$('language').value='';
 	  history.replaceState(null,'',location.pathname+location.search);
 	  $('content').setAttribute('aria-busy','true');

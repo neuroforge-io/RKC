@@ -43,6 +43,7 @@ const (
 	maximumOwnershipMarkerFileSize  = 64 * 1024
 	maximumExportManifestFileSize   = 16 * 1024 * 1024
 	maximumCanonicalDatasetFileSize = 512 * 1024 * 1024
+	maximumSearchIndexFileSize      = search.MaximumPersistedIndexBytes
 	maximumDatasetFileCount         = 500000
 	maximumStaticSiteFileSize       = 512 * 1024 * 1024
 	maximumStaticSiteTotalBytes     = 512 * 1024 * 1024
@@ -136,6 +137,9 @@ func Load(outputRoot string) (*Dataset, error) {
 	if validation.HasErrors() {
 		return nil, fmt.Errorf("validate bundle: %s", validationErrors(validation))
 	}
+	if err := search.ValidateBundleObjectIDs(bundle); err != nil {
+		return nil, fmt.Errorf("validate search identities: %w", err)
+	}
 	if integrity.manifest != nil && integrity.manifest.SnapshotID != manifest.ID {
 		return nil, fmt.Errorf("export manifest snapshot %q does not match dataset snapshot %q", integrity.manifest.SnapshotID, manifest.ID)
 	}
@@ -151,10 +155,27 @@ func Load(outputRoot string) (*Dataset, error) {
 		return nil, errors.New("coverage.json does not match the canonical bundle")
 	}
 
-	// Never trust a persisted lexical index independently of the bundle. It is
-	// cheap and deterministic to rebuild, and doing so prevents a stale or
-	// adversarial index from returning objects absent from the validated graph.
-	searchIndex := search.BuildFromBundle(bundle)
+	// A legacy or metadata-only index is rebuilt from canonical truth. A modern
+	// repository-text index is used only after its manifest hash, snapshot
+	// binding, object identities, body receipts, postings, and accounting are
+	// independently validated against the canonical bundle.
+	var searchIndex *search.Index
+	if integrity.manifest != nil {
+		var persisted search.Index
+		err := integrity.readVerifiedDerivedJSON(root, "search/index.json", maximumSearchIndexFileSize, &persisted)
+		if err != nil && !errors.Is(err, os.ErrNotExist) {
+			return nil, fmt.Errorf("load repository text search index: %w", err)
+		}
+		if err == nil && persisted.CorpusVersion == search.RepositoryTextCorpusVersion {
+			if err := search.ValidateBundleIndex(&persisted, bundle, true); err != nil {
+				return nil, fmt.Errorf("validate repository text search index: %w", err)
+			}
+			searchIndex = &persisted
+		}
+	}
+	if searchIndex == nil {
+		searchIndex = search.BuildFromBundle(bundle)
+	}
 	// Persisted site/* files are a portable export projection, not authenticated
 	// publisher code. A live server always regenerates its executable application
 	// shell from the current binary. Full atlas data stays behind the bounded API
@@ -224,6 +245,50 @@ func (integrity datasetIntegrity) readJSON(root, name string, target any) error 
 		limit = maximumLegacyManifestFileSize
 	}
 	return readBoundedDatasetJSON(root, name, limit, target)
+}
+
+func (integrity datasetIntegrity) readVerifiedDerivedJSON(root, name string, maximumBytes int64, target any) error {
+	if integrity.manifest == nil {
+		return os.ErrNotExist
+	}
+	canonical, err := canonicalDatasetPath(filepath.ToSlash(name))
+	if err != nil {
+		return err
+	}
+	var expected *datasetExportFile
+	for index := range integrity.manifest.Files {
+		if integrity.manifest.Files[index].Path == canonical {
+			expected = &integrity.manifest.Files[index]
+			break
+		}
+	}
+	if expected == nil {
+		return os.ErrNotExist
+	}
+	if maximumBytes <= 0 || expected.Size > maximumBytes {
+		return fmt.Errorf("derived file %q exceeds %d bytes", canonical, maximumBytes)
+	}
+	path := filepath.Join(root, filepath.FromSlash(canonical))
+	resolved, err := filepath.EvalSymlinks(path)
+	if err != nil {
+		return err
+	}
+	if !datasetPathWithin(root, resolved) {
+		return errors.New("derived file escapes the dataset root")
+	}
+	size, digest, err := decodeAndHashRegularJSON(resolved, maximumBytes, target)
+	if err != nil {
+		return err
+	}
+	if size != expected.Size || digest != expected.SHA256 {
+		return errors.New("derived file changed after export verification")
+	}
+	return nil
+}
+
+func datasetPathWithin(root, candidate string) bool {
+	relative, err := filepath.Rel(root, candidate)
+	return err == nil && relative != ".." && !strings.HasPrefix(relative, ".."+string(filepath.Separator))
 }
 
 func inspectDatasetIntegrity(root string) (datasetIntegrity, error) {
@@ -508,6 +573,61 @@ func readAndHashRegularFileWithBuffer(path string, captureLimit int64, copyBuffe
 		return nil, 0, "", errors.New("file changed while reading")
 	}
 	return buffer.Bytes(), size, hex.EncodeToString(hash.Sum(nil)), nil
+}
+
+// decodeAndHashRegularJSON verifies file identity and allocation-driving search
+// budgets before decoding directly from the same stable descriptor. This
+// avoids retaining a second raw copy of a potentially large derived index and
+// prevents a compact hostile JSON shape from amplifying past the live resource
+// envelope before semantic validation can run.
+func decodeAndHashRegularJSON(path string, maximumBytes int64, target any) (int64, string, error) {
+	if maximumBytes <= 0 {
+		return 0, "", errors.New("JSON byte limit must be positive")
+	}
+	before, err := os.Lstat(path)
+	if err != nil {
+		return 0, "", err
+	}
+	if !before.Mode().IsRegular() || before.Size() > maximumBytes {
+		return 0, "", fmt.Errorf("JSON file is not regular or exceeds %d bytes", maximumBytes)
+	}
+	file, err := os.Open(path)
+	if err != nil {
+		return 0, "", err
+	}
+	defer file.Close()
+	opened, err := file.Stat()
+	if err != nil || !sameDatasetFileState(before, opened) {
+		return 0, "", errors.New("JSON file identity changed while opening")
+	}
+	if _, ok := target.(*search.Index); !ok {
+		return 0, "", errors.New("streaming derived JSON preflight supports only a search index")
+	}
+	if err := search.PreflightPersistedIndex(file); err != nil {
+		return 0, "", fmt.Errorf("preflight search index resources: %w", err)
+	}
+	if _, err := file.Seek(0, io.SeekStart); err != nil {
+		return 0, "", fmt.Errorf("rewind preflighted search index: %w", err)
+	}
+	hash := sha256.New()
+	reader := io.TeeReader(io.LimitReader(file, maximumBytes+1), hash)
+	if err := decodeStrictJSONReader(reader, target); err != nil {
+		return 0, "", err
+	}
+	after, err := file.Stat()
+	pathAfter, pathErr := os.Lstat(path)
+	if err != nil || pathErr != nil || !sameDatasetFileState(opened, after) || !sameDatasetFileState(after, pathAfter) {
+		return 0, "", errors.New("JSON file changed while decoding")
+	}
+	if after.Size() > maximumBytes {
+		return 0, "", fmt.Errorf("JSON file exceeds %d bytes", maximumBytes)
+	}
+	return after.Size(), hex.EncodeToString(hash.Sum(nil)), nil
+}
+
+func sameDatasetFileState(left, right os.FileInfo) bool {
+	return left != nil && right != nil && os.SameFile(left, right) &&
+		left.Mode() == right.Mode() && left.Size() == right.Size() && left.ModTime().Equal(right.ModTime())
 }
 
 const maxSignedInt64 = int64(^uint64(0) >> 1)
@@ -1168,7 +1288,11 @@ func readLegacyJSONL[T any](root, name string, target *[]T, limits legacyLoadLim
 }
 
 func decodeStrictJSON(data []byte, target any) error {
-	decoder := json.NewDecoder(bytes.NewReader(data))
+	return decodeStrictJSONReader(bytes.NewReader(data), target)
+}
+
+func decodeStrictJSONReader(reader io.Reader, target any) error {
+	decoder := json.NewDecoder(reader)
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(target); err != nil {
 		return err

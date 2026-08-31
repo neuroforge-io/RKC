@@ -144,6 +144,124 @@ func TestBrowserBindsRepositoryReadsToOneActiveAtlasRevision(t *testing.T) {
 	}
 }
 
+func TestBrowserUsesFullSearchAPIAndNavigableArtifactResults(t *testing.T) {
+	bundle := exportFixture(t.TempDir(), "artifact-search.go", []byte("package artifactsearch\n"))
+	assets, err := BrowserAssets(bundle, model.BuildCoverage(bundle))
+	if err != nil {
+		t.Fatal(err)
+	}
+	application := string(assets["app.js"])
+	for _, marker := range []string{
+		"fetchJSON('/api/v1/search?'",
+		"parameters.set('object_types','node,artifact')",
+		"normaliseAPISearchHit",
+		"boundedSearchExcerpt",
+		"data-object-type=",
+		"selectSearchResult",
+		"selectArtifactSearchResult",
+		"fetchJSON('/api/v1/artifacts/'",
+		"Artifact detail completed after the active atlas generation changed",
+		"function renderArtifact(id)",
+		"Matched repository text",
+	} {
+		if !strings.Contains(application, marker) {
+			t.Errorf("browser full-search/artifact contract is missing %q", marker)
+		}
+	}
+	refreshStart := strings.Index(application, "async function refreshAPIList(revision){")
+	refreshEnd := strings.Index(application, "function normaliseAPISearchHit(")
+	if refreshStart < 0 || refreshEnd <= refreshStart {
+		t.Fatal("browser API refresh flow is missing")
+	}
+	refresh := application[refreshStart:refreshEnd]
+	searchRoute := strings.Index(refresh, "fetchJSON('/api/v1/search?'")
+	nodeRoute := strings.Index(refresh, "fetchJSON('/api/v1/nodes?'")
+	if searchRoute < 0 || nodeRoute <= searchRoute || !strings.Contains(refresh, "if(query){") {
+		t.Fatalf("non-empty browser queries are not routed through full search before node-only browsing: %s", refresh)
+	}
+	artifactStart := strings.Index(application, "async function selectArtifactSearchResult(result,focusContent=true){")
+	artifactEnd := strings.Index(application, "function renderList(){")
+	if artifactStart < 0 || artifactEnd <= artifactStart {
+		t.Fatal("browser artifact-detail loader is missing")
+	}
+	artifactLoader := application[artifactStart:artifactEnd]
+	artifactAwait := strings.Index(artifactLoader, "detail=await fetchJSON(")
+	artifactRevisionCheck := strings.Index(artifactLoader, "if(atlasRevision!==state.atlasRevision)throw snapshotGenerationError(")
+	artifactMutation := strings.Index(artifactLoader, "state.artifacts.set(")
+	if artifactAwait < 0 || artifactRevisionCheck <= artifactAwait || artifactMutation <= artifactRevisionCheck {
+		t.Fatalf("artifact loader does not recheck the caller-captured atlas revision before mutation: %s", artifactLoader)
+	}
+}
+
+func TestBrowserBodyOnlyArtifactSearchResultIsVisibleAndNavigable(t *testing.T) {
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("node is not installed; generated asset contract tests remain active")
+	}
+	bundle := exportFixture(t.TempDir(), "artifact-body-search.go", []byte("package artifactbodysearch\n"))
+	assets, err := BrowserAssets(bundle, model.BuildCoverage(bundle))
+	if err != nil {
+		t.Fatal(err)
+	}
+	application := string(assets["app.js"])
+	if !strings.HasSuffix(application, "boot();") {
+		t.Fatal("browser application boot suffix is missing")
+	}
+	application = strings.TrimSuffix(application, "boot();")
+
+	const prelude = `
+const testElements=new Map();
+function testElement(id){
+  if(!testElements.has(id))testElements.set(id,{value:'',innerHTML:'',textContent:'',className:'',hidden:false,disabled:false,
+    setAttribute(){},addEventListener(){},removeEventListener(){},focus(){},select(){},querySelectorAll(){return[]},
+    classList:{toggle(){},add(){},remove(){}}});
+  return testElements.get(id);
+}
+global.document={getElementById:testElement,querySelectorAll(){return[]},activeElement:null,body:{classList:{toggle(){}}}};
+global.window={addEventListener(){}};
+global.location={hash:'',pathname:'/',search:''};
+global.history={replaceState(){}};
+global.sessionStorage={getItem(){return null},setItem(){},removeItem(){}};
+global.HTMLInputElement=class{};global.HTMLTextAreaElement=class{};global.HTMLSelectElement=class{};
+`
+	const harness = `
+function repositoryResponse(data){return{ok:true,status:200,headers:{get(name){return name===snapshotGenerationHeader?'snapshot-body':null}},json:async()=>data}}
+function atlas(){return{snapshot:{id:'snapshot-body',root_name:'body-search'},nodes:[],artifacts:[],edges:[],evidence:[],diagnostics:[]}}
+(async()=>{
+  const bodyOnlyTerm='bodyonlyartifactneedle',artifactID='artifact-body',nodeID='node-body';
+  state.api=true;state.atlasRevision=1;state.searchRevision=1;state.bundle=atlas();state.coverage={};
+  testElement('search').value=bodyOnlyTerm;testElement('kind').value='';testElement('language').value='';
+  const requests=[];
+  global.fetch=async path=>{
+    requests.push(String(path));
+    if(String(path).startsWith('/api/v1/search?'))return repositoryResponse({query:bodyOnlyTerm,hits:[{document:{id:artifactID,object_type:'artifact',kind:'file',language:'yaml',title:'service.yaml',qualified_name:'config/service.yaml',path:'config/service.yaml',body:'ordinary prefix '+bodyOnlyTerm+' grounded suffix',metadata:{rkc_secret_redacted:'true'}},score:9.5,reasons:['body:'+bodyOnlyTerm],terms:[bodyOnlyTerm]}],truncated:false,mode:'lexical',index_version:'test'});
+    if(String(path)==='/api/v1/artifacts/'+artifactID)return repositoryResponse({artifact:{id:artifactID,path:'config/service.yaml',kind:'file',language:'yaml',media_type:'application/yaml',size_bytes:48,line_count:2,text:true,status:'syntax_parsed',sha256:'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'},nodes:[{id:nodeID,kind:'function',name:'LoadService',qualified_name:'config.LoadService',language:'go',artifact_id:artifactID}]});
+    if(String(path)==='/api/v1/nodes/'+nodeID)return repositoryResponse({node:{id:nodeID,kind:'function',name:'LoadService',qualified_name:'config.LoadService',language:'go',artifact_id:artifactID},evidence:[],outgoing_edges:[],incoming_edges:[]});
+    throw new Error('unexpected request '+path);
+  };
+  await refreshAPIList(state.searchRevision);
+  if(!requests[0]?.startsWith('/api/v1/search?')||!requests[0].includes('q='+bodyOnlyTerm)||!requests[0].includes('object_types=node%2Cartifact'))throw new Error('body query did not use bounded full search: '+requests[0]);
+  const result=state.apiSearchResults?.[0];
+  if(!result||result.object_type!=='artifact'||Object.hasOwn(result,'body')||!result.excerpt.includes(bodyOnlyTerm)||state.results[0]?.objectType!=='artifact')throw new Error('body-only artifact hit was not normalized into bounded UI state');
+  if(!testElement('list').innerHTML.includes('config/service.yaml')||!testElement('list').innerHTML.includes(bodyOnlyTerm)||!testElement('list').innerHTML.includes('artifact · file'))throw new Error('body-only artifact hit is not visible in the result list');
+  await selectSearchResult('artifact',artifactID,false);
+  if(state.selectedArtifact!==artifactID||state.selected!==null||!testElement('content').innerHTML.includes('Matched repository text')||!testElement('content').innerHTML.includes(bodyOnlyTerm)||!testElement('content').innerHTML.includes('LoadService'))throw new Error('artifact result did not navigate to grounded artifact detail');
+  await selectSearchResult('node',nodeID,false);
+  if(state.selected!==nodeID||state.selectedArtifact!==null||!testElement('content').innerHTML.includes('config.LoadService'))throw new Error('node navigation regressed after heterogeneous search');
+  console.log('artifact-body-search-ok');
+})().catch(error=>{console.error(error?.stack||error);process.exitCode=1});
+`
+	command := exec.Command(node, "-")
+	command.Stdin = strings.NewReader(prelude + application + harness)
+	output, err := command.CombinedOutput()
+	if err != nil {
+		t.Fatalf("browser body-only artifact search adversary failed: %v\n%s", err, output)
+	}
+	if !bytes.Contains(output, []byte("artifact-body-search-ok")) {
+		t.Fatalf("browser body-only artifact search adversary did not finish: %s", output)
+	}
+}
+
 func TestBrowserStaleRepositoryResponsesCannotRepopulateActivatedAtlas(t *testing.T) {
 	node, err := exec.LookPath("node")
 	if err != nil {
@@ -225,6 +343,14 @@ function atlas(snapshotID,nodes=[]){return{snapshot:{id:snapshotID,root_name:sna
   wrongSnapshot.resolve(repositoryResponse('different',{node:{id:'wrong-snapshot'},evidence:[],outgoing_edges:[],incoming_edges:[]}));
   let snapshotRejected=false;try{await pendingWrongSnapshot}catch(error){snapshotRejected=isSnapshotGenerationError(error)}
   if(!snapshotRejected||state.nodes.has('wrong-snapshot'))throw new Error('wrong-snapshot detail response was accepted');
+
+  state.bundle=atlas('artifact-validated');state.artifacts.clear();state.selectedArtifact=null;
+  const artifactResult={id:'stale-artifact',object_type:'artifact',kind:'file',title:'stale.txt',path:'stale.txt',terms:[],reasons:[],excerpt:'stale'};
+  const postValidationArtifact=deferredResponse();global.fetch=()=>postValidationArtifact.promise;
+  const pendingPostValidationArtifact=selectArtifactSearchResult(artifactResult,false);
+  postValidationArtifact.resolve(repositoryResponse('artifact-validated',{artifact:{id:'stale-artifact',path:'stale.txt',kind:'file',text:true,status:'parsed'},nodes:[]},()=>{advanceAtlasGeneration();state.bundle=atlas('artifact-activated');state.artifacts.clear();state.selectedArtifact=null}));
+  let postValidationArtifactRejected=false;try{await pendingPostValidationArtifact}catch(error){postValidationArtifactRejected=isSnapshotGenerationError(error)}
+  if(!postValidationArtifactRejected||state.bundle.snapshot.id!=='artifact-activated'||state.artifacts.has('stale-artifact')||state.selectedArtifact)throw new Error('artifact detail mutated state after fetch validation but before caller continuation');
   console.log('stale-read-guard-ok');
 })().catch(error=>{console.error(error?.stack||error);process.exitCode=1});
 `
