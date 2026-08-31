@@ -118,11 +118,11 @@ func caller() {
 }
 
 func TestFlowLiteralMetadataDoesNotDiscloseValues(t *testing.T) {
-	const secret = "rkc-private-literal-47d39e"
+	const privateLiteral = "rkc-private-literal-47d39e"
 	source := `package main
 
 func literalValues() string {
-	secret := "` + secret + `"
+	secret := "` + privateLiteral + `"
 	number := 731942
 	_ = number
 	return secret
@@ -139,13 +139,13 @@ func literalValues() string {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.Contains(string(encoded), secret) || strings.Contains(string(encoded), "731942") {
+	if strings.Contains(string(encoded), privateLiteral) || strings.Contains(string(encoded), "731942") {
 		t.Fatalf("serialized flow fragment disclosed a source literal: %s", encoded)
 	}
 
-	wantDigestBytes := sha256.Sum256([]byte(PluginID + "\x00go-literal\x00STRING\x00" + secret))
+	wantDigestBytes := sha256.Sum256([]byte(PluginID + "\x00go-literal\x00STRING\x00" + privateLiteral))
 	wantDigest := hex.EncodeToString(wantDigestBytes[:])
-	rawDigestBytes := sha256.Sum256([]byte(secret))
+	rawDigestBytes := sha256.Sum256([]byte(privateLiteral))
 	rawDigest := hex.EncodeToString(rawDigestBytes[:])
 	foundSecretDigest := false
 	literals := 0
