@@ -1416,7 +1416,7 @@ class CompletePackageTests(unittest.TestCase):
         self.assertIn("GO_TEMP=$WORK/go-tmp", verifier)
         self.assertIn("INNER_TEMP=$WORK/temp", verifier)
         self.assertIn('mkdir -m 0700 "$INNER_TEMP"', verifier)
-        self.assertIn('TMPDIR="$INNER_TEMP"', verifier)
+        self.assertIn('RKC_RELEASE_WORK_ROOT="$INNER_TEMP"', verifier)
         self.assertIn(
             'mkdir -p "$GO_BUILD_CACHE" "$GO_MODULE_CACHE" "$GO_TEMP"',
             verifier,
@@ -1426,7 +1426,7 @@ class CompletePackageTests(unittest.TestCase):
         )
         self.assertIn("trap cleanup_inner_work EXIT INT TERM", verifier)
         inner_work = verifier.index(
-            'WORK=$(mktemp -d "${TMPDIR:-/tmp}/rkc-release-verification.XXXXXX")'
+            'WORK=$(mktemp -d "$RELEASE_WORK_ROOT/rkc-release-verification.XXXXXX")'
         )
         cache_setup = verifier.index("GO_BUILD_CACHE=$WORK/go-build-cache")
         self.assertLess(inner_work, cache_setup)

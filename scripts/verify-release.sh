@@ -196,7 +196,7 @@ if [ "${RKC_RELEASE_VERIFY_INNER:-0}" != 1 ]; then
     echo "release verification: private source checkout does not match immutable HEAD" >&2
     exit 1
   fi
-  if RKC_RELEASE_VERIFY_INNER=1 PYTHON="$VALIDATION_PYTHON" TMPDIR="$INNER_TEMP" \
+  if RKC_RELEASE_VERIFY_INNER=1 PYTHON="$VALIDATION_PYTHON" RKC_RELEASE_WORK_ROOT="$INNER_TEMP" \
     sh "$SOURCE/scripts/verify-release.sh"; then
     verification_status=0
   else
@@ -233,7 +233,13 @@ SOURCE_COMMIT=$(git rev-parse --verify 'HEAD^{commit}')
 SOURCE_TREE=$(git rev-parse --verify "${SOURCE_COMMIT}^{tree}")
 SOURCE_COMMIT_TIME=$(git show -s --format=%ct "$SOURCE_COMMIT")
 prepare_validation_output "$OUT"
-WORK=$(mktemp -d "${TMPDIR:-/tmp}/rkc-release-verification.XXXXXX")
+RELEASE_WORK_ROOT=${RKC_RELEASE_WORK_ROOT:-${TMPDIR:-/tmp}}
+unset RKC_RELEASE_WORK_ROOT
+if [ ! -d "$RELEASE_WORK_ROOT" ] || [ -L "$RELEASE_WORK_ROOT" ]; then
+  echo "release verification: private work root must be a real directory" >&2
+  exit 1
+fi
+WORK=$(mktemp -d "$RELEASE_WORK_ROOT/rkc-release-verification.XXXXXX")
 cleanup_inner_work() {
   # Go's module cache intentionally creates read-only directories. Restore
   # owner permissions before removing the private verification workspace so a
