@@ -6,6 +6,7 @@ import hashlib
 import io
 import json
 import os
+import runpy
 import stat
 import subprocess
 import sys
@@ -15,6 +16,7 @@ import urllib.error
 import urllib.request
 from copy import deepcopy
 from pathlib import Path
+from types import SimpleNamespace
 from unittest import mock
 
 import model_assets
@@ -99,6 +101,12 @@ class ModelAssetTests(unittest.TestCase):
         )
         self.assertEqual(
             model_assets.configured_priority_markers(
+                {model_assets.HIGHER_PRIORITY_MARKERS_ENVIRONMENT: ""}
+            ),
+            (b"torchrun", b"lm_eval"),
+        )
+        self.assertEqual(
+            model_assets.configured_priority_markers(
                 {
                     model_assets.HIGHER_PRIORITY_MARKERS_ENVIRONMENT: (
                         "critical_train,batch2"
@@ -108,6 +116,8 @@ class ModelAssetTests(unittest.TestCase):
             (b"critical_train", b"batch2"),
         )
         invalid = (
+            "",
+            "é",
             "critical_train,",
             "critical_train,critical_train",
             "CriticalTrain",
@@ -144,6 +154,19 @@ class ModelAssetTests(unittest.TestCase):
                 set(),
                 names,
             )
+        )
+        self.assertFalse(
+            model_assets._matches_priority_process(202, b"", b"python3", set(), names)
+        )
+        self.assertEqual(
+            model_assets._priority_process_class(
+                b"python worker.py", priority_names=(b"erais",)
+            ),
+            "priority-workload",
+        )
+        self.assertEqual(
+            model_assets._priority_process_class(b"", priority_names=(b"erais",)),
+            "priority-workload",
         )
 
     def test_priority_match_ignores_wrapper_ancestor_only(self) -> None:
@@ -306,6 +329,8 @@ class ModelAssetTests(unittest.TestCase):
             model_assets._validate_fetch_url(
                 "https://attacker.example/payload.gguf", asset
             )
+        with self.assertRaisesRegex(model_assets.IntegrityError, "IP-literal"):
+            model_assets._validate_fetch_url("https://127.0.0.1/payload.gguf", asset)
 
     def test_https_downgrade_is_rejected(self) -> None:
         asset = fixture_asset(b"expected")
@@ -347,6 +372,50 @@ class ModelAssetTests(unittest.TestCase):
                 link.symlink_to(path)
                 with self.assertRaises(model_assets.LockError):
                     model_assets._read_regular(link, 10)
+
+    def test_regular_lock_reader_rejects_read_overflow_inode_and_size_races(self) -> None:
+        before = SimpleNamespace(st_mode=stat.S_IFREG, st_dev=1, st_ino=2, st_size=1)
+        with mock.patch.object(model_assets.os, "open", return_value=7), mock.patch.object(
+            model_assets.os, "fstat", return_value=before
+        ), mock.patch.object(model_assets.os, "read", return_value=b"xx"), mock.patch.object(
+            model_assets.os, "close"
+        ), self.assertRaisesRegex(model_assets.LockError, "exceeds"):
+            model_assets._read_regular(Path("fixture"), 1)
+
+        changed_inode = SimpleNamespace(st_mode=stat.S_IFREG, st_dev=1, st_ino=3, st_size=1)
+        with mock.patch.object(model_assets.os, "open", return_value=7), mock.patch.object(
+            model_assets.os, "fstat", side_effect=[before, changed_inode]
+        ), mock.patch.object(model_assets.os, "read", side_effect=[b"x", b""]), mock.patch.object(
+            model_assets.os, "lstat", return_value=before
+        ), mock.patch.object(model_assets.os, "close"), self.assertRaisesRegex(
+            model_assets.LockError, "changed while it was read"
+        ):
+            model_assets._read_regular(Path("fixture"), 1)
+
+        changed_size = SimpleNamespace(st_mode=stat.S_IFREG, st_dev=1, st_ino=2, st_size=2)
+        with mock.patch.object(model_assets.os, "open", return_value=7), mock.patch.object(
+            model_assets.os, "fstat", side_effect=[before, changed_size]
+        ), mock.patch.object(model_assets.os, "read", side_effect=[b"x", b""]), mock.patch.object(
+            model_assets.os, "lstat", return_value=before
+        ), mock.patch.object(model_assets.os, "close"), self.assertRaisesRegex(
+            model_assets.LockError, "size changed while it was read"
+        ):
+            model_assets._read_regular(Path("fixture"), 1)
+
+    def test_regular_lock_reader_without_optional_open_flags(self) -> None:
+        class WithoutOptionalFlags:
+            O_RDONLY = os.O_RDONLY
+
+            def __getattr__(self, name: str):
+                if name in {"O_CLOEXEC", "O_NOFOLLOW"}:
+                    raise AttributeError(name)
+                return getattr(os, name)
+
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / "lock"
+            path.write_bytes(b"value")
+            with mock.patch.object(model_assets, "os", WithoutOptionalFlags()):
+                self.assertEqual(model_assets._read_regular(path, 10), b"value")
 
     def test_scalar_url_host_and_cmake_validators(self) -> None:
         self.assertEqual(model_assets._string("x", "x"), "x")
@@ -409,12 +478,14 @@ class ModelAssetTests(unittest.TestCase):
         mutations = (
             ("id", "BAD ID"),
             ("kind", "other"),
+            ("status", "unsupported"),
             ("status", "runtime-pinned"),
             ("filename", "../model.gguf"),
             ("revision", "short"),
             ("sha256", "A" * 64),
             ("size_bytes", 0),
             ("allowed_hosts", ["other.example"]),
+            ("license_spdx", "GPL-3.0"),
             ("license_spdx", "MIT"),
             ("redistribution", "bundled"),
             ("quantization", None),
@@ -451,6 +522,9 @@ class ModelAssetTests(unittest.TestCase):
             path.write_text('{"x":1,"x":2}', encoding="utf-8")
             with self.assertRaisesRegex(model_assets.LockError, "duplicate"):
                 model_assets.load_lock(path)
+            path.write_bytes(b"\xff")
+            with self.assertRaisesRegex(model_assets.LockError, "parse"):
+                model_assets.load_lock(path)
             document = deepcopy(lock.document)
             document["default_generation_model"] = lock.assets[1].asset_id
             path.write_text(json.dumps(document), encoding="utf-8")
@@ -461,6 +535,17 @@ class ModelAssetTests(unittest.TestCase):
             path.write_text(json.dumps(document), encoding="utf-8")
             with self.assertRaisesRegex(model_assets.LockError, "pinned commit"):
                 model_assets.load_lock(path)
+            qualified = deepcopy(lock.document)
+            generation_id = qualified["assets"][1]["id"]
+            embedding_id = qualified["assets"][-1]["id"]
+            for index in (1, len(qualified["assets"]) - 1):
+                qualified["assets"][index]["status"] = "qualified"
+                qualified["assets"][index]["default_eligible"] = True
+            qualified["default_generation_model"] = generation_id
+            qualified["default_embedding_model"] = embedding_id
+            path.write_text(json.dumps(qualified), encoding="utf-8")
+            parsed = model_assets.load_lock(path)
+            self.assertEqual(parsed.asset(generation_id).status, "qualified")
 
     @mock.patch.object(model_assets.subprocess, "run")
     def test_non_linux_priority_fallback_and_assertion(self, run: mock.Mock) -> None:
@@ -479,6 +564,20 @@ class ModelAssetTests(unittest.TestCase):
         ), mock.patch.object(model_assets.sys, "platform", "darwin"):
             matches = model_assets.active_priority_processes()
         self.assertEqual(matches, [(123, "erais")])
+        run.return_value = subprocess.CompletedProcess(
+            [],
+            0,
+            stdout=(
+                f"{os.getpid()} python /private/project/erais/train.py\n"
+                "123 python /private/project/erais/train.py\n"
+            ).encode(),
+            stderr=b"",
+        )
+        with mock.patch.dict(
+            os.environ,
+            {model_assets.HIGHER_PRIORITY_MARKERS_ENVIRONMENT: "erais"},
+        ), mock.patch.object(model_assets.sys, "platform", "darwin"):
+            self.assertEqual(model_assets.active_priority_processes(), [(123, "erais")])
         with mock.patch.object(
             model_assets, "active_priority_processes", return_value=matches
         ):
@@ -508,6 +607,9 @@ class ModelAssetTests(unittest.TestCase):
             (proc / "101/cmdline").write_bytes(b"python\0/work/erais/train.py\0")
             (proc / "101/comm").write_bytes(b"python3\n")
             (proc / "102").mkdir()
+            (proc / "103").mkdir()
+            (proc / "103/cmdline").write_bytes(b"python\0/work/other/train.py\0")
+            (proc / "103/comm").write_bytes(b"python3\n")
             (proc / "not-a-pid").mkdir()
 
             def mapped(value: object = ".") -> Path:
@@ -538,6 +640,25 @@ class ModelAssetTests(unittest.TestCase):
                 ancestors = model_assets._ancestor_pids()
             self.assertIn(pid, ancestors)
             self.assertIn(50, ancestors)
+            with mock.patch.object(model_assets.os, "getpid", return_value=0):
+                self.assertEqual(model_assets._ancestor_pids(), set())
+            with mock.patch.object(
+                model_assets, "Path", side_effect=OSError("proc unavailable")
+            ):
+                self.assertIn(os.getpid(), model_assets._ancestor_pids())
+            class EndlessProcPath:
+                def __init__(self, value: str) -> None:
+                    self.pid = int(str(value).rsplit("/", 2)[-2])
+
+                def read_text(self, **_kwargs: object) -> str:
+                    return f"{self.pid} (python) S {self.pid + 1} 0 0\n"
+
+            with mock.patch.object(model_assets.os, "getpid", return_value=1), mock.patch.object(
+                model_assets, "Path", EndlessProcPath
+            ):
+                self.assertEqual(len(model_assets._ancestor_pids()), 64)
+        with mock.patch.object(model_assets, "active_priority_processes", return_value=[]):
+            model_assets.assert_priority_available()
 
     def test_linux_resource_guard_full_contract_and_mismatches(self) -> None:
         real_path = Path
@@ -629,6 +750,11 @@ class ModelAssetTests(unittest.TestCase):
         request.redirect_dict = {asset.url: 5}  # type: ignore[attr-defined]
         with self.assertRaisesRegex(model_assets.IntegrityError, "five redirects"):
             handler.redirect_request(request, None, 302, "found", {}, asset.url)
+        request.redirect_dict = {}
+        redirected = handler.redirect_request(
+            request, None, 302, "found", {}, asset.url
+        )
+        self.assertIsNotNone(redirected)
         self.assertIsNotNone(model_assets._default_opener(asset))
         with mock.patch.object(
             model_assets.os, "write", return_value=0
@@ -779,6 +905,76 @@ class ModelAssetTests(unittest.TestCase):
             with self.assertRaisesRegex(model_assets.AssetError, "negative"):
                 model_assets._required_free_bytes(-1)
 
+    def test_open_asset_rejects_overflow_and_postread_identity_changes(self) -> None:
+        asset = fixture_asset(b"x")
+        before = SimpleNamespace(st_mode=stat.S_IFREG, st_dev=1, st_ino=2, st_size=1, st_mtime_ns=1)
+        with mock.patch.object(model_assets.os, "fstat", return_value=before), mock.patch.object(
+            model_assets.os, "read", return_value=b"xx"
+        ), self.assertRaisesRegex(model_assets.IntegrityError, "exceeded"):
+            model_assets._verify_open_asset(7, asset, priority_check=lambda: None)
+
+        changed = SimpleNamespace(st_mode=stat.S_IFREG, st_dev=1, st_ino=2, st_size=2, st_mtime_ns=1)
+        with mock.patch.object(model_assets.os, "fstat", side_effect=[before, changed]), mock.patch.object(
+            model_assets.os, "read", side_effect=[b"x", b""]
+        ), self.assertRaisesRegex(model_assets.IntegrityError, "changed while it was verified"):
+            model_assets._verify_open_asset(7, asset, priority_check=lambda: None)
+
+    def test_fetch_rejects_temporary_contract_and_cache_root_race(self) -> None:
+        asset = fixture_asset(b"x")
+        with tempfile.TemporaryDirectory() as temporary:
+            cache = Path(temporary) / "cache"
+            with mock.patch.object(model_assets, "assert_disk_headroom"), mock.patch.object(
+                model_assets, "_open_cache_root", return_value=(cache, 7, SimpleNamespace(st_dev=1, st_ino=2))
+            ), mock.patch.object(model_assets, "verify_cached_asset", side_effect=model_assets.MissingAsset), mock.patch.object(
+                model_assets.os, "open", return_value=8
+            ), mock.patch.object(
+                model_assets.os, "fstat", return_value=SimpleNamespace(st_mode=stat.S_IFREG, st_nlink=2)
+            ), mock.patch.object(model_assets.os, "close"), mock.patch.object(
+                model_assets, "_unlink_exact_temporary"
+            ), self.assertRaisesRegex(
+                model_assets.IntegrityError, "private regular file"
+            ):
+                model_assets.fetch_asset(asset, cache, require_guard=False, priority_check=lambda: None)
+
+            with mock.patch.object(model_assets, "assert_disk_headroom"), mock.patch.object(
+                model_assets, "_open_cache_root", return_value=(cache, 7, SimpleNamespace(st_dev=1, st_ino=2))
+            ), mock.patch.object(model_assets, "verify_cached_asset", side_effect=[model_assets.MissingAsset, cache / asset.filename]), mock.patch.object(
+                model_assets, "_download_to_descriptor"
+            ), mock.patch.object(model_assets.os, "open", return_value=8), mock.patch.object(
+                model_assets.os, "fstat", side_effect=[
+                    SimpleNamespace(st_mode=stat.S_IFREG, st_nlink=1, st_dev=1, st_ino=3, st_size=1),
+                    SimpleNamespace(st_mode=stat.S_IFREG, st_nlink=1, st_dev=1, st_ino=4, st_size=1),
+                ]
+            ), mock.patch.object(model_assets.os, "close"), mock.patch.object(model_assets.os, "fsync"), mock.patch.object(
+                model_assets, "_unlink_exact_temporary"
+            ), self.assertRaisesRegex(
+                model_assets.IntegrityError, "changed before publication"
+            ):
+                model_assets.fetch_asset(asset, cache, require_guard=False, priority_check=lambda: None)
+
+            before = SimpleNamespace(
+                st_mode=stat.S_IFREG,
+                st_nlink=1,
+                st_dev=1,
+                st_ino=3,
+                st_size=1,
+            )
+            after = SimpleNamespace(**vars(before))
+            with mock.patch.object(model_assets, "assert_disk_headroom"), mock.patch.object(
+                model_assets, "_open_cache_root", return_value=(cache, 7, SimpleNamespace(st_dev=1, st_ino=2))
+            ), mock.patch.object(model_assets, "verify_cached_asset", side_effect=model_assets.MissingAsset), mock.patch.object(
+                model_assets.os, "open", return_value=8
+            ), mock.patch.object(model_assets.os, "fstat", side_effect=[before, after]), mock.patch.object(
+                model_assets, "_download_to_descriptor"
+            ), mock.patch.object(model_assets.os, "fsync"), mock.patch.object(
+                model_assets.os, "close"
+            ), mock.patch.object(model_assets.os, "link"), mock.patch.object(
+                model_assets, "_unlink_exact_temporary"
+            ), mock.patch.object(
+                model_assets.os, "lstat", return_value=SimpleNamespace(st_dev=1, st_ino=4)
+            ), self.assertRaisesRegex(model_assets.IntegrityError, "root pathname changed"):
+                model_assets.fetch_asset(asset, cache, require_guard=False, priority_check=lambda: None)
+
     def test_download_rejects_http_contract_violations(self) -> None:
         payload = b"expected"
         asset = fixture_asset(payload)
@@ -894,6 +1090,12 @@ class ModelAssetTests(unittest.TestCase):
             model_assets, "load_lock", side_effect=model_assets.PriorityBlocked("busy")
         ), mock.patch("sys.stderr", new=io.StringIO()):
             self.assertEqual(model_assets.main(["list"]), 75)
+
+    def test_script_guard_exits_cleanly_for_help(self) -> None:
+        with mock.patch.object(sys, "argv", [str(model_assets.__file__), "--help"]):
+            with self.assertRaises(SystemExit) as raised:
+                runpy.run_path(str(model_assets.__file__), run_name="__main__")
+        self.assertEqual(raised.exception.code, 0)
 
     def test_lock_rejects_structural_and_binding_policy_drift(self) -> None:
         lock = model_assets.load_lock()
