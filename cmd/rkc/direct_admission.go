@@ -188,23 +188,31 @@ func runProtectedDirectLocalUsing(
 					cancelWork()
 					return
 				}
-				if directLocalWorkFinished(workFinished) {
-					monitorResult <- nil
-					return
-				}
 				if err := dependencies.checkHigherPriority(); err != nil {
-					monitorResult <- fmt.Errorf("protected %s yielded during local work: %w", command, err)
-					cancelWork()
+					reportDirectLocalMonitorFailure(
+						workFinished,
+						monitorResult,
+						cancelWork,
+						fmt.Errorf("protected %s yielded during local work: %w", command, err),
+					)
 					return
 				}
 				if err := dependencies.checkHostMemory(); err != nil {
-					monitorResult <- fmt.Errorf("protected %s yielded to the host-memory reserve during local work: %w", command, err)
-					cancelWork()
+					reportDirectLocalMonitorFailure(
+						workFinished,
+						monitorResult,
+						cancelWork,
+						fmt.Errorf("protected %s yielded to the host-memory reserve during local work: %w", command, err),
+					)
 					return
 				}
 				if err := dependencies.requireEnvelope(); err != nil {
-					monitorResult <- fmt.Errorf("protected %s current-process envelope changed during local work: %w", command, err)
-					cancelWork()
+					reportDirectLocalMonitorFailure(
+						workFinished,
+						monitorResult,
+						cancelWork,
+						fmt.Errorf("protected %s current-process envelope changed during local work: %w", command, err),
+					)
 					return
 				}
 			}
@@ -225,6 +233,20 @@ func directLocalWorkFinished(finished <-chan struct{}) bool {
 	default:
 		return false
 	}
+}
+
+func reportDirectLocalMonitorFailure(
+	finished <-chan struct{},
+	result chan<- error,
+	cancel context.CancelFunc,
+	failure error,
+) {
+	if directLocalWorkFinished(finished) {
+		result <- nil
+		return
+	}
+	result <- failure
+	cancel()
 }
 
 func launchGuardedDirect(ctx context.Context, command string, args []string) error {

@@ -361,6 +361,47 @@ func TestDirectLocalWorkFinishedIsNonBlocking(t *testing.T) {
 	}
 }
 
+func TestProtectedDirectLocalSuppressesLateMonitorFailureAfterLocalCompletes(t *testing.T) {
+	sentinel := errors.New("late priority failure")
+	ticks := make(chan time.Time, 1)
+	ticks <- time.Unix(1, 0)
+	enteredCheck := make(chan struct{})
+	releaseCheck := make(chan struct{})
+	priorityChecks := 0
+	err := runProtectedDirectLocalUsing(
+		context.Background(),
+		"scan",
+		[]string{"--no-python", "."},
+		func(ctx context.Context, _ []string) error {
+			select {
+			case <-enteredCheck:
+				return nil
+			case <-ctx.Done():
+				return ctx.Err()
+			}
+		},
+		protectedDirectLocalDependencies{
+			checkHigherPriority: func() error {
+				priorityChecks++
+				if priorityChecks == 2 {
+					close(enteredCheck)
+					<-releaseCheck
+					return sentinel
+				}
+				return nil
+			},
+			checkHostMemory: func() error { return nil },
+			requireEnvelope: func() error { return nil },
+			newTicker: func(time.Duration) (<-chan time.Time, func()) {
+				return ticks, func() { close(releaseCheck) }
+			},
+		},
+	)
+	if err != nil || priorityChecks != 2 {
+		t.Fatalf("late monitor failure changed completed work: err=%v priority_checks=%d", err, priorityChecks)
+	}
+}
+
 func TestProtectedDirectLocalHonorsCancellationBeforeInspectionOrWork(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
