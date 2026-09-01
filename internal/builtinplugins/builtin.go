@@ -26,6 +26,10 @@ func PythonSHA256() string {
 // MaterializePython writes the bundled Python AST extractor to dir and returns
 // its absolute path. The caller owns cleanup of dir.
 func MaterializePython(dir string) (string, error) {
+	return materializePython(dir, filepath.Abs)
+}
+
+func materializePython(dir string, absolutePath func(string) (string, error)) (string, error) {
 	if dir == "" {
 		return "", fmt.Errorf("builtin plugin directory is empty")
 	}
@@ -39,7 +43,7 @@ func MaterializePython(dir string) (string, error) {
 	if err := os.WriteFile(path, pythonExtractor, 0o400); err != nil {
 		return "", fmt.Errorf("write bundled Python extractor: %w", err)
 	}
-	absolute, err := filepath.Abs(path)
+	absolute, err := absolutePath(path)
 	if err != nil {
 		return "", err
 	}
