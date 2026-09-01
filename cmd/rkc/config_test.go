@@ -172,6 +172,7 @@ func TestLoadConfigurationStrictJSONAndDefaults(t *testing.T) {
 		{"unknown", `{"unknown":true}`, "unknown field"},
 		{"removed-git-ignore-toggle", `{"inventory":{"include_git_ignored":false}}`, "unknown field"},
 		{"trailing", string(data) + ` {}`, "multiple JSON values"},
+		{"malformed-trailing", string(data) + ` [`, "unexpected EOF"},
 		{"malformed", `{`, "decode configuration"},
 	}
 	for _, test := range tests {

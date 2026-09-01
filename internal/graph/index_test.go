@@ -232,9 +232,12 @@ func TestOptionNormalizationAcceptanceAndHelpers(t *testing.T) {
 		t.Fatalf("caps = %+v", capped)
 	}
 	index := Build(nil, nil)
-	edge := rkcmodel.Edge{Kind: "calls", Resolution: "resolved"}
+	edge := rkcmodel.Edge{ID: "edge", Kind: "calls", From: "from", To: "to", Resolution: "resolved"}
 	if !index.acceptEdge(edge, TraverseOptions{}) || index.acceptEdge(edge, TraverseOptions{EdgeKinds: map[string]struct{}{"imports": {}}}) ||
 		index.acceptEdge(edge, TraverseOptions{Resolutions: map[string]struct{}{rkcmodel.ResolutionDeclared: {}}}) ||
+		index.acceptEdge(edge, TraverseOptions{SuppressedEdgeIDs: map[string]struct{}{"edge": {}}}) ||
+		index.acceptEdge(edge, TraverseOptions{SuppressedNodeIDs: map[string]struct{}{"from": {}}}) ||
+		index.acceptEdge(edge, TraverseOptions{SuppressedNodeIDs: map[string]struct{}{"to": {}}}) ||
 		index.acceptEdge(rkcmodel.Edge{Resolution: rkcmodel.ResolutionUnresolved}, TraverseOptions{}) ||
 		!index.acceptEdge(rkcmodel.Edge{Resolution: rkcmodel.ResolutionUnresolved}, TraverseOptions{IncludeUnresolved: true}) {
 		t.Fatal("edge acceptance filters mismatch")

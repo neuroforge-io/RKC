@@ -188,11 +188,9 @@ func runProtectedDirectLocalUsing(
 					cancelWork()
 					return
 				}
-				select {
-				case <-workFinished:
+				if directLocalWorkFinished(workFinished) {
 					monitorResult <- nil
 					return
-				default:
 				}
 				if err := dependencies.checkHigherPriority(); err != nil {
 					monitorResult <- fmt.Errorf("protected %s yielded during local work: %w", command, err)
@@ -218,6 +216,15 @@ func runProtectedDirectLocalUsing(
 	cancelWork()
 	monitorErr := <-monitorResult
 	return errors.Join(localErr, monitorErr)
+}
+
+func directLocalWorkFinished(finished <-chan struct{}) bool {
+	select {
+	case <-finished:
+		return true
+	default:
+		return false
+	}
 }
 
 func launchGuardedDirect(ctx context.Context, command string, args []string) error {

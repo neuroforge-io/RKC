@@ -350,6 +350,17 @@ func TestProtectedDirectLocalFailsClosedWhenMonitorTickerStops(t *testing.T) {
 	}
 }
 
+func TestDirectLocalWorkFinishedIsNonBlocking(t *testing.T) {
+	open := make(chan struct{})
+	if directLocalWorkFinished(nil) || directLocalWorkFinished(open) {
+		t.Fatal("open or absent completion channel reported finished")
+	}
+	close(open)
+	if !directLocalWorkFinished(open) {
+		t.Fatal("closed completion channel did not report finished")
+	}
+}
+
 func TestProtectedDirectLocalHonorsCancellationBeforeInspectionOrWork(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
@@ -677,6 +688,18 @@ func TestDirectAdmissionArgumentSafetyIsGrammarAware(t *testing.T) {
 	}
 	if help, err := validateDirectCommandAdmission("scan", []string{"--config", "--help", "--no-python"}); help || err != nil {
 		t.Fatalf("value-position help was misclassified: help:%t error:%v", help, err)
+	}
+	for _, test := range []struct {
+		command string
+		args    []string
+		want    string
+	}{
+		{command: "scip", want: "generate"},
+		{command: "trace", args: []string{"generate"}, want: "capture"},
+	} {
+		if _, err := validateDirectCommandAdmission(test.command, test.args); err == nil || !strings.Contains(err.Error(), "requires the "+test.want+" subcommand") {
+			t.Errorf("invalid %s subcommand = %v", test.command, err)
+		}
 	}
 	if _, err := validateDirectCommandAdmission("serve", nil); err == nil || !strings.Contains(err.Error(), "does not support") {
 		t.Fatalf("unsupported direct command = %v", err)

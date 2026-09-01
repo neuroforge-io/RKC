@@ -133,3 +133,18 @@ func TestStageBundleRejectsInvalidInputsAndStopsOnFailure(t *testing.T) {
 		t.Fatalf("canceled adaptive stage = %v", err)
 	}
 }
+
+func TestStageAdaptiveStopsWhenLeftPartitionFails(t *testing.T) {
+	failure := errors.New("left partition failed")
+	var batchSizes []int
+	err := stageAdaptive(context.Background(), []int{1, 2, 3, 4}, func(values []int) error {
+		batchSizes = append(batchSizes, len(values))
+		if len(values) == 4 {
+			return resourceExhausted("put values", "build", "values", "test batch limit")
+		}
+		return failure
+	})
+	if !errors.Is(err, failure) || !reflect.DeepEqual(batchSizes, []int{4, 2}) {
+		t.Fatalf("adaptive left failure = %v, batches=%v", err, batchSizes)
+	}
+}

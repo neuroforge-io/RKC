@@ -124,6 +124,20 @@ func TestImportAcceptsMatchingCanonicalOrigin(t *testing.T) {
 	}
 }
 
+func TestBundleAffinityRejectsOriginIdentityForgery(t *testing.T) {
+	compiled := validHistoryFixture()
+	bundle := validHistoryBundle()
+	origin := "https://example.test/NeuroforgeIO/RKC.git"
+	bindHistoryToOrigin(&compiled, bundle, origin)
+	forgedRepositoryID := rkcmodel.StableID("repository", "forged-origin-identity")
+	compiled.RepositoryID = forgedRepositoryID
+	compiled.SourceID = historySourceID(forgedRepositoryID, compiled.SourceRevision)
+	bundle.Snapshot.RepositoryID = forgedRepositoryID
+	if err := validateBundleAffinity(bundle, compiled); err == nil || !strings.Contains(err.Error(), "identity is not bound") {
+		t.Fatalf("forged origin repository identity = %v", err)
+	}
+}
+
 func TestImportRejectsForeignOrUnprovenHistoryBeforeMutation(t *testing.T) {
 	tests := []struct {
 		name   string
