@@ -417,6 +417,8 @@ type maximumWriter struct {
 	maximum int64
 }
 
+// Write forwards data without allowing the sealed SCIP payload to exceed its
+// admitted maximum.
 func (writer *maximumWriter) Write(data []byte) (int, error) {
 	if int64(len(data)) > writer.maximum-writer.written {
 		return 0, fmt.Errorf("sealed SCIP index exceeds the %d-byte limit", writer.maximum)

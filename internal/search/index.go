@@ -1027,6 +1027,7 @@ type maximumIndexWriter struct {
 	maximum int64
 }
 
+// Write forwards data while enforcing the persisted search-index byte limit.
 func (writer *maximumIndexWriter) Write(data []byte) (int, error) {
 	if writer.maximum <= 0 || int64(len(data)) > writer.maximum-writer.written {
 		return 0, fmt.Errorf("persisted search index exceeds the %d-byte limit", writer.maximum)

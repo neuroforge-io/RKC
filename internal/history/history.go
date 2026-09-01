@@ -896,6 +896,8 @@ type boundedDiagnostic struct {
 	limit  int
 }
 
+// Write retains only the configured diagnostic prefix while reporting the full
+// input length so an attached command is not disrupted by bounded capture.
 func (writer *boundedDiagnostic) Write(data []byte) (int, error) {
 	original := len(data)
 	remaining := writer.limit - writer.buffer.Len()

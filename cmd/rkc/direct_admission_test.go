@@ -323,6 +323,33 @@ func TestProtectedDirectLocalReturnsLocalFailureWithoutMonitorNoise(t *testing.T
 	}
 }
 
+func TestProtectedDirectLocalFailsClosedWhenMonitorTickerStops(t *testing.T) {
+	ticks := make(chan time.Time)
+	close(ticks)
+	localObservedCancellation := false
+	err := runProtectedDirectLocalUsing(
+		context.Background(),
+		"scan",
+		nil,
+		func(ctx context.Context, _ []string) error {
+			<-ctx.Done()
+			localObservedCancellation = true
+			return ctx.Err()
+		},
+		protectedDirectLocalDependencies{
+			checkHigherPriority: func() error { return nil },
+			checkHostMemory:     func() error { return nil },
+			requireEnvelope:     func() error { return nil },
+			newTicker: func(time.Duration) (<-chan time.Time, func()) {
+				return ticks, func() {}
+			},
+		},
+	)
+	if err == nil || !strings.Contains(err.Error(), "ticker stopped unexpectedly") || !errors.Is(err, context.Canceled) || !localObservedCancellation {
+		t.Fatalf("closed monitor ticker result = %v, local cancelled=%t", err, localObservedCancellation)
+	}
+}
+
 func TestProtectedDirectLocalHonorsCancellationBeforeInspectionOrWork(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()

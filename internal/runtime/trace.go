@@ -667,6 +667,8 @@ type boundedBuffer struct {
 	truncated bool
 }
 
+// Write retains the bounded output prefix, records truncation, and reports the
+// full input length so the observed process can continue writing.
 func (buffer *boundedBuffer) Write(data []byte) (int, error) {
 	room := MaximumCaptureOutputBytes - len(buffer.data)
 	if room <= 0 {

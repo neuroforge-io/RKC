@@ -182,7 +182,12 @@ func runProtectedDirectLocalUsing(
 			case <-workContext.Done():
 				monitorResult <- nil
 				return
-			case <-ticks:
+			case _, ok := <-ticks:
+				if !ok {
+					monitorResult <- fmt.Errorf("protected %s local monitor ticker stopped unexpectedly", command)
+					cancelWork()
+					return
+				}
 				select {
 				case <-workFinished:
 					monitorResult <- nil

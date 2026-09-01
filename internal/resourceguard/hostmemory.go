@@ -20,6 +20,7 @@ const (
 	HostAvailableMemoryMinimumEnvironment = "RKC_HOST_AVAILABLE_MEMORY_MIN_MIB"
 	maximumHostAvailableMemoryMinimumMiB  = int64(64 * 1024)
 	maximumMeminfoBytes                   = int64(64 * 1024)
+	maximumMeminfoLineBytes               = 8 * 1024
 )
 
 // ErrHostMemoryReserve identifies a protected RKC workload that yielded
@@ -61,14 +62,18 @@ func invalidHostAvailableMemoryMinimumError() error {
 // intentionally independent of the workload cgroup: MemAvailable can fall
 // because a higher-priority peer grows even while RKC itself stays small.
 func CheckHostAvailableMemory() error {
+	return checkHostAvailableMemoryForPlatform(runtime.GOOS, "/proc/meminfo")
+}
+
+func checkHostAvailableMemoryForPlatform(platform, path string) error {
 	minimum, err := HostAvailableMemoryMinimumBytesFromEnvironment()
 	if err != nil || minimum == 0 {
 		return err
 	}
-	if runtime.GOOS != "linux" {
+	if platform != "linux" {
 		return fmt.Errorf("%w: Linux /proc/meminfo is required", ErrHostMemoryReserve)
 	}
-	return checkHostAvailableMemory("/proc/meminfo", minimum)
+	return checkHostAvailableMemory(path, minimum)
 }
 
 func checkHostAvailableMemory(path string, minimum int64) error {
@@ -88,7 +93,7 @@ func checkHostAvailableMemory(path string, minimum int64) error {
 		return fmt.Errorf("%w: Linux meminfo exceeds the bounded inspection limit", ErrHostMemoryReserve)
 	}
 	scanner := bufio.NewScanner(bytes.NewReader(data))
-	scanner.Buffer(make([]byte, 1024), int(maximumMeminfoBytes+1))
+	scanner.Buffer(make([]byte, 1024), maximumMeminfoLineBytes)
 	var available int64
 	found := false
 	for scanner.Scan() {

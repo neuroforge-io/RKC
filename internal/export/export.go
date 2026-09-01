@@ -1129,6 +1129,8 @@ func (writer *notebookPackWriter) start() {
 	writer.started = true
 }
 
+// Add redacts and appends one complete record, flushing to a new bounded pack
+// before the append when the current pack cannot admit it.
 func (writer *notebookPackWriter) Add(record string) error {
 	if !writer.started {
 		writer.start()
@@ -1163,6 +1165,7 @@ func redactNotebookText(value string) []byte {
 	return secrets.Redact(data, secrets.Scan(data))
 }
 
+// Close flushes the final non-empty pack and is a no-op before the first Add.
 func (writer *notebookPackWriter) Close() error {
 	if !writer.started {
 		return nil

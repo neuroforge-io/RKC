@@ -100,12 +100,23 @@ func TestCheckHostAvailableMemoryFailsClosedOnUnreadableOrOversizedInput(t *test
 	if err := checkHostAvailableMemory(missing, minimum); !errors.Is(err, ErrHostMemoryReserve) || !strings.Contains(err.Error(), "read Linux MemAvailable") {
 		t.Fatalf("missing meminfo = %v", err)
 	}
+	directory := t.TempDir()
+	if err := checkHostAvailableMemory(directory, minimum); !errors.Is(err, ErrHostMemoryReserve) || !strings.Contains(err.Error(), "read Linux MemAvailable") {
+		t.Fatalf("unreadable meminfo stream = %v", err)
+	}
 	oversized := filepath.Join(t.TempDir(), "oversized")
 	if err := os.WriteFile(oversized, []byte(strings.Repeat("x", int(maximumMeminfoBytes+1))), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	if err := checkHostAvailableMemory(oversized, minimum); !errors.Is(err, ErrHostMemoryReserve) || !strings.Contains(err.Error(), "bounded inspection limit") {
 		t.Fatalf("oversized meminfo = %v", err)
+	}
+	oversizedLine := filepath.Join(t.TempDir(), "oversized-line")
+	if err := os.WriteFile(oversizedLine, []byte(strings.Repeat("x", maximumMeminfoLineBytes+1)), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := checkHostAvailableMemory(oversizedLine, minimum); !errors.Is(err, ErrHostMemoryReserve) || !strings.Contains(err.Error(), "scan Linux MemAvailable") {
+		t.Fatalf("oversized-line meminfo = %v", err)
 	}
 	if err := checkHostAvailableMemory(oversized, 0); err == nil || errors.Is(err, ErrHostMemoryReserve) {
 		t.Fatalf("invalid minimum = %v", err)
@@ -116,6 +127,24 @@ func TestCheckHostAvailableMemoryDisabled(t *testing.T) {
 	t.Setenv(HostAvailableMemoryMinimumEnvironment, "0")
 	if err := CheckHostAvailableMemory(); err != nil {
 		t.Fatalf("disabled host reserve = %v", err)
+	}
+}
+
+func TestCheckHostAvailableMemoryPlatformBoundary(t *testing.T) {
+	t.Setenv(HostAvailableMemoryMinimumEnvironment, "1536")
+	if err := checkHostAvailableMemoryForPlatform("darwin", "unused"); !errors.Is(err, ErrHostMemoryReserve) || !strings.Contains(err.Error(), "Linux /proc/meminfo is required") {
+		t.Fatalf("portable host reserve = %v", err)
+	}
+	path := filepath.Join(t.TempDir(), "meminfo")
+	if err := os.WriteFile(path, []byte("MemAvailable: 2097152 kB\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := checkHostAvailableMemoryForPlatform("linux", path); err != nil {
+		t.Fatalf("Linux host reserve = %v", err)
+	}
+	t.Setenv(HostAvailableMemoryMinimumEnvironment, "invalid-private-value")
+	if err := checkHostAvailableMemoryForPlatform("linux", path); err == nil || !strings.Contains(err.Error(), HostAvailableMemoryMinimumEnvironment) || strings.Contains(err.Error(), "invalid-private-value") {
+		t.Fatalf("invalid host reserve configuration = %v", err)
 	}
 }
 
