@@ -218,6 +218,63 @@ func TestRepositoryTextSearchExportRejectsCrossTypeDuplicateIDs(t *testing.T) {
 	}
 }
 
+func TestWriteAllKeepsLargeStructuredDataInPacksButOutOfMemoryIndex(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	sentinel := "large_structured_dataset_notebook_sentinel"
+	source := append(bytes.Repeat([]byte("{\"value\":1}\n"), searchindex.MaximumStructuredDataBodyBytes/12+1), []byte(sentinel+"\n")...)
+	path := filepath.Join(root, "data", "records.json")
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, source, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	bundle := exportFixture(root, "data/records.json", source)
+	bundle.Artifacts[0].Language = "json"
+	bundle.Artifacts[0].MediaType = "application/json"
+	bundle.Artifacts[0].Status = "text"
+	output := filepath.Join(t.TempDir(), "atlas")
+	if err := WriteAll(bundle, model.BuildCoverage(bundle), Options{
+		Root: root, Output: output, IncludeSources: true, NotebookMaxSize: 256 * 1024,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	index, err := searchindex.Load(filepath.Join(output, "search", "index.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := searchindex.ValidateBundleIndex(index, bundle, true); err != nil {
+		t.Fatal(err)
+	}
+	artifactDocument := index.Documents[bundle.Artifacts[0].ID]
+	if artifactDocument.Metadata["rkc_body_kind"] != "bounded-metadata-only" ||
+		artifactDocument.Metadata["rkc_body_exclusion"] == "" ||
+		len(index.Search(searchindex.Query{Text: sentinel}).Hits) != 0 {
+		t.Fatalf("large structured-data search receipt = %+v", artifactDocument)
+	}
+	normalized, err := os.ReadFile(filepath.Join(output, "normalized", "data", "records.json.md"))
+	if err != nil || !bytes.Contains(normalized, []byte(sentinel)) {
+		t.Fatalf("normalized structured data is incomplete: %v", err)
+	}
+	packPaths, err := filepath.Glob(filepath.Join(output, "notebooklm", "05_repository_sources_*.md"))
+	if err != nil || len(packPaths) == 0 {
+		t.Fatalf("NotebookLM source packs are missing: %v", err)
+	}
+	var found bool
+	for _, packPath := range packPaths {
+		data, readErr := os.ReadFile(packPath)
+		if readErr != nil {
+			t.Fatal(readErr)
+		}
+		found = found || bytes.Contains(data, []byte(sentinel))
+	}
+	if !found {
+		t.Fatal("large structured data was omitted from NotebookLM packs")
+	}
+}
+
 func TestWriteAllHonorsFeatureDisables(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()

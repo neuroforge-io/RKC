@@ -169,6 +169,56 @@ func TestRepositoryTextCorpusIsSearchableSnapshotBoundAndRecomputed(t *testing.T
 	}
 }
 
+func TestRepositoryTextCorpusBoundsLargeStructuredDataWithReceipts(t *testing.T) {
+	t.Parallel()
+	bundle := rkcmodel.Bundle{
+		Snapshot: rkcmodel.Snapshot{ID: "snapshot-bounded-structured-data"},
+		Artifacts: []rkcmodel.Artifact{
+			{ID: "large-json", Kind: "file", Path: "data/records.json", Language: "json", MediaType: "application/json", SHA256: strings.Repeat("a", 64), SizeBytes: MaximumStructuredDataBodyBytes + 1, Text: true, Status: "text"},
+			{ID: "small-json", Kind: "file", Path: "config/service.json", Language: "json", MediaType: "application/json", SHA256: strings.Repeat("b", 64), SizeBytes: MaximumStructuredDataBodyBytes, Text: true, Status: "parsed"},
+			{ID: "notebook", Kind: "file", Path: "research/demo.ipynb", Language: "jupyter", MediaType: "application/x-ipynb+json", SHA256: strings.Repeat("c", 64), SizeBytes: MaximumStructuredDataBodyBytes + 1, Text: true, Status: "text"},
+		},
+	}
+	index := BuildFromBundleWithArtifactBodies(bundle, map[string]string{
+		"large-json": "large_dataset_sentinel",
+		"small-json": "small_config_sentinel",
+		"notebook":   "notebook_sentinel",
+	})
+	if err := ValidateBundleIndex(index, bundle, true); err != nil {
+		t.Fatal(err)
+	}
+	large := index.Documents["large-json"]
+	if large.Body != "application/json text" || !reflect.DeepEqual(large.Metadata, repositoryTextMetadataOnly(bundle.Artifacts[0])) {
+		t.Fatalf("large structured-data document = %+v", large)
+	}
+	if hits := index.Search(Query{Text: "large_dataset_sentinel"}).Hits; len(hits) != 0 {
+		t.Fatalf("large structured-data body was indexed: %+v", hits)
+	}
+	for _, query := range []string{"small_config_sentinel", "notebook_sentinel"} {
+		if hits := index.Search(Query{Text: query}).Hits; len(hits) != 1 {
+			t.Fatalf("admitted repository body %q was not indexed: %+v", query, hits)
+		}
+	}
+
+	tampered := *index
+	tampered.Documents = make(map[string]Document, len(index.Documents))
+	for id, candidate := range index.Documents {
+		if candidate.Metadata != nil {
+			candidate.Metadata = map[string]string{}
+			for key, value := range index.Documents[id].Metadata {
+				candidate.Metadata[key] = value
+			}
+		}
+		tampered.Documents[id] = candidate
+	}
+	document := tampered.Documents["large-json"]
+	document.Metadata["rkc_body_exclusion"] = "tampered"
+	tampered.Documents["large-json"] = document
+	if err := ValidateBundleIndex(&tampered, bundle, true); err == nil || !strings.Contains(err.Error(), "exclusion metadata") {
+		t.Fatalf("tampered exclusion receipt was accepted: %v", err)
+	}
+}
+
 func TestValidateBundleIndexRejectsCrossTypeDuplicateIDs(t *testing.T) {
 	t.Parallel()
 	bundle := rkcmodel.Bundle{

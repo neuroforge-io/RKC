@@ -28,10 +28,11 @@ import (
 // Load. It does not authenticate index contents.
 const IndexVersion = "1"
 
-// RepositoryTextCorpusVersion identifies a derived corpus whose admitted text
-// artifact documents contain the complete secret-redacted repository body.
-// The corpus is snapshot-bound and can be validated independently of postings.
-const RepositoryTextCorpusVersion = "repository-text-v1"
+// RepositoryTextCorpusVersion identifies a derived corpus whose admitted code
+// and documentation artifacts contain complete secret-redacted bodies. Large
+// structured-data artifacts carry explicit metadata-only receipts so dataset
+// volume cannot exhaust the fixed live-server memory envelope.
+const RepositoryTextCorpusVersion = "repository-text-v2"
 
 // MaximumResultBodyBytes bounds one returned search document body. The full
 // body remains indexed; result serialization and downstream context assembly
@@ -43,9 +44,13 @@ const MaximumResultBodyBytes = 64 * 1024
 // limit alone is not a memory guarantee because JSON maps and postings amplify
 // in memory; all limits below are therefore independent and cumulative.
 const (
-	MaximumPersistedIndexBytes     int64 = 1536 * 1024 * 1024
-	MaximumIndexedTextBytes        int64 = 768 * 1024 * 1024
-	MaximumIndexedDocumentBytes          = 8 * 1024 * 1024
+	MaximumPersistedIndexBytes  int64 = 1536 * 1024 * 1024
+	MaximumIndexedTextBytes     int64 = 256 * 1024 * 1024
+	MaximumIndexedDocumentBytes       = 8 * 1024 * 1024
+	// MaximumStructuredDataBodyBytes bounds full-body indexing for formats
+	// commonly used as machine-generated datasets. Their canonical identity,
+	// graph facts, parsed schema facts, and NotebookLM source remain available.
+	MaximumStructuredDataBodyBytes       = 64 * 1024
 	MaximumIndexDocuments                = 500_000
 	MaximumDistinctTerms                 = 2_000_000
 	MaximumTermDictionaryBytes     int64 = 256 * 1024 * 1024
@@ -56,7 +61,11 @@ const (
 	MaximumIndexedTermBytes              = 1_024
 )
 
-const repositoryTextBodyKind = "secret-redacted-repository-text"
+const (
+	repositoryTextBodyKind         = "secret-redacted-repository-text"
+	repositoryTextMetadataOnlyKind = "bounded-metadata-only"
+	structuredDataExclusionReason  = "structured-data-over-65536-bytes"
+)
 
 // Document is one searchable node, artifact, or parsed document. Build indexes
 // ID, Title, QualifiedName, Signature, Path, Kind, Language, and Body with fixed
@@ -151,10 +160,12 @@ func BuildFromBundle(bundle rkcmodel.Bundle) *Index {
 }
 
 // BuildFromBundleWithArtifactBodies derives the same canonical object corpus
-// as BuildFromBundle and enriches admitted text artifacts with complete,
-// caller-supplied secret-redacted bodies. Bodies are keyed by canonical
-// artifact ID; unknown entries are ignored. The resulting index records an
-// explicit corpus version and snapshot binding for validation at load time.
+// as BuildFromBundle and enriches admitted artifacts selected by
+// IndexesRepositoryTextBody with complete, caller-supplied secret-redacted
+// bodies. Deliberately bounded large structured-data artifacts receive explicit
+// metadata-only receipts. Bodies are keyed by canonical artifact ID; unknown
+// entries are ignored. The resulting index records an explicit corpus version
+// and snapshot binding for validation at load time.
 func BuildFromBundleWithArtifactBodies(bundle rkcmodel.Bundle, secretRedactedBodies map[string]string) *Index {
 	if secretRedactedBodies == nil {
 		secretRedactedBodies = map[string]string{}
@@ -232,9 +243,11 @@ func documentsFromBundle(bundle rkcmodel.Bundle, secretRedactedBodies map[string
 	for _, artifact := range bundle.Artifacts {
 		body := artifact.MediaType + " " + artifact.Status
 		var metadata map[string]string
-		if sourceBody, ok := secretRedactedBodies[artifact.ID]; ok && isAdmittedTextArtifact(artifact) {
+		if sourceBody, ok := secretRedactedBodies[artifact.ID]; ok && IndexesRepositoryTextBody(artifact) {
 			body = sourceBody
 			metadata = repositoryTextMetadata(artifact, sourceBody)
+		} else if secretRedactedBodies != nil && isAdmittedTextArtifact(artifact) && !IndexesRepositoryTextBody(artifact) {
+			metadata = repositoryTextMetadataOnly(artifact)
 		}
 		documents = append(documents, Document{
 			ID: artifact.ID, ObjectType: "artifact", Kind: artifact.Kind, Language: artifact.Language,
@@ -324,6 +337,32 @@ func isAdmittedTextArtifact(artifact rkcmodel.Artifact) bool {
 	}
 }
 
+// IndexesRepositoryTextBody reports whether a canonical artifact receives its
+// complete secret-redacted body in the in-memory lexical index. RKC indexes
+// code, documentation, notebooks, configuration, and ordinary text in full.
+// Only large structured dataset formats are metadata-only; those bytes remain
+// inventoried, normalized, and exported to NotebookLM packs.
+func IndexesRepositoryTextBody(artifact rkcmodel.Artifact) bool {
+	if !isAdmittedTextArtifact(artifact) {
+		return false
+	}
+	if artifact.SizeBytes <= MaximumStructuredDataBodyBytes {
+		return true
+	}
+	switch strings.ToLower(strings.TrimSpace(artifact.Language)) {
+	case "json", "jsonl", "csv", "tsv", "xml":
+		return false
+	case "jupyter":
+		return true
+	case "":
+		switch strings.ToLower(filepath.Ext(artifact.Path)) {
+		case ".json", ".jsonl", ".ndjson", ".csv", ".tsv", ".xml":
+			return false
+		}
+	}
+	return true
+}
+
 func repositoryTextMetadata(artifact rkcmodel.Artifact, body string) map[string]string {
 	digest := sha256.Sum256([]byte(body))
 	return map[string]string{
@@ -334,9 +373,18 @@ func repositoryTextMetadata(artifact rkcmodel.Artifact, body string) map[string]
 	}
 }
 
+func repositoryTextMetadataOnly(artifact rkcmodel.Artifact) map[string]string {
+	return map[string]string{
+		"rkc_body_kind":              repositoryTextMetadataOnlyKind,
+		"rkc_body_exclusion":         structuredDataExclusionReason,
+		"rkc_source_artifact_sha256": artifact.SHA256,
+	}
+}
+
 // ValidateBundleIndex proves that index objects and postings are a mechanical
 // projection of bundle. When requireRepositoryText is true, every admitted
-// text artifact must carry the versioned secret-redacted body metadata.
+// text artifact must carry either versioned secret-redacted body metadata or
+// the exact deterministic metadata-only receipt required by the corpus policy.
 func ValidateBundleIndex(index *Index, bundle rkcmodel.Bundle, requireRepositoryText bool) error {
 	if index == nil {
 		return fmt.Errorf("search index is nil")
@@ -392,14 +440,23 @@ func ValidateBundleIndex(index *Index, bundle rkcmodel.Bundle, requireRepository
 		artifact, artifactDocument := artifacts[id]
 		artifactDocument = artifactDocument && expected.ObjectType == "artifact"
 		enriched := artifactDocument && actual.Metadata["rkc_body_kind"] == repositoryTextBodyKind
+		metadataOnly := artifactDocument && actual.Metadata["rkc_body_kind"] == repositoryTextMetadataOnlyKind
 		if enriched {
-			if !isAdmittedTextArtifact(artifact) || !reflect.DeepEqual(actual.Metadata, repositoryTextMetadata(artifact, actual.Body)) {
+			if !IndexesRepositoryTextBody(artifact) || !reflect.DeepEqual(actual.Metadata, repositoryTextMetadata(artifact, actual.Body)) {
 				return fmt.Errorf("search index artifact body metadata is invalid for %q", id)
 			}
 			normalized.Body = expected.Body
 			normalized.Metadata = expected.Metadata
+		} else if metadataOnly {
+			if IndexesRepositoryTextBody(artifact) || !reflect.DeepEqual(actual.Metadata, repositoryTextMetadataOnly(artifact)) {
+				return fmt.Errorf("search index artifact exclusion metadata is invalid for %q", id)
+			}
+			normalized.Metadata = expected.Metadata
 		} else if requireRepositoryText && artifactDocument && isAdmittedTextArtifact(artifact) {
-			return fmt.Errorf("search index is missing repository text for %q", id)
+			if IndexesRepositoryTextBody(artifact) {
+				return fmt.Errorf("search index is missing repository text for %q", id)
+			}
+			return fmt.Errorf("search index is missing repository text exclusion receipt for %q", id)
 		}
 		if !reflect.DeepEqual(normalized, expected) {
 			return fmt.Errorf("search index document differs from canonical identity %q", id)

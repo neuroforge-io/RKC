@@ -69,10 +69,6 @@ func WriteAll(bundle model.Bundle, coverage model.Coverage, opts Options) error 
 	if err := writeJSON(filepath.Join(opts.Output, "bundle.json"), canonical); err != nil {
 		return err
 	}
-	repositoryText, err := loadRepositoryTextBodies(canonical, opts)
-	if err != nil {
-		return err
-	}
 	if !opts.DisableJSONLGraph {
 		graphDir := filepath.Join(opts.Output, "graph")
 		if err := os.MkdirAll(graphDir, 0o755); err != nil {
@@ -111,14 +107,14 @@ func WriteAll(bundle model.Bundle, coverage model.Coverage, opts Options) error 
 		if err := os.MkdirAll(searchDir, 0o755); err != nil {
 			return err
 		}
-		if err := writeRepositoryTextSearchIndex(filepath.Join(searchDir, "index.json"), canonical, repositoryText); err != nil {
+		if err := writeRepositoryTextSearchIndexFromSource(filepath.Join(searchDir, "index.json"), canonical, opts); err != nil {
 			return fmt.Errorf("write search index: %w", err)
 		}
 	}
-	if err := writeDocs(canonical, coverage, opts, repositoryText); err != nil {
+	if err := writeDocs(canonical, coverage, opts, nil); err != nil {
 		return err
 	}
-	if err := writeNotebookBundleWithBodies(canonical, coverage, opts, repositoryText); err != nil {
+	if err := writeNotebookBundle(canonical, coverage, opts); err != nil {
 		return err
 	}
 	if !opts.DisableStaticSite {
@@ -276,13 +272,13 @@ func isNormalizedTextArtifact(artifact model.Artifact) bool {
 	}
 }
 
-func loadRepositoryTextBodies(bundle model.Bundle, opts Options) (map[string]repositoryTextBody, error) {
+func loadRepositoryTextBodies(bundle model.Bundle, opts Options, include func(model.Artifact) bool) (map[string]repositoryTextBody, error) {
 	if strings.TrimSpace(opts.Root) == "" {
 		return nil, nil
 	}
 	var admittedBytes int64
 	for _, artifact := range bundle.Artifacts {
-		if !isNormalizedTextArtifact(artifact) {
+		if !isNormalizedTextArtifact(artifact) || (include != nil && !include(artifact)) {
 			continue
 		}
 		if artifact.SizeBytes < 0 || artifact.SizeBytes > search.MaximumIndexedDocumentBytes {
@@ -295,21 +291,29 @@ func loadRepositoryTextBodies(bundle model.Bundle, opts Options) (map[string]rep
 	}
 	bodies := make(map[string]repositoryTextBody, len(bundle.Artifacts))
 	for _, artifact := range bundle.Artifacts {
-		if !isNormalizedTextArtifact(artifact) {
+		if !isNormalizedTextArtifact(artifact) || (include != nil && !include(artifact)) {
 			continue
 		}
-		data, err := readVerifiedArtifact(opts.Root, artifact)
+		body, err := loadRepositoryTextBody(opts, artifact)
 		if err != nil {
-			return nil, fmt.Errorf("read repository text %q: %w", artifact.Path, err)
+			return nil, err
 		}
-		findings := secrets.Scan(data)
-		redacted := secrets.Redact(data, findings)
-		digest := sha256.Sum256(redacted)
-		bodies[artifact.ID] = repositoryTextBody{
-			Text: string(redacted), SHA256: hex.EncodeToString(digest[:]), Findings: findings,
-		}
+		bodies[artifact.ID] = body
 	}
 	return bodies, nil
+}
+
+func loadRepositoryTextBody(opts Options, artifact model.Artifact) (repositoryTextBody, error) {
+	data, err := readVerifiedArtifact(opts.Root, artifact)
+	if err != nil {
+		return repositoryTextBody{}, fmt.Errorf("read repository text %q: %w", artifact.Path, err)
+	}
+	findings := secrets.Scan(data)
+	redacted := secrets.Redact(data, findings)
+	digest := sha256.Sum256(redacted)
+	return repositoryTextBody{
+		Text: string(redacted), SHA256: hex.EncodeToString(digest[:]), Findings: findings,
+	}, nil
 }
 
 func repositoryTextSearchBodies(bodies map[string]repositoryTextBody) map[string]string {
@@ -340,6 +344,14 @@ func writeRepositoryTextSearchIndex(path string, bundle model.Bundle, bodies map
 		return fmt.Errorf("build bounded search index: %w", err)
 	}
 	return index.Save(path)
+}
+
+func writeRepositoryTextSearchIndexFromSource(path string, bundle model.Bundle, opts Options) error {
+	bodies, err := loadRepositoryTextBodies(bundle, opts, search.IndexesRepositoryTextBody)
+	if err != nil {
+		return err
+	}
+	return writeRepositoryTextSearchIndex(path, bundle, bodies)
 }
 
 func readVerifiedArtifact(root string, artifact model.Artifact) ([]byte, error) {
@@ -686,11 +698,7 @@ func writeRelations(b *strings.Builder, title string, edges []model.Edge, outgoi
 }
 
 func writeNotebookBundle(bundle model.Bundle, coverage model.Coverage, opts Options) error {
-	repositoryText, err := loadRepositoryTextBodies(bundle, opts)
-	if err != nil {
-		return err
-	}
-	return writeNotebookBundleWithBodies(bundle, coverage, opts, repositoryText)
+	return writeNotebookBundleWithBodies(bundle, coverage, opts, nil)
 }
 
 func writeNotebookBundleWithBodies(bundle model.Bundle, coverage model.Coverage, opts Options, repositoryText map[string]repositoryTextBody) error {
@@ -713,7 +721,7 @@ func writeNotebookBundleWithBodies(bundle model.Bundle, coverage model.Coverage,
 	if err := writeNotebookEvidencePacks(dir, bundle, opts.NotebookMaxSize); err != nil {
 		return err
 	}
-	repositoryTextStats, err := writeNotebookRepositoryTextPacks(dir, bundle, repositoryText, opts.NotebookMaxSize)
+	repositoryTextStats, err := writeNotebookRepositoryTextPacks(dir, bundle, repositoryText, opts)
 	if err != nil {
 		return err
 	}
@@ -965,7 +973,7 @@ type notebookRepositoryTextStats struct {
 	Redactions int
 }
 
-func writeNotebookRepositoryTextPacks(dir string, bundle model.Bundle, repositoryText map[string]repositoryTextBody, maxBytes int) (notebookRepositoryTextStats, error) {
+func writeNotebookRepositoryTextPacks(dir string, bundle model.Bundle, repositoryText map[string]repositoryTextBody, opts Options) (notebookRepositoryTextStats, error) {
 	artifacts := append([]model.Artifact(nil), bundle.Artifacts...)
 	sort.Slice(artifacts, func(i, j int) bool {
 		if artifacts[i].Path != artifacts[j].Path {
@@ -973,12 +981,25 @@ func writeNotebookRepositoryTextPacks(dir string, bundle model.Bundle, repositor
 		}
 		return artifacts[i].ID < artifacts[j].ID
 	})
-	writer := newNotebookPackWriter(dir, "05_repository_sources", "Secret-redacted repository source", maxBytes)
+	writer := newNotebookPackWriter(dir, "05_repository_sources", "Secret-redacted repository source", opts.NotebookMaxSize)
 	var stats notebookRepositoryTextStats
 	for _, artifact := range artifacts {
-		body, ok := repositoryText[artifact.ID]
-		if !ok || isNotebookLicenseArtifact(artifact) {
+		if !isNormalizedTextArtifact(artifact) || isNotebookLicenseArtifact(artifact) {
 			continue
+		}
+		body, ok := repositoryText[artifact.ID]
+		if !ok {
+			// Stored canonical snapshots may be exported without access to the
+			// original repository. Preserve the metadata-only export contract
+			// instead of interpreting artifact paths relative to the process cwd.
+			if strings.TrimSpace(opts.Root) == "" {
+				continue
+			}
+			var err error
+			body, err = loadRepositoryTextBody(opts, artifact)
+			if err != nil {
+				return stats, err
+			}
 		}
 		var record strings.Builder
 		fmt.Fprintf(&record, "## %s\n\n", markdownText(artifact.Path))
@@ -1008,11 +1029,7 @@ func writeNotebookRepositoryTextPacks(dir string, bundle model.Bundle, repositor
 }
 
 func writeNotebookLicensePacks(dir string, bundle model.Bundle, opts Options) (bool, error) {
-	repositoryText, err := loadRepositoryTextBodies(bundle, opts)
-	if err != nil {
-		return false, err
-	}
-	return writeNotebookLicensePacksWithBodies(dir, bundle, opts, repositoryText)
+	return writeNotebookLicensePacksWithBodies(dir, bundle, opts, nil)
 }
 
 func writeNotebookLicensePacksWithBodies(dir string, bundle model.Bundle, opts Options, repositoryText map[string]repositoryTextBody) (bool, error) {
@@ -1035,7 +1052,11 @@ func writeNotebookLicensePacksWithBodies(dir string, bundle model.Bundle, opts O
 	for _, artifact := range artifacts {
 		body, ok := repositoryText[artifact.ID]
 		if !ok {
-			return false, fmt.Errorf("read NotebookLM license source %q: verified secret-redacted repository text is missing", artifact.Path)
+			var err error
+			body, err = loadRepositoryTextBody(opts, artifact)
+			if err != nil {
+				return false, err
+			}
 		}
 		var b strings.Builder
 		fmt.Fprintf(&b, "## %s\n\n", markdownText(artifact.Path))
@@ -1182,10 +1203,20 @@ func writeSite(bundle model.Bundle, coverage model.Coverage, opts Options) error
 	if err := os.MkdirAll(filepath.Join(dir, "data"), 0o755); err != nil {
 		return err
 	}
-	files, err := BrowserAssets(bundle, coverage)
+	files, err := SiteAssets()
 	if err != nil {
 		return err
 	}
+	bootstrap, err := browserBootstrapData(bundle, coverage)
+	if err != nil {
+		return err
+	}
+	searchData, err := browserSearchData(bundle)
+	if err != nil {
+		return err
+	}
+	files["data/bootstrap.json"] = bootstrap
+	files["data/search.json"] = searchData
 	for name, content := range files {
 		path := filepath.Join(dir, filepath.FromSlash(name))
 		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
@@ -1195,7 +1226,11 @@ func writeSite(bundle model.Bundle, coverage model.Coverage, opts Options) error
 			return fmt.Errorf("write static atlas %s: %w", name, err)
 		}
 	}
-	return nil
+	payload := struct {
+		Bundle   model.Bundle   `json:"bundle"`
+		Coverage model.Coverage `json:"coverage"`
+	}{bundle, coverage}
+	return writeJSON(filepath.Join(dir, "data", "atlas.json"), payload)
 }
 
 const (
@@ -1560,14 +1595,34 @@ func sameFileState(left, right os.FileInfo) bool {
 }
 
 func writeJSON(path string, value any) error {
-	data, err := json.MarshalIndent(value, "", "  ")
+	temp, err := os.CreateTemp(filepath.Dir(path), ".rkc-json-")
 	if err != nil {
+		return fmt.Errorf("create temporary JSON for %s: %w", path, err)
+	}
+	tempPath := temp.Name()
+	committed := false
+	defer func() {
+		_ = temp.Close()
+		if !committed {
+			_ = os.Remove(tempPath)
+		}
+	}()
+	encoder := json.NewEncoder(temp)
+	encoder.SetEscapeHTML(true)
+	encoder.SetIndent("", "  ")
+	if err := encoder.Encode(value); err != nil {
 		return fmt.Errorf("marshal %s: %w", path, err)
 	}
-	data = append(data, '\n')
-	if err := os.WriteFile(path, data, 0o644); err != nil {
+	if err := temp.Chmod(0o644); err != nil {
+		return fmt.Errorf("set JSON mode for %s: %w", path, err)
+	}
+	if err := temp.Close(); err != nil {
+		return fmt.Errorf("close JSON for %s: %w", path, err)
+	}
+	if err := os.Rename(tempPath, path); err != nil {
 		return fmt.Errorf("write %s: %w", path, err)
 	}
+	committed = true
 	return nil
 }
 
