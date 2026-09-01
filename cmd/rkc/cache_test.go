@@ -254,6 +254,27 @@ func TestPlanFailsClosedAtConfigurationAndCacheBoundaries(t *testing.T) {
 	}
 }
 
+func TestCacheCommandsRejectInvalidRootsAndBrokenOutput(t *testing.T) {
+	root := t.TempDir()
+	cacheFile := filepath.Join(root, "cache-file")
+	writeTestFile(t, cacheFile, "not a directory")
+	for name, args := range map[string][]string{
+		"inspect": {"inspect", "--cache-dir", cacheFile},
+		"verify":  {"verify", "--cache-dir", cacheFile},
+		"prune":   {"prune", "--cache-dir", cacheFile, "--all", "--dry-run"},
+	} {
+		if err := runCache(args); err == nil {
+			t.Errorf("cache %s accepted a regular-file root", name)
+		}
+	}
+	cacheRoot := filepath.Join(root, "empty-cache")
+	if err := withClosedStdout(func() error {
+		return runCache([]string{"verify", "--cache-dir", cacheRoot, "--json"})
+	}); err == nil {
+		t.Fatal("cache verify succeeded with a closed stdout")
+	}
+}
+
 func plannedCLIStage(t *testing.T, plan pipeline.ScanPlan, stageID string) pipeline.StagePlan {
 	t.Helper()
 	for _, stage := range plan.Stages {
