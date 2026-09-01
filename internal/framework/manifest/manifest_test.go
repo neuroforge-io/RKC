@@ -237,6 +237,38 @@ func TestPackageJSONStringBinAndGoReplaceBlock(t *testing.T) {
 	}
 }
 
+func TestPackageJSONFallbackNameAndMalformedTrailingData(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	writeManifestTestFile(t, root, "nested/package.json", `{"version":"1.0.0","bin":{"empty":"","cli":"bin/cli.js"}}`)
+	writeManifestTestFile(t, root, "trailing/package.json", `{"name":"first"} {`)
+	fragment, err := Extract(Options{Root: root, Files: []pluginapi.FileRef{
+		{ArtifactID: "fallback", Path: "nested/package.json", SHA256: "fallback"},
+		{ArtifactID: "trailing", Path: "trailing/package.json", SHA256: "trailing"},
+	}})
+	if err != nil {
+		t.Fatalf("Extract() error = %v", err)
+	}
+	foundFallback, foundCLI := false, false
+	for _, node := range fragment.Nodes {
+		if node.Kind == "project" && node.Name == "nested" {
+			foundFallback = true
+		}
+		if node.Kind == "cli_command" && node.Name == "cli" {
+			foundCLI = true
+		}
+		if node.Kind == "cli_command" && node.Name == "empty" {
+			t.Fatal("empty package bin entry was emitted")
+		}
+	}
+	if !foundFallback || !foundCLI {
+		t.Fatalf("fallback package nodes missing: project=%t cli=%t", foundFallback, foundCLI)
+	}
+	if len(fragment.Diagnostics) != 1 || fragment.Diagnostics[0].Code != "RKC-MAN-1002" {
+		t.Fatalf("trailing diagnostics = %#v", fragment.Diagnostics)
+	}
+}
+
 func TestExtractManifestRejectsPathsOutsideRoot(t *testing.T) {
 	t.Parallel()
 	parent := t.TempDir()
@@ -369,6 +401,28 @@ func TestManifestHelpersBoundaries(t *testing.T) {
 	}
 	if got := joinAfter([]string{"a"}, 1); got != "" {
 		t.Errorf("joinAfter(boundary) = %q", got)
+	}
+	for _, test := range []struct {
+		value string
+		want  string
+	}{
+		{"", "empty"}, {"${HOME}", "expression"}, {"true", "boolean"},
+		{"12.5", "number"}, {"https://example.test", "url"}, {"../config", "path"}, {"text", "literal"},
+	} {
+		if got := scalarClassification(test.value); got != test.want {
+			t.Errorf("scalarClassification(%q) = %q, want %q", test.value, got, test.want)
+		}
+	}
+	for _, test := range []struct {
+		command string
+		want    string
+	}{
+		{"", "empty"}, {"go test ./...", "test"}, {"ruff check .", "quality"},
+		{"release publish", "deploy"}, {"go build ./...", "build"}, {"echo hello", "command"},
+	} {
+		if got := commandMetadata("test", test.command)["command_class"]; got != test.want {
+			t.Errorf("commandMetadata(%q) class = %#v, want %q", test.command, got, test.want)
+		}
 	}
 }
 

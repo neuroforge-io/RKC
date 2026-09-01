@@ -130,6 +130,30 @@ func TestExtractMarkdownRejectsPathsOutsideRoot(t *testing.T) {
 	}
 }
 
+func TestMarkdownSetextTitleAndUnresolvedLinks(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	writeMarkdownTestFile(t, root, "docs/plain.md", "Project\n=====\nSee [escape](../../outside.md), [unknown](missing.md), [anchor](#local), and [web](mailto:test@example.test).\n")
+	fragment, err := Extract(Options{Root: root, SnapshotID: "snapshot", Files: []pluginapi.FileRef{{ArtifactID: "plain", Path: "docs/plain.md", SHA256: "sha"}}, Artifacts: map[string]string{}})
+	if err != nil {
+		t.Fatalf("Extract() error = %v", err)
+	}
+	if len(fragment.Documents) != 1 || fragment.Documents[0].Title != "Project" || len(fragment.Documents[0].Sections) != 1 {
+		t.Fatalf("setext document = %#v", fragment.Documents)
+	}
+	for _, edge := range fragment.Edges {
+		if edge.Kind == "references" {
+			t.Fatalf("unresolved link emitted edge: %#v", edge)
+		}
+	}
+
+	writeMarkdownTestFile(t, root, "plain.md", "text without a heading\n")
+	parsed, err := parseFile(root, pluginapi.FileRef{ArtifactID: "plain", Path: "plain.md"})
+	if err != nil || len(parsed.sections) != 1 || parsed.sections[0].heading != "plain" {
+		t.Fatalf("heading-less document = %#v, %v", parsed, err)
+	}
+}
+
 func TestMarkdownHelpersBoundaries(t *testing.T) {
 	t.Parallel()
 	for _, test := range []struct {
