@@ -10,6 +10,7 @@ import subprocess
 import tempfile
 import unittest
 from copy import deepcopy
+from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
 from unittest import mock
@@ -160,6 +161,20 @@ class QualificationScoringTests(unittest.TestCase):
             with self.assertRaisesRegex(qualify_models.QualificationError, "exceeds"):
                 qualify_models._read_json(Path("oversized.json"))
 
+        overread_before = SimpleNamespace(
+            st_mode=stat.S_IFREG, st_size=1, st_dev=1, st_ino=2
+        )
+        overread_after = SimpleNamespace(
+            st_mode=stat.S_IFREG, st_size=2, st_dev=1, st_ino=2
+        )
+        with mock.patch.object(qualify_models.os, "open", return_value=7), mock.patch.object(
+            qualify_models.os, "fstat", side_effect=[overread_before, overread_after]
+        ), mock.patch.object(qualify_models.os, "read", return_value=b"{}"), mock.patch.object(
+            qualify_models.os, "lstat", return_value=overread_after
+        ), mock.patch.object(qualify_models.os, "close"):
+            with self.assertRaisesRegex(qualify_models.QualificationError, "exceeds"):
+                qualify_models._read_json(Path("overread.json"), maximum_bytes=1)
+
     def test_checked_in_spec_validates_and_policy_mutations_fail(self) -> None:
         lock = model_assets.load_lock()
         spec, _digest = qualify_models._read_json(qualify_models.DEFAULT_SPEC)
@@ -192,12 +207,52 @@ class QualificationScoringTests(unittest.TestCase):
                     "maximum_long_context_latency_ms", 300_001
                 ),
             ),
+            (
+                "generation context",
+                lambda value: value["generation"].__setitem__(
+                    "context_tokens", qualify_models.LONG_CONTEXT_TOKENS - 1
+                ),
+            ),
+            (
+                "long-context target",
+                lambda value: value["generation"]["cases"][-1].__setitem__(
+                    "target_input_tokens", 1
+                ),
+            ),
+            (
+                "long-context evidence",
+                lambda value: value["generation"]["cases"][-1].__setitem__(
+                    "evidence", [{"id": "only", "text": "one"}]
+                ),
+            ),
+            (
+                "missing stress case",
+                lambda value: value["generation"]["cases"].__setitem__(
+                    -1, {**value["generation"]["cases"][-1], "target_input_tokens": 0}
+                ),
+            ),
         )
         for name, mutate in mutations:
             changed = deepcopy(spec)
             mutate(changed)
             with self.subTest(name=name), self.assertRaises(qualify_models.QualificationError):
                 qualify_models._validate_spec(changed, lock)
+
+        generation_asset_id = spec["generation"]["asset_id"]
+        asset = lock.asset(generation_asset_id)
+        for name, changed_asset in (
+            ("asset status", replace(asset, status="qualified")),
+            ("asset eligibility", replace(asset, default_eligible=True)),
+            ("asset qualification", replace(asset, qualification_spec=None)),
+            ("asset context", replace(asset, native_context_tokens=1)),
+        ):
+            changed_assets = tuple(
+                changed_asset if item.asset_id == generation_asset_id else item
+                for item in lock.assets
+            )
+            changed_lock = replace(lock, assets=changed_assets)
+            with self.subTest(name=name), self.assertRaises(qualify_models.QualificationError):
+                qualify_models._validate_spec(spec, changed_lock)
 
     def test_process_memory_port_and_json_response_helpers(self) -> None:
         self.assertGreater(qualify_models._choose_port(), 0)
@@ -352,6 +407,13 @@ class QualificationScoringTests(unittest.TestCase):
                 self.assertFalse(
                     qualify_models._validate_claim_response(case, content)["passed"]
                 )
+        unresolved_required = deepcopy(case)
+        unresolved_required["expect"]["minimum_unresolved_questions"] = 1
+        result = qualify_models._validate_claim_response(
+            unresolved_required,
+            '{"claims":[],"unresolved_questions":[]}',
+        )
+        self.assertIn("too few unresolved questions", result["failures"])
 
     def generation_policy(self) -> dict[str, object]:
         case = generation_case()
@@ -459,6 +521,112 @@ class QualificationScoringTests(unittest.TestCase):
             )
         self.assertFalse(result["passed"])
         self.assertGreaterEqual(len(result["threshold_failures"]), 4)
+
+        class EmptyChoicesServer(Server):
+            def request(self, endpoint, *_args, **_kwargs):  # type: ignore[no-untyped-def]
+                if endpoint == "/v1/chat/completions/input_tokens":
+                    return {"input_tokens": 32}
+                return {"choices": []}
+
+        with mock.patch.object(qualify_models, "LocalServer", EmptyChoicesServer):
+            result = qualify_models.run_generation(
+                policy, Path("server"), Path("model.gguf"), Path("logs"), 1
+            )
+        self.assertFalse(result["passed"])
+        self.assertFalse(result["cases"][0]["validation"]["schema_valid"])
+
+        class MalformedMessageServer(Server):
+            def request(self, endpoint, *_args, **_kwargs):  # type: ignore[no-untyped-def]
+                if endpoint == "/v1/chat/completions/input_tokens":
+                    return {"input_tokens": 32}
+                return {"choices": [{"message": {"content": 1}}]}
+
+        with mock.patch.object(qualify_models, "LocalServer", MalformedMessageServer):
+            result = qualify_models.run_generation(
+                policy, Path("server"), Path("model.gguf"), Path("logs"), 1
+            )
+        self.assertFalse(result["cases"][0]["validation"]["schema_valid"])
+
+        class StandardFailureServer(Server):
+            def request(self, endpoint, *_args, **_kwargs):  # type: ignore[no-untyped-def]
+                if endpoint == "/v1/chat/completions/input_tokens":
+                    return {"input_tokens": 32}
+                raise qualify_models.QualificationError("standard request failed")
+
+        with mock.patch.object(qualify_models, "LocalServer", StandardFailureServer):
+            with self.assertRaisesRegex(qualify_models.QualificationError, "standard request failed"):
+                qualify_models.run_generation(
+                    policy, Path("server"), Path("model.gguf"), Path("logs"), 1
+                )
+
+    def test_generation_runner_records_exact_fill_and_latency_failures(self) -> None:
+        content = json.dumps(
+            {
+                "claims": [
+                    {
+                        "text": "One returns error.",
+                        "category": "signature",
+                        "certainty": "supported",
+                        "evidence_ids": ["ev-one"],
+                    }
+                ],
+                "unresolved_questions": [],
+            }
+        )
+
+        class Server:
+            peak_rss_bytes = 10
+
+            def __init__(self, *_args, **_kwargs) -> None:
+                pass
+
+            def start(self) -> None:
+                return None
+
+            def request(self, _endpoint, _payload, _timeout):  # type: ignore[no-untyped-def]
+                return {"choices": [{"message": {"content": content}}]}
+
+            def metrics(self) -> str:
+                return "metrics"
+
+            def close(self) -> None:
+                return None
+
+        policy = self.generation_policy()
+        policy["cases"][0]["target_input_tokens"] = 10
+        policy["context_tokens"] = 100
+        policy["maximum_output_tokens"] = 90
+        policy["thresholds"]["maximum_long_context_latency_ms"] = 1
+        prepared = {
+            "prompt": "prompt",
+            "body": {},
+            "input_tokens": 9,
+            "padding_characters": 0,
+            "target_input_tokens": 10,
+        }
+        with mock.patch.object(qualify_models, "LocalServer", Server), mock.patch.object(
+            qualify_models, "_prepare_generation_case", return_value=prepared
+        ), mock.patch.object(
+            qualify_models.time, "monotonic", side_effect=[0.0, 1.0, 2.0, 1.0, 2.0, 3.0]
+        ):
+            result = qualify_models.run_generation(
+                policy, Path("server"), Path("model.gguf"), Path("logs"), 1
+            )
+        self.assertIn("exact_context_fill_rate must equal 1.0", result["threshold_failures"])
+        self.assertIn("maximum_long_context_latency_ms above threshold", result["threshold_failures"])
+
+        standard_policy = self.generation_policy()
+        standard_policy["thresholds"]["maximum_standard_case_latency_ms"] = 1
+        standard_prepared = {**prepared, "input_tokens": 32, "target_input_tokens": 0}
+        with mock.patch.object(qualify_models, "LocalServer", Server), mock.patch.object(
+            qualify_models, "_prepare_generation_case", return_value=standard_prepared
+        ), mock.patch.object(
+            qualify_models.time, "monotonic", side_effect=[0.0, 1.0, 2.0, 1.0, 2.0, 3.0]
+        ):
+            result = qualify_models.run_generation(
+                standard_policy, Path("server"), Path("model.gguf"), Path("logs"), 1
+            )
+        self.assertIn("maximum_standard_case_latency_ms above threshold", result["threshold_failures"])
 
     def test_long_context_latency_ceiling_fails_with_a_bounded_report(self) -> None:
         class SlowServer:
@@ -737,6 +905,11 @@ class QualificationScoringTests(unittest.TestCase):
             os.chmod(unsafe, 0o777)
             with self.assertRaisesRegex(qualify_models.QualificationError, "private"):
                 qualify_models._atomic_report(unsafe / "report", {})
+            short_write = directory / "short-write.json"
+            with mock.patch.object(qualify_models.os, "write", return_value=0), mock.patch.object(
+                qualify_models.os, "close"
+            ), self.assertRaisesRegex(OSError, "short write"):
+                qualify_models._atomic_report(short_write, {"ok": True})
 
     def test_main_rejects_unsafe_output_before_model_execution(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -834,6 +1007,59 @@ class QualificationScoringTests(unittest.TestCase):
                 )
                 self.assertIn("logs retained", errors.getvalue())
 
+        with tempfile.TemporaryDirectory() as temporary:
+            log_directory = Path(temporary) / "logs"
+            log_directory.mkdir(mode=0o700)
+            (log_directory / "generation.stdout.log").write_text("fixture\n", encoding="utf-8")
+            output = Path(temporary) / "report.json"
+            changed_spec = deepcopy(spec)
+            changed_spec["embedding"]["runtime_profile"] = "portable"
+            with mock.patch.object(model_assets, "assert_priority_available"), mock.patch.object(
+                model_assets, "assert_resource_guard"
+            ), mock.patch.object(model_assets, "load_lock", return_value=lock), mock.patch.object(
+                qualify_models, "_read_json", return_value=(changed_spec, digest)
+            ), mock.patch.object(qualify_models, "_validate_spec"), mock.patch(
+                "sys.stderr", new=io.StringIO()
+            ):
+                self.assertEqual(
+                    qualify_models.main(
+                        ["--runtime", str(runtime), "--output", str(output)]
+                    ),
+                    1,
+                )
+
+            with mock.patch.object(model_assets, "assert_priority_available"), mock.patch.object(
+                model_assets, "assert_resource_guard"
+            ), mock.patch.object(model_assets, "load_lock", return_value=lock), mock.patch.object(
+                qualify_models, "_read_json", return_value=(spec, digest)
+            ), mock.patch.object(qualify_models, "_validate_spec"), mock.patch.object(
+                qualify_models.bootstrap_llama_cpp,
+                "_verify_existing_runtime",
+                return_value={"profile": "native"},
+            ), mock.patch.object(model_assets, "verify_cached_asset", return_value=model), mock.patch.object(
+                qualify_models, "run_generation", return_value=generation
+            ), mock.patch.object(qualify_models, "run_embedding", return_value=embedding), mock.patch.object(
+                model_assets, "active_priority_processes", return_value=[]
+            ), mock.patch.object(qualify_models.tempfile, "mkdtemp", return_value=str(log_directory)), mock.patch(
+                "sys.stdout", new=io.StringIO()
+            ):
+                self.assertEqual(
+                    qualify_models.main(
+                        ["--runtime", str(runtime), "--output", str(output)]
+                    ),
+                    0,
+                )
+            report = json.loads(output.read_text(encoding="utf-8"))
+            self.assertIn("generation.stdout.log", report["log_sha256"])
+
+        with mock.patch("sys.stderr", new=io.StringIO()):
+            self.assertEqual(
+                qualify_models.main(
+                    ["--runtime", str(runtime), "--output", "/tmp/unused", "--request-timeout-seconds", "0"]
+                ),
+                1,
+            )
+
 
 class FakeProcess:
     def __init__(self, pid: int = 321) -> None:
@@ -915,6 +1141,31 @@ class LocalServerTests(unittest.TestCase):
                 qualify_models.QualificationError, "log exceeded"
             ):
                 server._check()
+
+    def test_server_health_retry_and_already_exited_close_paths(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            process = FakeProcess()
+            server = qualify_models.LocalServer(
+                Path("server"), Path("model"), 128, Path(temporary), embedding=False
+            )
+            with mock.patch.object(qualify_models, "_choose_port", return_value=12345), mock.patch.object(
+                model_assets, "assert_priority_available"
+            ), mock.patch.object(qualify_models.subprocess, "Popen", return_value=process), mock.patch.object(
+                qualify_models.time, "sleep"
+            ):
+                # Patch the bound method after construction so the health probe
+                # fails once, then the bounded timeout exits deterministically.
+                with mock.patch.object(
+                    server, "_monitored_http", side_effect=qualify_models.QualificationError("not ready")
+                ), mock.patch.object(
+                    qualify_models.time, "monotonic", side_effect=[0.0, 0.0, 1.0]
+                ):
+                    with self.assertRaisesRegex(qualify_models.QualificationError, "healthy"):
+                        server.start(timeout=0.5)
+            process.returncode = 0
+            with mock.patch.object(qualify_models, "_process_rss_bytes", return_value=0):
+                server.close()
+                server.close()
 
     def test_non_embedding_timeout_context_and_forced_close_paths(self) -> None:
         class TimeoutProcess(FakeProcess):
