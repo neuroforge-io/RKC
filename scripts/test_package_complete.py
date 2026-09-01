@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import importlib.util
+import builtins
 import io
 import json
 import os
+import runpy
 import stat
 import subprocess
 import sys
@@ -15,6 +17,7 @@ import zipfile
 from collections.abc import Callable
 from pathlib import Path, PurePosixPath
 from typing import Any
+from types import SimpleNamespace
 from unittest import mock
 
 
@@ -604,6 +607,75 @@ class CompletePackageTests(unittest.TestCase):
                 PACKAGE.copy_regular_file(
                     link, PACKAGE.ROOT / "stage/link", mode=0o644, label="x"
                 )
+        source.write_bytes(b"payload")
+        with mock.patch.object(PACKAGE, "MAX_ARTIFACT_FILE_BYTES", 1), self.assertRaisesRegex(
+            PACKAGE.PackageError, "per-file package limit"
+        ):
+            PACKAGE.copy_regular_file(
+                source, PACKAGE.ROOT / "stage/oversized", mode=0o644, label="fixture"
+            )
+        if hasattr(PACKAGE.os, "O_NOFOLLOW"):
+            nofollow = PACKAGE.os.O_NOFOLLOW
+            delattr(PACKAGE.os, "O_NOFOLLOW")
+            try:
+                PACKAGE.copy_regular_file(
+                    source, PACKAGE.ROOT / "stage/no-nofollow", mode=0o644, label="fixture"
+                )
+            finally:
+                setattr(PACKAGE.os, "O_NOFOLLOW", nofollow)
+        with mock.patch.object(PACKAGE.os, "open", side_effect=OSError("open blocked")), self.assertRaisesRegex(
+            PACKAGE.PackageError, "cannot open"
+        ):
+            PACKAGE.copy_regular_file(
+                source, PACKAGE.ROOT / "stage/open-failure", mode=0o644, label="fixture"
+            )
+
+        class FakeHandle:
+            def __enter__(self) -> "FakeHandle":
+                return self
+
+            def __exit__(self, *_args: object) -> None:
+                return None
+
+            def fileno(self) -> int:
+                return 1
+
+            def read(self, _size: int = -1) -> bytes:
+                return b"payload"
+
+            def seek(self, _offset: int) -> None:
+                return None
+
+        with mock.patch.object(PACKAGE.os, "open", return_value=1), mock.patch.object(
+            PACKAGE.os, "fdopen", return_value=FakeHandle()
+        ), mock.patch.object(
+            PACKAGE.os, "fstat", return_value=SimpleNamespace(st_mode=stat.S_IFDIR)
+        ), self.assertRaisesRegex(PACKAGE.PackageError, "changed file type"):
+            PACKAGE.copy_regular_file(
+                source, PACKAGE.ROOT / "stage/changed-type", mode=0o644, label="fixture"
+            )
+
+        size = len(source.read_bytes())
+        before = SimpleNamespace(
+            st_mode=stat.S_IFREG | 0o600,
+            st_size=size,
+            st_dev=1,
+            st_ino=2,
+            st_mtime_ns=3,
+        )
+        after = SimpleNamespace(
+            st_mode=before.st_mode,
+            st_size=size,
+            st_dev=before.st_dev,
+            st_ino=before.st_ino,
+            st_mtime_ns=4,
+        )
+        with mock.patch.object(PACKAGE.os, "fstat", side_effect=[before, after]), self.assertRaisesRegex(
+            PACKAGE.PackageError, "changed while it was copied"
+        ):
+            PACKAGE.copy_regular_file(
+                source, PACKAGE.ROOT / "stage/raced", mode=0o644, label="fixture"
+            )
 
     def test_copy_tracked_source_requires_license_closure(self) -> None:
         object_id = "c" * 40
@@ -656,6 +728,37 @@ class CompletePackageTests(unittest.TestCase):
             PACKAGE, "tracked_files", return_value=[]
         ), self.assertRaisesRegex(PACKAGE.PackageError, "required license"):
             PACKAGE.copy_tracked_source(PACKAGE.ROOT / "empty", self.identity)
+
+    def test_copy_tracked_source_rejects_empty_license_and_missing_module_lock(self) -> None:
+        object_id = "c" * 40
+        top_level = [
+            PACKAGE.TrackedFile(PurePosixPath(name), False, object_id)
+            for name in PACKAGE.TOP_LEVEL_LICENSE_FILES
+        ]
+
+        def materialize(item: PACKAGE.TrackedFile, destination: Path) -> int:
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            destination.write_bytes(b"fixture\n")
+            return 8
+
+        with mock.patch.object(PACKAGE, "tracked_files", return_value=top_level), mock.patch.object(
+            PACKAGE, "copy_commit_blob", side_effect=materialize
+        ), self.assertRaisesRegex(PACKAGE.PackageError, "LICENSES directory"):
+            PACKAGE.copy_tracked_source(PACKAGE.ROOT / "no-licenses", self.identity)
+
+        with_license = [
+            *top_level,
+            PACKAGE.TrackedFile(PurePosixPath("LICENSES/Go.txt"), False, object_id),
+        ]
+        with mock.patch.object(PACKAGE, "tracked_files", return_value=with_license), mock.patch.object(
+            PACKAGE, "copy_commit_blob", side_effect=materialize
+        ), self.assertRaisesRegex(PACKAGE.PackageError, "module audit lock"):
+            PACKAGE.copy_tracked_source(PACKAGE.ROOT / "no-module-lock", self.identity)
+
+        empty_licenses = PACKAGE.ROOT / "empty-licenses"
+        (empty_licenses / "LICENSES").mkdir(parents=True)
+        with self.assertRaisesRegex(PACKAGE.PackageError, "LICENSES directory is empty"):
+            PACKAGE.audited_license_paths(empty_licenses)
 
     def release_binary_fixture(self, source: Path) -> None:
         for name in PACKAGE.TOP_LEVEL_LICENSE_FILES:
@@ -774,6 +877,16 @@ class CompletePackageTests(unittest.TestCase):
                 self.identity,
             )
         nested_notice.write_bytes(nested_content)
+        nested_notice.write_bytes(b"different notice")
+        with self.assertRaisesRegex(PACKAGE.PackageError, "notice differs"):
+            PACKAGE.copy_release_binaries(
+                source,
+                PACKAGE.ROOT / "different-notice",
+                module_lock,
+                PACKAGE.ROOT,
+                self.identity,
+            )
+        nested_notice.write_bytes(nested_content)
         (source / "unexpected").write_text("x", encoding="utf-8")
         with self.assertRaisesRegex(PACKAGE.PackageError, "differs"):
             PACKAGE.copy_release_binaries(
@@ -793,6 +906,18 @@ class CompletePackageTests(unittest.TestCase):
                 module_lock,
                 PACKAGE.ROOT,
                 self.identity,
+            )
+
+        invalid_platform = PurePosixPath("invalid/rkc.spdx.json")
+        with mock.patch.object(
+            PACKAGE, "tree_files", return_value=[(invalid_platform, source / "fixture")]
+        ), mock.patch.object(
+            PACKAGE, "expected_binary_bundle", return_value=frozenset({invalid_platform})
+        ), mock.patch.object(
+            PACKAGE, "EXPECTED_BINARY_SBOMS", frozenset({invalid_platform})
+        ), self.assertRaisesRegex(PACKAGE.PackageError, "invalid release binary platform"):
+            PACKAGE.copy_release_binaries(
+                source, PACKAGE.ROOT / "invalid-platform", module_lock, PACKAGE.ROOT, self.identity
             )
 
     @mock.patch.object(PACKAGE.subprocess, "run")
@@ -1065,6 +1190,12 @@ class CompletePackageTests(unittest.TestCase):
         module_lock = self.write_module_lock(PACKAGE.ROOT)
         PACKAGE.validate_go_module_lock(PACKAGE.ROOT)
 
+        original_lock = module_lock.read_bytes()
+        module_lock.write_bytes(b"x" * (1024 * 1024 + 1))
+        with self.assertRaisesRegex(PACKAGE.PackageError, "exceeds 1048576"):
+            PACKAGE.validate_go_module_lock(PACKAGE.ROOT)
+        module_lock.write_bytes(original_lock)
+
         original = module_license.read_bytes()
         module_license.write_bytes(b"tampered\n")
         with self.assertRaisesRegex(PACKAGE.PackageError, "digest differs"):
@@ -1276,11 +1407,128 @@ class CompletePackageTests(unittest.TestCase):
             release_readme.index("./install.sh"),
             release_readme.index('"$HOME/.local/bin/rkc" wizard'),
         )
+
+        symlink = stage / "symlink-fixture"
+        if hasattr(os, "symlink"):
+            symlink.symlink_to(source / "VERSION")
+            with self.assertRaisesRegex(PACKAGE.PackageError, "contains a symlink"):
+                PACKAGE.write_distribution_sbom(stage, self.identity)
+            symlink.unlink()
+
+        (stage / "MANIFEST.json").write_text("generated\n", encoding="utf-8")
+        (stage / "SHA256SUMS.txt").write_text("generated\n", encoding="utf-8")
+        original_sha256 = PACKAGE.hashlib.sha256
+
+        def colliding_sha256(data: bytes = b"") -> Any:
+            if data:
+                return SimpleNamespace(hexdigest=lambda: "0" * 64)
+            return original_sha256(data)
+
+        with mock.patch.object(PACKAGE.hashlib, "sha256", side_effect=colliding_sha256), self.assertRaisesRegex(
+            PACKAGE.PackageError, "identifier collision"
+        ):
+            PACKAGE.write_distribution_sbom(stage, self.identity)
+        (stage / "MANIFEST.json").unlink()
+        (stage / "SHA256SUMS.txt").unlink()
+
+        excluded_only = PACKAGE.ROOT / "excluded-only"
+        excluded_only.mkdir()
+        (excluded_only / "MANIFEST.json").write_text("generated\n", encoding="utf-8")
+        (excluded_only / "SHA256SUMS.txt").write_text("generated\n", encoding="utf-8")
+        with self.assertRaisesRegex(PACKAGE.PackageError, "inventory is empty"):
+            PACKAGE.write_distribution_sbom(excluded_only, self.identity)
+
+        first_binary = stage / "artifacts" / "binaries" / "linux-amd64" / "rkc"
+        first_binary_content = first_binary.read_bytes()
+        first_binary.unlink()
+        with self.assertRaisesRegex(PACKAGE.PackageError, "component is missing"):
+            PACKAGE.write_distribution_sbom(stage, self.identity)
+        first_binary.write_bytes(first_binary_content)
+
+        sbom_paths = sorted(
+            stage.joinpath(*("artifacts", "binaries", *relative.parts)).with_name(
+                relative.name + ".spdx.json"
+            )
+            for relative in PACKAGE.EXPECTED_BINARIES
+        )
+        sbom_path = sbom_paths[0]
+        original_sbom = json.loads(sbom_path.read_text(encoding="utf-8"))
+
+        def mutate_sbom(mutation: Callable[[dict[str, Any]], None], marker: str) -> None:
+            mutated = json.loads(json.dumps(original_sbom))
+            mutation(mutated)
+            sbom_path.write_text(json.dumps(mutated), encoding="utf-8")
+            try:
+                with self.assertRaisesRegex(PACKAGE.PackageError, marker):
+                    PACKAGE.write_distribution_sbom(stage, self.identity)
+            finally:
+                sbom_path.write_text(json.dumps(original_sbom), encoding="utf-8")
+
+        mutate_sbom(lambda value: value.__setitem__("spdxVersion", "1.0"), "malformed")
+        mutate_sbom(lambda value: value.__setitem__("packages", {}), "package inventory")
+        mutate_sbom(
+            lambda value: value.__setitem__("packages", [{"name": "dependency"}]),
+            "root package is missing",
+        )
+        mutate_sbom(
+            lambda value: value["packages"].append({"name": "bad-dependency"}),
+            "dependency is malformed",
+        )
+        mutate_sbom(
+            lambda value: value["packages"][1].__setitem__("downloadLocation", "drift"),
+            "dependency drifted",
+        )
+        mutate_sbom(
+            lambda value: value.__setitem__("hasExtractedLicensingInfos", {}),
+            "extracted licenses are malformed",
+        )
+        mutate_sbom(
+            lambda value: value.__setitem__("hasExtractedLicensingInfos", [{}]),
+            "extracted license is malformed",
+        )
+        second_sbom = sbom_paths[1]
+        second_original = json.loads(second_sbom.read_text(encoding="utf-8"))
+        first_extracted = {"licenseId": "LicenseRef-X", "text": "a"}
+        second_extracted = {"licenseId": "LicenseRef-X", "text": "b"}
+        sbom_path.write_text(
+            json.dumps({**original_sbom, "hasExtractedLicensingInfos": [first_extracted]}),
+            encoding="utf-8",
+        )
+        second_sbom.write_text(
+            json.dumps({**second_original, "hasExtractedLicensingInfos": [second_extracted]}),
+            encoding="utf-8",
+        )
+        with self.assertRaisesRegex(PACKAGE.PackageError, "extracted license drifted"):
+            PACKAGE.write_distribution_sbom(stage, self.identity)
+        sbom_path.write_text(json.dumps(original_sbom), encoding="utf-8")
+        second_sbom.write_text(json.dumps(second_original), encoding="utf-8")
+
+        posture_originals: dict[Path, dict[str, Any]] = {}
+        for path in sbom_paths:
+            document = json.loads(path.read_text(encoding="utf-8"))
+            posture_originals[path] = json.loads(json.dumps(document))
+            document["packages"][1]["filesAnalyzed"] = True
+            path.write_text(json.dumps(document), encoding="utf-8")
+        with self.assertRaisesRegex(PACKAGE.PackageError, "posture is invalid"):
+            PACKAGE.write_distribution_sbom(stage, self.identity)
+        for path, document in posture_originals.items():
+            path.write_text(json.dumps(document), encoding="utf-8")
+
+        PACKAGE.write_distribution_sbom(stage, self.identity)
+        (stage / "SBOM.spdx.json").unlink()
+        valid_extracted = {"licenseId": "LicenseRef-X", "text": "a"}
+        for path in sbom_paths:
+            document = json.loads(path.read_text(encoding="utf-8"))
+            document["hasExtractedLicensingInfos"] = [valid_extracted]
+            path.write_text(json.dumps(document), encoding="utf-8")
         PACKAGE.write_distribution_sbom(stage, self.identity)
         PACKAGE.stage_manifest(stage, self.identity)
         PACKAGE.write_stage_checksums(stage)
         distribution_sbom = json.loads(
             (stage / "SBOM.spdx.json").read_text(encoding="utf-8")
+        )
+        self.assertEqual(
+            distribution_sbom["hasExtractedLicensingInfos"], [valid_extracted]
         )
         distribution = distribution_sbom["packages"][0]
         self.assertTrue(distribution["filesAnalyzed"])
@@ -1306,6 +1554,12 @@ class CompletePackageTests(unittest.TestCase):
             ),
             len(PACKAGE.EXPECTED_BINARIES),
         )
+        if hasattr(os, "symlink"):
+            manifest_link = stage / "manifest-link"
+            manifest_link.symlink_to(stage / "README-FIRST.md")
+            with self.assertRaisesRegex(PACKAGE.PackageError, "contains a symlink"):
+                PACKAGE.stage_manifest(stage, self.identity)
+            manifest_link.unlink()
         manifest = json.loads((stage / "MANIFEST.json").read_text(encoding="utf-8"))
         self.assertEqual(manifest["version"], "1.2.3")
         self.assertEqual(manifest["go_module_lock"], "third_party/go-modules.lock.json")
@@ -1347,6 +1601,21 @@ class CompletePackageTests(unittest.TestCase):
             self.assertEqual((installer.external_attr >> 16) & 0o777, 0o755)
         with self.assertRaisesRegex(PACKAGE.PackageError, "appeared"):
             PACKAGE.write_zip(stage, output, False)
+        force_new = PACKAGE.DIST / "force-new.zip"
+        PACKAGE.write_zip(stage, force_new, True)
+        if hasattr(os, "O_DIRECTORY"):
+            directory_flag = PACKAGE.os.O_DIRECTORY
+            delattr(PACKAGE.os, "O_DIRECTORY")
+            try:
+                no_directory_flag = PACKAGE.DIST / "no-directory-flag.zip"
+                PACKAGE.write_zip(stage, no_directory_flag, True)
+            finally:
+                setattr(PACKAGE.os, "O_DIRECTORY", directory_flag)
+        if hasattr(os, "symlink"):
+            unsafe_zip = PACKAGE.DIST / "unsafe.zip"
+            unsafe_zip.symlink_to(output)
+            with self.assertRaisesRegex(PACKAGE.PackageError, "unsafe replacement"):
+                PACKAGE.write_zip(stage, unsafe_zip, True)
         PACKAGE.write_zip(stage, output, True)
 
         module_lock.write_text("[]\n", encoding="utf-8")
@@ -1372,6 +1641,16 @@ class CompletePackageTests(unittest.TestCase):
             linked_output.symlink_to(candidate)
             with self.assertRaises(PACKAGE.PackageError):
                 PACKAGE.prepare_output(str(linked_output), True)
+            original_dist = PACKAGE.DIST
+            linked_dist = PACKAGE.ROOT / "dist-link"
+            linked_dist.symlink_to(original_dist, target_is_directory=True)
+            PACKAGE.DIST = linked_dist
+            try:
+                with self.assertRaisesRegex(PACKAGE.PackageError, "dist must be a real"):
+                    PACKAGE.prepare_output("dist-link/failure.zip", False)
+            finally:
+                PACKAGE.DIST = original_dist
+                linked_dist.unlink()
         original = PACKAGE.DIST
         PACKAGE.DIST = PACKAGE.ROOT / "missing-dist"
         try:
@@ -1527,6 +1806,31 @@ class CompletePackageTests(unittest.TestCase):
         ):
             PACKAGE.build_package(output, False)
 
+    def test_build_package_rejects_head_change_during_assembly(self) -> None:
+        for relative in PACKAGE.REQUIRED_INPUTS:
+            (PACKAGE.DIST / relative).mkdir(parents=True)
+        changed = PACKAGE.SourceIdentity("c" * 40, self.identity.tree, "7")
+        output = PACKAGE.DIST / "head-changed.zip"
+        with mock.patch.object(
+            PACKAGE, "source_identity", side_effect=[self.identity, changed]
+        ), mock.patch.object(PACKAGE, "require_clean_tracked_source"), mock.patch.object(
+            PACKAGE, "copy_tracked_source"
+        ), mock.patch.object(PACKAGE, "copy_license_material"), mock.patch.object(
+            PACKAGE, "copy_release_binaries"
+        ), mock.patch.object(PACKAGE, "copy_package_installer"), mock.patch.object(
+            PACKAGE, "validate_demo_outputs"
+        ), mock.patch.object(PACKAGE, "copy_required_files"), mock.patch.object(
+            PACKAGE, "validate_release_evidence", return_value={}
+        ), mock.patch.object(PACKAGE, "write_json_file"), mock.patch.object(
+            PACKAGE, "write_source_receipt"
+        ), mock.patch.object(PACKAGE, "write_readme"), mock.patch.object(
+            PACKAGE, "write_distribution_sbom"
+        ), mock.patch.object(PACKAGE, "stage_manifest"), mock.patch.object(
+            PACKAGE, "write_stage_checksums"
+        ), mock.patch.object(PACKAGE, "write_zip"):
+            with self.assertRaisesRegex(PACKAGE.PackageError, "HEAD changed"):
+                PACKAGE.build_package(output, False)
+
     def test_main_reports_success_and_translates_package_error(self) -> None:
         output = PACKAGE.DIST / "result.zip"
         output.write_bytes(b"zip")
@@ -1552,6 +1856,53 @@ class CompletePackageTests(unittest.TestCase):
             side_effect=PACKAGE.SourceGuardError("dirty source"),
         ), self.assertRaisesRegex(SystemExit, "dirty source"):
             PACKAGE.main()
+
+    def test_package_script_guard_and_import_fallback_are_exercised(self) -> None:
+        script = Path(PACKAGE.__file__).resolve()
+        with mock.patch.object(sys, "argv", ["package-complete.py", "--help"]):
+            with self.assertRaises(SystemExit) as raised:
+                runpy.run_path(str(script), run_name="__main__")
+        self.assertEqual(raised.exception.code, 0)
+
+        original_modules = {
+            name: sys.modules.get(name)
+            for name in ("scripts", "scripts.git_source_guard")
+        }
+        original_path = sys.path[:]
+        try:
+            sys.modules.pop("scripts.git_source_guard", None)
+            sys.modules.pop("scripts", None)
+            repository_root = str(script.parent.parent)
+            sys.path[:] = [
+                str(script.parent),
+                *[
+                    value
+                    for value in original_path
+                    if value and str(Path(value).resolve()) != repository_root
+                ],
+            ]
+            with mock.patch.object(sys, "argv", ["package-complete.py", "--help"]):
+                with self.assertRaises(SystemExit) as raised:
+                    runpy.run_path(str(script), run_name="__main__")
+            self.assertEqual(raised.exception.code, 0)
+        finally:
+            sys.path[:] = original_path
+            for name, module in original_modules.items():
+                if module is None:
+                    sys.modules.pop(name, None)
+                else:
+                    sys.modules[name] = module
+
+        real_import = builtins.__import__
+
+        def reject_unrelated(name: str, *args: object, **kwargs: object) -> object:
+            if name == "scripts.git_source_guard":
+                raise ModuleNotFoundError("foreign module", name="foreign.module")
+            return real_import(name, *args, **kwargs)
+
+        with mock.patch.object(builtins, "__import__", side_effect=reject_unrelated):
+            with self.assertRaisesRegex(ModuleNotFoundError, "foreign module"):
+                runpy.run_path(str(script), run_name="package-complete-import-error")
 
 
 if __name__ == "__main__":
