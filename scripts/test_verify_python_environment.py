@@ -4,6 +4,7 @@ import argparse
 import importlib.metadata
 import io
 import json
+import runpy
 import sys
 import tempfile
 import unittest
@@ -132,6 +133,11 @@ class VerifyPythonEnvironmentTests(unittest.TestCase):
             SystemExit, "verification failed: lock drift"
         ):
             ENVIRONMENT.main()
+
+        with mock.patch.object(
+            sys, "argv", ["verify_python_environment.py", "--help"]
+        ), self.assertRaises(SystemExit):
+            runpy.run_path(str(Path(ENVIRONMENT.__file__)), run_name="__main__")
 
 
 if __name__ == "__main__":

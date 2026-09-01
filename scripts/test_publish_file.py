@@ -178,6 +178,18 @@ class PublishFileTests(unittest.TestCase):
         ), self.assertRaisesRegex(PUBLISHER.PublishError, "bounded regular"):
             PUBLISHER.publish(source, destination, 0o644)
 
+    def test_cleanup_ignores_already_missing_temporary_file(self) -> None:
+        source = PUBLISHER.ROOT / "source-cleanup"
+        source.write_bytes(b"content")
+        destination = PUBLISHER.DIST / "logs" / "cleanup"
+        with mock.patch.object(
+            PUBLISHER.os, "replace", side_effect=OSError("replace failed")
+        ), mock.patch.object(
+            PUBLISHER.os, "unlink", side_effect=FileNotFoundError
+        ):
+            with self.assertRaisesRegex(OSError, "replace failed"):
+                PUBLISHER.publish(source, destination, 0o644)
+
     def test_main_reports_failure_and_success(self) -> None:
         arguments = [
             "publish_file.py",

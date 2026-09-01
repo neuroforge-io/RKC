@@ -83,6 +83,8 @@ class QualityIndexTests(unittest.TestCase):
         source = self.write("pkg/api.go", "package pkg\nfunc API() {}\n")
         self.write("pkg/api_test.go", "package pkg\nfunc TestAPI() {}\n")
         self.write("pkg/doc.go", "// Package pkg documents the package.\npackage pkg\n")
+        if hasattr(os, "symlink"):
+            (self.root / "pkg" / "linked.go").symlink_to(source)
         python = self.write("tools/worker.py", '"""Worker documentation."""\nprint(1)\n')
         self.write("tools/test_worker.py", "def test_worker():\n    pass\n")
         undocumented = self.write("tools/secret.py", "print('secret')")
@@ -111,6 +113,9 @@ class QualityIndexTests(unittest.TestCase):
         go_docs = index._documentation_evidence("pkg/api.go", source, documentation, self.root)
         self.assertEqual(go_docs["status"], "evidence")
         self.assertIn("pkg/doc.go", go_docs["evidence"])
+        if hasattr(os, "symlink"):
+            linked_docs = index._documentation_evidence("pkg/api.go", source, {}, self.root)
+            self.assertIn("pkg/doc.go", linked_docs["evidence"])
         py_docs = index._documentation_evidence("tools/worker.py", python, documentation, self.root)
         self.assertIn("in-source-docstring", py_docs["evidence"])
         no_docs = index._documentation_evidence("tools/secret.py", undocumented, {}, self.root)

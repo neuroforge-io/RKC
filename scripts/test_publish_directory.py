@@ -6,6 +6,7 @@ import importlib.util
 import io
 import json
 import os
+import runpy
 import sys
 import tempfile
 import unittest
@@ -284,6 +285,11 @@ class PublishDirectoryTests(unittest.TestCase):
         ), mock.patch("sys.stderr", new=io.StringIO()) as stderr:
             self.assertEqual(PUBLISH.main(), 1)
             self.assertIn("publish directory: blocked", stderr.getvalue())
+
+        with mock.patch.object(
+            sys, "argv", ["publish_directory.py", "--help"]
+        ), self.assertRaises(SystemExit):
+            runpy.run_path(str(Path(PUBLISH.__file__)), run_name="__main__")
 
     @unittest.skipUnless(sys.platform.startswith("linux"), "renameat2 requires Linux")
     def test_explicit_repository_root_supports_immutable_helper(self) -> None:

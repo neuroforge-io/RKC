@@ -4,6 +4,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+import runpy
 from pathlib import Path
 from unittest import mock
 
@@ -129,6 +130,9 @@ class GitSourceGuardTests(unittest.TestCase):
             guard, "require_clean_worktree", side_effect=SourceGuardError("dirty")
         ), self.assertRaisesRegex(SystemExit, "dirty"):
             guard.main()
+
+        with mock.patch.object(sys, "argv", arguments):
+            runpy.run_path(str(Path(guard.__file__)), run_name="__main__")
 
 
 if __name__ == "__main__":
