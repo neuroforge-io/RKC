@@ -5,8 +5,10 @@ from __future__ import annotations
 import io
 import json
 import os
+import runpy
 import stat
 import subprocess
+import sys
 import tempfile
 import unittest
 from copy import deepcopy
@@ -347,6 +349,12 @@ class QualificationScoringTests(unittest.TestCase):
                 qualify_models, "_loopback_opener", return_value=opener(response)
             ), self.assertRaisesRegex(qualify_models.QualificationError, message):
                 qualify_models._bounded_http("http://127.0.0.1:1/health", "key")
+        with mock.patch.object(model_assets, "assert_priority_available"), mock.patch.object(
+            qualify_models, "_loopback_opener", return_value=opener(Response(b"{}", length="2"))
+        ):
+            self.assertEqual(
+                qualify_models._bounded_http("http://127.0.0.1:1/health", "key"), b"{}"
+            )
         with mock.patch.object(model_assets, "assert_priority_available"), mock.patch.object(
             qualify_models, "_loopback_opener"
         ) as make_opener, self.assertRaisesRegex(
@@ -787,6 +795,46 @@ class QualificationScoringTests(unittest.TestCase):
                     mock.Mock(), tokenizer_policy, Path("model.gguf"), tokenizer_gap, 1
                 )
 
+        boundary = deepcopy(tokenizer_gap)
+
+        def boundary_count(_server, body, _timeout):  # type: ignore[no-untyped-def]
+            prompt = body["messages"][1]["content"]
+            encoded = prompt.split("BEGIN_UNTRUSTED_REPOSITORY_DATA\n", 1)[1].split(
+                "\nEND_UNTRUSTED_REPOSITORY_DATA", 1
+            )[0]
+            packet = json.loads(encoded)
+            padding = packet.get("neutral_padding", "")
+            if not padding:
+                padding = packet.get("neutral_padding_head_to_middle", "") + packet.get(
+                    "neutral_padding_middle_to_tail", ""
+                )
+            if len(padding) == 1000:
+                return 10
+            return 20 if len(padding) >= 1024 else 1
+
+        with mock.patch.object(qualify_models, "MAX_STRESS_PADDING_CHARACTERS", 1024), mock.patch.object(
+            qualify_models, "_input_token_count", side_effect=boundary_count
+        ):
+            prepared = qualify_models._prepare_generation_case(
+                mock.Mock(), tokenizer_policy, Path("model.gguf"), boundary, 1
+            )
+        self.assertEqual(prepared["input_tokens"], 10)
+        self.assertEqual(prepared["padding_characters"], 1000)
+
+        over_bound = deepcopy(tokenizer_gap)
+        over_bound["padding_characters"] = 2048
+        with mock.patch.object(qualify_models, "MAX_STRESS_PADDING_CHARACTERS", 1024), mock.patch.object(
+            qualify_models, "_generation_prompt", side_effect=lambda _case, padding_characters: str(padding_characters)
+        ), mock.patch.object(
+            qualify_models, "_generation_request_body", side_effect=lambda _policy, _model, prompt: {"padding": prompt}
+        ), mock.patch.object(
+            qualify_models, "_input_token_count", side_effect=lambda _server, body, _timeout: 20 if int(body["padding"]) >= 1024 else 1
+        ):
+            with self.assertRaisesRegex(qualify_models.QualificationError, "could not construct exact"):
+                qualify_models._prepare_generation_case(
+                    mock.Mock(), tokenizer_policy, Path("model.gguf"), over_bound, 1
+                )
+
     def test_input_token_count_fails_closed_on_invalid_server_response(self) -> None:
         server = mock.Mock()
         server.request.return_value = {"input_tokens": 12}
@@ -1060,6 +1108,11 @@ class QualificationScoringTests(unittest.TestCase):
                 1,
             )
 
+        with mock.patch.object(sys, "argv", ["qualify_models.py", "--help"]):
+            with self.assertRaises(SystemExit) as exited:
+                runpy.run_path(str(Path(qualify_models.__file__)), run_name="__main__")
+        self.assertEqual(exited.exception.code, 0)
+
 
 class FakeProcess:
     def __init__(self, pid: int = 321) -> None:
@@ -1166,6 +1219,55 @@ class LocalServerTests(unittest.TestCase):
             with mock.patch.object(qualify_models, "_process_rss_bytes", return_value=0):
                 server.close()
                 server.close()
+
+            loading_directory = Path(temporary) / "loading"
+            loading_directory.mkdir(mode=0o700)
+            loading = qualify_models.LocalServer(
+                Path("server"), Path("model"), 128, loading_directory, embedding=False
+            )
+            loading_process = FakeProcess()
+            with mock.patch.object(qualify_models.subprocess, "Popen", return_value=loading_process), mock.patch.object(
+                model_assets, "assert_priority_available"
+            ), mock.patch.object(
+                loading, "_monitored_http", return_value=b'{"status":"loading"}'
+            ), mock.patch.object(
+                qualify_models.time, "monotonic", side_effect=[0.0, 0.0, 1.0]
+            ), mock.patch.object(qualify_models.time, "sleep"):
+                with self.assertRaisesRegex(qualify_models.QualificationError, "healthy"):
+                    loading.start(timeout=0.5)
+
+    def test_monitored_http_reports_empty_worker_result_and_nonpriority_error(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            server = qualify_models.LocalServer(
+                Path("server"), Path("model"), 1, Path(temporary), embedding=False
+            )
+            server.process = FakeProcess()
+
+            class DoneEvent:
+                def wait(self, _timeout: float) -> bool:
+                    return True
+
+                def set(self) -> None:
+                    return None
+
+            class IdleThread:
+                def __init__(self, *_args, **_kwargs) -> None:
+                    pass
+
+                def start(self) -> None:
+                    return None
+
+            with mock.patch.object(qualify_models.threading, "Event", return_value=DoneEvent()), mock.patch.object(
+                qualify_models.threading, "Thread", IdleThread
+            ), mock.patch.object(model_assets, "assert_priority_available"), mock.patch.object(
+                qualify_models, "_process_rss_bytes", return_value=0
+            ), self.assertRaisesRegex(qualify_models.QualificationError, "no result"):
+                server._monitored_http("http://127.0.0.1:1/health", timeout=1)
+
+            with mock.patch.object(
+                qualify_models, "_bounded_http", side_effect=qualify_models.QualificationError("offline")
+            ), self.assertRaisesRegex(qualify_models.QualificationError, "offline"):
+                server._monitored_http("http://127.0.0.1:1/health", timeout=1)
 
     def test_non_embedding_timeout_context_and_forced_close_paths(self) -> None:
         class TimeoutProcess(FakeProcess):

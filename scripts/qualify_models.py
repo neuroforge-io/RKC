@@ -1382,6 +1382,7 @@ def main(argv: list[str] | None = None) -> int:
             log_directory,
             arguments.request_timeout_seconds,
         )
+        log_hashes: dict[str, object] = {}
         report = {
             "schema_version": "1.0.0",
             "qualification_id": spec.get("id"),
@@ -1411,14 +1412,12 @@ def main(argv: list[str] | None = None) -> int:
             },
             "generation": generation,
             "embedding": embedding,
-            "log_sha256": {},
+            "log_sha256": log_hashes,
             "manual_review_required": True,
         }
-        log_hashes = report["log_sha256"]
-        if isinstance(log_hashes, dict):
-            for path in sorted(log_directory.glob("*.log")):
-                digest, size = bootstrap_llama_cpp._sha256_file(path, MAX_LOG_BYTES)
-                log_hashes[path.name] = {"sha256": digest, "size_bytes": size}
+        for path in sorted(log_directory.glob("*.log")):
+            digest, size = bootstrap_llama_cpp._sha256_file(path, MAX_LOG_BYTES)
+            log_hashes[path.name] = {"sha256": digest, "size_bytes": size}
         _atomic_report(arguments.output, report)
         print(
             json.dumps(
