@@ -24,7 +24,7 @@ const (
 	// PluginID is the stable producer identity attached to imported SCIP facts.
 	PluginID = "rkc.scip"
 	// PluginVersion identifies RKC's bounded SCIP import semantics.
-	PluginVersion = "1.1.0"
+	PluginVersion = "1.1.1"
 
 	maximumDocuments   = 200_000
 	maximumSymbols     = 500_000
@@ -776,19 +776,31 @@ func (extractor *extractor) addDiagnostic(
 	if code == "" {
 		code = "SCIP"
 	}
+	message := strings.TrimSpace(diagnostic.message)
+	messageMissing := message == ""
+	if messageMissing {
+		// Some indexers emit tag-like diagnostics (for example DEPRECATED)
+		// with a code but no human message. Preserve the compiler fact while
+		// keeping the canonical diagnostic contract complete and explicit.
+		message = code
+	}
+	attributes := map[string]any{
+		"compiler_source":         diagnostic.source,
+		"scip_index_sha256":       extractor.input.SHA256,
+		"producer_authentication": extractor.producerAuthentication(),
+	}
+	if messageMissing {
+		attributes["compiler_message_missing"] = true
+	}
 	id := rkcmodel.StableID(
 		"diagnostic", PluginID, extractor.input.SHA256, path, code,
-		diagnostic.message, fmt.Sprint(source),
+		message, fmt.Sprint(source),
 	)
 	extractor.diagnostics[id] = rkcmodel.Diagnostic{
-		ID: id, Severity: severity, Code: code, Message: diagnostic.message,
+		ID: id, Severity: severity, Code: code, Message: message,
 		Source: source, Stage: "semantic_parse",
-		Plugin: extractor.toolName() + "@" + extractor.metadata.toolVersion,
-		Attributes: map[string]any{
-			"compiler_source":         diagnostic.source,
-			"scip_index_sha256":       extractor.input.SHA256,
-			"producer_authentication": extractor.producerAuthentication(),
-		},
+		Plugin:     extractor.toolName() + "@" + extractor.metadata.toolVersion,
+		Attributes: attributes,
 	}
 }
 

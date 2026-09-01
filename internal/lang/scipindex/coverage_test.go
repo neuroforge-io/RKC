@@ -339,6 +339,17 @@ func TestExtractorMergeAndDiagnosticHelperCoverage(t *testing.T) {
 	if len(value.diagnostics) != 1 {
 		t.Fatalf("diagnostic severity dedupe = %+v", value.diagnostics)
 	}
+	value.addDiagnostic("x.go", nil, compilerDiagnostic{code: "DEPRECATED"})
+	var missingMessageNormalized bool
+	for _, diagnostic := range value.diagnostics {
+		if diagnostic.Code == "DEPRECATED" {
+			missingMessageNormalized = diagnostic.Message == "DEPRECATED" &&
+				diagnostic.Attributes["compiler_message_missing"] == true
+		}
+	}
+	if len(value.diagnostics) != 2 || !missingMessageNormalized {
+		t.Fatalf("message-less compiler diagnostic was not normalized: %+v", value.diagnostics)
+	}
 	value.metadata.toolName = ""
 	if value.toolName() != PluginID {
 		t.Fatalf("empty tool name = %q", value.toolName())
