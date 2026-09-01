@@ -71,6 +71,35 @@ def sync_rename_parents(source_parent_fd: int, destination_parent_fd: int) -> No
     os.fsync(destination_parent_fd)
 
 
+def rollback_publication(
+    publication: str,
+    source_parent_fd: int,
+    source_name: str,
+    destination_parent_fd: int,
+    destination_name: str,
+) -> None:
+    """Undo one completed rename and persist the restored directory entries."""
+    if publication == "replaced":
+        renameat2(
+            source_parent_fd,
+            source_name,
+            destination_parent_fd,
+            destination_name,
+            RENAME_EXCHANGE,
+        )
+    elif publication == "created":
+        renameat2(
+            destination_parent_fd,
+            destination_name,
+            source_parent_fd,
+            source_name,
+            RENAME_NOREPLACE,
+        )
+    else:
+        raise PublishDirectoryError(f"cannot roll back unknown publication state: {publication}")
+    sync_rename_parents(source_parent_fd, destination_parent_fd)
+
+
 def renameat2(
     source_directory_fd: int,
     source: str,
@@ -185,23 +214,13 @@ def publish(
             sync_rename_parents(source_parent_fd, dist_fd)
         except BaseException:
             try:
-                if publication == "replaced":
-                    renameat2(
-                        source_parent_fd,
-                        source_name,
-                        dist_fd,
-                        destination_name,
-                        RENAME_EXCHANGE,
-                    )
-                elif publication == "created":
-                    renameat2(
-                        dist_fd,
-                        destination_name,
-                        source_parent_fd,
-                        source_name,
-                        RENAME_NOREPLACE,
-                    )
-                sync_rename_parents(source_parent_fd, dist_fd)
+                rollback_publication(
+                    publication,
+                    source_parent_fd,
+                    source_name,
+                    dist_fd,
+                    destination_name,
+                )
             except BaseException as rollback_error:
                 raise PublishDirectoryError(
                     f"publication failed and rollback also failed: {rollback_error}"

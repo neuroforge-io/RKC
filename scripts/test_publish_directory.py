@@ -205,6 +205,11 @@ class PublishDirectoryTests(unittest.TestCase):
             PUBLISH.renameat2(1, "source", 2, "destination", PUBLISH.RENAME_NOREPLACE)
         self.assertEqual(raised.exception.errno, 17)
 
+        with self.assertRaisesRegex(
+            PUBLISH.PublishDirectoryError, "unknown publication state"
+        ):
+            PUBLISH.rollback_publication("unknown", 1, "source", 2, "destination")
+
     def test_publish_rejects_platform_fd_and_rollback_failures(self) -> None:
         source = self.stage("failures", "value")
         destination = PUBLISH.DIST / "release"
