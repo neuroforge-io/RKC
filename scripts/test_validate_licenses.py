@@ -8,6 +8,7 @@ import io
 import json
 import os
 import runpy
+import stat
 import subprocess
 import sys
 import tempfile
@@ -428,6 +429,25 @@ class LicenseValidationTests(unittest.TestCase):
             self.assertFalse(LICENSES.CHECKS[-1]["ok"])
             self.assertIn("docs/public.md:1", LICENSES.CHECKS[-1]["detail"])
 
+    def test_attribution_language_rejects_nonregular_and_oversized_files(self) -> None:
+        surface = Path("surface.md")
+        self.write(str(surface), "Apache-2.0\n")
+        with mock.patch.object(LICENSES, "ATTRIBUTION_LANGUAGE_FILES", (surface,)), mock.patch.object(
+            LICENSES.os, "lstat", return_value=mock.Mock(st_mode=stat.S_IFDIR, st_size=0)
+        ):
+            LICENSES.validate_attribution_language()
+        self.assertFalse(LICENSES.CHECKS[-1]["ok"])
+        self.assertIn("must be a regular file", LICENSES.CHECKS[-1]["detail"])
+
+        with mock.patch.object(LICENSES, "ATTRIBUTION_LANGUAGE_FILES", (surface,)), mock.patch.object(
+            LICENSES.os,
+            "lstat",
+            return_value=mock.Mock(st_mode=stat.S_IFREG, st_size=8 * 1024 * 1024 + 1),
+        ):
+            LICENSES.validate_attribution_language()
+        self.assertFalse(LICENSES.CHECKS[-1]["ok"])
+        self.assertIn("exceeds 8388608 bytes", LICENSES.CHECKS[-1]["detail"])
+
     def test_declared_metadata_happy_and_invalid_paths(self) -> None:
         self.write(
             "api/openapi.yaml",
@@ -560,6 +580,42 @@ class LicenseValidationTests(unittest.TestCase):
         LICENSES.validate_declared_metadata()
         self.assertFalse(LICENSES.CHECKS[-1]["ok"])
         self.assertIn("invalid model lock", str(LICENSES.CHECKS[-1]["detail"]))
+
+    def test_declared_metadata_rejects_model_asset_shape_boundaries(self) -> None:
+        self.write(
+            "api/openapi.yaml",
+            "license:\n  name: Apache License 2.0\n  identifier: Apache-2.0\n",
+        )
+        base = {"llama_cpp": {"license_spdx": "MIT"}}
+        cases = (
+            ({**base, "assets": {}}, "assets must be an array"),
+            ({**base, "assets": [None]}, "asset entries must be objects"),
+            (
+                {**base, "assets": [{"id": "", "kind": "generation-model", "license_spdx": "Apache-2.0"}]},
+                "model asset has an invalid id",
+            ),
+            (
+                {**base, "assets": [{"id": "asset", "kind": None, "license_spdx": "Apache-2.0"}]},
+                "invalid kind or SPDX license",
+            ),
+            (
+                {
+                    **base,
+                    "assets": [
+                        {"id": "duplicate", "kind": "source-archive", "license_spdx": "MIT"},
+                        {"id": "duplicate", "kind": "source-archive", "license_spdx": "MIT"},
+                    ],
+                },
+                "duplicate model asset id",
+            ),
+        )
+        for document, expected in cases:
+            with self.subTest(expected=expected):
+                self.write("models/models.lock.json", json.dumps(document))
+                LICENSES.ERRORS.clear()
+                LICENSES.CHECKS.clear()
+                LICENSES.validate_declared_metadata()
+                self.assertIn(expected, " ".join(LICENSES.ERRORS))
 
     def test_dependency_boundary_accepts_exact_reviewed_closure(self) -> None:
         expected, roots = self.dependency_fixture()
