@@ -3,6 +3,7 @@ package main
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"errors"
 	"io"
 	"os"
@@ -51,6 +52,9 @@ func TestCommandTextViewsAndServeSetupFailures(t *testing.T) {
 		{"path-not-found", func() error {
 			return runPath([]string{"--dir", output, "--from", "Beta", "--to", "Alpha", "--direction", "outgoing"})
 		}, "No path found"},
+		{"path-search-completion-unknown", func() error {
+			return runPath([]string{"--dir", output, "--from", "Beta", "--to", "Alpha", "--direction", "outgoing", "--depth", "0"})
+		}, "exhaustively visiting"},
 		{"impact", func() error { return runImpact([]string{"--dir", output, "--node", "Beta", "--direction", "incoming"}) }, "Impact set"},
 		{"components", func() error {
 			return runComponents([]string{"--dir", output, "--edge-kinds", "calls", "--limit", "10"})
@@ -90,6 +94,73 @@ func TestCommandTextViewsAndServeSetupFailures(t *testing.T) {
 	stdout, err := captureStdout(t, func() error { return runPluginsVerify([]string{"--root", pluginRoot, "--lock", lock}) })
 	if err != nil || !strings.Contains(stdout, "Verified 0 locked plugin(s)") {
 		t.Fatalf("plugins verify output=%q error=%v", stdout, err)
+	}
+}
+
+func TestCommandJSONWritersFailClosedOnBrokenStdout(t *testing.T) {
+	_, output, _ := makeScannedFixture(t)
+	if err := withClosedStdout(func() error {
+		return runDiff([]string{"--format", "json", output, output})
+	}); err == nil {
+		t.Fatal("runDiff succeeded with a closed stdout")
+	}
+
+	root := t.TempDir()
+	coveragePath := filepath.Join(root, "coverage.json")
+	writeTestFile(t, coveragePath, `{"snapshot_id":"coverage","inventory_accounting_ratio":1,"deterministic_output_digest":"digest"}`)
+	if err := withClosedStdout(func() error {
+		return runCheck([]string{
+			"--coverage", coveragePath, "--json", "--verify-bundle=false", "--verify-files=false",
+			"--require-secret-redaction=false",
+		})
+	}); err == nil {
+		t.Fatal("runCheck succeeded with a closed stdout")
+	}
+}
+
+func withClosedStdout(fn func() error) error {
+	reader, writer, err := os.Pipe()
+	if err != nil {
+		return err
+	}
+	original := os.Stdout
+	os.Stdout = writer
+	_ = reader.Close()
+	callErr := fn()
+	_ = writer.Close()
+	os.Stdout = original
+	return callErr
+}
+
+func TestPluginCommandsPropagateDiscoveryFailures(t *testing.T) {
+	missing := filepath.Join(t.TempDir(), "missing-plugins")
+	for name, call := range map[string]func() error{
+		"list":     func() error { return runPluginsList([]string{"--root", missing}) },
+		"validate": func() error { return runPluginsValidate([]string{"--root", missing}) },
+		"lock":     func() error { return runPluginsLock([]string{"--root", missing}) },
+		"verify": func() error {
+			return runPluginsVerify([]string{"--root", missing, "--lock", filepath.Join(missing, "plugins.lock.json")})
+		},
+	} {
+		if err := call(); err == nil {
+			t.Errorf("plugins %s accepted a missing discovery root", name)
+		}
+	}
+}
+
+func TestPlanRejectsInvalidCacheAndInventoryLimits(t *testing.T) {
+	root := t.TempDir()
+	repository := filepath.Join(root, "repository")
+	writeTestFile(t, filepath.Join(repository, "main.go"), "package fixture\n")
+	if err := runPlanContext(context.Background(), []string{
+		"--cache-dir", "invalid\x00cache", "--no-plugins", "--no-frameworks", repository,
+	}); err == nil || !strings.Contains(err.Error(), "resolve stage cache") {
+		t.Fatalf("invalid plan cache path = %v", err)
+	}
+	if err := runPlanContext(context.Background(), []string{
+		"--no-cache", "--max-files", "-1", "--no-plugins", "--no-frameworks", repository,
+	}); err == nil || !strings.Contains(err.Error(), "inventory limits") {
+		t.Fatalf("invalid plan inventory limit = %v", err)
 	}
 }
 
