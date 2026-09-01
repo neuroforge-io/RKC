@@ -116,6 +116,34 @@ func TestCallSpanPreservesDirectColumnCoordinates(t *testing.T) {
 	}
 }
 
+func TestFlowIntegerAttributeNormalizesSupportedNumbers(t *testing.T) {
+	cases := []struct {
+		name  string
+		value any
+		want  int
+	}{
+		{"int", int(7), 7},
+		{"int32", int32(8), 8},
+		{"int64", int64(9), 9},
+		{"float32", float32(10.9), 10},
+		{"float64", float64(11.9), 11},
+		{"unsupported", "12", 0},
+	}
+	for _, test := range cases {
+		t.Run(test.name, func(t *testing.T) {
+			if got := flowIntegerAttribute(test.value); got != test.want {
+				t.Fatalf("flowIntegerAttribute(%#v) = %d, want %d", test.value, got, test.want)
+			}
+		})
+	}
+}
+
+func TestReadArtifactSourceRejectsBinaryArtifacts(t *testing.T) {
+	if _, err := readArtifactSource(t.TempDir(), rkcmodel.Artifact{Path: "binary", Text: false}); err == nil {
+		t.Fatal("binary artifact source was accepted")
+	}
+}
+
 func exactTestCallSpan(fset *token.FileSet, call *ast.CallExpr) *rkcmodel.SourceRange {
 	start := fset.PositionFor(call.Pos(), false)
 	end := fset.PositionFor(call.End(), false)

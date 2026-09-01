@@ -143,6 +143,28 @@ func TestIsCandidateAndLikelySecret(t *testing.T) {
 	}
 }
 
+func TestScalarClassificationCoversSafeDefaultClasses(t *testing.T) {
+	t.Parallel()
+	for _, test := range []struct {
+		value string
+		want  string
+	}{
+		{"", "empty"},
+		{"${HOME}", "expression"},
+		{"true", "boolean"},
+		{"42.5", "number"},
+		{"https://example.test/api", "url"},
+		{"./config", "path"},
+		{"plain text", "literal"},
+	} {
+		t.Run(test.want, func(t *testing.T) {
+			if got := scalarClassification(test.value); got != test.want {
+				t.Fatalf("scalarClassification(%q) = %q, want %q", test.value, got, test.want)
+			}
+		})
+	}
+}
+
 func writeEnvTestFile(t *testing.T, root, relative, content string) {
 	t.Helper()
 	path := filepath.Join(root, filepath.FromSlash(relative))

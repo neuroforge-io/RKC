@@ -154,6 +154,19 @@ func TestExtractJSONSchemaRejectsTrailingJSON(t *testing.T) {
 	}
 }
 
+func TestExtractJSONSchemaRejectsMalformedTrailingData(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	writeSchemaTestFile(t, root, "malformed-trailing.schema.json", `{"$schema":"urn:test","properties":{}} {`)
+	fragment, err := Extract(Options{Root: root, Files: []pluginapi.FileRef{{ArtifactID: "schema", Path: "malformed-trailing.schema.json", SHA256: "sha"}}})
+	if err != nil {
+		t.Fatalf("Extract() error = %v", err)
+	}
+	if len(fragment.Diagnostics) != 1 || fragment.Diagnostics[0].Code != "RKC-SCH-1002" {
+		t.Fatalf("diagnostics = %#v, want one RKC-SCH-1002", fragment.Diagnostics)
+	}
+}
+
 func TestExtractJSONSchemaRejectsPathsOutsideRoot(t *testing.T) {
 	t.Parallel()
 	parent := t.TempDir()
@@ -211,6 +224,15 @@ func TestJSONSchemaHelpersBoundaries(t *testing.T) {
 	}
 	if !likelySchemaPath("SCHEMA.JSON") || likelySchemaPath("data.json") {
 		t.Error("likelySchemaPath classification mismatch")
+	}
+	if got := first(" ", "\t"); got != "" {
+		t.Fatalf("first(all blank) = %q, want empty", got)
+	}
+	collector := collector{seenNode: map[string]struct{}{}, seenEdge: map[string]struct{}{}}
+	collector.addEdge("references", "from", "to", "declared", "evidence", nil)
+	collector.addEdge("references", "from", "to", "declared", "evidence", nil)
+	if len(collector.fragment.Edges) != 1 {
+		t.Fatalf("duplicate edge count = %d, want 1", len(collector.fragment.Edges))
 	}
 }
 
