@@ -81,6 +81,30 @@ func TestMemoryOptionsValidationAndDefaults(t *testing.T) {
 	}
 }
 
+func TestPrepareLimitedBatchAndRecordBoundaryFailures(t *testing.T) {
+	options := DefaultMemoryOptions()
+	canceled, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, err := prepareLimitedBatch(canceled, "prepare", []rkcmodel.Node{{ID: "node"}}, func(value rkcmodel.Node) string { return value.ID }, options); err == nil {
+		t.Fatal("canceled batch was accepted")
+	}
+
+	options.MaxBuildRecords = 1
+	if _, err := prepareLimitedBatch(context.Background(), "prepare", []rkcmodel.Node{{ID: "a"}, {ID: "b"}}, func(value rkcmodel.Node) string { return value.ID }, options); err == nil {
+		t.Fatal("record-limited batch was accepted")
+	}
+
+	options = DefaultMemoryOptions()
+	options.MaxRecordBytes = 1024
+	options.MaxBatchBytes = 1
+	if _, _, err := prepareLimitedRecord("prepare", "node", rkcmodel.Node{ID: "node"}, options); err == nil {
+		t.Fatal("batch-byte-limited record was accepted")
+	}
+	if _, _, err := prepareLimitedRecord("prepare", "node", uncloneable(1), DefaultMemoryOptions()); err == nil {
+		t.Fatal("record with failing clone was accepted")
+	}
+}
+
 func TestDefaultDurableOptionsRaiseOnlyAggregateBuildCapacity(t *testing.T) {
 	memory := DefaultMemoryOptions()
 	durable := DefaultDurableOptions()

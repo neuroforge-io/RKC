@@ -189,6 +189,12 @@ func TestIsCanonicalDecodedBundleChecksEveryCanonicalRuleWithoutMutation(t *test
 		add(func(value *Bundle) { value.Snapshot.Metadata[key] = "operational" })
 	}
 	add(func(value *Bundle) { value.Artifacts[0], value.Artifacts[1] = value.Artifacts[1], value.Artifacts[0] })
+	add(func(value *Bundle) {
+		value.Artifacts[0].Path = "same.go"
+		value.Artifacts[1].Path = "same.go"
+		value.Artifacts[0].ID = "z"
+		value.Artifacts[1].ID = "a"
+	})
 	add(func(value *Bundle) { value.Nodes[0], value.Nodes[1] = value.Nodes[1], value.Nodes[0] })
 	add(func(value *Bundle) { value.Edges[0], value.Edges[1] = value.Edges[1], value.Edges[0] })
 	add(func(value *Bundle) { value.Evidence[0], value.Evidence[1] = value.Evidence[1], value.Evidence[0] })

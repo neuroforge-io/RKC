@@ -117,6 +117,10 @@ func TestDetailedDiffFormattingBranches(t *testing.T) {
 	if err != nil || !strings.Contains(markdown, "pkg.After\\|Cell") || !strings.Contains(markdown, "logical-only") {
 		t.Fatalf("printDiffMarkdown output=%q error=%v", markdown, err)
 	}
+	zeroMarkdown, err := captureStdout(t, func() error { printDiffMarkdown(report, 0); return nil })
+	if err != nil || !strings.Contains(zeroMarkdown, "| Symbol | Fields | Reasons |") || strings.Contains(zeroMarkdown, "pkg.Before") {
+		t.Fatalf("printDiffMarkdown zero limit output=%q error=%v", zeroMarkdown, err)
+	}
 }
 
 func TestSynthesisSelectionAndWriterFailureBranches(t *testing.T) {

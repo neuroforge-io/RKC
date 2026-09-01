@@ -47,6 +47,12 @@ func signedTestCursor(store *MemoryStore, payload string) Cursor {
 
 func TestTypedErrorsAndCursorFailurePaths(t *testing.T) {
 	store := newConformanceStore(t)
+	if payload, err := store.openCursor("query", "", "nodes", "scope"); err != nil || payload != (cursorPayload{}) {
+		t.Fatalf("empty cursor = %+v, %v", payload, err)
+	}
+	if _, err := store.openCursor("query", Cursor(strings.Repeat("x", maxCursorLen+1)), "nodes", "scope"); !errors.Is(err, ErrInvalidCursor) {
+		t.Fatalf("oversized cursor = %v", err)
+	}
 	if scopeFingerprint("a", "\x00b") == scopeFingerprint("a\x00", "b") ||
 		scopeFingerprint("a") == scopeFingerprint("a", "") {
 		t.Fatal("cursor scope encoding is not structurally unambiguous")
