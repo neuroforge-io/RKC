@@ -269,6 +269,22 @@ func TestPackageJSONFallbackNameAndMalformedTrailingData(t *testing.T) {
 	}
 }
 
+func TestPackageJSONUsesRootFallbackName(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	writeManifestTestFile(t, root, "package.json", `{"version":"1.0.0"}`)
+	fragment, err := Extract(Options{Root: root, Files: []pluginapi.FileRef{{ArtifactID: "root", Path: "package.json", SHA256: "sha"}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, node := range fragment.Nodes {
+		if node.Kind == "project" && node.Name == "npm-project" {
+			return
+		}
+	}
+	t.Fatalf("root package fallback project missing: %+v", fragment.Nodes)
+}
+
 func TestExtractManifestRejectsPathsOutsideRoot(t *testing.T) {
 	t.Parallel()
 	parent := t.TempDir()
@@ -286,6 +302,42 @@ func TestExtractManifestRejectsPathsOutsideRoot(t *testing.T) {
 	}
 	if len(fragment.Diagnostics) != 1 || fragment.Diagnostics[0].Code != "RKC-MAN-1001" {
 		t.Fatalf("diagnostics = %#v, want one RKC-MAN-1001", fragment.Diagnostics)
+	}
+}
+
+func TestManifestRequirementsAndDockerInstructionBoundaries(t *testing.T) {
+	t.Parallel()
+	parent := t.TempDir()
+	root := filepath.Join(parent, "repository")
+	if err := os.Mkdir(root, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	fragment, err := Extract(Options{Root: root, Files: []pluginapi.FileRef{{ArtifactID: "outside", Path: "../requirements.txt", SHA256: "sha"}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(fragment.Diagnostics) != 1 || fragment.Diagnostics[0].Code != "RKC-MAN-1201" {
+		t.Fatalf("outside requirements diagnostic = %+v", fragment.Diagnostics)
+	}
+	dockerRoot := t.TempDir()
+	writeManifestTestFile(t, dockerRoot, "Dockerfile", "FROM\nENV =bad\nARG\n")
+	docker, err := Extract(Options{Root: dockerRoot, Files: []pluginapi.FileRef{{ArtifactID: "docker", Path: "Dockerfile", SHA256: "sha"}}})
+	if err != nil || len(docker.Nodes) != 1 {
+		t.Fatalf("malformed Docker instructions = nodes=%d diagnostics=%+v err=%v", len(docker.Nodes), docker.Diagnostics, err)
+	}
+	var trailing []dockerInstruction
+	scanner := bufio.NewScanner(strings.NewReader(`ENV A=1 \`))
+	if err := scanDockerInstructions(scanner, maxDockerInstructionSize, func(instruction dockerInstruction) { trailing = append(trailing, instruction) }); err != nil {
+		t.Fatal(err)
+	}
+	if len(trailing) != 1 || trailing[0].text != "ENV A=1" {
+		t.Fatalf("trailing Docker instruction = %+v", trailing)
+	}
+	rootReq := t.TempDir()
+	writeManifestTestFile(t, rootReq, "requirements.txt", "@invalid\nrequests>=2\n")
+	req, err := Extract(Options{Root: rootReq, Files: []pluginapi.FileRef{{ArtifactID: "requirements", Path: "requirements.txt", SHA256: "sha"}}})
+	if err != nil || len(req.Nodes) != 2 {
+		t.Fatalf("requirements classification = nodes=%d diagnostics=%+v err=%v", len(req.Nodes), req.Diagnostics, err)
 	}
 }
 

@@ -31,7 +31,7 @@ func TestExtractOpenAPIRichDocumentsAndDeterminism(t *testing.T) {
   },
   "paths": {
     "/items": {
-      "parameters": [{"name": "trace", "in": "header", "type": "string"}],
+      "parameters": [{"name": "trace", "in": "header", "type": "string", "schema": {"$ref": "#/components/schemas/Base"}}],
       "get": {
         "operationId": "listItems",
         "summary": "List items",
@@ -179,6 +179,15 @@ func TestOpenAPIJSONIsBoundedAndRejectsDuplicateMembers(t *testing.T) {
 		&document,
 	); err == nil || !strings.Contains(err.Error(), "byte safety limit") {
 		t.Fatalf("oversized JSON error = %v", err)
+	}
+	if err := decodeJSONObject([]byte(`["not an object"]`), &document); err == nil {
+		t.Fatal("array-root JSON was accepted as an object")
+	}
+	root := t.TempDir()
+	writeOpenAPITestFile(t, root, "oversized.openapi.json", strings.Repeat("x", maximumOpenAPIDocumentBytes+1))
+	fragment, err := Extract(Options{Root: root, Files: []pluginapi.FileRef{{ArtifactID: "oversized", Path: "oversized.openapi.json", SHA256: "sha"}}})
+	if err != nil || len(fragment.Diagnostics) != 1 || fragment.Diagnostics[0].Code != "RKC-API-1001" {
+		t.Fatalf("oversized OpenAPI diagnostic = %+v, %v", fragment.Diagnostics, err)
 	}
 }
 
@@ -426,6 +435,9 @@ paths: {}
 func TestYAMLConversionSafetyBoundaries(t *testing.T) {
 	t.Parallel()
 	var document map[string]any
+	if err := decodeYAMLObject([]byte("openapi: \"unterminated\npaths: {}\n"), &document); err == nil {
+		t.Fatal("unterminated YAML scalar was accepted")
+	}
 	if err := decodeYAMLObject(make([]byte, maximumYAMLBytes+1), &document); err == nil ||
 		!strings.Contains(err.Error(), "byte safety limit") {
 		t.Fatalf("oversized YAML error = %v", err)
@@ -468,6 +480,30 @@ func TestYAMLConversionSafetyBoundaries(t *testing.T) {
 		1,
 	); err == nil || !strings.Contains(err.Error(), "unmatched key") {
 		t.Fatalf("unmatched-key error = %v", err)
+	}
+	sequenceError := &yaml.Node{Kind: yaml.SequenceNode, Content: []*yaml.Node{{Kind: yaml.DocumentNode}}}
+	if _, err := (&yamlConverter{}).convert(sequenceError, 1); err == nil || !strings.Contains(err.Error(), "unsupported YAML node") {
+		t.Fatalf("sequence child error = %v", err)
+	}
+	keyWithTag := &yaml.Node{Kind: yaml.MappingNode, Content: []*yaml.Node{
+		{Kind: yaml.ScalarNode, Tag: "!!str", Style: yaml.TaggedStyle, Value: "key"},
+		{Kind: yaml.ScalarNode, Tag: "!!str", Value: "value"},
+	}}
+	if _, err := (&yamlConverter{}).convert(keyWithTag, 1); err == nil || !strings.Contains(err.Error(), "explicit YAML tags") {
+		t.Fatalf("tagged mapping key error = %v", err)
+	}
+	if _, err := (&yamlConverter{nodes: maximumYAMLNodes - 1}).convert(
+		&yaml.Node{Kind: yaml.SequenceNode, Content: []*yaml.Node{{Kind: yaml.ScalarNode, Tag: "!!str", Value: "a"}, {Kind: yaml.ScalarNode, Tag: "!!str", Value: "b"}}}, 1,
+	); err == nil || !strings.Contains(err.Error(), "node safety limit") {
+		t.Fatalf("sequence node-limit error = %v", err)
+	}
+	if _, err := (&yamlConverter{nodes: maximumYAMLNodes - 1}).convertMapping(
+		&yaml.Node{Kind: yaml.MappingNode, Content: []*yaml.Node{
+			{Kind: yaml.ScalarNode, Tag: "!!str", Value: "a"}, {Kind: yaml.ScalarNode, Tag: "!!str", Value: "one"},
+			{Kind: yaml.ScalarNode, Tag: "!!str", Value: "b"}, {Kind: yaml.ScalarNode, Tag: "!!str", Value: "two"},
+		}}, 1,
+	); err == nil || !strings.Contains(err.Error(), "node safety limit") {
+		t.Fatalf("mapping node-limit error = %v", err)
 	}
 	deepFlow := []byte(strings.Repeat("[", maximumYAMLDepth+1) +
 		"0" + strings.Repeat("]", maximumYAMLDepth+1))
@@ -527,6 +563,20 @@ func TestYAMLScalarCanonicalization(t *testing.T) {
 				t.Fatalf("convertScalar() = %#v, want %#v", got, test.want)
 			}
 		})
+	}
+	for _, test := range []struct {
+		raw, want string
+	}{
+		{"-0x10", "-16"}, {"+0X10", "16"}, {"0o10", "8"}, {"0B11", "3"}, {"1_000", "1000"},
+	} {
+		if got, err := canonicalYAMLInteger(test.raw); err != nil || got != test.want {
+			t.Errorf("canonicalYAMLInteger(%q) = %q, %v; want %q", test.raw, got, err, test.want)
+		}
+	}
+	for _, raw := range []string{"", "+", "0x"} {
+		if _, err := canonicalYAMLInteger(raw); err == nil {
+			t.Errorf("canonicalYAMLInteger(%q) accepted invalid input", raw)
+		}
 	}
 }
 
