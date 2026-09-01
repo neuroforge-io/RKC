@@ -29,6 +29,34 @@ func TestMaterializePythonRejectsInvalidDestinations(t *testing.T) {
 	}
 }
 
+func TestMaterializePythonReportsWorkingDirectoryResolutionFailure(t *testing.T) {
+	original, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	base := t.TempDir()
+	cwd := filepath.Join(base, "cwd")
+	if err := os.Mkdir(cwd, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(cwd); err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		if err := os.Chdir(original); err != nil {
+			t.Errorf("restore working directory: %v", err)
+		}
+	}()
+	// Removing the current directory is valid on Unix, but makes filepath.Abs
+	// fail when it asks the operating system to resolve the working directory.
+	if err := os.Remove(cwd); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := MaterializePython("materialized"); err == nil {
+		t.Fatal("MaterializePython() succeeded with an unresolvable working directory")
+	}
+}
+
 func TestMaterializePythonWritesExecutableEmbeddedExtractor(t *testing.T) {
 	directory := filepath.Join(t.TempDir(), "nested", "plugins")
 	path, err := MaterializePython(directory)
