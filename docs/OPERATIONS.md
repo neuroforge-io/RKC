@@ -51,18 +51,24 @@ For a source-checkout workload sharing a memory-constrained host, the wrapper
 accepts a strictly smaller, fail-closed profile. For example:
 
 ```sh
-RKC_MEMORY_HIGH_MIB=1280 \
-RKC_MEMORY_MAX_MIB=1536 \
+RKC_MEMORY_HIGH_MIB=1024 \
+RKC_MEMORY_MAX_MIB=1280 \
 RKC_MEMORY_SWAP_MAX_MIB=256 \
-RKC_GO_MEMORY_LIMIT_MIB=1024 \
-scripts/with-rkc-limits.sh ./bin/rkc scan --stage-workers 1 --no-python /path/to/repository
+RKC_GO_MEMORY_LIMIT_MIB=768 \
+RKC_HOST_AVAILABLE_MEMORY_MIN_MIB=1536 \
+scripts/with-rkc-limits.sh ./bin/rkc scan --stage-workers 1 --stage-memory-mib 768 --no-python /path/to/repository
 ```
 
 The wrapper rejects non-integers, a hard ceiling below the soft ceiling, values
 above the 4 GiB / 4.5 GiB / 256 MiB release maxima, and a Go heap target above
-the soft ceiling. The guarded binary re-proves actual cgroup usage and accepts
-the smaller reserved unit; direct scan/open admission reuses that unit rather
-than creating a sibling with the default allowance.
+the soft ceiling. It also validates the optional host-wide reserve from 0
+through 65,536 MiB. When nonzero, protected `open`, `quickstart`, `scan`, and
+workbench execution fail closed before work and yield within one second if
+Linux `MemAvailable` falls below that floor. The guarded binary re-proves
+actual cgroup usage and accepts the smaller reserved unit; direct scan/open
+admission reuses that unit rather than creating a sibling with the default
+allowance. `rkc doctor` reports both the configured reserve and whether the
+current host satisfies it.
 
 For a trusted single-user Linux checkout, `rkc open --workbench <path>` is the
 explicit interactive route. The guarded child writes its one-time URL-fragment

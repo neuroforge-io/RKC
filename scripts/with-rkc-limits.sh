@@ -5,7 +5,9 @@
 # scheduling, lowest CPU niceness, IOWeight=1 when the user manager delegates
 # that controller, and a high OOM-kill preference. Operators may select a
 # strictly smaller host profile with RKC_MEMORY_HIGH_MIB, RKC_MEMORY_MAX_MIB,
-# RKC_MEMORY_SWAP_MAX_MIB, and RKC_GO_MEMORY_LIMIT_MIB.
+# RKC_MEMORY_SWAP_MAX_MIB, and RKC_GO_MEMORY_LIMIT_MIB. An optional
+# RKC_HOST_AVAILABLE_MEMORY_MIN_MIB reserve makes direct RKC work yield when
+# host-wide Linux MemAvailable falls below the selected floor.
 #
 # Processes matching the bounded RKC_HIGHER_PRIORITY_MARKERS classes are
 # treated as explicitly more important. The generic default is
@@ -60,8 +62,9 @@ guard_memory_high_mib=${RKC_MEMORY_HIGH_MIB:-4096}
 guard_memory_max_mib=${RKC_MEMORY_MAX_MIB:-4608}
 guard_memory_swap_max_mib=${RKC_MEMORY_SWAP_MAX_MIB:-256}
 guard_go_memory_limit_mib=${RKC_GO_MEMORY_LIMIT_MIB:-$guard_memory_high_mib}
+guard_host_available_memory_min_mib=${RKC_HOST_AVAILABLE_MEMORY_MIN_MIB:-0}
 invalid_memory_profile() {
-    echo "rkc resource guard: memory profile must use integer MiB values with high=64..4096, max=high..4608, swap=0..256, and Go limit=64..high" >&2
+    echo "rkc resource guard: memory profile must use integer MiB values with high=64..4096, max=high..4608, swap=0..256, Go limit=64..high, and host reserve=0..65536" >&2
     exit 2
 }
 for guard_memory_value in "$guard_memory_high_mib" "$guard_memory_max_mib" "$guard_memory_swap_max_mib" "$guard_go_memory_limit_mib"; do
@@ -69,18 +72,28 @@ for guard_memory_value in "$guard_memory_high_mib" "$guard_memory_max_mib" "$gua
         ''|*[!0123456789]*) invalid_memory_profile ;;
     esac
     [ "${#guard_memory_value}" -le 4 ] || invalid_memory_profile
+    case "$guard_memory_value" in
+        0?*) invalid_memory_profile ;;
+    esac
 done
 [ "$guard_memory_high_mib" -ge 64 ] && [ "$guard_memory_high_mib" -le 4096 ] || invalid_memory_profile
 [ "$guard_memory_max_mib" -ge "$guard_memory_high_mib" ] && [ "$guard_memory_max_mib" -le 4608 ] || invalid_memory_profile
 [ "$guard_memory_swap_max_mib" -le 256 ] || invalid_memory_profile
 [ "$guard_go_memory_limit_mib" -ge 64 ] && [ "$guard_go_memory_limit_mib" -le "$guard_memory_high_mib" ] || invalid_memory_profile
+case "$guard_host_available_memory_min_mib" in
+    ''|*[!0123456789]*) invalid_memory_profile ;;
+    0?*) invalid_memory_profile ;;
+esac
+[ "${#guard_host_available_memory_min_mib}" -le 5 ] || invalid_memory_profile
+[ "$guard_host_available_memory_min_mib" -le 65536 ] || invalid_memory_profile
 RKC_MEMORY_HIGH_MIB=$guard_memory_high_mib
 RKC_MEMORY_MAX_MIB=$guard_memory_max_mib
 RKC_MEMORY_SWAP_MAX_MIB=$guard_memory_swap_max_mib
 RKC_GO_MEMORY_LIMIT_MIB=$guard_go_memory_limit_mib
+RKC_HOST_AVAILABLE_MEMORY_MIN_MIB=$guard_host_available_memory_min_mib
 GOMEMLIMIT=${guard_go_memory_limit_mib}MiB
 export RKC_MEMORY_HIGH_MIB RKC_MEMORY_MAX_MIB RKC_MEMORY_SWAP_MAX_MIB
-export RKC_GO_MEMORY_LIMIT_MIB GOMEMLIMIT
+export RKC_GO_MEMORY_LIMIT_MIB RKC_HOST_AVAILABLE_MEMORY_MIN_MIB GOMEMLIMIT
 
 # Configured workload classes are explicitly higher priority on shared hosts.
 # The strict policy refuses to start new RKC work while one is visible (callers
@@ -232,6 +245,7 @@ case "$mode" in
             --expand-environment=no \
             --unit "$unit" \
             --setenv="RKC_RESOURCE_GUARD_UNIT=$unit" \
+            --setenv="RKC_HOST_AVAILABLE_MEMORY_MIN_MIB=$guard_host_available_memory_min_mib" \
             --property CPUWeight=1 \
             --property IOWeight=1 \
             --property CPUQuota=100% \
@@ -276,6 +290,7 @@ case "$mode" in
             --setenv="RKC_MEMORY_MAX_MIB=$guard_memory_max_mib" \
             --setenv="RKC_MEMORY_SWAP_MAX_MIB=$guard_memory_swap_max_mib" \
             --setenv="RKC_GO_MEMORY_LIMIT_MIB=$guard_go_memory_limit_mib" \
+            --setenv="RKC_HOST_AVAILABLE_MEMORY_MIN_MIB=$guard_host_available_memory_min_mib" \
             --setenv="RKC_HIGHER_PRIORITY_POLICY=$higher_priority_policy" \
             --setenv="RKC_HIGHER_PRIORITY_MARKERS=$higher_priority_markers" \
             --setenv="RKC_HIGHER_PRIORITY_LOAD_MAX=$guard_priority_load_max" \

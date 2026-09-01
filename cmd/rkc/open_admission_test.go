@@ -27,25 +27,27 @@ func (run guardedOpenRunnerFunc) Run(ctx context.Context, stdout, stderr io.Writ
 func TestOpenAdmissionSelectsExactlyOneExecutionPath(t *testing.T) {
 	sentinel := errors.New("outside envelope")
 	tests := []struct {
-		name         string
-		args         []string
-		platform     string
-		guardedChild bool
-		requireError error
-		wantLocal    int
-		wantLaunch   int
-		wantError    string
+		name          string
+		args          []string
+		platform      string
+		guardedChild  bool
+		requireError  error
+		wantLocal     int
+		wantProtected int
+		wantLaunch    int
+		wantError     string
 	}{
 		{name: "help stays local", args: []string{"--help"}, platform: "linux", requireError: sentinel, wantLocal: 1},
 		{name: "portable platform stays local", platform: "darwin", requireError: sentinel, wantLocal: 1},
 		{name: "admitted Linux parent still launches monitor", platform: "linux", wantLaunch: 1},
 		{name: "unadmitted Linux launches guard", platform: "linux", requireError: sentinel, wantLaunch: 1},
-		{name: "admitted protected child stays local", platform: "linux", guardedChild: true, wantLocal: 1},
+		{name: "admitted protected child stays local", platform: "linux", guardedChild: true, wantProtected: 1},
 		{name: "child cannot recurse", platform: "linux", guardedChild: true, requireError: sentinel, wantError: "protected open child"},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			localCalls := 0
+			protectedCalls := 0
 			launchCalls := 0
 			args := append([]string(nil), test.args...)
 			err := runOpenWithAdmissionUsing(
@@ -68,6 +70,13 @@ func TestOpenAdmissionSelectsExactlyOneExecutionPath(t *testing.T) {
 					}
 					return nil
 				},
+				func(_ context.Context, observed []string) error {
+					protectedCalls++
+					if !reflect.DeepEqual(observed, args) {
+						t.Fatalf("protected args = %#v, want %#v", observed, args)
+					}
+					return nil
+				},
 			)
 			if test.wantError == "" && err != nil {
 				t.Fatalf("admission = %v", err)
@@ -75,8 +84,8 @@ func TestOpenAdmissionSelectsExactlyOneExecutionPath(t *testing.T) {
 			if test.wantError != "" && (err == nil || !strings.Contains(err.Error(), test.wantError) || !errors.Is(err, sentinel)) {
 				t.Fatalf("admission error = %v, want %q wrapping sentinel", err, test.wantError)
 			}
-			if localCalls != test.wantLocal || launchCalls != test.wantLaunch {
-				t.Fatalf("execution calls = local:%d launch:%d, want local:%d launch:%d", localCalls, launchCalls, test.wantLocal, test.wantLaunch)
+			if localCalls != test.wantLocal || protectedCalls != test.wantProtected || launchCalls != test.wantLaunch {
+				t.Fatalf("execution calls = local:%d protected:%d launch:%d, want local:%d protected:%d launch:%d", localCalls, protectedCalls, launchCalls, test.wantLocal, test.wantProtected, test.wantLaunch)
 			}
 		})
 	}
@@ -84,20 +93,24 @@ func TestOpenAdmissionSelectsExactlyOneExecutionPath(t *testing.T) {
 
 func TestOpenAdmissionRejectsMissingDependencies(t *testing.T) {
 	local := func(context.Context, []string) error { return nil }
+	protected := func(context.Context, []string) error { return nil }
 	launch := func(context.Context, []string) error { return nil }
 	require := func() error { return nil }
 	for name, call := range map[string]func() error{
 		"nil context": func() error {
-			return runOpenWithAdmissionUsing(nil, nil, "linux", false, require, launch, local)
+			return runOpenWithAdmissionUsing(nil, nil, "linux", false, require, launch, local, protected)
 		},
 		"nil require": func() error {
-			return runOpenWithAdmissionUsing(context.Background(), nil, "linux", false, nil, launch, local)
+			return runOpenWithAdmissionUsing(context.Background(), nil, "linux", false, nil, launch, local, protected)
 		},
 		"nil launch": func() error {
-			return runOpenWithAdmissionUsing(context.Background(), nil, "linux", false, require, nil, local)
+			return runOpenWithAdmissionUsing(context.Background(), nil, "linux", false, require, nil, local, protected)
 		},
 		"nil local": func() error {
-			return runOpenWithAdmissionUsing(context.Background(), nil, "linux", false, require, launch, nil)
+			return runOpenWithAdmissionUsing(context.Background(), nil, "linux", false, require, launch, nil, protected)
+		},
+		"nil protected local": func() error {
+			return runOpenWithAdmissionUsing(context.Background(), nil, "linux", false, require, launch, local, nil)
 		},
 	} {
 		t.Run(name, func(t *testing.T) {
@@ -395,6 +408,7 @@ func TestGuardedOpenEnvironmentIsMinimalDeterministicAndSubordinate(t *testing.T
 	t.Setenv("DISPLAY", ":42")
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv("XDG_CACHE_HOME", filepath.Join(t.TempDir(), "cache"))
+	t.Setenv(resourceguard.HostAvailableMemoryMinimumEnvironment, "1536")
 	first := guardedOpenEnvironment("/tmp/rkc-ready.json")
 	second := guardedOpenEnvironment("/tmp/rkc-ready.json")
 	if !reflect.DeepEqual(first, second) || !sort.StringsAreSorted(first) {
@@ -408,6 +422,7 @@ func TestGuardedOpenEnvironmentIsMinimalDeterministicAndSubordinate(t *testing.T
 		"CUDA_VISIBLE_DEVICES=-1",
 		"XDG_CACHE_HOME=" + os.Getenv("XDG_CACHE_HOME"),
 		guardedOpenReadyFileEnvironment + "=/tmp/rkc-ready.json",
+		resourceguard.HostAvailableMemoryMinimumEnvironment + "=1536",
 	} {
 		if !strings.Contains(joined, required) {
 			t.Fatalf("guarded environment omits %q: %s", required, joined)

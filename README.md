@@ -205,19 +205,28 @@ inside RKC's cgroup. Direct `scan` requires an explicit final
 `--no-python=true` or `--no-plugins=true` setting; the shorter true form
 `--no-python` is used throughout these examples.
 
+On shared Linux hosts, `RKC_HOST_AVAILABLE_MEMORY_MIN_MIB` optionally reserves
+host-wide `MemAvailable` for higher-priority peers. `open`, direct `quickstart`,
+direct `scan`, and the protected workbench check it before work and every
+second thereafter; malformed configuration and unreadable Linux memory state
+fail closed. Zero or an unset value disables this additional host-wide floor
+without weakening the mandatory per-cgroup ceilings.
+
 On a memory-constrained shared host, the low-level source-checkout wrapper can
 select a smaller profile without weakening any scheduling protection:
 
 ```sh
-RKC_MEMORY_HIGH_MIB=1280 \
-RKC_MEMORY_MAX_MIB=1536 \
+RKC_MEMORY_HIGH_MIB=1024 \
+RKC_MEMORY_MAX_MIB=1280 \
 RKC_MEMORY_SWAP_MAX_MIB=256 \
-RKC_GO_MEMORY_LIMIT_MIB=1024 \
-scripts/with-rkc-limits.sh ./bin/rkc scan --stage-workers 1 --no-python /path/to/repository
+RKC_GO_MEMORY_LIMIT_MIB=768 \
+RKC_HOST_AVAILABLE_MEMORY_MIN_MIB=1536 \
+scripts/with-rkc-limits.sh ./bin/rkc scan --stage-workers 1 --stage-memory-mib 768 --no-python /path/to/repository
 ```
 
-The four values are validated before systemd is invoked. They may only tighten
-the release-profile maxima; the Go heap target must not exceed the soft ceiling.
+All five values are validated before systemd is invoked. The cgroup values may
+only tighten the release-profile maxima, the Go heap target must not exceed the
+soft ceiling, and the host reserve must be an integer from 0 through 65,536 MiB.
 
 Press Ctrl-C in the terminal to stop cleanly. Use `open --no-browser` on
 headless hosts; the URL is still printed. The command accepts any local folder,

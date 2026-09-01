@@ -40,7 +40,11 @@ hard ceiling before any atlas, cache, journal, or snapshot write. An existing
 exact RKC unit is reused; the scratch-container path instead requires a private
 cgroup root to prove an equal-or-tighter hard ceiling, swap/task/weight/OOM
 controls, and lowered per-thread scheduling. Both paths continuously recheck
-the envelope and yield to configured higher-priority workload classes. The
+the envelope and yield to configured higher-priority workload classes. Set
+`RKC_HOST_AVAILABLE_MEMORY_MIN_MIB` to an integer MiB floor when RKC must also
+reserve host-wide Linux `MemAvailable` for those peers; protected first-run and
+workbench paths check it before work and once per second. Zero or unset disables
+that optional floor, while malformed configuration fails closed. The
 generic marker set is `torchrun,lm_eval`;
 `RKC_HIGHER_PRIORITY_MARKERS=training,benchmark` replaces it with 1-16 unique
 lower-case ASCII classes, each at most 32 bytes and 255 bytes total. Empty

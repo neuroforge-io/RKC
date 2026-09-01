@@ -31,6 +31,7 @@ func runServeWithContext(ctx context.Context, args []string) (resultErr error) {
 		requireLowPriority:    resourceguard.RequireCurrentProcessLowPriority,
 		reproveLowPriority:    resourceguard.RequireCurrentProcessReusableLowPriority,
 		checkHigherPriority:   resourceguard.CurrentPriorityCheck(),
+		checkHostMemory:       resourceguard.CheckHostAvailableMemory,
 		priorityCheckInterval: time.Second,
 	})
 }
@@ -39,6 +40,7 @@ type serveSafetyChecks struct {
 	requireLowPriority    func() error
 	reproveLowPriority    func() error
 	checkHigherPriority   func() error
+	checkHostMemory       func() error
 	priorityCheckInterval time.Duration
 }
 
@@ -89,7 +91,8 @@ func runServeWithSafety(ctx context.Context, args []string, safety serveSafetyCh
 	}
 	var executable string
 	if *workbenchEnabled {
-		if safety.requireLowPriority == nil || safety.reproveLowPriority == nil || safety.checkHigherPriority == nil || safety.priorityCheckInterval <= 0 {
+		if safety.requireLowPriority == nil || safety.reproveLowPriority == nil || safety.checkHigherPriority == nil ||
+			safety.checkHostMemory == nil || safety.priorityCheckInterval <= 0 {
 			return errors.New("workbench safety checks are unavailable")
 		}
 		if err := safety.requireLowPriority(); err != nil {
@@ -97,6 +100,9 @@ func runServeWithSafety(ctx context.Context, args []string, safety serveSafetyCh
 		}
 		if err := safety.checkHigherPriority(); err != nil {
 			return fmt.Errorf("workbench priority admission: %w", err)
+		}
+		if err := safety.checkHostMemory(); err != nil {
+			return fmt.Errorf("workbench host-memory admission: %w", err)
 		}
 		var err error
 		executable, err = os.Executable()
@@ -118,7 +124,7 @@ func runServeWithSafety(ctx context.Context, args []string, safety serveSafetyCh
 		// higher-priority work to start after initial admission. Recheck before
 		// any listener or bootstrap capability is published; the outer `rkc open`
 		// guard also monitors and can terminate this child throughout the load.
-		if err := recheckWorkbenchSafety(safety.reproveLowPriority, safety.checkHigherPriority); err != nil {
+		if err := recheckWorkbenchSafety(safety.reproveLowPriority, safety.checkHigherPriority, safety.checkHostMemory); err != nil {
 			return fmt.Errorf("workbench safety changed during dataset preparation: %w", err)
 		}
 		commandContext := servedWorkbenchCommandContext(dataset.Root, dataset.Manifest.ID, *database)
@@ -169,7 +175,7 @@ func runServeWithSafety(ctx context.Context, args []string, safety serveSafetyCh
 		monitorDone := make(chan error, 1)
 		go func() {
 			monitorDone <- monitorWorkbenchSafety(monitorContext, priorityTicker.C, func() error {
-				return recheckWorkbenchSafety(safety.reproveLowPriority, safety.checkHigherPriority)
+				return recheckWorkbenchSafety(safety.reproveLowPriority, safety.checkHigherPriority, safety.checkHostMemory)
 			})
 		}()
 		defer func() {
@@ -239,8 +245,8 @@ func monitorWorkbenchSafety(ctx context.Context, ticks <-chan time.Time, check f
 	}
 }
 
-func recheckWorkbenchSafety(reproveEnvelope, checkHigherPriority func() error) error {
-	if reproveEnvelope == nil || checkHigherPriority == nil {
+func recheckWorkbenchSafety(reproveEnvelope, checkHigherPriority, checkHostMemory func() error) error {
+	if reproveEnvelope == nil || checkHigherPriority == nil || checkHostMemory == nil {
 		return errors.New("workbench safety recheck is unavailable")
 	}
 	if err := reproveEnvelope(); err != nil {
@@ -248,6 +254,9 @@ func recheckWorkbenchSafety(reproveEnvelope, checkHigherPriority func() error) e
 	}
 	if err := checkHigherPriority(); err != nil {
 		return fmt.Errorf("higher-priority admission changed: %w", err)
+	}
+	if err := checkHostMemory(); err != nil {
+		return fmt.Errorf("host-memory reserve changed: %w", err)
 	}
 	return nil
 }

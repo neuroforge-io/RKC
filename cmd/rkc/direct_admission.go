@@ -115,6 +115,7 @@ const directCurrentProcessCheckInterval = time.Second
 
 type protectedDirectLocalDependencies struct {
 	checkHigherPriority func() error
+	checkHostMemory     func() error
 	requireEnvelope     func() error
 	newTicker           func(time.Duration) (<-chan time.Time, func())
 }
@@ -132,6 +133,7 @@ func runProtectedDirectLocal(
 		local,
 		protectedDirectLocalDependencies{
 			checkHigherPriority: resourceguard.CurrentPriorityCheck(),
+			checkHostMemory:     resourceguard.CheckHostAvailableMemory,
 			requireEnvelope:     resourceguard.RequireCurrentProcessReusableLowPriority,
 			newTicker: func(interval time.Duration) (<-chan time.Time, func()) {
 				ticker := time.NewTicker(interval)
@@ -148,7 +150,7 @@ func runProtectedDirectLocalUsing(
 	local func(context.Context, []string) error,
 	dependencies protectedDirectLocalDependencies,
 ) error {
-	if ctx == nil || local == nil || dependencies.checkHigherPriority == nil ||
+	if ctx == nil || local == nil || dependencies.checkHigherPriority == nil || dependencies.checkHostMemory == nil ||
 		dependencies.requireEnvelope == nil || dependencies.newTicker == nil {
 		return errors.New("protected direct local monitoring is not configured")
 	}
@@ -157,6 +159,9 @@ func runProtectedDirectLocalUsing(
 	}
 	if err := dependencies.checkHigherPriority(); err != nil {
 		return fmt.Errorf("protected %s yielded before local work: %w", command, err)
+	}
+	if err := dependencies.checkHostMemory(); err != nil {
+		return fmt.Errorf("protected %s host-memory reserve blocked local work: %w", command, err)
 	}
 	if err := dependencies.requireEnvelope(); err != nil {
 		return fmt.Errorf("protected %s current-process envelope is not reusable: %w", command, err)
@@ -186,6 +191,11 @@ func runProtectedDirectLocalUsing(
 				}
 				if err := dependencies.checkHigherPriority(); err != nil {
 					monitorResult <- fmt.Errorf("protected %s yielded during local work: %w", command, err)
+					cancelWork()
+					return
+				}
+				if err := dependencies.checkHostMemory(); err != nil {
+					monitorResult <- fmt.Errorf("protected %s yielded to the host-memory reserve during local work: %w", command, err)
 					cancelWork()
 					return
 				}

@@ -39,6 +39,9 @@ func runOpenWithAdmission(ctx context.Context, args []string) error {
 		resourceguard.RequireCurrentProcessLowPriority,
 		launchGuardedOpen,
 		runOpenContext,
+		func(protectedContext context.Context, protectedArguments []string) error {
+			return runProtectedDirectLocal(protectedContext, "open", protectedArguments, runOpenContext)
+		},
 	)
 }
 
@@ -50,8 +53,9 @@ func runOpenWithAdmissionUsing(
 	requireEnvelope func() error,
 	launch func(context.Context, []string) error,
 	local func(context.Context, []string) error,
+	protectedLocal func(context.Context, []string) error,
 ) error {
-	if ctx == nil || requireEnvelope == nil || launch == nil || local == nil {
+	if ctx == nil || requireEnvelope == nil || launch == nil || local == nil || protectedLocal == nil {
 		return errors.New("open resource admission is not configured")
 	}
 	if openHelpRequest(args) || platform != "linux" {
@@ -66,7 +70,7 @@ func runOpenWithAdmissionUsing(
 	if err := requireEnvelope(); err != nil {
 		return fmt.Errorf("protected open child is outside its required resource envelope: %w", err)
 	}
-	return local(ctx, args)
+	return protectedLocal(ctx, args)
 }
 
 func openHelpRequest(args []string) bool {
@@ -300,6 +304,7 @@ func guardedOpenEnvironment(readyFile string) []string {
 		// needs module caches and package-manager state to resolve imports.
 		"GOENV", "GOFLAGS", "GOMODCACHE", "GOPATH", "GOPROXY", "GOSUMDB", "GOCACHE",
 		"npm_config_cache",
+		resourceguard.HostAvailableMemoryMinimumEnvironment,
 	}
 	values := make(map[string]string, len(allowed)+14)
 	for _, name := range allowed {

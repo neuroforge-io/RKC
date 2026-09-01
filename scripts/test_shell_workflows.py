@@ -218,6 +218,29 @@ class ShellWorkflowTests(unittest.TestCase):
                 self.assertNotIn(value, result.stderr)
                 self.assertNotIn(sentinel, result.stderr)
 
+    def test_resource_guard_rejects_invalid_host_memory_reserve_privately(
+        self,
+    ) -> None:
+        sentinel = "SUPER_SECRET_HOST_MEMORY_RESERVE"
+        for value in ("-1", "+1", "1.5", "65537", "0001", "000001", "9" * 64, sentinel):
+            with self.subTest(value_length=len(value)):
+                environment = os.environ.copy()
+                environment["RKC_HOST_AVAILABLE_MEMORY_MIN_MIB"] = value
+                result = subprocess.run(
+                    ["/bin/sh", str(ROOT / "scripts/with-rkc-limits.sh"), "true"],
+                    cwd=ROOT,
+                    env=environment,
+                    check=False,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    text=True,
+                    timeout=10,
+                )
+                self.assertEqual(result.returncode, 2, result.stderr)
+                self.assertIn("host reserve=0..65536", result.stderr)
+                self.assertNotIn(value, result.stderr)
+                self.assertNotIn(sentinel, result.stderr)
+
     def test_resource_guard_propagates_priority_contract_to_service(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             binary_dir = Path(temporary)
@@ -236,6 +259,9 @@ class ShellWorkflowTests(unittest.TestCase):
                     "case \" $* \" in "
                     "*' --setenv=RKC_HIGHER_PRIORITY_LOAD_MAX=0.25 '*) ;; "
                     "*) exit 93 ;; esac\n"
+                    "case \" $* \" in "
+                    "*' --setenv=RKC_HOST_AVAILABLE_MEMORY_MIN_MIB=1536 '*) ;; "
+                    "*) exit 94 ;; esac\n"
                     "exit 0\n"
                 ),
             }
@@ -253,6 +279,7 @@ class ShellWorkflowTests(unittest.TestCase):
                     "RKC_HIGHER_PRIORITY_POLICY": "yield",
                     "RKC_HIGHER_PRIORITY_MARKERS": "critical_train,batch2",
                     "RKC_HIGHER_PRIORITY_LOAD_MAX": "0.25",
+                    "RKC_HOST_AVAILABLE_MEMORY_MIN_MIB": "1536",
                     "XDG_RUNTIME_DIR": temporary,
                     "DBUS_SESSION_BUS_ADDRESS": "unix:path=/tmp/fixture-bus",
                 }

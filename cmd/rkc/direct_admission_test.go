@@ -155,10 +155,12 @@ func TestDirectCommandAdmissionRejectsMissingDependencies(t *testing.T) {
 
 func TestProtectedDirectLocalContinuouslyYieldsAndReprovesEnvelope(t *testing.T) {
 	priorityActive := errors.New("priority active")
+	hostMemoryLow := errors.New("host memory low")
 	envelopeDrift := errors.New("envelope drift")
 	for _, test := range []struct {
 		name              string
 		checkPriority     func() error
+		checkHostMemory   func() error
 		requireEnvelope   func() error
 		triggerTick       bool
 		wantError         error
@@ -172,6 +174,14 @@ func TestProtectedDirectLocalContinuouslyYieldsAndReprovesEnvelope(t *testing.T)
 			},
 			requireEnvelope: func() error { return nil },
 			wantError:       priorityActive,
+		},
+		{
+			name:              "initial host-memory rejection starts no work",
+			checkPriority:     func() error { return nil },
+			checkHostMemory:   func() error { return hostMemoryLow },
+			requireEnvelope:   func() error { return nil },
+			wantError:         hostMemoryLow,
+			wantTickerStarted: 0,
 		},
 		{
 			name:              "initial envelope rejection starts no work",
@@ -195,6 +205,25 @@ func TestProtectedDirectLocalContinuouslyYieldsAndReprovesEnvelope(t *testing.T)
 			requireEnvelope:   func() error { return nil },
 			triggerTick:       true,
 			wantError:         priorityActive,
+			wantLocal:         1,
+			wantTickerStarted: 1,
+		},
+		{
+			name:          "continuous host-memory rejection cancels work",
+			checkPriority: func() error { return nil },
+			checkHostMemory: func() func() error {
+				calls := 0
+				return func() error {
+					calls++
+					if calls > 1 {
+						return hostMemoryLow
+					}
+					return nil
+				}
+			}(),
+			requireEnvelope:   func() error { return nil },
+			triggerTick:       true,
+			wantError:         hostMemoryLow,
 			wantLocal:         1,
 			wantTickerStarted: 1,
 		},
@@ -225,6 +254,10 @@ func TestProtectedDirectLocalContinuouslyYieldsAndReprovesEnvelope(t *testing.T)
 			if test.triggerTick {
 				ticks <- time.Unix(1, 0)
 			}
+			checkHostMemory := test.checkHostMemory
+			if checkHostMemory == nil {
+				checkHostMemory = func() error { return nil }
+			}
 			err := runProtectedDirectLocalUsing(
 				context.Background(),
 				"scan",
@@ -239,6 +272,7 @@ func TestProtectedDirectLocalContinuouslyYieldsAndReprovesEnvelope(t *testing.T)
 				},
 				protectedDirectLocalDependencies{
 					checkHigherPriority: test.checkPriority,
+					checkHostMemory:     checkHostMemory,
 					requireEnvelope:     test.requireEnvelope,
 					newTicker: func(interval time.Duration) (<-chan time.Time, func()) {
 						tickerStarts++
@@ -277,6 +311,7 @@ func TestProtectedDirectLocalReturnsLocalFailureWithoutMonitorNoise(t *testing.T
 		func(context.Context, []string) error { return sentinel },
 		protectedDirectLocalDependencies{
 			checkHigherPriority: func() error { return nil },
+			checkHostMemory:     func() error { return nil },
 			requireEnvelope:     func() error { return nil },
 			newTicker: func(time.Duration) (<-chan time.Time, func()) {
 				return ticks, func() { stopped++ }
@@ -299,6 +334,7 @@ func TestProtectedDirectLocalHonorsCancellationBeforeInspectionOrWork(t *testing
 		func(context.Context, []string) error { calls++; return nil },
 		protectedDirectLocalDependencies{
 			checkHigherPriority: func() error { calls++; return nil },
+			checkHostMemory:     func() error { calls++; return nil },
 			requireEnvelope:     func() error { calls++; return nil },
 			newTicker: func(time.Duration) (<-chan time.Time, func()) {
 				calls++
@@ -350,6 +386,7 @@ func TestProtectedDirectLocalRejectsMissingMonitorDependencies(t *testing.T) {
 	local := func(context.Context, []string) error { return nil }
 	valid := protectedDirectLocalDependencies{
 		checkHigherPriority: func() error { return nil },
+		checkHostMemory:     func() error { return nil },
 		requireEnvelope:     func() error { return nil },
 		newTicker: func(time.Duration) (<-chan time.Time, func()) {
 			return make(chan time.Time), func() {}
@@ -365,6 +402,11 @@ func TestProtectedDirectLocalRejectsMissingMonitorDependencies(t *testing.T) {
 		"nil priority": func() error {
 			dependencies := valid
 			dependencies.checkHigherPriority = nil
+			return runProtectedDirectLocalUsing(context.Background(), "scan", nil, local, dependencies)
+		},
+		"nil host memory": func() error {
+			dependencies := valid
+			dependencies.checkHostMemory = nil
 			return runProtectedDirectLocalUsing(context.Background(), "scan", nil, local, dependencies)
 		},
 		"nil envelope": func() error {
@@ -395,6 +437,7 @@ func TestLaunchGuardedDirectUsesExactArgumentsGuardAndSanitizedEnvironment(t *te
 	t.Setenv("RKC_DIRECT_SECRET_SENTINEL", "must-not-pass")
 	t.Setenv("DISPLAY", ":42")
 	t.Setenv("HOME", t.TempDir())
+	t.Setenv(resourceguard.HostAvailableMemoryMinimumEnvironment, "1536")
 	var captured resourceguard.Config
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer
@@ -433,6 +476,7 @@ func TestLaunchGuardedDirectUsesExactArgumentsGuardAndSanitizedEnvironment(t *te
 		"GOMAXPROCS=1",
 		"OMP_NUM_THREADS=1",
 		"CUDA_VISIBLE_DEVICES=-1",
+		resourceguard.HostAvailableMemoryMinimumEnvironment + "=1536",
 	} {
 		if !strings.Contains(environment, required) {
 			t.Fatalf("guard environment omits %q: %s", required, environment)

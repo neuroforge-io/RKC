@@ -97,6 +97,7 @@ func runDoctor(args []string) error {
 	checks = append(checks, gitCheck)
 	checks = append(checks, pythonIsolationCheck(cfg, err))
 	checks = append(checks, higherPriorityPolicyCheck())
+	checks = append(checks, hostMemoryReserveCheck())
 
 	fatalFailures := 0
 	warnings := 0
@@ -135,6 +136,47 @@ func runDoctor(args []string) error {
 		return fmt.Errorf("doctor found %d optional capability warning(s) in strict mode", warnings)
 	}
 	return nil
+}
+
+func hostMemoryReserveCheck() doctorCheck {
+	return hostMemoryReserveCheckUsing(
+		resourceguard.HostAvailableMemoryMinimumBytesFromEnvironment,
+		resourceguard.CheckHostAvailableMemory,
+	)
+}
+
+func hostMemoryReserveCheckUsing(parse func() (int64, error), check func() error) doctorCheck {
+	result := doctorCheck{Name: "host-memory-reserve", Fatal: false}
+	if parse == nil || check == nil {
+		result.Status = "fail"
+		result.Detail = "host-memory reserve inspection is not configured"
+		result.Remediation = "reinstall RKC"
+		return result
+	}
+	minimum, err := parse()
+	if err != nil {
+		result.Status = "fail"
+		result.Detail = err.Error() + "; protected direct execution fails closed"
+		result.Remediation = "unset RKC_HOST_AVAILABLE_MEMORY_MIN_MIB or set an integer MiB value from 0 through 65536"
+		return result
+	}
+	if minimum == 0 {
+		result.Status = "pass"
+		result.Detail = "disabled; per-cgroup memory ceilings remain enforced"
+		return result
+	}
+	if err := check(); err != nil {
+		result.Status = "fail"
+		result.Detail = err.Error()
+		result.Remediation = "reduce RKC_HOST_AVAILABLE_MEMORY_MIN_MIB only if the higher-priority host reserve remains safe"
+		return result
+	}
+	result.Status = "pass"
+	result.Detail = fmt.Sprintf(
+		"enabled at %d MiB; current Linux MemAvailable satisfies the reserve",
+		minimum/(1024*1024),
+	)
+	return result
 }
 
 func higherPriorityPolicyCheck() doctorCheck {

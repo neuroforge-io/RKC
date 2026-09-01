@@ -319,6 +319,7 @@ func TestRunServePublishesReadyServesAndShutsDownCleanly(t *testing.T) {
 					return nil
 				}
 			},
+			checkHostMemory:       func() error { return nil },
 			priorityCheckInterval: 5 * time.Millisecond,
 		})
 	}()
@@ -487,7 +488,7 @@ func TestWorkbenchSafetyRecheckFailsClosedOnEnvelopeDrift(t *testing.T) {
 	err := recheckWorkbenchSafety(func() error { return envelopeError }, func() error {
 		priorityChecks++
 		return nil
-	})
+	}, func() error { return nil })
 	if !errors.Is(err, resourceguard.ErrLowPriorityEnvelope) || !strings.Contains(err.Error(), "resource envelope drifted") {
 		t.Fatalf("envelope recheck = %v", err)
 	}
@@ -496,11 +497,16 @@ func TestWorkbenchSafetyRecheckFailsClosedOnEnvelopeDrift(t *testing.T) {
 	}
 
 	priorityError := fmt.Errorf("%w: fixture", resourceguard.ErrHigherPriorityActive)
-	err = recheckWorkbenchSafety(func() error { return nil }, func() error { return priorityError })
+	err = recheckWorkbenchSafety(func() error { return nil }, func() error { return priorityError }, func() error { return nil })
 	if !errors.Is(err, resourceguard.ErrHigherPriorityActive) || !strings.Contains(err.Error(), "higher-priority admission changed") {
 		t.Fatalf("priority recheck = %v", err)
 	}
-	if err := recheckWorkbenchSafety(nil, func() error { return nil }); err == nil {
+	hostMemoryError := fmt.Errorf("%w: fixture", resourceguard.ErrHostMemoryReserve)
+	err = recheckWorkbenchSafety(func() error { return nil }, func() error { return nil }, func() error { return hostMemoryError })
+	if !errors.Is(err, resourceguard.ErrHostMemoryReserve) || !strings.Contains(err.Error(), "host-memory reserve changed") {
+		t.Fatalf("host-memory recheck = %v", err)
+	}
+	if err := recheckWorkbenchSafety(nil, func() error { return nil }, func() error { return nil }); err == nil {
 		t.Fatal("nil envelope recheck was accepted")
 	}
 }
@@ -520,6 +526,7 @@ func TestServePrioritySafetyIsWorkbenchOnlyAndPrecedesDatasetLoading(t *testing.
 			checks++
 			return priorityError
 		},
+		checkHostMemory:       func() error { return nil },
 		priorityCheckInterval: time.Second,
 	})
 	if !errors.Is(err, resourceguard.ErrHigherPriorityActive) {
@@ -532,6 +539,27 @@ func TestServePrioritySafetyIsWorkbenchOnlyAndPrecedesDatasetLoading(t *testing.
 		t.Fatalf("priority rejection created readiness state: %v", statErr)
 	}
 
+	hostMemoryError := fmt.Errorf("%w: admission fixture", resourceguard.ErrHostMemoryReserve)
+	hostChecks := 0
+	err = runServeWithSafety(context.Background(), []string{
+		"--workbench", "--dir", missingAtlas, "--ready-file", ready,
+	}, serveSafetyChecks{
+		requireLowPriority:  func() error { return nil },
+		reproveLowPriority:  func() error { return nil },
+		checkHigherPriority: func() error { return nil },
+		checkHostMemory: func() error {
+			hostChecks++
+			return hostMemoryError
+		},
+		priorityCheckInterval: time.Second,
+	})
+	if !errors.Is(err, resourceguard.ErrHostMemoryReserve) || !strings.Contains(err.Error(), "host-memory admission") || hostChecks != 1 {
+		t.Fatalf("workbench host-memory admission = %v, checks=%d", err, hostChecks)
+	}
+	if _, statErr := os.Stat(ready); !errors.Is(statErr, os.ErrNotExist) {
+		t.Fatalf("host-memory rejection created readiness state: %v", statErr)
+	}
+
 	envelopeChecks := 0
 	err = runServeWithSafety(context.Background(), []string{
 		"--workbench", "--dir", missingAtlas, "--addr", "127.0.0.1:8787", "--ready-file", ready,
@@ -542,6 +570,7 @@ func TestServePrioritySafetyIsWorkbenchOnlyAndPrecedesDatasetLoading(t *testing.
 		},
 		reproveLowPriority:    func() error { return nil },
 		checkHigherPriority:   func() error { return nil },
+		checkHostMemory:       func() error { return nil },
 		priorityCheckInterval: time.Second,
 	})
 	if err == nil || !strings.Contains(err.Error(), "ephemeral port 0") {
