@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import io
 import os
+import runpy
 import subprocess
 import sys
 import tempfile
@@ -224,6 +225,11 @@ class CoverageGateTests(unittest.TestCase):
             self.assertTrue(coverage_gate._is_generated(source, coverage_gate.GENERATED_RE))
             source.write_text("package fixture\n", encoding="utf-8")
             self.assertFalse(coverage_gate._is_generated(source, coverage_gate.GENERATED_RE))
+            source.write_text("ordinary\n" * 20, encoding="utf-8")
+            self.assertFalse(coverage_gate._is_generated(source, coverage_gate.GENERATED_RE))
+            with mock.patch.object(Path, "open", side_effect=OSError("unreadable")):
+                with self.assertRaisesRegex(coverage_gate.GateError, "cannot read"):
+                    coverage_gate._is_generated(source, coverage_gate.GENERATED_RE)
             with self.assertRaisesRegex(coverage_gate.GateError, "escapes"):
                 coverage_gate._relative(Path(temporary).parent / "outside", root)
 
@@ -265,6 +271,97 @@ class CoverageGateTests(unittest.TestCase):
             with self.assertRaisesRegex(coverage_gate.GateError, "go failed"):
                 coverage_gate.discover_go_packages(root)
 
+    @mock.patch("coverage_gate.subprocess.run")
+    def test_discover_go_packages_rejects_malformed_inventory(self, run: mock.Mock) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary).resolve()
+            package_dir = root / "pkg"
+            package_dir.mkdir()
+            (package_dir / "good.go").write_text("package pkg\n", encoding="utf-8")
+            (package_dir / "generated.go").write_text(
+                "// Code generated fixture. DO NOT EDIT.\npackage pkg\n", encoding="utf-8"
+            )
+
+            def document(**overrides: object) -> dict[str, object]:
+                value: dict[str, object] = {
+                    "ImportPath": "example.test/rkc/pkg",
+                    "Dir": str(package_dir),
+                    "GoFiles": ["good.go"],
+                    "IgnoredGoFiles": [],
+                    "Module": {"Main": True, "Path": "example.test/rkc"},
+                }
+                value.update(overrides)
+                return value
+
+            def expect(raw: object, marker: str) -> None:
+                run.return_value = subprocess.CompletedProcess(
+                    [], 0, stdout=json.dumps(raw), stderr=""
+                )
+                with self.subTest(marker=marker), self.assertRaisesRegex(
+                    coverage_gate.GateError, marker
+                ):
+                    coverage_gate.discover_go_packages(root)
+
+            def expect_text(payload: str, marker: str) -> None:
+                run.return_value = subprocess.CompletedProcess([], 0, stdout=payload, stderr="")
+                with self.subTest(marker=marker), self.assertRaisesRegex(
+                    coverage_gate.GateError, marker
+                ):
+                    coverage_gate.discover_go_packages(root)
+
+            expect([], "non-object")
+            expect(document(Module={"Main": True, "Path": ""}), "no main module")
+            expect_text(
+                json.dumps(document())
+                + json.dumps(
+                    document(
+                        ImportPath="example.test/rkc/other",
+                        Module={"Main": True, "Path": "other"},
+                    )
+                ),
+                "inconsistent",
+            )
+            expect(document(ImportPath=""), "no import path")
+            expect(document(Dir=""), "no directory")
+            expect(document(Dir=str(root.parent / "outside")), "escapes repository")
+            expect(document(GoFiles=["sub/good.go"]), "invalid Go source name")
+            (package_dir / "bad.go").mkdir()
+            expect(document(GoFiles=["bad.go"]), "not a regular")
+            expect(document(IgnoredGoFiles=["sub/ignored.go"]), "invalid ignored")
+            (package_dir / "ignored-dir.go").mkdir()
+            expect(document(IgnoredGoFiles=["ignored-dir.go"]), "ignored Go source is not regular")
+            (package_dir / "ignored-generated.go").write_text(
+                "// Code generated fixture. DO NOT EDIT.\npackage pkg\n", encoding="utf-8"
+            )
+            run.return_value = subprocess.CompletedProcess(
+                [],
+                0,
+                stdout=json.dumps(document(IgnoredGoFiles=["ignored-generated.go"])),
+                stderr="",
+            )
+            _module, packages = coverage_gate.discover_go_packages(root)
+            self.assertEqual(packages[0].ignored_files, ())
+            expect(document(GoFiles=[]), "no current source")
+            run.return_value = subprocess.CompletedProcess([], 0, stdout="", stderr="")
+            with self.assertRaisesRegex(coverage_gate.GateError, "no first-party"):
+                coverage_gate.discover_go_packages(root)
+
+    def test_profile_map_and_profile_reader_reject_ambiguous_or_missing_inputs(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            package_a = self.package(root, "example.test/rkc/a", "a.go")
+            package_b = coverage_gate.GoPackage(
+                "example.test/rkc/b", package_a.directory, package_a.source_files, (), ()
+            )
+            with self.assertRaisesRegex(coverage_gate.GateError, "ambiguous"):
+                coverage_gate._profile_file_map(
+                    "example.test/rkc", [package_a, package_b], root
+                )
+            with self.assertRaisesRegex(coverage_gate.GateError, "cannot read"):
+                coverage_gate.parse_go_profile(
+                    root / "missing.out", "example.test/rkc", [package_a], root
+                )
+
     def test_profile_validation_and_stable_merged_output(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
@@ -283,6 +380,7 @@ class CoverageGateTests(unittest.TestCase):
             profile = root / "raw.out"
             profile.write_text(
                 "mode: count\n"
+                "\n"
                 "example.test/rkc/p/a.go:2.1,2.18 1 0\n"
                 "example.test/rkc/p/generated.go:2.1,2.10 1 1\n",
                 encoding="utf-8",
@@ -298,6 +396,7 @@ class CoverageGateTests(unittest.TestCase):
             for payload, marker in (
                 ("", "mode header"),
                 ("mode: weird\n", "unsupported"),
+                ("mode: set\n", "no first-party"),
                 ("mode: set\nbad row\n", "invalid"),
                 ("mode: set\nexample.test/rkc/p/a.go:3.2,2.1 1 1\n", "reversed"),
                 ("mode: set\nexample.test/rkc/p/a.go:2.1,2.2 0 1\n", "zero executable"),
@@ -309,6 +408,19 @@ class CoverageGateTests(unittest.TestCase):
                     coverage_gate.parse_go_profile(
                         profile, "example.test/rkc", [package], root
                     )
+
+            profile.write_text(
+                "mode: set\nexample.test/rkc/p/a.go:2.1,2.2 1 1\n",
+                encoding="utf-8",
+            )
+            with mock.patch.object(
+                coverage_gate,
+                "_profile_file_map",
+                return_value=({"example.test/rkc/p/a.go": ("missing.go", package.import_path)}, set()),
+            ), self.assertRaisesRegex(coverage_gate.GateError, "no package"):
+                coverage_gate.parse_go_profile(
+                    profile, "example.test/rkc", [package], root
+                )
 
     def test_evaluators_cover_overall_missing_and_non_applicable_rows(self) -> None:
         self.assertEqual(
@@ -355,6 +467,16 @@ class CoverageGateTests(unittest.TestCase):
                 "# Code generated fixture. DO NOT EDIT.\n", encoding="utf-8"
             )
             self.assertEqual(coverage_gate.discover_python_sources(root), ["scripts/main.py"])
+            (root / "scripts/not-regular.py").mkdir()
+            with self.assertRaisesRegex(coverage_gate.GateError, "not a regular"):
+                coverage_gate.discover_python_sources(root)
+            for path in (root / "scripts/not-regular.py", root / "scripts/main.py"):
+                if path.is_dir():
+                    path.rmdir()
+            (root / "scripts/main.py").unlink()
+            with self.assertRaisesRegex(coverage_gate.GateError, "no first-party"):
+                coverage_gate.discover_python_sources(root)
+            (root / "scripts/main.py").write_text("x = 1\n", encoding="utf-8")
             report = root / "report.json"
             base = {"meta": {"branch_coverage": True}, "files": {}}
             for files, marker in (
@@ -414,6 +536,48 @@ class CoverageGateTests(unittest.TestCase):
                 ):
                     coverage_gate.parse_python_report(report, ["scripts/main.py"])
 
+            report.write_text("not-json", encoding="utf-8")
+            with self.assertRaisesRegex(coverage_gate.GateError, "cannot read"):
+                coverage_gate.parse_python_report(report, ["scripts/main.py"])
+            report.write_text("[]", encoding="utf-8")
+            with self.assertRaisesRegex(coverage_gate.GateError, "not an object"):
+                coverage_gate.parse_python_report(report, ["scripts/main.py"])
+            report.write_text(
+                json.dumps({"meta": {"branch_coverage": True}, "files": []}),
+                encoding="utf-8",
+            )
+            with self.assertRaisesRegex(coverage_gate.GateError, "no file map"):
+                coverage_gate.parse_python_report(report, ["scripts/main.py"])
+
+            absolute_name = str(coverage_gate.ROOT / "scripts" / "example.py")
+            absolute_report = {
+                "meta": {"branch_coverage": True},
+                "files": {
+                    absolute_name: {
+                        "summary": {
+                            "num_statements": 1,
+                            "covered_lines": 1,
+                            "num_branches": 0,
+                            "covered_branches": 0,
+                        }
+                    }
+                },
+            }
+            report.write_text(json.dumps(absolute_report), encoding="utf-8")
+            parsed = coverage_gate.parse_python_report(report, ["scripts/example.py"])
+            self.assertEqual(parsed["files"][0]["file"], "scripts/example.py")  # type: ignore[index]
+
+            duplicate_report = {
+                "meta": {"branch_coverage": True},
+                "files": {
+                    "scripts/example.py": absolute_report["files"][absolute_name],
+                    "scripts\\example.py": absolute_report["files"][absolute_name],
+                },
+            }
+            report.write_text(json.dumps(duplicate_report), encoding="utf-8")
+            with self.assertRaisesRegex(coverage_gate.GateError, "repeats"):
+                coverage_gate.parse_python_report(report, ["scripts/example.py"])
+
     @mock.patch("coverage_gate.subprocess.run")
     def test_subprocess_helpers_configuration_and_commands(self, run: mock.Mock) -> None:
         run.return_value = subprocess.CompletedProcess([], 0)
@@ -452,6 +616,8 @@ class CoverageGateTests(unittest.TestCase):
             output = Path(temporary) / "coverage"
             run = coverage_gate._make_run_directory(output)
             self.assertTrue(run.is_dir())
+            second_run = coverage_gate._make_run_directory(output)
+            self.assertTrue(second_run.is_dir())
             parser = coverage_gate.build_parser()
             arguments = parser.parse_args(["--python-file-min", "81"])
             self.assertEqual(arguments.python_file_min, 81)
@@ -461,6 +627,7 @@ class CoverageGateTests(unittest.TestCase):
                 "covered_statements": 1,
                 "statements": 1,
                 "packages": [
+                    None,
                     {"package": "p", "threshold_applicable": True, "percent": 100},
                     {"package": "types", "threshold_applicable": False, "percent": 100},
                 ],
@@ -470,6 +637,7 @@ class CoverageGateTests(unittest.TestCase):
                 "covered_units": 1,
                 "units": 1,
                 "files": [
+                    None,
                     {"file": "x.py", "threshold_applicable": True, "percent": 100},
                     {"file": "empty.py", "threshold_applicable": False, "percent": 100},
                 ],
@@ -570,13 +738,20 @@ class CoverageGateTests(unittest.TestCase):
             ) -> int:
                 captured = kwargs.get("stdout_path")
                 if isinstance(captured, Path):
-                    captured.write_text('{"ok":true}', encoding="utf-8")
+                    payload = "[]" if "invalid-capture" in arguments else '{"ok":true}'
+                    captured.write_text(payload, encoding="utf-8")
                 if "failing-command" in arguments:
                     return 9
+                if "combine" in arguments:
+                    return 8
+                if "json" in arguments and "-m" in arguments:
+                    return 7
                 return 0
 
             commands = [
                 coverage_gate.CommandSpec(("captured-command",), capture_json=True),
+                coverage_gate.CommandSpec(("invalid-capture",), capture_json=True),
+                coverage_gate.CommandSpec(("plain-command",)),
                 coverage_gate.CommandSpec(("failing-command",)),
             ]
             with mock.patch.object(
@@ -609,6 +784,15 @@ class CoverageGateTests(unittest.TestCase):
             self.assertEqual(coverage_gate.main([]), 1)
         with mock.patch("sys.stderr", new=io.StringIO()):
             self.assertEqual(coverage_gate.main(["--go-overall-min", "101"]), 2)
+
+    def test_script_guard_exposes_help_without_running_the_gate(self) -> None:
+        with mock.patch.object(sys, "argv", ["coverage_gate.py", "--help"]):
+            with self.assertRaises(SystemExit) as raised:
+                runpy.run_path(
+                    str(Path(coverage_gate.__file__).resolve()),
+                    run_name="__main__",
+                )
+        self.assertEqual(raised.exception.code, 0)
 
 
 if __name__ == "__main__":
