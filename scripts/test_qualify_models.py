@@ -5,11 +5,13 @@ from __future__ import annotations
 import io
 import json
 import os
+import stat
 import subprocess
 import tempfile
 import unittest
 from copy import deepcopy
 from pathlib import Path
+from types import SimpleNamespace
 from unittest import mock
 
 import model_assets
@@ -114,6 +116,8 @@ class QualificationScoringTests(unittest.TestCase):
             (qualify_models._list, {}),
             (qualify_models._str, 1),
             (qualify_models._int, True),
+            (qualify_models._number, "1.5"),
+            (qualify_models._number, True),
             (qualify_models._number, float("inf")),
         ):
             with self.subTest(function=function.__name__), self.assertRaises(
@@ -136,6 +140,25 @@ class QualificationScoringTests(unittest.TestCase):
             path.write_text("{", encoding="utf-8")
             with self.assertRaisesRegex(qualify_models.QualificationError, "parse"):
                 qualify_models._read_json(path)
+
+        regular = SimpleNamespace(st_mode=stat.S_IFREG, st_size=2, st_dev=1, st_ino=2)
+        changed = SimpleNamespace(st_mode=stat.S_IFREG, st_size=2, st_dev=9, st_ino=2)
+        with mock.patch.object(qualify_models.os, "open", return_value=7), mock.patch.object(
+            qualify_models.os, "fstat", side_effect=[regular, changed]
+        ), mock.patch.object(qualify_models.os, "read", side_effect=[b"{}", b""]), mock.patch.object(
+            qualify_models.os, "lstat", return_value=regular
+        ), mock.patch.object(qualify_models.os, "close"):
+            with self.assertRaisesRegex(qualify_models.QualificationError, "changed while reading"):
+                qualify_models._read_json(Path("changed.json"))
+
+        oversized = SimpleNamespace(st_mode=stat.S_IFREG, st_size=3, st_dev=1, st_ino=2)
+        with mock.patch.object(qualify_models.os, "open", return_value=7), mock.patch.object(
+            qualify_models.os, "fstat", side_effect=[regular, oversized]
+        ), mock.patch.object(qualify_models.os, "read", side_effect=[b"{}", b""]), mock.patch.object(
+            qualify_models.os, "lstat", return_value=regular
+        ), mock.patch.object(qualify_models.os, "close"):
+            with self.assertRaisesRegex(qualify_models.QualificationError, "exceeds"):
+                qualify_models._read_json(Path("oversized.json"))
 
     def test_checked_in_spec_validates_and_policy_mutations_fail(self) -> None:
         lock = model_assets.load_lock()
@@ -193,6 +216,10 @@ class QualificationScoringTests(unittest.TestCase):
         with mock.patch.object(qualify_models.Path, "read_text", side_effect=OSError("gone")):
             self.assertEqual(qualify_models._process_rss_bytes(999999), 0)
             self.assertEqual(qualify_models._current_cgroup_peak(), 0)
+        with mock.patch.object(
+            qualify_models.Path, "read_text", return_value="VmRSS: unknown\nVmHWM:\n"
+        ):
+            self.assertEqual(qualify_models._process_rss_bytes(123), 0)
         self.assertEqual(
             qualify_models._parse_json_response(b'{"ok":true}', "fixture"), {"ok": True}
         )
@@ -255,6 +282,16 @@ class QualificationScoringTests(unittest.TestCase):
             ),
         ), self.assertRaisesRegex(qualify_models.QualificationError, "byte limit"):
             qualify_models._bounded_http("http://127.0.0.1:1/health", "key")
+
+        for response, message in (
+            (Response(b"{}", status=503), "unexpected HTTP status"),
+            (Response(b"{}", length="not-a-number"), "not an integer"),
+            (Response(b"{}", length="-1"), "byte limit"),
+        ):
+            with mock.patch.object(model_assets, "assert_priority_available"), mock.patch.object(
+                qualify_models, "_loopback_opener", return_value=opener(response)
+            ), self.assertRaisesRegex(qualify_models.QualificationError, message):
+                qualify_models._bounded_http("http://127.0.0.1:1/health", "key")
         with mock.patch.object(model_assets, "assert_priority_available"), mock.patch.object(
             qualify_models, "_loopback_opener"
         ) as make_opener, self.assertRaisesRegex(
@@ -297,6 +334,11 @@ class QualificationScoringTests(unittest.TestCase):
         prompt = qualify_models._generation_prompt(case)
         self.assertIn("BEGIN_UNTRUSTED", prompt)
         self.assertIn("Neutral padding", prompt)
+        for padding in (-1, qualify_models.MAX_STRESS_PADDING_CHARACTERS + 1):
+            with self.subTest(padding=padding), self.assertRaises(
+                qualify_models.QualificationError
+            ):
+                qualify_models._generation_prompt(case, padding_characters=padding)
         variants = (
             "[]",
             '{"claims":"bad","unresolved_questions":{}}',
@@ -503,6 +545,79 @@ class QualificationScoringTests(unittest.TestCase):
             qualify_models._prepare_generation_case(
                 mock.Mock(), policy, Path("model.gguf"), impossible, 1
             )
+
+        zero_case = deepcopy(case)
+        zero_case.pop("target_input_tokens")
+        zero_policy = deepcopy(policy)
+        zero_policy["context_tokens"] = 64
+        zero_policy["maximum_output_tokens"] = 32
+        with mock.patch.object(qualify_models, "_input_token_count", return_value=40):
+            with self.assertRaisesRegex(qualify_models.QualificationError, "exceeds context"):
+                qualify_models._prepare_generation_case(
+                    mock.Mock(), zero_policy, Path("model.gguf"), zero_case, 1
+                )
+
+        above = deepcopy(case)
+        above["target_input_tokens"] = 10
+        above_policy = deepcopy(policy)
+        above_policy["context_tokens"] = 100
+        above_policy["maximum_output_tokens"] = 90
+        with mock.patch.object(qualify_models, "_input_token_count", return_value=11):
+            with self.assertRaisesRegex(qualify_models.QualificationError, "above target"):
+                qualify_models._prepare_generation_case(
+                    mock.Mock(), above_policy, Path("model.gguf"), above, 1
+                )
+
+        exact = deepcopy(case)
+        exact["target_input_tokens"] = 50
+        exact_policy = deepcopy(policy)
+        exact_policy["context_tokens"] = 100
+        exact_policy["maximum_output_tokens"] = 50
+        with mock.patch.object(qualify_models, "_input_token_count", return_value=50):
+            prepared = qualify_models._prepare_generation_case(
+                mock.Mock(), exact_policy, Path("model.gguf"), exact, 1
+            )
+        self.assertEqual(prepared["padding_characters"], 0)
+
+        unreachable = deepcopy(case)
+        unreachable["target_input_tokens"] = 2
+        unreachable_policy = deepcopy(policy)
+        unreachable_policy["context_tokens"] = 100
+        unreachable_policy["maximum_output_tokens"] = 98
+        with mock.patch.object(qualify_models, "MAX_STRESS_PADDING_CHARACTERS", 1024), mock.patch.object(
+            qualify_models, "_input_token_count", return_value=1
+        ):
+            with self.assertRaisesRegex(qualify_models.QualificationError, "cannot reach"):
+                qualify_models._prepare_generation_case(
+                    mock.Mock(), unreachable_policy, Path("model.gguf"), unreachable, 1
+                )
+
+        tokenizer_gap = deepcopy(case)
+        tokenizer_gap["target_input_tokens"] = 10
+        tokenizer_policy = deepcopy(policy)
+        tokenizer_policy["context_tokens"] = 100
+        tokenizer_policy["maximum_output_tokens"] = 90
+
+        def non_exact(_server, body, _timeout):  # type: ignore[no-untyped-def]
+            prompt = body["messages"][1]["content"]
+            encoded = prompt.split("BEGIN_UNTRUSTED_REPOSITORY_DATA\n", 1)[1].split(
+                "\nEND_UNTRUSTED_REPOSITORY_DATA", 1
+            )[0]
+            packet = json.loads(encoded)
+            padding = packet.get("neutral_padding", "")
+            if not padding:
+                padding = packet.get("neutral_padding_head_to_middle", "") + packet.get(
+                    "neutral_padding_middle_to_tail", ""
+                )
+            return 20 if len(padding) >= 1024 else 1
+
+        with mock.patch.object(qualify_models, "MAX_STRESS_PADDING_CHARACTERS", 1024), mock.patch.object(
+            qualify_models, "_input_token_count", side_effect=non_exact
+        ):
+            with self.assertRaisesRegex(qualify_models.QualificationError, "could not construct exact"):
+                qualify_models._prepare_generation_case(
+                    mock.Mock(), tokenizer_policy, Path("model.gguf"), tokenizer_gap, 1
+                )
 
     def test_input_token_count_fails_closed_on_invalid_server_response(self) -> None:
         server = mock.Mock()
