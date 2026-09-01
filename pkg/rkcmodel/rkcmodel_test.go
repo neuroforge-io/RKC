@@ -412,6 +412,28 @@ func TestBuildCoverageSeparatesAssertionsFromAuthenticatedRuntimeEvents(t *testi
 	}
 }
 
+func TestBuildCoverageHandlesEmptyTraceIDsValueSinksAndInvalidRuntimeTypes(t *testing.T) {
+	bundle := Bundle{
+		Nodes: []Node{
+			{ID: "trace-without-id", Kind: "trace"},
+			{ID: "sink", Kind: "value", Attributes: map[string]any{"flow_role": "sink"}},
+			{ID: "source", Kind: "value", Attributes: map[string]any{"flow_role": "source"}},
+		},
+		Evidence: []Evidence{{
+			ID: "invalid-trace-type", Kind: "test_result", Confidence: 1,
+			Attributes: map[string]any{
+				"producer_authenticated": true,
+				"status":                 "pass",
+				"trace_id":               42,
+			},
+		}},
+	}
+	got := BuildCoverage(bundle)
+	if got.RuntimeTraces != 0 || got.FlowSources != 1 || got.FlowSinks != 1 || got.RuntimeProducerAuthenticatedTests != 0 {
+		t.Fatalf("empty trace/value/runtime boundaries = %+v", got)
+	}
+}
+
 func TestCoverageAndAttributeHelpersHandleZeroAndMalformedValues(t *testing.T) {
 	t.Parallel()
 

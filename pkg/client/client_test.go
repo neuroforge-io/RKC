@@ -303,6 +303,51 @@ func TestHTTPErrorMessages(t *testing.T) {
 	}
 }
 
+func TestEndpointErrorsPropagateAcrossCompatibilityMethods(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+		http.Error(writer, "backend unavailable", http.StatusServiceUnavailable)
+	}))
+	defer server.Close()
+	client, err := New(server.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	checks := []struct {
+		name string
+		call func() error
+	}{
+		{name: "search", call: func() error { _, err := client.Search(context.Background(), "q", SearchOptions{}); return err }},
+		{name: "neighborhood", call: func() error {
+			_, err := client.Neighborhood(context.Background(), "node", NeighborhoodOptions{})
+			return err
+		}},
+		{name: "impact", call: func() error { _, err := client.Impact(context.Background(), "node", ImpactOptions{}); return err }},
+	}
+	for _, check := range checks {
+		t.Run(check.name, func(t *testing.T) {
+			if err := check.call(); err == nil || !strings.Contains(err.Error(), "backend unavailable") {
+				t.Fatalf("%s error = %v", check.name, err)
+			}
+		})
+	}
+}
+
+func TestGetRejectsMalformedEndpointAndRequestURL(t *testing.T) {
+	client, err := New("http://example.test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := client.get(context.Background(), "/api/v1/bad%zz", nil, &struct{}{}); err == nil || !strings.Contains(err.Error(), "decode RKC endpoint path") {
+		t.Fatalf("malformed endpoint error = %v", err)
+	}
+	// New validates the public base URL. Keep this defensive branch covered for
+	// callers that construct or mutate a Client inside the package.
+	client.baseURL.Scheme = "http\n"
+	if err := client.get(context.Background(), "/api/v1/health", nil, &struct{}{}); err == nil || !strings.Contains(err.Error(), "invalid control character") {
+		t.Fatalf("malformed request URL error = %v", err)
+	}
+}
+
 func TestMalformedJSONTransportReadAndContextErrors(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
 		_, _ = io.WriteString(writer, "not-json")
