@@ -6,12 +6,18 @@ import hashlib
 import io
 import json
 import os
+import runpy
+import shutil
 import subprocess
 import sys
+import stat
 import tarfile
 import tempfile
 import unittest
+from contextlib import ExitStack
+from dataclasses import replace
 from pathlib import Path
+from types import SimpleNamespace
 from unittest import mock
 
 import bootstrap_llama_cpp
@@ -147,6 +153,53 @@ class RuntimeReceiptTests(unittest.TestCase):
             self.assertGreaterEqual(checks, 2)
             with self.assertRaises(model_assets.IntegrityError):
                 bootstrap_llama_cpp._sha256_file(file, maximum_bytes=1)
+            regular = SimpleNamespace(st_mode=stat.S_IFREG | 0o600, st_size=0, st_dev=1, st_ino=2)
+            with mock.patch.object(bootstrap_llama_cpp.os, "open", return_value=41), mock.patch.object(
+                bootstrap_llama_cpp.os, "fstat", return_value=regular
+            ), mock.patch.object(
+                bootstrap_llama_cpp.os, "read", side_effect=[b"too-long", b""]
+            ), mock.patch.object(bootstrap_llama_cpp.os, "close"):
+                with self.assertRaisesRegex(model_assets.IntegrityError, "exceeds"):
+                    bootstrap_llama_cpp._sha256_file(
+                        file, maximum_bytes=2, priority_check=lambda: None
+                    )
+            changed_inode = SimpleNamespace(
+                st_mode=regular.st_mode,
+                st_size=3,
+                st_dev=1,
+                st_ino=99,
+            )
+            with mock.patch.object(bootstrap_llama_cpp.os, "open", return_value=42), mock.patch.object(
+                bootstrap_llama_cpp.os,
+                "fstat",
+                side_effect=[regular, changed_inode],
+            ), mock.patch.object(
+                bootstrap_llama_cpp.os, "read", side_effect=[b"abc", b""]
+            ), mock.patch.object(bootstrap_llama_cpp.os, "close"):
+                with self.assertRaisesRegex(model_assets.IntegrityError, "changed"):
+                    bootstrap_llama_cpp._sha256_file(
+                        file, maximum_bytes=10, priority_check=lambda: None
+                    )
+            same_inode_different_size = SimpleNamespace(
+                st_mode=regular.st_mode,
+                st_size=4,
+                st_dev=1,
+                st_ino=2,
+            )
+            pathname = SimpleNamespace(st_dev=1, st_ino=2)
+            with mock.patch.object(bootstrap_llama_cpp.os, "open", return_value=43), mock.patch.object(
+                bootstrap_llama_cpp.os,
+                "fstat",
+                side_effect=[regular, same_inode_different_size],
+            ), mock.patch.object(
+                bootstrap_llama_cpp.os, "lstat", return_value=pathname
+            ), mock.patch.object(
+                bootstrap_llama_cpp.os, "read", side_effect=[b"abc", b""]
+            ), mock.patch.object(bootstrap_llama_cpp.os, "close"):
+                with self.assertRaisesRegex(model_assets.IntegrityError, "size changed"):
+                    bootstrap_llama_cpp._sha256_file(
+                        file, maximum_bytes=10, priority_check=lambda: None
+                    )
             nested = bootstrap_llama_cpp._private_directory(root / "a" / "b")
             self.assertTrue(nested.is_dir())
             self.assertEqual(nested.stat().st_mode & 0o777, 0o700)
@@ -160,6 +213,9 @@ class RuntimeReceiptTests(unittest.TestCase):
                 link.symlink_to(nested, target_is_directory=True)
                 with self.assertRaisesRegex(model_assets.AssetError, "real directory"):
                     bootstrap_llama_cpp._private_directory(link)
+            with mock.patch.object(bootstrap_llama_cpp.os, "getuid", return_value=os.getuid() + 1):
+                with self.assertRaisesRegex(model_assets.AssetError, "owned"):
+                    bootstrap_llama_cpp._private_directory(nested)
 
     def make_archive(self, path: Path, *, special: bool = False) -> None:
         with tarfile.open(path, "w:gz") as archive:
@@ -247,6 +303,94 @@ class RuntimeReceiptTests(unittest.TestCase):
                 bootstrap_llama_cpp._extract_source(
                     duplicate, duplicate_out, "llama-root"
                 )
+
+    def test_extract_source_covers_directories_stream_boundaries_and_priority(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+
+            def write_archive(path: Path, members: list[tuple[str, str, bytes | None]]) -> None:
+                with tarfile.open(path, "w:gz") as archive:
+                    for name, kind, payload in members:
+                        member = tarfile.TarInfo(name)
+                        if kind == "dir":
+                            member.type = tarfile.DIRTYPE
+                            archive.addfile(member)
+                        else:
+                            data = payload or b""
+                            member.size = len(data)
+                            member.mode = 0o644
+                            archive.addfile(member, io.BytesIO(data))
+
+            tree_members = [
+                ("llama-root", "dir", None),
+                ("llama-root/docs", "dir", None),
+                ("llama-root/CMakeLists.txt", "file", b"cmake\n"),
+                ("llama-root/LICENSE", "file", b"MIT\n"),
+                ("llama-root/ggml/CMakeLists.txt", "file", b"ggml\n"),
+                ("llama-root/docs/readme.md", "file", b"docs\n"),
+            ]
+            archive = root / "tree.tar.gz"
+            write_archive(archive, tree_members)
+            destination = root / "tree"
+            destination.mkdir()
+            checks: list[str] = []
+            with mock.patch.object(bootstrap_llama_cpp, "PRIORITY_RECHECK_BYTES", 1):
+                bootstrap_llama_cpp._extract_source(
+                    archive, destination, "llama-root", priority_check=lambda: checks.append("check")
+                )
+            self.assertEqual((destination / "docs/readme.md").read_bytes(), b"docs\n")
+            self.assertGreaterEqual(len(checks), 2)
+
+            total_limited = root / "total-limited"
+            total_limited.mkdir()
+            with mock.patch.object(bootstrap_llama_cpp, "MAX_ARCHIVE_TOTAL_BYTES", 1), self.assertRaisesRegex(
+                model_assets.IntegrityError, "expands"
+            ):
+                bootstrap_llama_cpp._extract_source(archive, total_limited, "llama-root")
+
+            stream_none = root / "stream-none"
+            stream_none.mkdir()
+            with mock.patch.object(tarfile.TarFile, "extractfile", return_value=None), self.assertRaisesRegex(
+                model_assets.IntegrityError, "cannot read"
+            ):
+                bootstrap_llama_cpp._extract_source(archive, stream_none, "llama-root")
+
+            truncated = root / "truncated"
+            truncated.mkdir()
+            with mock.patch.object(tarfile.TarFile, "extractfile", return_value=io.BytesIO()), self.assertRaisesRegex(
+                model_assets.IntegrityError, "truncated"
+            ):
+                bootstrap_llama_cpp._extract_source(archive, truncated, "llama-root")
+
+            oversized = root / "oversized"
+            oversized.mkdir()
+            with mock.patch.object(
+                tarfile.TarFile, "extractfile", return_value=io.BytesIO(b"x" * 100)
+            ), self.assertRaisesRegex(model_assets.IntegrityError, "oversized"):
+                bootstrap_llama_cpp._extract_source(archive, oversized, "llama-root")
+
+            short_write = root / "short-write"
+            short_write.mkdir()
+            with mock.patch.object(bootstrap_llama_cpp.os, "write", return_value=0), self.assertRaisesRegex(
+                OSError, "short write"
+            ):
+                bootstrap_llama_cpp._extract_source(archive, short_write, "llama-root")
+
+            nonregular = root / "nonregular-required.tar.gz"
+            write_archive(
+                nonregular,
+                [
+                    ("llama-root", "dir", None),
+                    ("llama-root/CMakeLists.txt", "file", b"cmake\n"),
+                    ("llama-root/LICENSE", "dir", None),
+                    ("llama-root/ggml", "dir", None),
+                    ("llama-root/ggml/CMakeLists.txt", "file", b"ggml\n"),
+                ],
+            )
+            nonregular_out = root / "nonregular-required"
+            nonregular_out.mkdir()
+            with self.assertRaisesRegex(model_assets.IntegrityError, "missing regular LICENSE"):
+                bootstrap_llama_cpp._extract_source(nonregular, nonregular_out, "llama-root")
 
     @mock.patch.object(bootstrap_llama_cpp.subprocess, "run")
     @mock.patch.object(bootstrap_llama_cpp, "assert_priority_available")
@@ -366,6 +510,67 @@ class RuntimeReceiptTests(unittest.TestCase):
                 ["cmake"], {}, 1, priority_check=lambda: None
             )
 
+    def test_build_group_windows_termination_and_lookup_races(self) -> None:
+        class WindowsProcess:
+            pid = 321
+
+            def __init__(self, *, lookup_race: bool) -> None:
+                self.lookup_race = lookup_race
+                self.wait_calls = 0
+                self.terminated = False
+                self.killed = False
+
+            def poll(self) -> None:
+                return None
+
+            def terminate(self) -> None:
+                self.terminated = True
+                if self.lookup_race:
+                    raise ProcessLookupError()
+
+            def kill(self) -> None:
+                self.killed = True
+                if self.lookup_race:
+                    raise ProcessLookupError()
+
+            def wait(self, timeout: float | None = None) -> int:
+                self.wait_calls += 1
+                if self.wait_calls == 1:
+                    raise subprocess.TimeoutExpired("cmake", timeout)
+                return 0
+
+        normal = WindowsProcess(lookup_race=False)
+        with mock.patch.object(bootstrap_llama_cpp.os, "name", "nt"):
+            bootstrap_llama_cpp._terminate_process_group(normal)  # type: ignore[arg-type]
+        self.assertTrue(normal.terminated)
+        self.assertTrue(normal.killed)
+        self.assertEqual(normal.wait_calls, 2)
+
+        lookup_race = WindowsProcess(lookup_race=True)
+        with mock.patch.object(bootstrap_llama_cpp.os, "name", "nt"):
+            bootstrap_llama_cpp._terminate_process_group(lookup_race)  # type: ignore[arg-type]
+        self.assertTrue(lookup_race.terminated)
+        self.assertTrue(lookup_race.killed)
+        self.assertEqual(lookup_race.wait_calls, 2)
+
+    def test_run_uses_default_priority_check(self) -> None:
+        class CompleteProcess:
+            pid = 12
+
+            def poll(self) -> int:
+                return 0
+
+            def wait(self, timeout: float | None = None) -> int:
+                return 0
+
+        with mock.patch.object(
+            bootstrap_llama_cpp.subprocess, "Popen", return_value=CompleteProcess()
+        ), mock.patch.object(
+            bootstrap_llama_cpp, "assert_priority_available"
+        ) as priority:
+            bootstrap_llama_cpp._run(["cmake"], {}, 1)
+        self.assertGreaterEqual(priority.call_count, 2)
+
     def test_staging_cleanup_is_exact_inode_and_fail_closed(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
@@ -398,6 +603,50 @@ class RuntimeReceiptTests(unittest.TestCase):
             os.chmod(public, 0o755)
             with self.assertRaisesRegex(model_assets.IntegrityError, "not private"):
                 bootstrap_llama_cpp._staging_identity(public)
+            regular = root / "regular"
+            regular.write_bytes(b"x")
+            with self.assertRaisesRegex(model_assets.IntegrityError, "real directory"):
+                bootstrap_llama_cpp._staging_identity(regular)
+            owned = Path(tempfile.mkdtemp(prefix=".owned.building-", dir=root))
+            with mock.patch.object(bootstrap_llama_cpp.os, "getuid", return_value=os.getuid() + 1):
+                with self.assertRaisesRegex(model_assets.IntegrityError, "owned"):
+                    bootstrap_llama_cpp._staging_identity(owned)
+
+    def test_staging_cleanup_handles_rename_identity_and_remove_failures(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            staging = Path(tempfile.mkdtemp(prefix=".runtime.building-", dir=root))
+            identity = bootstrap_llama_cpp._staging_identity(staging)
+            with mock.patch.object(
+                bootstrap_llama_cpp.os, "rename", side_effect=OSError("rename blocked")
+            ), mock.patch.object(bootstrap_llama_cpp.os, "rmdir", wraps=os.rmdir) as rmdir:
+                with self.assertRaisesRegex(OSError, "rename blocked"):
+                    bootstrap_llama_cpp._cleanup_owned_staging(staging, identity)
+                self.assertEqual(rmdir.call_count, 1)
+            self.assertTrue(staging.exists())
+
+            retained = Path(tempfile.mkdtemp(prefix=".runtime.building-", dir=root))
+            retained_identity = bootstrap_llama_cpp._staging_identity(retained)
+            identities = iter((retained_identity, (retained_identity[0], retained_identity[1] + 1)))
+            with mock.patch.object(
+                bootstrap_llama_cpp, "_staging_identity", side_effect=lambda _path: next(identities)
+            ):
+                with self.assertRaisesRegex(model_assets.AssetError, "during quarantine"):
+                    bootstrap_llama_cpp._cleanup_owned_staging(retained, retained_identity)
+            for path in root.glob("*.failed-*"):
+                if path.is_dir():
+                    shutil.rmtree(path)
+
+            remove_failure = Path(tempfile.mkdtemp(prefix=".runtime.building-", dir=root))
+            remove_identity = bootstrap_llama_cpp._staging_identity(remove_failure)
+            with mock.patch.object(
+                bootstrap_llama_cpp.shutil, "rmtree", side_effect=OSError("remove blocked")
+            ):
+                with self.assertRaisesRegex(model_assets.AssetError, "cannot remove"):
+                    bootstrap_llama_cpp._cleanup_owned_staging(remove_failure, remove_identity)
+            for path in root.glob("*.failed-*"):
+                if path.is_dir():
+                    shutil.rmtree(path)
 
     def test_atomic_json_is_no_replace_and_runtime_name_is_pinned(self) -> None:
         lock = model_assets.load_lock()
@@ -408,6 +657,10 @@ class RuntimeReceiptTests(unittest.TestCase):
             self.assertEqual(path.stat().st_mode & 0o777, 0o600)
             with self.assertRaises(FileExistsError):
                 bootstrap_llama_cpp._atomic_json(path, {"ok": False})
+            with mock.patch.object(bootstrap_llama_cpp.os, "write", return_value=0), self.assertRaisesRegex(
+                OSError, "short write"
+            ):
+                bootstrap_llama_cpp._atomic_json(Path(temporary) / "short.json", {"ok": True})
         name = bootstrap_llama_cpp._runtime_name(lock, "portable")
         self.assertTrue(name.endswith("-portable"))
         self.assertIn(lock.digest[:12], name)
@@ -501,6 +754,12 @@ class RuntimeReceiptTests(unittest.TestCase):
                         root, lock, "portable"
                     )
 
+            malformed_shape = json.loads(json.dumps(original))
+            malformed_shape.pop("runtime")
+            receipt_path.write_text(json.dumps(malformed_shape), encoding="utf-8")
+            with self.assertRaisesRegex(model_assets.IntegrityError, "shape"):
+                bootstrap_llama_cpp._verify_existing_runtime(root, lock, "portable")
+
             receipt = json.loads(json.dumps(original))
             receipt["binaries"][0]["size_bytes"] = True
             receipt_path.write_text(json.dumps(receipt), encoding="utf-8")
@@ -536,6 +795,10 @@ class RuntimeReceiptTests(unittest.TestCase):
 
             receipt_path.write_bytes(b"\xff")
             with self.assertRaisesRegex(model_assets.IntegrityError, "invalid"):
+                bootstrap_llama_cpp._verify_existing_runtime(root, lock, "portable")
+
+            receipt_path.write_bytes(b"x" * (1024 * 1024 + 1))
+            with self.assertRaisesRegex(model_assets.IntegrityError, "oversized"):
                 bootstrap_llama_cpp._verify_existing_runtime(root, lock, "portable")
 
             receipt_path.write_text(
@@ -582,6 +845,19 @@ class RuntimeReceiptTests(unittest.TestCase):
                     bootstrap_llama_cpp._verify_existing_runtime(
                         root, lock, "portable"
                     )
+
+            license_path.write_bytes(b"")
+            with self.assertRaisesRegex(model_assets.IntegrityError, "empty"):
+                bootstrap_llama_cpp._runtime_license_record(root, lock)
+
+            llama = dict(lock.document["llama_cpp"])  # type: ignore[arg-type]
+            llama["license_spdx"] = "Apache-2.0"
+            mismatched_lock = SimpleNamespace(
+                document={"llama_cpp": llama},
+                asset=lambda _asset_id: lock.asset(str(llama["source_asset_id"])),
+            )
+            with self.assertRaisesRegex(model_assets.IntegrityError, "metadata"):
+                bootstrap_llama_cpp._runtime_license_record(root, mismatched_lock)  # type: ignore[arg-type]
 
     def test_build_runtime_happy_path_is_fully_mocked(self) -> None:
         lock = model_assets.load_lock()
@@ -683,6 +959,181 @@ class RuntimeReceiptTests(unittest.TestCase):
             self.assertEqual(list(runtime_root.glob("*.building-*")), [])
             self.assertEqual(list(runtime_root.glob("*.failed-*")), [])
 
+    def test_build_runtime_rejects_old_cmake_and_missing_extraction_root(self) -> None:
+        lock = model_assets.load_lock()
+        source_asset_id = str(lock.document["llama_cpp"]["source_asset_id"])  # type: ignore[index]
+        assets = tuple(
+            replace(asset, extraction_root=None)
+            if asset.asset_id == source_asset_id
+            else asset
+            for asset in lock.assets
+        )
+        missing_root_lock = replace(lock, assets=assets)
+        for current_lock, version, marker in (
+            (lock, (3, 13, "cmake 3.13"), "required"),
+            (missing_root_lock, (3, 31, "cmake 3.31"), "extraction root"),
+        ):
+            with tempfile.TemporaryDirectory() as temporary:
+                root = Path(temporary)
+                archive = root / "archive.tar.gz"
+                archive.write_bytes(b"locked")
+                runtime_root = root / "runtime"
+                with mock.patch.object(bootstrap_llama_cpp, "assert_priority_available"), mock.patch.object(
+                    bootstrap_llama_cpp, "assert_resource_guard"
+                ), mock.patch.object(bootstrap_llama_cpp, "fetch_asset", return_value=archive), mock.patch.object(
+                    bootstrap_llama_cpp, "verify_cached_asset", return_value=archive
+                ), mock.patch.object(
+                    bootstrap_llama_cpp, "_cmake_version", return_value=version
+                ), mock.patch.object(bootstrap_llama_cpp, "assert_disk_headroom"):
+                    with self.subTest(marker=marker), self.assertRaisesRegex(
+                        model_assets.AssetError if marker == "required" else model_assets.IntegrityError,
+                        marker,
+                    ):
+                        bootstrap_llama_cpp.build_runtime(
+                            current_lock,
+                            root / "downloads",
+                            runtime_root,
+                            "portable",
+                            "cmake",
+                        )
+
+    def test_build_runtime_rejects_nonregular_and_nonexecutable_outputs(self) -> None:
+        lock = model_assets.load_lock()
+        for output_kind in ("directory", "non-executable"):
+            with tempfile.TemporaryDirectory() as temporary:
+                root = Path(temporary)
+                archive = root / "archive.tar.gz"
+                archive.write_bytes(b"locked")
+                runtime_root = root / "runtime"
+
+                def fake_extract(
+                    _archive: Path, destination: Path, _extraction_root: str
+                ) -> None:
+                    (destination / "LICENSE").write_bytes(b"fixture MIT license\n")
+
+                def fake_run(
+                    command: list[str], _environment: dict[str, str], _timeout: float
+                ) -> None:
+                    if "--build" not in command:
+                        return
+                    build = Path(command[command.index("--build") + 1])
+                    targets = command[command.index("--target") + 1 :]
+                    for target in targets:
+                        binary = build / "bin" / target
+                        binary.parent.mkdir(parents=True, exist_ok=True)
+                        if output_kind == "directory":
+                            binary.mkdir()
+                        else:
+                            binary.write_bytes(b"not executable\n")
+                            os.chmod(binary, 0o600)
+
+                with mock.patch.object(bootstrap_llama_cpp, "assert_priority_available"), mock.patch.object(
+                    bootstrap_llama_cpp, "assert_resource_guard"
+                ), mock.patch.object(bootstrap_llama_cpp, "fetch_asset", return_value=archive), mock.patch.object(
+                    bootstrap_llama_cpp, "verify_cached_asset", return_value=archive
+                ), mock.patch.object(
+                    bootstrap_llama_cpp, "_extract_source", side_effect=fake_extract
+                ), mock.patch.object(
+                    bootstrap_llama_cpp, "_cmake_version", return_value=(3, 31, "cmake 3.31")
+                ), mock.patch.object(bootstrap_llama_cpp, "assert_disk_headroom"), mock.patch.object(
+                    bootstrap_llama_cpp, "_run", side_effect=fake_run
+                ):
+                    marker = "regular" if output_kind == "directory" else "executable"
+                    with self.subTest(output_kind=output_kind), self.assertRaisesRegex(
+                        model_assets.IntegrityError, marker
+                    ):
+                        bootstrap_llama_cpp.build_runtime(
+                            lock,
+                            root / "downloads",
+                            runtime_root,
+                            "portable",
+                            "cmake",
+                        )
+
+    def test_build_runtime_handles_concurrent_publish_and_postpublish_verify(self) -> None:
+        lock = model_assets.load_lock()
+
+        def execute(
+            *, concurrent: bool
+        ) -> tuple[Path, Path, BaseException]:
+            temporary = tempfile.TemporaryDirectory()
+            self.addCleanup(temporary.cleanup)
+            root = Path(temporary.name)
+            archive = root / "archive.tar.gz"
+            archive.write_bytes(b"locked")
+            runtime_root = root / "runtime"
+            final = runtime_root / bootstrap_llama_cpp._runtime_name(lock, "portable")
+
+            def fake_extract(
+                _archive: Path, destination: Path, _extraction_root: str
+            ) -> None:
+                (destination / "LICENSE").write_bytes(b"fixture MIT license\n")
+
+            def fake_run(
+                command: list[str], _environment: dict[str, str], _timeout: float
+            ) -> None:
+                if "--build" not in command:
+                    return
+                build = Path(command[command.index("--build") + 1])
+                for target in command[command.index("--target") + 1 :]:
+                    binary = build / "bin" / target
+                    binary.parent.mkdir(parents=True, exist_ok=True)
+                    binary.write_bytes((target + "\n").encode())
+                    os.chmod(binary, 0o700)
+
+            real_rename = bootstrap_llama_cpp.os.rename
+            rename_calls = 0
+
+            def rename(source: str | os.PathLike[str], destination: str | os.PathLike[str]) -> None:
+                nonlocal rename_calls
+                rename_calls += 1
+                if concurrent and rename_calls == 1:
+                    raise FileExistsError("published concurrently")
+                real_rename(source, destination)
+
+            patches = [
+                mock.patch.object(bootstrap_llama_cpp, "assert_priority_available"),
+                mock.patch.object(bootstrap_llama_cpp, "assert_resource_guard"),
+                mock.patch.object(bootstrap_llama_cpp, "fetch_asset", return_value=archive),
+                mock.patch.object(bootstrap_llama_cpp, "verify_cached_asset", return_value=archive),
+                mock.patch.object(bootstrap_llama_cpp, "_extract_source", side_effect=fake_extract),
+                mock.patch.object(bootstrap_llama_cpp, "_cmake_version", return_value=(3, 31, "cmake 3.31")),
+                mock.patch.object(bootstrap_llama_cpp, "assert_disk_headroom"),
+                mock.patch.object(bootstrap_llama_cpp, "_run", side_effect=fake_run),
+                mock.patch.object(bootstrap_llama_cpp.os, "rename", side_effect=rename),
+            ]
+            if concurrent:
+                patches.append(mock.patch.object(bootstrap_llama_cpp, "_verify_existing_runtime", return_value={}))
+            else:
+                patches.append(
+                    mock.patch.object(
+                        bootstrap_llama_cpp,
+                        "_verify_existing_runtime",
+                        side_effect=model_assets.IntegrityError("post-publish verify failed"),
+                    )
+                )
+            with ExitStack() as stack:
+                for patcher in patches:
+                    stack.enter_context(patcher)
+                try:
+                    bootstrap_llama_cpp.build_runtime(
+                        lock, root / "downloads", runtime_root, "portable", "cmake"
+                    )
+                except BaseException as exc:
+                    return root, final, exc
+            raise AssertionError("mocked build unexpectedly succeeded")
+
+        root, final, concurrent_error = execute(concurrent=True)
+        self.assertIsInstance(concurrent_error, model_assets.AssetError)
+        self.assertRegex(str(concurrent_error), "concurrent identical")
+        self.assertEqual(list((root / "runtime").glob("*.building-*")), [])
+        self.assertEqual(list((root / "runtime").glob("*.failed-*")), [])
+
+        root, final, postpublish_error = execute(concurrent=False)
+        self.assertIsInstance(postpublish_error, model_assets.IntegrityError)
+        self.assertRegex(str(postpublish_error), "post-publish")
+        self.assertTrue(final.is_dir())
+
     def test_main_maps_success_priority_and_integrity_failures(self) -> None:
         lock = model_assets.load_lock()
         runtime = Path("/fixture/runtime")
@@ -699,6 +1150,15 @@ class RuntimeReceiptTests(unittest.TestCase):
             bootstrap_llama_cpp, "load_lock", side_effect=model_assets.LockError("bad")
         ), mock.patch("sys.stderr", new=io.StringIO()):
             self.assertEqual(bootstrap_llama_cpp.main([]), 1)
+
+    def test_script_guard_exposes_help_without_starting_a_build(self) -> None:
+        with mock.patch.object(sys, "argv", ["bootstrap_llama_cpp.py", "--help"]):
+            with self.assertRaises(SystemExit) as raised:
+                runpy.run_path(
+                    str(Path(bootstrap_llama_cpp.__file__).resolve()),
+                    run_name="__main__",
+                )
+        self.assertEqual(raised.exception.code, 0)
 
 
 if __name__ == "__main__":
