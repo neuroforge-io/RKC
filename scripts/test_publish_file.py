@@ -220,6 +220,25 @@ class PublishFileTests(unittest.TestCase):
         PUBLISHER.publish(source, destination, 0o644, repository_root=outer)
         self.assertEqual(destination.read_bytes(), b"immutable helper")
 
+    def test_publish_remains_portable_without_optional_open_flags(self) -> None:
+        root = PUBLISHER.ROOT
+        source = root / "source-no-flags"
+        source.write_bytes(b"portable")
+        destination = root / "dist" / "logs" / "portable.txt"
+
+        class WithoutOptionalOpenFlags:
+            def __init__(self, wrapped: object) -> None:
+                self._wrapped = wrapped
+
+            def __getattr__(self, name: str) -> object:
+                if name in {"O_DIRECTORY", "O_NOFOLLOW"}:
+                    raise AttributeError(name)
+                return getattr(self._wrapped, name)
+
+        with mock.patch.object(PUBLISHER, "os", WithoutOptionalOpenFlags(os)):
+            PUBLISHER.publish(source, destination, 0o644)
+        self.assertEqual(destination.read_bytes(), b"portable")
+
 
 if __name__ == "__main__":
     unittest.main()
