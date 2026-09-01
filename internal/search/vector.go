@@ -55,6 +55,20 @@ type VectorIndex struct {
 	Vectors    []VectorRecord      `json:"vectors"`
 }
 
+// vectorTempFile is the small file contract needed by Save. Keeping the
+// contract explicit lets tests exercise write, sync, and close failures
+// without depending on host-specific disk-full or permission behaviour.
+type vectorTempFile interface {
+	Write([]byte) (int, error)
+	Sync() error
+	Close() error
+	Name() string
+}
+
+func createVectorTemp(directory, pattern string) (vectorTempFile, error) {
+	return os.CreateTemp(directory, pattern)
+}
+
 // VectorBuildOptions bounds provider batch size and the UTF-8-safe document
 // prefix included in each embedding request. Nonpositive values select safe
 // defaults and oversized batches are capped.
@@ -219,6 +233,10 @@ func Fuse(query string, lexical, semantic Response, limit int) Response {
 // renames it over path. It does not establish a parent-directory durability
 // barrier or authenticate the destination for untrusted consumers.
 func (index *VectorIndex) Save(path string) error {
+	return index.save(path, createVectorTemp)
+}
+
+func (index *VectorIndex) save(path string, createTemp func(string, string) (vectorTempFile, error)) error {
 	if index == nil || index.Version != VectorIndexVersion {
 		return errors.New("cannot save invalid vector index")
 	}
@@ -229,7 +247,7 @@ func (index *VectorIndex) Save(path string) error {
 	if err != nil {
 		return err
 	}
-	temporary, err := os.CreateTemp(filepath.Dir(path), ".vector-index-")
+	temporary, err := createTemp(filepath.Dir(path), ".vector-index-")
 	if err != nil {
 		return err
 	}

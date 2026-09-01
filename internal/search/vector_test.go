@@ -20,6 +20,32 @@ type vectorTestProvider struct {
 	calls      [][]string
 }
 
+type vectorTempFileStub struct {
+	name     string
+	writeErr error
+	syncErr  error
+	closeErr error
+}
+
+func (stub *vectorTempFileStub) Write(data []byte) (int, error) {
+	if stub.writeErr != nil {
+		return 0, stub.writeErr
+	}
+	return len(data), nil
+}
+
+func (stub *vectorTempFileStub) Sync() error {
+	return stub.syncErr
+}
+
+func (stub *vectorTempFileStub) Close() error {
+	return stub.closeErr
+}
+
+func (stub *vectorTempFileStub) Name() string {
+	return stub.name
+}
+
 func (provider *vectorTestProvider) Descriptor() EmbeddingDescriptor {
 	return provider.descriptor
 }
@@ -436,6 +462,45 @@ func TestVectorIndexSaveLoadRoundTripAndFailures(t *testing.T) {
 				t.Fatalf("LoadVectorIndex error = %v, want containing %q", err, test.want)
 			}
 		})
+	}
+}
+
+func TestVectorIndexSavePropagatesTemporaryFileFailures(t *testing.T) {
+	t.Parallel()
+
+	index := &VectorIndex{
+		Version:    VectorIndexVersion,
+		Descriptor: EmbeddingDescriptor{Provider: "test", Model: "model", Dimensions: 1},
+		Documents:  map[string]Document{"a": {ID: "a"}},
+		Vectors:    []VectorRecord{{DocumentID: "a", Values: []float32{1}}},
+	}
+	sentinel := errors.New("temporary file failure")
+	for _, test := range []struct {
+		name string
+		file vectorTempFileStub
+	}{
+		{name: "write", file: vectorTempFileStub{writeErr: sentinel}},
+		{name: "sync", file: vectorTempFileStub{syncErr: sentinel}},
+		{name: "close", file: vectorTempFileStub{closeErr: sentinel}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			test.file.name = filepath.Join(t.TempDir(), "temporary-vector-index")
+			err := index.save(filepath.Join(t.TempDir(), "vectors.json"), func(string, string) (vectorTempFile, error) {
+				return &test.file, nil
+			})
+			if !errors.Is(err, sentinel) {
+				t.Fatalf("Save(%s) error = %v, want %v", test.name, err, sentinel)
+			}
+		})
+	}
+
+	creatorErr := errors.New("temporary creation failure")
+	err := index.save(filepath.Join(t.TempDir(), "vectors.json"), func(string, string) (vectorTempFile, error) {
+		return nil, creatorErr
+	})
+	if !errors.Is(err, creatorErr) {
+		t.Fatalf("Save(create) error = %v, want %v", err, creatorErr)
 	}
 }
 
