@@ -4,13 +4,16 @@ from __future__ import annotations
 
 import hashlib
 import importlib.util
+import io
 import json
 import os
+import runpy
 import subprocess
 import sys
 import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 from unittest import mock
 
 MODULE_NAME = "rkc_generate_go_sbom"
@@ -477,6 +480,127 @@ class GenerateGoSBOMTests(unittest.TestCase):
             link.symlink_to(self.binary)
             with self.assertRaisesRegex(SBOM.SBOMError, "regular"):
                 SBOM.sha256_file(link, "fixture")
+
+    def test_regular_readers_fail_closed_on_missing_open_and_portability_paths(self) -> None:
+        with self.assertRaisesRegex(SBOM.SBOMError, "missing"):
+            SBOM.regular_bytes(self.root / "missing", "fixture")
+        with self.assertRaisesRegex(SBOM.SBOMError, "cannot open"):
+            with mock.patch.object(SBOM.os, "open", side_effect=OSError("blocked")):
+                SBOM.regular_bytes(self.binary, "fixture")
+        with self.assertRaisesRegex(SBOM.SBOMError, "cannot open"):
+            with mock.patch.object(SBOM.os, "open", side_effect=OSError("blocked")):
+                SBOM.sha256_file(self.binary, "fixture")
+
+        class WithoutNoFollow:
+            O_RDONLY = os.O_RDONLY
+
+            def __getattr__(self, name: str):
+                if name == "O_NOFOLLOW":
+                    raise AttributeError(name)
+                return getattr(os, name)
+
+        with mock.patch.object(SBOM, "os", WithoutNoFollow()):
+            self.assertEqual(SBOM.regular_bytes(self.binary, "fixture"), self.binary.read_bytes())
+            self.assertEqual(SBOM.sha256_file(self.binary, "fixture"), hashlib.sha256(self.binary.read_bytes()).hexdigest())
+
+    def test_strict_json_and_lock_source_date_and_extracted_license_errors(self) -> None:
+        with self.assertRaisesRegex(SBOM.SBOMError, "duplicate JSON key"):
+            SBOM.strict_object([("duplicate", 1), ("duplicate", 2)])
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / "invalid-lock.json"
+            path.write_text("{", encoding="utf-8")
+            with self.assertRaisesRegex(SBOM.SBOMError, "strict UTF-8 JSON"):
+                SBOM.load_lock(path, self.root)
+            path.write_text('{"duplicate": 1, "duplicate": 2}', encoding="utf-8")
+            with self.assertRaisesRegex(SBOM.SBOMError, "duplicate JSON key"):
+                SBOM.load_lock(path, self.root)
+        with self.assertRaisesRegex(SBOM.SBOMError, "supported range"):
+            SBOM.source_date(str(10**1000))
+        locked, _, _ = SBOM.load_lock(self.lock, self.root)
+        (self.root / self.sqlite_public_path).write_bytes(b"\xff")
+        with self.assertRaisesRegex(SBOM.SBOMError, "not UTF-8"):
+            SBOM.extracted_license_info(list(locked.values()), self.root)
+
+    @mock.patch.object(SBOM.subprocess, "run")
+    def test_generate_can_omit_extracted_licenses(self, run: mock.Mock) -> None:
+        run.return_value = self.completed(self.build_info())
+        with mock.patch.object(SBOM, "extracted_license_info", return_value=[]):
+            document = SBOM.generate(
+                self.binary,
+                self.lock,
+                "0.3.0",
+                self.root,
+                **self.identity_arguments(),
+            )
+        self.assertNotIn("hasExtractedLicensingInfos", document)
+
+    @mock.patch.object(SBOM.subprocess, "run")
+    def test_verify_and_write_document_failure_boundaries(self, run: mock.Mock) -> None:
+        run.return_value = self.completed(self.build_info())
+        output = self.root / "invalid.spdx.json"
+        output.write_text("{", encoding="utf-8")
+        with self.assertRaisesRegex(SBOM.SBOMError, "strict UTF-8 JSON"):
+            SBOM.verify_document(
+                output,
+                self.binary,
+                self.lock,
+                "0.3.0",
+                self.root,
+                **self.identity_arguments(),
+            )
+        output.write_text('{"duplicate": 1, "duplicate": 2}', encoding="utf-8")
+        with self.assertRaisesRegex(SBOM.SBOMError, "duplicate JSON key"):
+            SBOM.verify_document(
+                output,
+                self.binary,
+                self.lock,
+                "0.3.0",
+                self.root,
+                **self.identity_arguments(),
+            )
+        replacement = self.root / "replace.spdx.json"
+        with mock.patch.object(SBOM.os, "replace", side_effect=OSError("replace failed")):
+            with self.assertRaisesRegex(OSError, "replace failed"):
+                SBOM.write_document({"fixture": True}, replacement, False)
+        self.assertFalse(replacement.exists())
+
+    def cli_arguments(self, destination: str, *, verify: bool = False, force: bool = False) -> list[str]:
+        option = "--verify-document" if verify else "--output"
+        return [
+            "generate-go-sbom.py",
+            "--binary", str(self.binary),
+            option, destination,
+            "--lock", str(self.lock),
+            "--source-root", str(self.root),
+            "--source-commit", self.source_commit,
+            "--source-tree", self.source_tree,
+            "--goos", "linux",
+            "--goarch", "amd64",
+            "--source-date-epoch", self.source_date_epoch,
+            "--version", "0.3.0",
+        ] + (["--force"] if force else [])
+
+    def test_main_output_verify_error_and_script_guard(self) -> None:
+        with mock.patch.object(SBOM, "generate", return_value={"fixture": True}), mock.patch.object(
+            SBOM, "write_document"
+        ) as write_document, mock.patch.object(sys, "argv", self.cli_arguments(str(self.root / "out.json"))):
+            self.assertEqual(SBOM.main(), 0)
+            write_document.assert_called_once()
+        with mock.patch.object(SBOM, "verify_document"), mock.patch.object(
+            sys, "argv", self.cli_arguments(str(self.root / "out.json"), verify=True)
+        ):
+            self.assertEqual(SBOM.main(), 0)
+        with mock.patch.object(sys, "argv", self.cli_arguments(str(self.root / "out.json"), verify=True, force=True)):
+            with mock.patch("sys.stderr", new=io.StringIO()):
+                self.assertEqual(SBOM.main(), 2)
+        with mock.patch.object(SBOM, "generate", side_effect=SBOM.SBOMError("fixture failure")), mock.patch.object(
+            sys, "argv", self.cli_arguments(str(self.root / "out.json"))
+        ), mock.patch("sys.stderr", new=io.StringIO()):
+            self.assertEqual(SBOM.main(), 2)
+        with mock.patch.object(sys, "argv", [str(Path(SBOM.__file__)), "--help"]):
+            with self.assertRaises(SystemExit) as raised:
+                runpy.run_path(str(Path(SBOM.__file__)), run_name="__main__")
+        self.assertEqual(raised.exception.code, 0)
 
 
 if __name__ == "__main__":
