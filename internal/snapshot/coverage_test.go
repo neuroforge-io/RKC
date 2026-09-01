@@ -84,6 +84,46 @@ func TestTransactionLeaseProvesLivenessAndIdentity(t *testing.T) {
 	_ = closedLease.Close()
 }
 
+func TestTransactionLeaseRejectsUnreadableAndInvalidPaths(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "unreadable")
+	if err := os.WriteFile(path, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(path, 0); err != nil {
+		t.Fatal(err)
+	}
+	if _, live, err := acquireAbandonedTransactionLease(path); err == nil || live {
+		t.Fatalf("acquire unreadable lease = live=%v err=%v", live, err)
+	}
+
+	if _, _, err := acquireAbandonedTransactionLease("invalid\x00lease"); err == nil {
+		t.Fatal("acquire invalid lease path succeeded")
+	}
+
+	validPath := filepath.Join(root, "valid")
+	lease, err := createTransactionLease(validPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := lease.file.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := lease.validate(validPath); !errors.Is(err, ErrBuildingUnowned) {
+		t.Fatalf("validate closed lease = %v", err)
+	}
+	if err := os.Remove(validPath); err != nil {
+		t.Fatal(err)
+	}
+	if err := lease.validate(validPath); !errors.Is(err, ErrBuildingUnowned) {
+		t.Fatalf("validate missing path = %v", err)
+	}
+	lease.file = nil
+	if err := lease.Close(); err != nil {
+		t.Fatalf("close cleared lease = %v", err)
+	}
+}
+
 func mustOpenSnapshotFile(t *testing.T, path string) *os.File {
 	t.Helper()
 	file, err := os.OpenFile(path, os.O_RDWR, 0)

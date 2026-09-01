@@ -44,6 +44,16 @@ func TestPrepareTraceInputsValidation(t *testing.T) {
 	if _, _, err := PrepareTraceInputs(context.Background(), []string{big}); err == nil {
 		t.Fatal("oversized trace was accepted")
 	}
+	unreadable := filepath.Join(dir, "unreadable.json")
+	if err := os.WriteFile(unreadable, encoded, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(unreadable, 0o000); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := PrepareTraceInputs(context.Background(), []string{unreadable}); err == nil || !strings.Contains(err.Error(), "hash trace") {
+		t.Fatalf("unreadable trace preparation = %v", err)
+	}
 	var many []string
 	for index := 0; index < 65; index++ {
 		many = append(many, valid)
@@ -97,6 +107,16 @@ func TestLoadTraceValidation(t *testing.T) {
 	input.SHA256 = ""
 	if _, err := LoadTrace(context.Background(), input); err == nil {
 		t.Fatal("missing digest was accepted")
+	}
+	unreadable := filepath.Join(dir, "unreadable-load.json")
+	if err := os.WriteFile(unreadable, []byte(content), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(unreadable, 0o000); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := LoadTrace(context.Background(), TraceInput{Path: unreadable, SHA256: sha256OfFile(t, path), SizeBytes: int64(len(content))}); err == nil || !strings.Contains(err.Error(), "read trace") {
+		t.Fatalf("unreadable trace load = %v", err)
 	}
 	if _, err := LoadTrace(nil, input); err == nil {
 		t.Fatal("nil context was accepted")
