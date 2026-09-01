@@ -341,6 +341,34 @@ func TestManifestRequirementsAndDockerInstructionBoundaries(t *testing.T) {
 	}
 }
 
+func TestManifestDeduplicatesRepeatedFileReferences(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	writeManifestTestFile(t, root, "package.json", `{"name":"duplicate-check","dependencies":{"example":"1.0.0"}}`)
+	file := pluginapi.FileRef{ArtifactID: "package", Path: "package.json", SHA256: "sha"}
+	fragment, err := Extract(Options{Root: root, Files: []pluginapi.FileRef{file, file}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	projects, dependencies, edges := 0, 0, 0
+	for _, node := range fragment.Nodes {
+		switch node.Kind {
+		case "project":
+			projects++
+		case "external_dependency":
+			dependencies++
+		}
+	}
+	for _, edge := range fragment.Edges {
+		if edge.Kind == "depends_on" {
+			edges++
+		}
+	}
+	if projects != 1 || dependencies != 1 || edges != 1 {
+		t.Fatalf("duplicate file references were not deduplicated: projects=%d dependencies=%d edges=%d", projects, dependencies, edges)
+	}
+}
+
 func TestDockerfileBackslashContinuations(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()
