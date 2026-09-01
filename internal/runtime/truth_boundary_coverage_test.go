@@ -221,6 +221,10 @@ func TestRuntimeIdentifierRedactionBoundaries(t *testing.T) {
 	if name, redacted, err := safeTestIdentity("TestSafe/user-controlled"); err != nil || name != "TestSafe"+redactedSubtestSuffix || !redacted {
 		t.Fatalf("subtest redaction = %q, %v, %v", name, redacted, err)
 	}
+	secretTest := "github_pat_" + strings.Repeat("A", 20)
+	if _, _, err := safeTestIdentity(secretTest); err == nil || !strings.Contains(err.Error(), "credential-shaped") {
+		t.Fatalf("credential-shaped root test was accepted: %v", err)
+	}
 }
 
 func TestAffinityBindingsRejectAmbiguityAndMutation(t *testing.T) {

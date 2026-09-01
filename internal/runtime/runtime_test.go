@@ -60,7 +60,8 @@ func TestParseCoverageRejectsMalformed(t *testing.T) {
 }
 
 func TestParseGoTestJSON(t *testing.T) {
-	output := `{"Action":"run","Package":"example.com/z","Test":"TestAlpha"}
+	output := `
+{"Action":"run","Package":"example.com/z","Test":"TestAlpha"}
 {"Action":"output","Package":"example.com/z","Test":"TestAlpha","Output":"ok\n"}
 {"Action":"pass","Package":"example.com/z","Test":"TestAlpha","Elapsed":0.01}
 {"Action":"run","Package":"example.com/z","Test":"TestBeta"}
