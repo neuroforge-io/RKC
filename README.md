@@ -180,10 +180,12 @@ without starting a scan. Scripts and experienced users can continue to run
 `open` performs the scan and locked integrity/quality checks, starts the
 loopback read-only browser, and opens the default desktop browser when one is
 available. On an ordinary Linux host, `open`, `quickstart`, and direct `scan`
-first re-execute inside the exact one-core, nice-19, idle-I/O, 4 GiB pressure /
-4.5 GiB hard-memory envelope. A command already inside that exact RKC unit is
-reused instead of creating a sibling allowance. The only additional reuse path
-is a private, constrained container whose cgroup root proves the one-core,
+first re-execute inside the default one-core, nice-19, idle-I/O, 4 GiB pressure /
+4.5 GiB hard-memory envelope. A command already inside that RKC unit is
+reused instead of creating a sibling allowance. Reserved RKC units launched
+with a strictly smaller memory, swap, or task ceiling are also reusable; larger,
+unlimited, or internally inconsistent controls fail closed. The only additional
+reuse path is a private, constrained container whose cgroup root proves the one-core,
 4.5 GiB hard-memory, 256 MiB swap, 128-task, low-weight, and OOM contracts before
 RKC lowers and rechecks every thread's scheduling priority. Admission and
 continuous monitoring treat visible configured workload classes as explicitly
@@ -202,6 +204,20 @@ that disposable service, so stopping RKC does not place the desktop browser
 inside RKC's cgroup. Direct `scan` requires an explicit final
 `--no-python=true` or `--no-plugins=true` setting; the shorter true form
 `--no-python` is used throughout these examples.
+
+On a memory-constrained shared host, the low-level source-checkout wrapper can
+select a smaller profile without weakening any scheduling protection:
+
+```sh
+RKC_MEMORY_HIGH_MIB=1280 \
+RKC_MEMORY_MAX_MIB=1536 \
+RKC_MEMORY_SWAP_MAX_MIB=256 \
+RKC_GO_MEMORY_LIMIT_MIB=1024 \
+scripts/with-rkc-limits.sh ./bin/rkc scan --stage-workers 1 --no-python /path/to/repository
+```
+
+The four values are validated before systemd is invoked. They may only tighten
+the release-profile maxima; the Go heap target must not exceed the soft ceiling.
 
 Press Ctrl-C in the terminal to stop cleanly. Use `open --no-browser` on
 headless hosts; the URL is still printed. The command accepts any local folder,

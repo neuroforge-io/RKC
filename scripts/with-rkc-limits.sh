@@ -1,9 +1,11 @@
 #!/bin/sh
 # Run an RKC development or inference workload in a deliberately subordinate
 # cgroup. The defaults protect concurrent, higher-priority training workloads:
-# at most one CPU core, 4 GiB soft / 4.5 GiB hard memory, idle I/O scheduling,
-# lowest CPU niceness, idle I/O scheduling (plus IOWeight=1 when the user
-# manager delegates that controller), and a high OOM-kill preference.
+# at most one CPU core, no more than 4 GiB soft / 4.5 GiB hard memory, idle I/O
+# scheduling, lowest CPU niceness, IOWeight=1 when the user manager delegates
+# that controller, and a high OOM-kill preference. Operators may select a
+# strictly smaller host profile with RKC_MEMORY_HIGH_MIB, RKC_MEMORY_MAX_MIB,
+# RKC_MEMORY_SWAP_MAX_MIB, and RKC_GO_MEMORY_LIMIT_MIB.
 #
 # Processes matching the bounded RKC_HIGHER_PRIORITY_MARKERS classes are
 # treated as explicitly more important. The generic default is
@@ -53,6 +55,32 @@ case "$guard_require_io_controller" in
         exit 2
         ;;
 esac
+
+guard_memory_high_mib=${RKC_MEMORY_HIGH_MIB:-4096}
+guard_memory_max_mib=${RKC_MEMORY_MAX_MIB:-4608}
+guard_memory_swap_max_mib=${RKC_MEMORY_SWAP_MAX_MIB:-256}
+guard_go_memory_limit_mib=${RKC_GO_MEMORY_LIMIT_MIB:-$guard_memory_high_mib}
+invalid_memory_profile() {
+    echo "rkc resource guard: memory profile must use integer MiB values with high=64..4096, max=high..4608, swap=0..256, and Go limit=64..high" >&2
+    exit 2
+}
+for guard_memory_value in "$guard_memory_high_mib" "$guard_memory_max_mib" "$guard_memory_swap_max_mib" "$guard_go_memory_limit_mib"; do
+    case "$guard_memory_value" in
+        ''|*[!0123456789]*) invalid_memory_profile ;;
+    esac
+    [ "${#guard_memory_value}" -le 4 ] || invalid_memory_profile
+done
+[ "$guard_memory_high_mib" -ge 64 ] && [ "$guard_memory_high_mib" -le 4096 ] || invalid_memory_profile
+[ "$guard_memory_max_mib" -ge "$guard_memory_high_mib" ] && [ "$guard_memory_max_mib" -le 4608 ] || invalid_memory_profile
+[ "$guard_memory_swap_max_mib" -le 256 ] || invalid_memory_profile
+[ "$guard_go_memory_limit_mib" -ge 64 ] && [ "$guard_go_memory_limit_mib" -le "$guard_memory_high_mib" ] || invalid_memory_profile
+RKC_MEMORY_HIGH_MIB=$guard_memory_high_mib
+RKC_MEMORY_MAX_MIB=$guard_memory_max_mib
+RKC_MEMORY_SWAP_MAX_MIB=$guard_memory_swap_max_mib
+RKC_GO_MEMORY_LIMIT_MIB=$guard_go_memory_limit_mib
+GOMEMLIMIT=${guard_go_memory_limit_mib}MiB
+export RKC_MEMORY_HIGH_MIB RKC_MEMORY_MAX_MIB RKC_MEMORY_SWAP_MAX_MIB
+export RKC_GO_MEMORY_LIMIT_MIB GOMEMLIMIT
 
 # Configured workload classes are explicitly higher priority on shared hosts.
 # The strict policy refuses to start new RKC work while one is visible (callers
@@ -207,9 +235,9 @@ case "$mode" in
             --property CPUWeight=1 \
             --property IOWeight=1 \
             --property CPUQuota=100% \
-            --property MemoryHigh=4096M \
-            --property MemoryMax=4608M \
-            --property MemorySwapMax=256M \
+            --property "MemoryHigh=${guard_memory_high_mib}M" \
+            --property "MemoryMax=${guard_memory_max_mib}M" \
+            --property "MemorySwapMax=${guard_memory_swap_max_mib}M" \
             --property TasksMax=128 \
             --property OOMPolicy=stop \
             choom -n 750 -- ionice -c 3 nice -n 19 "$@"
@@ -241,17 +269,22 @@ case "$mode" in
             --setenv="CMAKE_BUILD_PARALLEL_LEVEL=$CMAKE_BUILD_PARALLEL_LEVEL" \
             --setenv="CARGO_BUILD_JOBS=$CARGO_BUILD_JOBS" \
             --setenv="GOFLAGS=$GOFLAGS" \
+            --setenv="GOMEMLIMIT=$GOMEMLIMIT" \
             --setenv="CGO_ENABLED=$guard_cgo_enabled" \
             --setenv="RKC_REQUIRE_IO_CONTROLLER=$guard_require_io_controller" \
+            --setenv="RKC_MEMORY_HIGH_MIB=$guard_memory_high_mib" \
+            --setenv="RKC_MEMORY_MAX_MIB=$guard_memory_max_mib" \
+            --setenv="RKC_MEMORY_SWAP_MAX_MIB=$guard_memory_swap_max_mib" \
+            --setenv="RKC_GO_MEMORY_LIMIT_MIB=$guard_go_memory_limit_mib" \
             --setenv="RKC_HIGHER_PRIORITY_POLICY=$higher_priority_policy" \
             --setenv="RKC_HIGHER_PRIORITY_MARKERS=$higher_priority_markers" \
             --setenv="RKC_HIGHER_PRIORITY_LOAD_MAX=$guard_priority_load_max" \
             --property CPUWeight=1 \
             --property IOWeight=1 \
             --property CPUQuota=100% \
-            --property MemoryHigh=4096M \
-            --property MemoryMax=4608M \
-            --property MemorySwapMax=256M \
+            --property "MemoryHigh=${guard_memory_high_mib}M" \
+            --property "MemoryMax=${guard_memory_max_mib}M" \
+            --property "MemorySwapMax=${guard_memory_swap_max_mib}M" \
             --property TasksMax=128 \
             --property OOMPolicy=stop \
             --property KillMode=control-group \

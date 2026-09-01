@@ -16,7 +16,11 @@ import (
 var ErrLowPriorityEnvelope = errors.New("current process is outside the RKC low-priority envelope")
 
 const (
-	rkcMemoryHighBytes = int64(4 * 1024 * 1024 * 1024)
+	// The host envelope may be tightened below these release-profile maxima.
+	// Reserved rkc-low units never accept a larger value, an unlimited value,
+	// or a hard ceiling too small to host a useful Go process.
+	rkcMemoryHighBytes    = int64(4 * 1024 * 1024 * 1024)
+	rkcMinimumMemoryBytes = int64(64 * 1024 * 1024)
 	// LowPriorityMemoryMaxBytes is the hard memory ceiling shared by the
 	// installed first-run launcher, workbench, development guard, and model
 	// runtime. Keep it aligned with scripts/with-rkc-limits.sh.
@@ -184,13 +188,35 @@ func requireProcessLowPriority(procRoot, cgroupRoot string, pid int, scheduling 
 	if err := requireCPUQuotaAtMostOne(cgroupPath); err != nil {
 		return fail("%v", err)
 	}
-	for name, expected := range map[string]int64{
-		"memory.high":     rkcMemoryHighBytes,
-		"memory.max":      rkcMemoryMaxBytes,
-		"memory.swap.max": rkcSwapMaxBytes,
-		"pids.max":        rkcTasksMax,
+	memoryHigh, err := requireControlInRange(cgroupPath, "memory.high", rkcMinimumMemoryBytes, rkcMemoryHighBytes)
+	if err != nil {
+		return fail("%v", err)
+	}
+	memoryMax, err := requireControlInRange(cgroupPath, "memory.max", rkcMinimumMemoryBytes, rkcMemoryMaxBytes)
+	if err != nil {
+		return fail("%v", err)
+	}
+	if memoryHigh > memoryMax {
+		return fail("memory.high %d exceeds memory.max %d", memoryHigh, memoryMax)
+	}
+	swapMax, err := requireControlAtMostValue(cgroupPath, "memory.swap.max", rkcSwapMaxBytes)
+	if err != nil {
+		return fail("%v", err)
+	}
+	tasksMax, err := requireControlInRange(cgroupPath, "pids.max", 1, rkcTasksMax)
+	if err != nil {
+		return fail("%v", err)
+	}
+	for _, usage := range []struct {
+		name        string
+		policyLimit int64
+		actualLimit int64
+	}{
+		{name: "memory.current", policyLimit: rkcMemoryMaxBytes, actualLimit: memoryMax},
+		{name: "memory.swap.current", policyLimit: rkcSwapMaxBytes, actualLimit: swapMax},
+		{name: "pids.current", policyLimit: rkcTasksMax, actualLimit: tasksMax},
 	} {
-		if err := requireControlInteger(cgroupPath, name, expected); err != nil {
+		if err := requireCurrentControlAtMostLimit(cgroupPath, usage.name, usage.policyLimit, usage.actualLimit); err != nil {
 			return fail("%v", err)
 		}
 	}
@@ -424,6 +450,20 @@ func requireControlAtMostValue(root, name string, maximum int64) (int64, error) 
 	}
 	if value > maximum {
 		return 0, fmt.Errorf("%s is %d, exceeds %d", name, value, maximum)
+	}
+	return value, nil
+}
+
+func requireControlInRange(root, name string, minimum, maximum int64) (int64, error) {
+	if minimum < 0 || maximum < minimum {
+		return 0, fmt.Errorf("%s policy range is invalid", name)
+	}
+	value, err := requireControlAtMostValue(root, name, maximum)
+	if err != nil {
+		return 0, err
+	}
+	if value < minimum {
+		return 0, fmt.Errorf("%s is %d, below %d", name, value, minimum)
 	}
 	return value, nil
 }

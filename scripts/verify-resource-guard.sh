@@ -47,8 +47,13 @@ sh scripts/with-rkc-limits.sh sh -c '
     [ "${CMAKE_BUILD_PARALLEL_LEVEL:-}" = 1 ] || fail "CMAKE_BUILD_PARALLEL_LEVEL did not survive guard entry"
     [ "${CARGO_BUILD_JOBS:-}" = 1 ] || fail "CARGO_BUILD_JOBS did not survive guard entry"
     [ "${GOFLAGS:-}" = "-mod=readonly -p=1" ] || fail "GOFLAGS did not survive guard entry"
+    [ "${GOMEMLIMIT:-}" = "4096MiB" ] || fail "default Go memory limit did not survive guard entry"
     [ "${CGO_ENABLED:-}" = 0 ] || fail "CGO_ENABLED did not survive guard entry"
     [ "${RKC_REQUIRE_IO_CONTROLLER:-}" = "$1" ] || fail "RKC_REQUIRE_IO_CONTROLLER did not survive guard entry"
+    [ "${RKC_MEMORY_HIGH_MIB:-}" = 4096 ] || fail "default soft-memory profile did not survive guard entry"
+    [ "${RKC_MEMORY_MAX_MIB:-}" = 4608 ] || fail "default hard-memory profile did not survive guard entry"
+    [ "${RKC_MEMORY_SWAP_MAX_MIB:-}" = 256 ] || fail "default swap profile did not survive guard entry"
+    [ "${RKC_GO_MEMORY_LIMIT_MIB:-}" = 4096 ] || fail "default Go-memory profile did not survive guard entry"
     relative=
     while IFS=: read -r hierarchy controllers path; do
         [ "$hierarchy" = 0 ] && relative=$path

@@ -47,6 +47,23 @@ desktop browser outside the disposable RKC service. `--no-browser` retains the
 printed URL for headless use. The default server is read-only and remains the
 portable macOS/Windows first-run path.
 
+For a source-checkout workload sharing a memory-constrained host, the wrapper
+accepts a strictly smaller, fail-closed profile. For example:
+
+```sh
+RKC_MEMORY_HIGH_MIB=1280 \
+RKC_MEMORY_MAX_MIB=1536 \
+RKC_MEMORY_SWAP_MAX_MIB=256 \
+RKC_GO_MEMORY_LIMIT_MIB=1024 \
+scripts/with-rkc-limits.sh ./bin/rkc scan --stage-workers 1 --no-python /path/to/repository
+```
+
+The wrapper rejects non-integers, a hard ceiling below the soft ceiling, values
+above the 4 GiB / 4.5 GiB / 256 MiB release maxima, and a Go heap target above
+the soft ceiling. The guarded binary re-proves actual cgroup usage and accepts
+the smaller reserved unit; direct scan/open admission reuses that unit rather
+than creating a sibling with the default allowance.
+
 For a trusted single-user Linux checkout, `rkc open --workbench <path>` is the
 explicit interactive route. The guarded child writes its one-time URL-fragment
 bootstrap only to an atomically published, owner-private readiness receipt. The

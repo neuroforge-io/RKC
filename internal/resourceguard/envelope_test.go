@@ -27,6 +27,21 @@ func TestRequireProcessLowPriorityAcceptsExactEnvelope(t *testing.T) {
 	}
 }
 
+func TestRequireProcessLowPriorityAcceptsStrictlySmallerMemoryEnvelope(t *testing.T) {
+	fixture := newEnvelopeFixture(t)
+	fixture.writeControl("memory.high", strconv.FormatInt(1280*1024*1024, 10)+"\n")
+	fixture.writeControl("memory.max", strconv.FormatInt(1536*1024*1024, 10)+"\n")
+	fixture.writeControl("memory.current", strconv.FormatInt(1024*1024*1024, 10)+"\n")
+	fixture.writeControl("memory.swap.max", strconv.FormatInt(128*1024*1024, 10)+"\n")
+	fixture.writeControl("pids.max", "64\n")
+	fixture.writeControl("pids.current", "8\n")
+	if err := requireProcessLowPriority(fixture.proc, fixture.cgroup, fixture.pid, func(int) (schedulingEnvelope, error) {
+		return schedulingEnvelope{nice: rkcNice, ioClass: rkcIOClassIdle}, nil
+	}); err != nil {
+		t.Fatalf("strictly smaller low-priority envelope was rejected: %v", err)
+	}
+}
+
 func TestPrepareCurrentProcessLowPriorityUsesExactThenNarrowExternalProof(t *testing.T) {
 	exactFailure := fmt.Errorf("%w: exact", ErrLowPriorityEnvelope)
 	externalFailure := fmt.Errorf("%w: external", ErrLowPriorityEnvelope)
@@ -237,10 +252,23 @@ func TestRequireProcessLowPriorityRejectsPartialEnvelopes(t *testing.T) {
 		{"unlimited cpu", func(f *envelopeFixture) { f.writeControl("cpu.max", "max 100000\n") }, rkcNice, rkcIOClassIdle, "one-core"},
 		{"over one cpu", func(f *envelopeFixture) { f.writeControl("cpu.max", "100001 100000\n") }, rkcNice, rkcIOClassIdle, "one-core"},
 		{"cpu burst", func(f *envelopeFixture) { f.writeControl("cpu.max.burst", "1\n") }, rkcNice, rkcIOClassIdle, "burst"},
-		{"memory high", func(f *envelopeFixture) { f.writeControl("memory.high", "max\n") }, rkcNice, rkcIOClassIdle, "memory.high"},
-		{"memory max", func(f *envelopeFixture) { f.writeControl("memory.max", "1\n") }, rkcNice, rkcIOClassIdle, "memory.max"},
-		{"swap", func(f *envelopeFixture) { f.writeControl("memory.swap.max", "1\n") }, rkcNice, rkcIOClassIdle, "memory.swap.max"},
+		{"memory high unlimited", func(f *envelopeFixture) { f.writeControl("memory.high", "max\n") }, rkcNice, rkcIOClassIdle, "memory.high"},
+		{"memory high above policy", func(f *envelopeFixture) {
+			f.writeControl("memory.high", strconv.FormatInt(rkcMemoryHighBytes+1, 10)+"\n")
+		}, rkcNice, rkcIOClassIdle, "memory.high"},
+		{"memory max below minimum", func(f *envelopeFixture) { f.writeControl("memory.max", "1\n") }, rkcNice, rkcIOClassIdle, "memory.max"},
+		{"memory high above hard max", func(f *envelopeFixture) { f.writeControl("memory.max", strconv.FormatInt(1024*1024*1024, 10)+"\n") }, rkcNice, rkcIOClassIdle, "exceeds memory.max"},
+		{"swap above policy", func(f *envelopeFixture) {
+			f.writeControl("memory.swap.max", strconv.FormatInt(rkcSwapMaxBytes+1, 10)+"\n")
+		}, rkcNice, rkcIOClassIdle, "memory.swap.max"},
 		{"tasks", func(f *envelopeFixture) { f.writeControl("pids.max", "129\n") }, rkcNice, rkcIOClassIdle, "pids.max"},
+		{"memory usage above hard max", func(f *envelopeFixture) {
+			f.writeControl("memory.current", strconv.FormatInt(rkcMemoryMaxBytes+1, 10)+"\n")
+		}, rkcNice, rkcIOClassIdle, "memory.current"},
+		{"swap usage above max", func(f *envelopeFixture) {
+			f.writeControl("memory.swap.current", strconv.FormatInt(rkcSwapMaxBytes+1, 10)+"\n")
+		}, rkcNice, rkcIOClassIdle, "memory.swap.current"},
+		{"tasks usage above max", func(f *envelopeFixture) { f.writeControl("pids.current", "129\n") }, rkcNice, rkcIOClassIdle, "pids.current"},
 		{"io weight", func(f *envelopeFixture) { f.writeControl("io.weight", "default 100\n") }, rkcNice, rkcIOClassIdle, "io.weight"},
 		{"oom adjustment", func(f *envelopeFixture) { f.writeProc("oom_score_adj", "0\n") }, rkcNice, rkcIOClassIdle, "OOM"},
 		{"nice", func(*envelopeFixture) {}, 18, rkcIOClassIdle, "nice"},
@@ -418,8 +446,11 @@ func newEnvelopeFixture(t *testing.T) *envelopeFixture {
 	fixture.writeControl("cpu.max.burst", "0\n")
 	fixture.writeControl("memory.high", strconv.FormatInt(rkcMemoryHighBytes, 10)+"\n")
 	fixture.writeControl("memory.max", strconv.FormatInt(rkcMemoryMaxBytes, 10)+"\n")
+	fixture.writeControl("memory.current", strconv.FormatInt(64*1024*1024, 10)+"\n")
 	fixture.writeControl("memory.swap.max", strconv.FormatInt(rkcSwapMaxBytes, 10)+"\n")
+	fixture.writeControl("memory.swap.current", "0\n")
 	fixture.writeControl("pids.max", strconv.FormatInt(rkcTasksMax, 10)+"\n")
+	fixture.writeControl("pids.current", "4\n")
 	fixture.writeControl("io.weight", "default 1\n")
 	return fixture
 }
