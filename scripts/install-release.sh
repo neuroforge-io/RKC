@@ -19,11 +19,13 @@ rkc_download() {
     rkc_fail "download failed; check the release/version and network connection"
 }
 rkc_directory() {
+  # Existing leaves do not prove their ancestors are real directories. Inspect
+  # every component before canonicalization can hide a linked parent.
+  [ "$1" = "$(dirname -- "$1")" ] || rkc_directory "$(dirname -- "$1")"
   [ ! -L "$1" ] || rkc_fail "destination directory is a symlink: $1"
   if [ -e "$1" ]; then
     [ -d "$1" ] || rkc_fail "destination is not a directory: $1"
   else
-    rkc_directory "$(dirname -- "$1")"
     mkdir "$1"
   fi
 }
@@ -107,6 +109,7 @@ EOF
   done
   rkc_directory "$rkc_prefix"
   rkc_prefix=$(CDPATH= cd -- "$rkc_prefix" && pwd -P)
+  [ "$rkc_prefix" != / ] || rkc_fail "unsafe install prefix resolves to filesystem root"
   # Preflight every destination before replacing any installed file.
   while IFS= read -r rkc_member; do
     rkc_destination=$rkc_prefix/$rkc_member

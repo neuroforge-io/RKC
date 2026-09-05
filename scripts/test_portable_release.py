@@ -28,7 +28,10 @@ class PortableReleaseTests(unittest.TestCase):
     def setUp(self) -> None:
         self.work = tempfile.TemporaryDirectory(prefix="rkc-portable-test-")
         self.addCleanup(self.work.cleanup)
-        self.root = Path(self.work.name)
+        # macOS commonly exposes its temporary root through /var -> /private/var.
+        # Fixtures that expect admission use the real path; linked-path rejection
+        # is exercised separately below.
+        self.root = Path(self.work.name).resolve()
         self.binaries = self.root / "dist/portable-binaries"
         self.source = {"version": "0.4.0", "commit": "a" * 40, "tree": "b" * 40, "commit_time_unix": 1700000000}
         for name in ("LICENSE", "NOTICE", "THIRD_PARTY_NOTICES.md", "VERSION", "LICENSES/Go.txt", "LICENSES/go-modules/example@v1/LICENSE", "third_party/go-modules.lock.json", "models/models.lock.json", "models/qualification/rkc-local-model-v1.json", "schemas/model-lock.schema.json", "schemas/model-qualification.schema.json", "scripts/install-release.sh", "scripts/install-release.ps1"):
@@ -191,6 +194,22 @@ class PortableReleaseTests(unittest.TestCase):
         result = subprocess.run(["sh", str(ROOT / "scripts/install-release.sh"), "--help"], capture_output=True, text=True)
         self.assertEqual(result.returncode, 0)
         self.assertIn("never disables guards", result.stdout)
+
+    @unittest.skipUnless(shutil.which("unzip") and shutil.which("sha256sum"), "POSIX unzip and SHA256 tools required")
+    def test_posix_installer_rejects_existing_linked_ancestors_and_root_aliases(self) -> None:
+        real = self.root / "real-parent"
+        real.mkdir()
+        linked = self.root / "linked-parent"
+        linked.symlink_to(real, target_is_directory=True)
+        prefix = linked / "existing-prefix"
+        prefix.mkdir()
+        result = self.installer(extra=["--prefix", str(prefix)])
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("symlink", result.stderr)
+        self.assertFalse((real / "existing-prefix/bin").exists())
+        result = self.installer(extra=["--prefix", "/."])
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("filesystem root", result.stderr)
 
     def test_installer_checksum_failures_precede_installation(self) -> None:
         missing = self.write("missing-sums.txt", b"0" * 64 + b"  another-platform.zip\n")

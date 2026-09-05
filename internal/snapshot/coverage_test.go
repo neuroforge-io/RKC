@@ -427,7 +427,7 @@ func TestTransactionAndStoreAdversarialValidationBranches(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	badSnapshot := filepath.Join(store.root, "snapshots", "not-a-directory")
+	badSnapshot := filepath.Join(store.root, "snapshots", snapshotDirectoryName("not-a-directory"))
 	if err := os.WriteFile(badSnapshot, nil, 0o600); err != nil {
 		t.Fatal(err)
 	}

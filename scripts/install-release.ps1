@@ -18,6 +18,54 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
+function Get-RkcArchitecture {
+    # Framework RuntimeInformation is absent before .NET 4.7.1 and older
+    # implementations report the emulated x86/x64 architecture on Windows ARM.
+    # Ask the OS for its native machine, independently of this PowerShell host.
+    # https://learn.microsoft.com/windows/win32/api/wow64apiset/nf-wow64apiset-iswow64process2
+    if (!('RkcInstaller.NativePlatform' -as [type])) {
+        Add-Type -TypeDefinition @'
+using System;
+using System.ComponentModel;
+using System.Runtime.InteropServices;
+namespace RkcInstaller {
+    public static class NativePlatform {
+        [DllImport("kernel32.dll", SetLastError = true)]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        private static extern bool IsWow64Process2(IntPtr process, out ushort processMachine, out ushort nativeMachine);
+        [DllImport("kernel32.dll")]
+        private static extern void GetNativeSystemInfo(out SystemInfo info);
+        [StructLayout(LayoutKind.Sequential)]
+        private struct SystemInfo {
+            public ushort Architecture, Reserved;
+            public uint PageSize;
+            public IntPtr MinimumAddress, MaximumAddress;
+            public UIntPtr ProcessorMask;
+            public uint ProcessorCount, ProcessorType, AllocationGranularity;
+            public ushort ProcessorLevel, ProcessorRevision;
+        }
+        public static string Architecture() {
+            ushort processMachine, nativeMachine;
+            try {
+                if (!IsWow64Process2(new IntPtr(-1), out processMachine, out nativeMachine))
+                    throw new Win32Exception(Marshal.GetLastWin32Error());
+            } catch (EntryPointNotFoundException) {
+                // Early Windows 10 predates both this API and Windows ARM64.
+                SystemInfo info;
+                GetNativeSystemInfo(out info);
+                nativeMachine = info.Architecture == 9 ? (ushort)0x8664 : (ushort)0;
+            }
+            if (nativeMachine == 0x8664) return "amd64";
+            if (nativeMachine == 0xaa64) return "arm64";
+            throw new PlatformNotSupportedException("Supported Windows architectures are amd64 and arm64.");
+        }
+    }
+}
+'@
+    }
+    return [RkcInstaller.NativePlatform]::Architecture()
+}
+
 function Get-RkcDownload([string]$Address, [string]$Destination, [long]$Maximum) {
     Add-Type -AssemblyName System.Net.Http
     $handler = [System.Net.Http.HttpClientHandler]::new()
@@ -74,14 +122,13 @@ function Assert-RkcPath([string]$Path, [bool]$Directory) {
 function Install-RkcRelease {
     if ([Environment]::OSVersion.Platform -ne [PlatformID]::Win32NT) { throw 'Use install-release.sh on Linux or macOS.' }
     if ($Version -notmatch '^[a-zA-Z0-9._-]+$') { throw 'Invalid release tag.' }
-    $architecture = [System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture.ToString().ToLowerInvariant()
-    if ($architecture -eq 'x64') { $architecture = 'amd64' }
-    if ($architecture -notin @('amd64', 'arm64')) { throw 'Supported Windows architectures are amd64 and arm64.' }
+    $architecture = Get-RkcArchitecture
     if (!$Prefix) {
         if (!$env:LOCALAPPDATA) { throw 'LOCALAPPDATA is unavailable; specify -Prefix.' }
         $Prefix = Join-Path $env:LOCALAPPDATA 'RKC'
     }
     if ($Prefix -match '[\r\n]' -or $Prefix -in @('.', '..')) { throw 'Unsafe install prefix.' }
+    if (!$NoPath -and $Prefix.Contains(';')) { throw 'A prefix containing semicolons cannot be added to PATH; use -NoPath and the absolute launch path.' }
     $installRoot = [IO.Path]::GetFullPath($Prefix).TrimEnd('\')
     if (!$installRoot -or $installRoot.TrimEnd('\') -eq [IO.Path]::GetPathRoot($installRoot).TrimEnd('\')) { throw 'Refusing a filesystem-root install prefix.' }
     Assert-RkcPath $installRoot $true
