@@ -1,6 +1,6 @@
 // Package main contains the rkc-mcp JSON-RPC stdio adapter.
 //
-// Command rkc-mcp exposes one generated RKC snapshot over JSON-RPC stdio.
+// Command rkc-mcp exposes generated RKC snapshots over JSON-RPC stdio.
 package main
 
 import (
@@ -34,6 +34,7 @@ func run(ctx context.Context, arguments []string, input io.Reader, output, diagn
 	fs := flag.NewFlagSet("rkc-mcp", flag.ContinueOnError)
 	fs.SetOutput(diagnostics)
 	dir := fs.String("dir", ".rkc", "generated RKC output directory")
+	workspace := fs.String("workspace", "", "private workspace registry; automatically follows verified active snapshots")
 	database := fs.String("database", "", "durable SQLite store (mutually exclusive with --dir)")
 	snapshotID := fs.String("snapshot", "", "SQLite snapshot ID")
 	repositoryID := fs.String("repository", "", "SQLite repository ID; selects its current snapshot")
@@ -52,8 +53,31 @@ func run(ctx context.Context, arguments []string, input io.Reader, output, diagn
 		fmt.Fprintln(output, version)
 		return 0
 	}
-	dirExplicit := false
-	fs.Visit(func(item *flag.Flag) { dirExplicit = dirExplicit || item.Name == "dir" })
+	dirExplicit, workspaceExplicit := false, false
+	fs.Visit(func(item *flag.Flag) {
+		dirExplicit = dirExplicit || item.Name == "dir"
+		workspaceExplicit = workspaceExplicit || item.Name == "workspace"
+	})
+	if workspaceExplicit {
+		if strings.TrimSpace(*workspace) == "" || *workspace != strings.TrimSpace(*workspace) {
+			fmt.Fprintln(diagnostics, "rkc-mcp: --workspace requires a registry path without surrounding whitespace")
+			return 1
+		}
+		if dirExplicit || *database != "" || *snapshotID != "" || *repositoryID != "" {
+			fmt.Fprintln(diagnostics, "rkc-mcp: --workspace is mutually exclusive with --dir, --database, --snapshot, and --repository")
+			return 1
+		}
+		adapter, err := mcpserver.NewWorkspace(*workspace, version)
+		if err != nil {
+			fmt.Fprintln(diagnostics, "rkc-mcp:", err)
+			return 1
+		}
+		if err := adapter.Serve(ctx, input, output); err != nil {
+			fmt.Fprintln(diagnostics, "rkc-mcp:", err)
+			return 1
+		}
+		return 0
+	}
 	dataset, err := loadMCPDataset(ctx, *dir, *database, *snapshotID, *repositoryID, dirExplicit)
 	if err != nil {
 		fmt.Fprintln(diagnostics, "rkc-mcp:", err)

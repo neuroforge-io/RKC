@@ -384,6 +384,13 @@ func validateDirectCommandAdmission(command string, args []string) (bool, error)
 	var booleanFlags map[string]struct{}
 	var valueFlags map[string]struct{}
 	switch command {
+	case "workspace":
+		if len(args) == 0 || args[0] != "sync" {
+			return false, errors.New("direct workspace admission requires the sync subcommand")
+		}
+		args = args[1:]
+		booleanFlags = map[string]struct{}{}
+		valueFlags = map[string]struct{}{"workspace": {}, "timeout": {}}
 	case "scan":
 		booleanFlags = scanAdmissionBooleanFlags
 		valueFlags = scanAdmissionValueFlags

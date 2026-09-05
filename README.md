@@ -106,6 +106,11 @@ Or configure an MCP client to launch the installed stdio server:
 rkc-mcp --dir ./my-project/.rkc
 ```
 
+For several repositories with automatic refresh, use a private
+[tracked workspace](docs/WORKSPACES.md) and connect its
+[MCP server](docs/MCP.md). Workspace tracking is available in the current source
+checkout; the v0.4.0 download serves individual atlases.
+
 Combine compiled atlas folders without a model:
 
 ```sh

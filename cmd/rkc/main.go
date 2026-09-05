@@ -40,6 +40,8 @@ func dispatch(args []string) error {
 		return nil
 	}
 	switch args[0] {
+	case "workspace":
+		return runWorkspace(args[1:])
 	case "context":
 		return runContext(args[1:])
 	case "capabilities":
@@ -140,6 +142,7 @@ Get started:
 Core commands:
   wizard       Guided terminal first run (alias: tui)
   gui          Open a workspace and choose a source in the browser
+  workspace    Register, sync, and watch private local or remote sources
   open         Compile, verify, and open a local browser atlas (alias: start)
   quickstart   Build and verify a ready-to-search atlas in one command
   init         Generate a complete, safe local configuration
