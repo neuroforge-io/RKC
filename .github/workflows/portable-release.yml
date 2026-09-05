@@ -101,8 +101,16 @@ jobs:
         include:
           - runner: macos-15-intel
             platform: darwin-amd64
+            architecture: amd64
+          - runner: macos-15
+            platform: darwin-arm64
+            architecture: arm64
           - runner: windows-2025
             platform: windows-amd64
+            architecture: amd64
+          - runner: windows-11-arm
+            platform: windows-arm64
+            architecture: arm64
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 15
     steps:
@@ -116,12 +124,15 @@ jobs:
         shell: bash
         env:
           GOMAXPROCS: '1'
+          RKC_TESTED_ARCH: ${{ matrix.architecture }}
           # Keep adversarial fixtures beneath the runner's real work directory,
           # avoiding macOS /var and Windows short-user-name temp aliases.
           TMPDIR: ${{ runner.temp }}
           TMP: ${{ runner.temp }}
           TEMP: ${{ runner.temp }}
-        run: go test ./internal/privatepath ./internal/safeoutput ./internal/cas ./internal/snapshot
+        run: |
+          test "$(go env GOARCH)" = "$RKC_TESTED_ARCH"
+          go test ./internal/privatepath ./internal/safeoutput ./internal/cas ./internal/snapshot
 
   native:
     needs: build
@@ -131,29 +142,75 @@ jobs:
         include:
           - runner: macos-15-intel
             platform: darwin-amd64
+            architecture: amd64
+          - runner: macos-15
+            platform: darwin-arm64
+            architecture: arm64
           - runner: windows-2025
             platform: windows-amd64
+            architecture: amd64
+          - runner: windows-11-arm
+            platform: windows-arm64
+            architecture: arm64
+          - runner: ubuntu-24.04-arm
+            platform: linux-arm64
+            architecture: arm64
     runs-on: ${{ matrix.runner }}
+    env:
+      RKC_TESTED_PLATFORM: ${{ matrix.platform }}
+      RKC_TESTED_ARCH: ${{ matrix.architecture }}
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
-          python-version: '3.11'
+          # The current Windows ARM image caches native 3.13; the GUI helper
+          # uses only the standard library and does not set a product dependency.
+          python-version: '3.13'
+          architecture: ${{ matrix.architecture == 'amd64' && 'x64' || 'arm64' }}
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: rkc-portable-build-${{ github.sha }}
           path: portable-downloads
-      - name: Install and exercise native macOS binaries
-        if: runner.os == 'macOS'
+      - name: Provision the existing fail-closed Linux resource envelope
+        if: runner.os == 'Linux'
         shell: bash
         run: |
           set -euo pipefail
-          test "$(uname -m)" = x86_64
-          sh scripts/install-release.sh --archive portable-downloads/rkc-darwin-amd64.zip --checksums portable-downloads/SHA256SUMS.txt --prefix "$RUNNER_TEMP/rkc-installed"
+          user_id="$(id -u)"
+          user_name="$(id -un)"
+          runtime_dir="/run/user/${user_id}"
+          drop_in='/etc/systemd/system/user@.service.d/90-rkc-ci-delegation.conf'
+          sudo install -d -m 0755 "$(dirname "$drop_in")"
+          printf '%s\n' '[Service]' 'Delegate=cpu io memory pids' | sudo tee "$drop_in" >/dev/null
+          sudo systemctl daemon-reload
+          sudo loginctl enable-linger "$user_name"
+          sudo systemctl restart "user@${user_id}.service"
+          test -S "${runtime_dir}/bus"
+          {
+            printf 'XDG_RUNTIME_DIR=%s\n' "$runtime_dir"
+            printf 'DBUS_SESSION_BUS_ADDRESS=unix:path=%s/bus\n' "$runtime_dir"
+          } >> "$GITHUB_ENV"
+      - name: Install and exercise native Unix binaries
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          set -euo pipefail
+          case "$RKC_TESTED_ARCH:$(uname -m)" in
+            amd64:x86_64|arm64:arm64|arm64:aarch64) ;;
+            *) echo 'Native runner architecture does not match the release asset' >&2; exit 1 ;;
+          esac
+          sh scripts/install-release.sh --archive "portable-downloads/rkc-$RKC_TESTED_PLATFORM.zip" --checksums portable-downloads/SHA256SUMS.txt --prefix "$RUNNER_TEMP/rkc-installed"
           test "$("$RUNNER_TEMP/rkc-installed/bin/rkc" version)" = "$(cat VERSION)"
           test "$("$RUNNER_TEMP/rkc-installed/bin/rkc-mcp" --version)" = "$(cat VERSION)"
-          "$RUNNER_TEMP/rkc-installed/bin/rkc" scan --no-python --out "$RUNNER_TEMP/rkc-atlas" examples/sample-go
+          if [ "$RUNNER_OS" = Linux ]; then
+            export RKC_RESOURCE_GUARD_MODE=service
+            export RKC_REQUIRE_IO_CONTROLLER=1
+            sh scripts/verify-resource-guard.sh
+            sh scripts/with-rkc-limits.sh "$RUNNER_TEMP/rkc-installed/bin/rkc" scan --no-python --out "$RUNNER_TEMP/rkc-atlas" examples/sample-go
+          else
+            "$RUNNER_TEMP/rkc-installed/bin/rkc" scan --no-python --out "$RUNNER_TEMP/rkc-atlas" examples/sample-go
+          fi
           "$RUNNER_TEMP/rkc-installed/bin/rkc" context --dir "$RUNNER_TEMP/rkc-atlas" Login > "$RUNNER_TEMP/rkc-context.json"
           python3 -c 'import json,os,pathlib; assert json.loads(pathlib.Path(os.environ["RUNNER_TEMP"],"rkc-context.json").read_text())["items"]'
           python3 scripts/smoke-gui.py --rkc "$RUNNER_TEMP/rkc-installed/bin/rkc" > "$RUNNER_TEMP/rkc-gui-smoke.json"
@@ -162,10 +219,12 @@ jobs:
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
-          if ([Runtime.InteropServices.RuntimeInformation]::OSArchitecture.ToString() -ne 'X64') { throw 'Expected native amd64 runner.' }
+          $expectedArchitecture = @{ amd64 = 'X64'; arm64 = 'Arm64' }[$env:RKC_TESTED_ARCH]
+          if ([Runtime.InteropServices.RuntimeInformation]::OSArchitecture.ToString() -ne $expectedArchitecture) { throw 'Native runner architecture does not match the release asset.' }
+          $archive = Join-Path 'portable-downloads' ('rkc-' + $env:RKC_TESTED_PLATFORM + '.zip')
           $prefix = Join-Path $env:RUNNER_TEMP 'rkc-installed'
           # Windows PowerShell 5.1 is the baseline bootstrap interpreter.
-          powershell -NoProfile -File scripts/install-release.ps1 -Archive portable-downloads/rkc-windows-amd64.zip -Checksums portable-downloads/SHA256SUMS.txt -Prefix $prefix -NoPath
+          powershell -NoProfile -File scripts/install-release.ps1 -Archive $archive -Checksums portable-downloads/SHA256SUMS.txt -Prefix $prefix -NoPath
           if ($LASTEXITCODE -ne 0) { throw 'Windows installer failed.' }
           $rkc = Join-Path $prefix 'bin/rkc.exe'
           $mcp = Join-Path $prefix 'bin/rkc-mcp.exe'
@@ -177,7 +236,7 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'Portable scan failed.' }
           $packet = & $rkc context --dir $atlas Login
           if ($LASTEXITCODE -ne 0 -or ($packet | ConvertFrom-Json).items.Count -eq 0) { throw 'Portable cited context failed.' }
-          ./scripts/test_install_release.ps1 -Archive portable-downloads/rkc-windows-amd64.zip -Checksums portable-downloads/SHA256SUMS.txt
+          ./scripts/test_install_release.ps1 -Archive $archive -Checksums portable-downloads/SHA256SUMS.txt
           python scripts/smoke-gui.py --rkc $rkc | Out-File -Encoding utf8 (Join-Path $env:RUNNER_TEMP 'rkc-gui-smoke.json')
           if ($LASTEXITCODE -ne 0) { throw 'Native GUI smoke failed.' }
       - name: Record exact native qualification
@@ -215,14 +274,30 @@ jobs:
           pattern: rkc-portable-smoke-*-${{ github.sha }}
           merge-multiple: true
           path: release
-      - name: Verify final archive checksums
+      - name: Verify all six exact native qualifications and checksums
         working-directory: release
-        run: sha256sum --check SHA256SUMS.txt
+        run: |
+          sha256sum --check SHA256SUMS.txt
+          python3 - <<'PYREPORT'
+          import hashlib, json, os, pathlib
+          platforms = ['linux-amd64', 'linux-arm64', 'darwin-amd64', 'darwin-arm64', 'windows-amd64', 'windows-arm64']
+          for platform in platforms:
+              report_path = pathlib.Path('native-smoke-' + platform + '.json')
+              report = json.loads(report_path.read_text())
+              assert report['schema_version'] == 'rkc-portable-smoke/v1'
+              assert report['platform'] == platform and report['source_commit'] == os.environ['GITHUB_SHA']
+              assert report['ok'] is True and report['gui']['ok'] is True
+              archive = pathlib.Path('rkc-' + platform + '.zip')
+              assert report['archive_sha256'] == hashlib.sha256(archive.read_bytes()).hexdigest()
+          with pathlib.Path('SHA256SUMS.txt').open('a') as receipt:
+              for report_path in sorted(pathlib.Path('.').glob('native-smoke-*.json')):
+                  receipt.write(hashlib.sha256(report_path.read_bytes()).hexdigest() + '  ' + report_path.name + '\n')
+          PYREPORT
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: rkc-portable-release-${{ github.sha }}
           path: release
           if-no-files-found: error
       # Publishing is a separate maintainer action after this workflow and the
-      # full Linux CI both pass for the identical source commit. ARM64 assets
-      # are cross-built; these native smoke reports cover amd64 only.
+      # full Linux CI both pass for the identical source commit. Build emits
+      # linux-amd64 proof; native jobs qualify the other five portable assets.
