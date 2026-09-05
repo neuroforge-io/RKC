@@ -673,11 +673,23 @@ func dedupeBundle(bundle *rkcmodel.Bundle) {
 			if current.Signature == "" {
 				current.Signature = item.Signature
 			}
-			if current.Source == nil {
+			if current.Source == nil && item.Source != nil {
 				current.Source = item.Source
+				// A source range and its artifact are one provenance binding.
+				// A shared project may first appear as a source-less syntax node
+				// and later receive its manifest range from another adapter.
+				if item.Source.ArtifactID != "" {
+					current.ArtifactID = item.Source.ArtifactID
+				} else if item.ArtifactID != "" {
+					current.ArtifactID = item.ArtifactID
+				}
 			}
 			if current.ArtifactID == "" {
-				current.ArtifactID = item.ArtifactID
+				if current.Source != nil && current.Source.ArtifactID != "" {
+					current.ArtifactID = current.Source.ArtifactID
+				} else {
+					current.ArtifactID = item.ArtifactID
+				}
 			}
 			if current.Attributes == nil {
 				current.Attributes = map[string]any{}
