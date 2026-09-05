@@ -26,6 +26,7 @@ SHELL_WORKFLOWS = (
     "scripts/check-portable-builds.sh",
     "scripts/generate-demo.sh",
     "scripts/install-package.sh",
+    "scripts/install-release.sh",
     "scripts/reproducibility.sh",
     "scripts/reproducible-complete-package.sh",
     "scripts/self-catalogue.sh",

@@ -1,0 +1,185 @@
+name: portable-release
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: portable-release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - name: Bind a tagged build to VERSION
+        env:
+          RKC_REF_TYPE: ${{ github.ref_type }}
+          RKC_REF_NAME: ${{ github.ref_name }}
+        run: |
+          set -eu
+          if [ "$RKC_REF_TYPE" = tag ]; then
+            test "$RKC_REF_NAME" = "v$(cat VERSION)"
+          fi
+          python3 scripts/git_source_guard.py --root "$PWD" --operation 'portable release workflow'
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: '1.26.5'
+          cache: true
+          cache-dependency-path: go.sum
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: '3.11'
+      - name: Provision the existing fail-closed Linux resource envelope
+        shell: bash
+        run: |
+          set -euo pipefail
+          user_id="$(id -u)"
+          user_name="$(id -un)"
+          runtime_dir="/run/user/${user_id}"
+          drop_in='/etc/systemd/system/user@.service.d/90-rkc-ci-delegation.conf'
+          sudo install -d -m 0755 "$(dirname "$drop_in")"
+          printf '%s\n' '[Service]' 'Delegate=cpu io memory pids' | sudo tee "$drop_in" >/dev/null
+          sudo systemctl daemon-reload
+          sudo loginctl enable-linger "$user_name"
+          sudo systemctl restart "user@${user_id}.service"
+          test -S "${runtime_dir}/bus"
+          {
+            printf 'XDG_RUNTIME_DIR=%s\n' "$runtime_dir"
+            printf 'DBUS_SESSION_BUS_ADDRESS=unix:path=%s/bus\n' "$runtime_dir"
+          } >> "$GITHUB_ENV"
+      - name: Verify guard and installer regressions
+        env:
+          RKC_RESOURCE_GUARD_MODE: service
+          RKC_REQUIRE_IO_CONTROLLER: '1'
+        run: |
+          sh scripts/verify-resource-guard.sh
+          sh scripts/with-rkc-limits.sh python3 -m unittest scripts.test_portable_release
+      - name: Build and verify six portable asset sets
+        env:
+          RKC_RESOURCE_GUARD_MODE: service
+        run: |
+          sh scripts/with-rkc-limits.sh sh scripts/build-release-binaries.sh --portable
+          sh scripts/with-rkc-limits.sh python3 scripts/package-portable.py
+      - name: Exercise the native Linux installer
+        env:
+          RKC_RESOURCE_GUARD_MODE: service
+        run: |
+          sh scripts/install-release.sh --archive dist/portable-release/rkc-linux-amd64.zip --checksums dist/portable-release/SHA256SUMS.txt --prefix "$RUNNER_TEMP/rkc-installed"
+          test "$("$RUNNER_TEMP/rkc-installed/bin/rkc" version)" = "$(cat VERSION)"
+          test "$("$RUNNER_TEMP/rkc-installed/bin/rkc-mcp" --version)" = "$(cat VERSION)"
+          sh scripts/with-rkc-limits.sh "$RUNNER_TEMP/rkc-installed/bin/rkc" scan --no-python --out "$RUNNER_TEMP/rkc-atlas" examples/sample-go
+          "$RUNNER_TEMP/rkc-installed/bin/rkc" context --dir "$RUNNER_TEMP/rkc-atlas" Login > "$RUNNER_TEMP/rkc-context.json"
+          python3 -c 'import json,os,pathlib; assert json.loads(pathlib.Path(os.environ["RUNNER_TEMP"],"rkc-context.json").read_text())["items"]'
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: rkc-portable-build-${{ github.sha }}
+          path: dist/portable-release
+          if-no-files-found: error
+
+  native:
+    needs: build
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-15-intel
+            platform: darwin-amd64
+          - runner: windows-2025
+            platform: windows-amd64
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: '3.11'
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: rkc-portable-build-${{ github.sha }}
+          path: portable-downloads
+      - name: Install and exercise native macOS binaries
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(uname -m)" = x86_64
+          sh scripts/install-release.sh --archive portable-downloads/rkc-darwin-amd64.zip --checksums portable-downloads/SHA256SUMS.txt --prefix "$RUNNER_TEMP/rkc-installed"
+          test "$("$RUNNER_TEMP/rkc-installed/bin/rkc" version)" = "$(cat VERSION)"
+          test "$("$RUNNER_TEMP/rkc-installed/bin/rkc-mcp" --version)" = "$(cat VERSION)"
+          "$RUNNER_TEMP/rkc-installed/bin/rkc" scan --no-python --out "$RUNNER_TEMP/rkc-atlas" examples/sample-go
+          "$RUNNER_TEMP/rkc-installed/bin/rkc" context --dir "$RUNNER_TEMP/rkc-atlas" Login > "$RUNNER_TEMP/rkc-context.json"
+          python3 -c 'import json,os,pathlib; assert json.loads(pathlib.Path(os.environ["RUNNER_TEMP"],"rkc-context.json").read_text())["items"]'
+      - name: Install and exercise native Windows binaries
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          if ([Runtime.InteropServices.RuntimeInformation]::OSArchitecture.ToString() -ne 'X64') { throw 'Expected native amd64 runner.' }
+          $prefix = Join-Path $env:RUNNER_TEMP 'rkc-installed'
+          # Windows PowerShell 5.1 is the baseline bootstrap interpreter.
+          powershell -NoProfile -File scripts/install-release.ps1 -Archive portable-downloads/rkc-windows-amd64.zip -Checksums portable-downloads/SHA256SUMS.txt -Prefix $prefix -NoPath
+          if ($LASTEXITCODE -ne 0) { throw 'Windows installer failed.' }
+          $rkc = Join-Path $prefix 'bin/rkc.exe'
+          $mcp = Join-Path $prefix 'bin/rkc-mcp.exe'
+          $version = (Get-Content VERSION -Raw).Trim()
+          if ((& $rkc version) -ne $version -or $LASTEXITCODE -ne 0) { throw 'CLI version mismatch.' }
+          if ((& $mcp --version) -ne $version -or $LASTEXITCODE -ne 0) { throw 'MCP version mismatch.' }
+          $atlas = Join-Path $env:RUNNER_TEMP 'rkc-atlas'
+          & $rkc scan --no-python --out $atlas examples/sample-go
+          if ($LASTEXITCODE -ne 0) { throw 'Portable scan failed.' }
+          $packet = & $rkc context --dir $atlas Login
+          if ($LASTEXITCODE -ne 0 -or ($packet | ConvertFrom-Json).items.Count -eq 0) { throw 'Portable cited context failed.' }
+          ./scripts/test_install_release.ps1 -Archive portable-downloads/rkc-windows-amd64.zip -Checksums portable-downloads/SHA256SUMS.txt
+      - name: Record exact native qualification
+        shell: bash
+        env:
+          RKC_TESTED_PLATFORM: ${{ matrix.platform }}
+          RKC_TESTED_COMMIT: ${{ github.sha }}
+        run: |
+          python - <<'PY'
+          import hashlib, json, os, pathlib
+          platform = os.environ['RKC_TESTED_PLATFORM']
+          archive = pathlib.Path('portable-downloads', 'rkc-' + platform + '.zip')
+          report = {'schema_version': 'rkc-portable-smoke/v1', 'platform': platform, 'source_commit': os.environ['RKC_TESTED_COMMIT'], 'archive_sha256': hashlib.sha256(archive.read_bytes()).hexdigest(), 'checks': ['checksum_verified_install', 'cli_version', 'mcp_version', 'deterministic_scan_no_python', 'cited_context'], 'ok': True}
+          pathlib.Path('native-smoke-' + platform + '.json').write_text(json.dumps(report, sort_keys=True, indent=2) + '\n')
+          PY
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: rkc-portable-smoke-${{ matrix.platform }}-${{ github.sha }}
+          path: native-smoke-*.json
+          if-no-files-found: error
+
+  ready:
+    needs: [build, native]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: rkc-portable-build-${{ github.sha }}
+          path: release
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: rkc-portable-smoke-*-${{ github.sha }}
+          merge-multiple: true
+          path: release
+      - name: Verify final archive checksums
+        working-directory: release
+        run: sha256sum --check SHA256SUMS.txt
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: rkc-portable-release-${{ github.sha }}
+          path: release
+          if-no-files-found: error
+      # Publishing is a separate maintainer action after this workflow and the
+      # full Linux CI both pass for the identical source commit. ARM64 assets
+      # are cross-built; these native smoke reports cover amd64 only.

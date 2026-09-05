@@ -3,6 +3,18 @@ set -eu
 
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 cd "$ROOT"
+TARGET=dist/binaries
+PLATFORMS='linux-amd64 linux-arm64'
+case "${1-}" in
+  '') ;;
+  --portable)
+    TARGET=dist/portable-binaries
+    PLATFORMS='linux-amd64 linux-arm64 darwin-amd64 darwin-arm64 windows-amd64 windows-arm64'
+    shift
+    ;;
+  *) echo "Usage: build-release-binaries.sh [--portable]" >&2; exit 2 ;;
+esac
+[ "$#" -eq 0 ] || { echo "release binaries: unexpected arguments" >&2; exit 2; }
 python3 scripts/git_source_guard.py \
   --root "$ROOT" \
   --operation "release binary build"
@@ -15,7 +27,6 @@ case "$SOURCE_COMMIT:$SOURCE_TREE:$SOURCE_DATE_EPOCH" in
     exit 1
     ;;
 esac
-TARGET=dist/binaries
 if [ -L dist ] || { [ -e dist ] && [ ! -d dist ]; }; then
   echo "release binaries: dist must be a real directory, not a symlink or non-directory" >&2
   exit 1
@@ -24,8 +35,11 @@ if [ -L "$TARGET" ] || { [ -e "$TARGET" ] && [ ! -d "$TARGET" ]; }; then
   echo "release binaries: $TARGET must be a real directory, not a symlink or non-directory" >&2
   exit 1
 fi
-mkdir -p "$TARGET/linux-amd64" "$TARGET/linux-arm64"
-for directory in "$TARGET/linux-amd64" "$TARGET/linux-arm64"; do
+mkdir -p "$TARGET"
+for platform in $PLATFORMS; do
+  directory=$TARGET/$platform
+  [ ! -L "$directory" ] || { echo "release binaries: unsafe platform directory" >&2; exit 1; }
+  mkdir -p "$directory"
   if [ -L "$directory" ] || [ ! -d "$directory" ]; then
     echo "release binaries: unsafe platform directory: $directory" >&2
     exit 1
@@ -71,18 +85,22 @@ esac
   go mod download
   go mod verify
 )
-for architecture in amd64 arm64; do
-  mkdir -p "$WORK/linux-$architecture"
+for platform in $PLATFORMS; do
+  operating_system=${platform%-*}
+  architecture=${platform#*-}
+  suffix=
+  [ "$operating_system" != windows ] || suffix=.exe
+  mkdir -p "$WORK/$platform"
   (
     cd "$SOURCE"
     case "$architecture" in
       amd64)
-        GOEXPERIMENT= GOAMD64=v1 GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -mod=readonly -buildvcs=true -trimpath -ldflags="$LDFLAGS" -o "$WORK/linux-amd64/rkc" ./cmd/rkc
-        GOEXPERIMENT= GOAMD64=v1 GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -mod=readonly -buildvcs=true -trimpath -ldflags="$LDFLAGS" -o "$WORK/linux-amd64/rkc-mcp" ./cmd/rkc-mcp
+        GOEXPERIMENT= GOAMD64=v1 GOOS="$operating_system" GOARCH=amd64 CGO_ENABLED=0 go build -mod=readonly -buildvcs=true -trimpath -ldflags="$LDFLAGS" -o "$WORK/$platform/rkc$suffix" ./cmd/rkc
+        GOEXPERIMENT= GOAMD64=v1 GOOS="$operating_system" GOARCH=amd64 CGO_ENABLED=0 go build -mod=readonly -buildvcs=true -trimpath -ldflags="$LDFLAGS" -o "$WORK/$platform/rkc-mcp$suffix" ./cmd/rkc-mcp
         ;;
       arm64)
-        GOEXPERIMENT= GOARM64=v8.0 GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build -mod=readonly -buildvcs=true -trimpath -ldflags="$LDFLAGS" -o "$WORK/linux-arm64/rkc" ./cmd/rkc
-        GOEXPERIMENT= GOARM64=v8.0 GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build -mod=readonly -buildvcs=true -trimpath -ldflags="$LDFLAGS" -o "$WORK/linux-arm64/rkc-mcp" ./cmd/rkc-mcp
+        GOEXPERIMENT= GOARM64=v8.0 GOOS="$operating_system" GOARCH=arm64 CGO_ENABLED=0 go build -mod=readonly -buildvcs=true -trimpath -ldflags="$LDFLAGS" -o "$WORK/$platform/rkc$suffix" ./cmd/rkc
+        GOEXPERIMENT= GOARM64=v8.0 GOOS="$operating_system" GOARCH=arm64 CGO_ENABLED=0 go build -mod=readonly -buildvcs=true -trimpath -ldflags="$LDFLAGS" -o "$WORK/$platform/rkc-mcp$suffix" ./cmd/rkc-mcp
         ;;
       *)
         echo "release binaries: unsupported architecture: $architecture" >&2
@@ -91,25 +109,25 @@ for architecture in amd64 arm64; do
     esac
   )
   python3 "$SOURCE/scripts/generate-go-sbom.py" \
-    --binary "$WORK/linux-$architecture/rkc" \
-    --output "$WORK/linux-$architecture/rkc.spdx.json" \
+    --binary "$WORK/$platform/rkc$suffix" \
+    --output "$WORK/$platform/rkc.spdx.json" \
     --lock "$SOURCE/third_party/go-modules.lock.json" \
     --source-root "$SOURCE" \
     --source-commit "$SOURCE_COMMIT" \
     --source-tree "$SOURCE_TREE" \
     --source-date-epoch "$SOURCE_DATE_EPOCH" \
-    --goos linux \
+    --goos "$operating_system" \
     --goarch "$architecture" \
     --version "$VERSION"
   python3 "$SOURCE/scripts/generate-go-sbom.py" \
-    --binary "$WORK/linux-$architecture/rkc-mcp" \
-    --output "$WORK/linux-$architecture/rkc-mcp.spdx.json" \
+    --binary "$WORK/$platform/rkc-mcp$suffix" \
+    --output "$WORK/$platform/rkc-mcp.spdx.json" \
     --lock "$SOURCE/third_party/go-modules.lock.json" \
     --source-root "$SOURCE" \
     --source-commit "$SOURCE_COMMIT" \
     --source-tree "$SOURCE_TREE" \
     --source-date-epoch "$SOURCE_DATE_EPOCH" \
-    --goos linux \
+    --goos "$operating_system" \
     --goarch "$architecture" \
     --version "$VERSION"
 done
@@ -137,20 +155,21 @@ python3 "$SOURCE/scripts/git_source_guard.py" \
   --root "$ROOT" \
   --operation "release binary publication"
 
-for architecture in amd64 arm64; do
-  platform="$TARGET/linux-$architecture"
-  publish_file "$WORK/linux-$architecture/rkc" "$platform/rkc"
-  publish_file "$WORK/linux-$architecture/rkc-mcp" "$platform/rkc-mcp"
-  publish_file "$WORK/linux-$architecture/rkc.spdx.json" "$platform/rkc.spdx.json"
-  publish_file "$WORK/linux-$architecture/rkc-mcp.spdx.json" "$platform/rkc-mcp.spdx.json"
+for platform in $PLATFORMS; do
+  suffix=
+  case "$platform" in windows-*) suffix=.exe ;; esac
+  publish_file "$WORK/$platform/rkc$suffix" "$TARGET/$platform/rkc$suffix"
+  publish_file "$WORK/$platform/rkc-mcp$suffix" "$TARGET/$platform/rkc-mcp$suffix"
+  publish_file "$WORK/$platform/rkc.spdx.json" "$TARGET/$platform/rkc.spdx.json"
+  publish_file "$WORK/$platform/rkc-mcp.spdx.json" "$TARGET/$platform/rkc-mcp.spdx.json"
 done
 
 for notice in LICENSE NOTICE THIRD_PARTY_NOTICES.md; do
   source_notice=$SOURCE/$notice
   if [ -f "$source_notice" ] && [ ! -L "$source_notice" ]; then
     publish_file "$source_notice" "$TARGET/$notice"
-    for platform in "$TARGET/linux-amd64" "$TARGET/linux-arm64"; do
-      publish_file "$source_notice" "$platform/$notice"
+    for platform in $PLATFORMS; do
+      publish_file "$source_notice" "$TARGET/$platform/$notice"
     done
   fi
 done
@@ -163,13 +182,11 @@ if [ -n "$unsafe_license" ]; then
   echo "release binaries: unsafe license entry: $unsafe_license" >&2
   exit 1
 fi
-mkdir -p "$TARGET/LICENSES" "$TARGET/linux-amd64/LICENSES" "$TARGET/linux-arm64/LICENSES"
+mkdir -p "$TARGET/LICENSES"
 find "$SOURCE/LICENSES" -type f -print | LC_ALL=C sort | while IFS= read -r license; do
   relative=${license#"$SOURCE/LICENSES/"}
-  for destination in \
-    "$TARGET/LICENSES/$relative" \
-    "$TARGET/linux-amd64/LICENSES/$relative" \
-    "$TARGET/linux-arm64/LICENSES/$relative"; do
+  for platform in . $PLATFORMS; do
+    destination=$TARGET/$platform/LICENSES/$relative
     mkdir -p "$(dirname "$destination")"
     publish_file "$license" "$destination"
   done
@@ -181,10 +198,8 @@ if [ ! -f "$SOURCE_MODULE_LOCK" ] || [ -L "$SOURCE_MODULE_LOCK" ]; then
   echo "release binaries: audited Go module lock is missing or unsafe" >&2
   exit 1
 fi
-for destination in \
-  "$TARGET/$MODULE_LOCK" \
-  "$TARGET/linux-amd64/$MODULE_LOCK" \
-  "$TARGET/linux-arm64/$MODULE_LOCK"; do
+for platform in . $PLATFORMS; do
+  destination=$TARGET/$platform/$MODULE_LOCK
   mkdir -p "$(dirname "$destination")"
   publish_file "$SOURCE_MODULE_LOCK" "$destination"
 done
