@@ -82,11 +82,14 @@ class ValidateContractsTests(unittest.TestCase):
             return observed
 
         expected = {
-            "/api/v1/artifacts": {"limit", "language", "status", "path_prefix"},
-            "/api/v1/nodes": {"limit", "q", "kind", "language"},
+            "/api/v1/artifacts": {"limit", "cursor", "language", "status", "path_prefix"},
+            "/api/v1/nodes": {"limit", "cursor", "q", "kind", "language"},
+            "/api/v1/edges": {"limit", "cursor", "kind", "from", "to", "resolution"},
+            "/api/v1/diagnostics": {"limit", "cursor", "severity", "code"},
             "/api/v1/search": {
                 "q",
                 "limit",
+                "cursor",
                 "kinds",
                 "kind",
                 "languages",
@@ -130,6 +133,63 @@ class ValidateContractsTests(unittest.TestCase):
             observed_by_route["/api/v1/impact"]["direction"]["schema"]["default"],
             "incoming",
         )
+
+    def test_paginated_openapi_exposes_typed_snapshot_bound_pages(self) -> None:
+        document = yaml.safe_load(
+            (ROOT / "api" / "openapi.yaml").read_text(encoding="utf-8")
+        )
+        components = document["components"]
+        schemas = components["schemas"]
+        page = schemas["CollectionPage"]
+        self.assertEqual(
+            set(page["required"]), {"items", "total", "truncated", "snapshot_id"}
+        )
+        self.assertEqual(page["properties"]["total"]["minimum"], 0)
+        self.assertEqual(page["properties"]["snapshot_id"]["minLength"], 1)
+        self.assertEqual(page["properties"]["next_cursor"]["maxLength"], 4096)
+        self.assertEqual(components["parameters"]["Cursor"]["schema"]["maxLength"], 4096)
+        self.assertTrue(components["headers"]["SnapshotID"]["required"])
+
+        for route, name, record in (
+            ("nodes", "NodePage", "node"),
+            ("artifacts", "ArtifactPage", "artifact"),
+            ("edges", "EdgePage", "edge"),
+            ("diagnostics", "DiagnosticPage", "diagnostic"),
+        ):
+            with self.subTest(route=route):
+                operation = document["paths"][f"/api/v1/{route}"]["get"]
+                self.assertEqual(
+                    operation["responses"]["200"]["$ref"],
+                    f"#/components/responses/{name}",
+                )
+                self.assertIn("400", operation["responses"])
+                response = components["responses"][name]
+                self.assertIn("X-RKC-Snapshot-ID", response["headers"])
+                self.assertEqual(
+                    response["content"]["application/json"]["schema"]["$ref"],
+                    f"#/components/schemas/{name}",
+                )
+                self.assertEqual(
+                    schemas[name]["allOf"][0]["$ref"],
+                    "#/components/schemas/CollectionPage",
+                )
+                self.assertEqual(
+                    schemas[name]["allOf"][1]["properties"]["items"]["items"]["$ref"],
+                    f"../schemas/rkc-bundle.schema.json#/$defs/{record}",
+                )
+
+        search = document["paths"]["/api/v1/search"]["get"]["responses"]["200"]
+        self.assertIn("X-RKC-Snapshot-ID", search["headers"])
+        self.assertEqual(
+            search["content"]["application/json"]["schema"]["$ref"],
+            "#/components/schemas/SearchPage",
+        )
+        self.assertEqual(
+            set(schemas["SearchPage"]["required"]),
+            {"query", "hits", "truncated", "mode", "index_version", "total", "snapshot_id"},
+        )
+        # Components are still bounded graph results, not resumable collections.
+        self.assertNotIn("snapshot_id", schemas["ItemPage"]["properties"])
 
     def test_checked_in_contracts_pass_and_diagnostics_are_structured(self) -> None:
         output = io.StringIO()

@@ -10,6 +10,14 @@ info:
     Every dataset-bound response carries `X-RKC-Snapshot-ID`; clients that
     combine parallel responses must require one identical value and bind it to
     the manifest/coverage identities before presenting the result.
+    Nodes, artifacts, edges, diagnostics, and search support opaque cursor
+    pagination. These endpoints reject unknown or repeated query parameters,
+    malformed query encoding, query/filter values above 4096 UTF-8 bytes, and
+    raw query strings above 32768 bytes. Unknown filter values return no matches.
+    Cursors bind the endpoint, exact query/filter parameter names and values,
+    process, and dataset generation. Preserve omitted versus empty parameters
+    and aliases when continuing; page size may change.
+    Restart traversal after a server restart or atlas reload invalidates a cursor.
     The optional workbench routes exist only when a user explicitly enables the
     token-authenticated, loopback-only command surface under RKC's resource
     guard. The larger multi-repository service contract is retained in
@@ -97,13 +105,16 @@ paths:
   /api/v1/artifacts:
     get:
       operationId: listArtifacts
+      description: Page through canonical inventory records in deterministic order. Unknown filter values produce an empty page.
       parameters:
         - $ref: '#/components/parameters/Limit'
-        - { name: language, in: query, schema: { type: string } }
-        - { name: status, in: query, schema: { type: string } }
-        - { name: path_prefix, in: query, schema: { type: string }, description: Include artifacts whose repository-relative path starts with this value. }
+        - $ref: '#/components/parameters/Cursor'
+        - { name: language, in: query, schema: { type: string, maxLength: 4096 } }
+        - { name: status, in: query, schema: { type: string, maxLength: 4096 } }
+        - { name: path_prefix, in: query, schema: { type: string, maxLength: 4096 }, description: Include artifacts whose repository-relative path starts with this value. }
       responses:
-        '200': { $ref: '#/components/responses/ItemPage' }
+        '200': { $ref: '#/components/responses/ArtifactPage' }
+        '400': { $ref: '#/components/responses/PaginationProblem' }
   /api/v1/artifacts/{artifactID}:
     get:
       operationId: getArtifact
@@ -119,13 +130,16 @@ paths:
   /api/v1/nodes:
     get:
       operationId: listNodes
+      description: Page through canonical nodes in deterministic inventory order, or lexical rank when q is supplied. Unknown filter values produce an empty page.
       parameters:
         - $ref: '#/components/parameters/NodeLimit'
-        - { name: q, in: query, schema: { type: string, minLength: 1 }, description: Optional lexical query. When present, returns matching node records with retrieval metadata. }
-        - { name: kind, in: query, schema: { type: string } }
-        - { name: language, in: query, schema: { type: string } }
+        - $ref: '#/components/parameters/Cursor'
+        - { name: q, in: query, schema: { type: string, maxLength: 4096 }, description: Optional lexical query of at most 4096 UTF-8 bytes. A nonempty query returns matching node records with retrieval metadata. }
+        - { name: kind, in: query, schema: { type: string, maxLength: 4096 } }
+        - { name: language, in: query, schema: { type: string, maxLength: 4096 } }
       responses:
-        '200': { $ref: '#/components/responses/ItemPage' }
+        '200': { $ref: '#/components/responses/NodePage' }
+        '400': { $ref: '#/components/responses/PaginationProblem' }
   /api/v1/nodes/{nodeID}:
     get:
       operationId: getNode
@@ -141,14 +155,17 @@ paths:
   /api/v1/edges:
     get:
       operationId: listEdges
+      description: Page through canonical graph relationships in deterministic order. Unknown filter values produce an empty page.
       parameters:
         - $ref: '#/components/parameters/Limit'
-        - { name: kind, in: query, schema: { type: string } }
-        - { name: from, in: query, schema: { type: string } }
-        - { name: to, in: query, schema: { type: string } }
-        - { name: resolution, in: query, schema: { type: string } }
+        - $ref: '#/components/parameters/Cursor'
+        - { name: kind, in: query, schema: { type: string, maxLength: 4096 } }
+        - { name: from, in: query, schema: { type: string, maxLength: 4096 } }
+        - { name: to, in: query, schema: { type: string, maxLength: 4096 } }
+        - { name: resolution, in: query, schema: { type: string, maxLength: 4096 } }
       responses:
-        '200': { $ref: '#/components/responses/ItemPage' }
+        '200': { $ref: '#/components/responses/EdgePage' }
+        '400': { $ref: '#/components/responses/PaginationProblem' }
   /api/v1/evidence/{evidenceID}:
     get:
       operationId: getEvidence
@@ -164,32 +181,39 @@ paths:
   /api/v1/diagnostics:
     get:
       operationId: listDiagnostics
+      description: Page through canonical analyzer and validation findings in deterministic order. Unknown filter values produce an empty page.
       parameters:
         - $ref: '#/components/parameters/Limit'
-        - { name: severity, in: query, schema: { type: string } }
-        - { name: code, in: query, schema: { type: string } }
+        - $ref: '#/components/parameters/Cursor'
+        - { name: severity, in: query, schema: { type: string, maxLength: 4096 } }
+        - { name: code, in: query, schema: { type: string, maxLength: 4096 } }
       responses:
-        '200': { $ref: '#/components/responses/ItemPage' }
+        '200': { $ref: '#/components/responses/DiagnosticPage' }
+        '400': { $ref: '#/components/responses/PaginationProblem' }
   /api/v1/search:
     get:
       operationId: search
+      description: Page through ranked lexical results. Keep q and exact filter parameters unchanged across pages. Unknown filter values produce no hits.
       parameters:
-        - { name: q, in: query, required: true, schema: { type: string, minLength: 1 } }
+        - { name: q, in: query, required: true, schema: { type: string, minLength: 1, maxLength: 4096 }, description: Nonempty lexical query of at most 4096 UTF-8 bytes. }
         - $ref: '#/components/parameters/SearchLimit'
-        - { name: kinds, in: query, schema: { type: string }, description: Comma-separated node kinds. }
-        - { name: kind, in: query, deprecated: true, schema: { type: string }, description: Compatibility alias for kinds; ignored when kinds is present. }
-        - { name: languages, in: query, schema: { type: string }, description: Comma-separated languages. }
-        - { name: language, in: query, deprecated: true, schema: { type: string }, description: Compatibility alias for languages; ignored when languages is present. }
-        - { name: object_types, in: query, schema: { type: string }, description: Comma-separated object types. }
-        - { name: type, in: query, deprecated: true, schema: { type: string }, description: Compatibility alias for object_types; ignored when object_types is present. }
-        - { name: path_prefix, in: query, schema: { type: string } }
+        - $ref: '#/components/parameters/Cursor'
+        - { name: kinds, in: query, schema: { type: string, maxLength: 4096 }, description: Comma-separated indexed-object kinds. }
+        - { name: kind, in: query, deprecated: true, schema: { type: string, maxLength: 4096 }, description: Compatibility alias for kinds; ignored when kinds is nonempty. }
+        - { name: languages, in: query, schema: { type: string, maxLength: 4096 }, description: Comma-separated languages. }
+        - { name: language, in: query, deprecated: true, schema: { type: string, maxLength: 4096 }, description: Compatibility alias for languages; ignored when languages is nonempty. }
+        - { name: object_types, in: query, schema: { type: string, maxLength: 4096 }, description: Comma-separated object types. }
+        - { name: type, in: query, deprecated: true, schema: { type: string, maxLength: 4096 }, description: Compatibility alias for object_types; ignored when object_types is nonempty. }
+        - { name: path_prefix, in: query, schema: { type: string, maxLength: 4096 } }
       responses:
         '200':
-          description: Ranked lexical results with retrieval trace fields.
+          description: Ranked lexical results with retrieval trace fields and snapshot-bound continuation.
+          headers:
+            X-RKC-Snapshot-ID: { $ref: '#/components/headers/SnapshotID' }
           content:
             application/json:
-              schema: { type: object, additionalProperties: true }
-        '400': { $ref: '#/components/responses/Problem' }
+              schema: { $ref: '#/components/schemas/SearchPage' }
+        '400': { $ref: '#/components/responses/PaginationProblem' }
   /api/v1/graph/neighborhood:
     get:
       operationId: neighborhood
@@ -376,14 +400,22 @@ components:
       name: limit
       in: query
       schema: { type: integer, minimum: 1, maximum: 5000, default: 100 }
+      description: Page size. For compatibility, missing, malformed, or values below 1 use the default; values above the maximum are clamped. May change between pages.
     NodeLimit:
       name: limit
       in: query
       schema: { type: integer, minimum: 1, maximum: 1000, default: 100 }
+      description: Page size. For compatibility, missing, malformed, or values below 1 use the default; values above the maximum are clamped. May change between pages.
     SearchLimit:
       name: limit
       in: query
       schema: { type: integer, minimum: 1, maximum: 1000, default: 50 }
+      description: Page size. For compatibility, missing, malformed, or values below 1 use the default; values above the maximum are clamped. May change between pages.
+    Cursor:
+      name: cursor
+      in: query
+      schema: { type: string, maxLength: 4096 }
+      description: Opaque next_cursor from the preceding page, at most 4096 UTF-8 bytes. Omit or leave empty for the first page. Pass unchanged with the same endpoint and exact query/filter parameters, including their names and presence; limit may change. Bound to the serving process and dataset generation, so a restart or atlas reload invalidates it. Invalid, modified, or mismatched cursors return HTTP 400.
     ComponentLimit:
       name: limit
       in: query
@@ -459,6 +491,90 @@ components:
         items: { type: array, items: {} }
         truncated: { type: boolean }
         total: { type: integer }
+    CollectionPage:
+      type: object
+      required: [items, total, truncated, snapshot_id]
+      properties:
+        items: { type: array, items: {} }
+        total:
+          type: integer
+          minimum: 0
+          description: Count of all records matching the filters, including records before this page.
+        truncated:
+          type: boolean
+          description: True exactly when matching records remain after this page.
+        snapshot_id:
+          type: string
+          minLength: 1
+          description: Immutable dataset identity; must equal the X-RKC-Snapshot-ID response header.
+        next_cursor:
+          type: string
+          minLength: 1
+          maxLength: 4096
+          description: Opaque continuation token. Present exactly when truncated is true; omitted after the last page. Keep the same endpoint and exact query/filter parameters.
+      additionalProperties: true
+    NodePage:
+      allOf:
+        - { $ref: '#/components/schemas/CollectionPage' }
+        - type: object
+          properties:
+            items: { type: array, items: { $ref: '../schemas/rkc-bundle.schema.json#/$defs/node' } }
+            retrieval: { type: object, additionalProperties: true, description: Lexical retrieval metadata included when q selects ranked nodes. }
+    ArtifactPage:
+      allOf:
+        - { $ref: '#/components/schemas/CollectionPage' }
+        - type: object
+          properties:
+            items: { type: array, items: { $ref: '../schemas/rkc-bundle.schema.json#/$defs/artifact' } }
+    EdgePage:
+      allOf:
+        - { $ref: '#/components/schemas/CollectionPage' }
+        - type: object
+          properties:
+            items: { type: array, items: { $ref: '../schemas/rkc-bundle.schema.json#/$defs/edge' } }
+    DiagnosticPage:
+      allOf:
+        - { $ref: '#/components/schemas/CollectionPage' }
+        - type: object
+          properties:
+            items: { type: array, items: { $ref: '../schemas/rkc-bundle.schema.json#/$defs/diagnostic' } }
+    SearchPage:
+      type: object
+      required: [query, hits, truncated, mode, index_version, total, snapshot_id]
+      properties:
+        query: { type: string, description: Original query text echoed by the lexical index. }
+        hits: { type: array, items: { $ref: '#/components/schemas/SearchHit' } }
+        truncated: { $ref: '#/components/schemas/CollectionPage/properties/truncated' }
+        total: { $ref: '#/components/schemas/CollectionPage/properties/total' }
+        snapshot_id: { $ref: '#/components/schemas/CollectionPage/properties/snapshot_id' }
+        next_cursor: { $ref: '#/components/schemas/CollectionPage/properties/next_cursor' }
+        mode: { type: string, description: Retrieval strategy used for these hits. }
+        index_version: { type: string, description: Search-index contract used for ranking. }
+      additionalProperties: true
+    SearchHit:
+      type: object
+      required: [document, score, reasons, terms]
+      properties:
+        document: { $ref: '#/components/schemas/SearchDocument' }
+        score: { type: number }
+        reasons: { type: array, items: { type: string } }
+        terms: { type: array, items: { type: string } }
+      additionalProperties: true
+    SearchDocument:
+      type: object
+      required: [id, object_type, title]
+      properties:
+        id: { type: string, description: Stable identifier of the indexed object. }
+        object_type: { type: string, description: Projection class such as node or artifact or document. }
+        title: { type: string }
+        kind: { type: string }
+        language: { type: string }
+        qualified_name: { type: string }
+        signature: { type: string }
+        path: { type: string, description: Repository-relative source path when available. }
+        body: { type: string, description: Bounded text projection; repository content remains untrusted data. }
+        metadata: { type: object, additionalProperties: { type: string } }
+      additionalProperties: true
     WorkbenchJob:
       type: object
       required: [id, args, status, created_at, deadline_at, output, truncated]
@@ -503,6 +619,39 @@ components:
       content:
         application/json:
           schema: { $ref: '#/components/schemas/ItemPage' }
+    NodePage:
+      description: One snapshot-bound page of canonical nodes, with a cursor when further matches remain.
+      headers:
+        X-RKC-Snapshot-ID: { $ref: '#/components/headers/SnapshotID' }
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/NodePage' }
+    ArtifactPage:
+      description: One snapshot-bound page of canonical inventory records, with a cursor when further matches remain.
+      headers:
+        X-RKC-Snapshot-ID: { $ref: '#/components/headers/SnapshotID' }
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ArtifactPage' }
+    EdgePage:
+      description: One snapshot-bound page of canonical graph relationships, with a cursor when further matches remain.
+      headers:
+        X-RKC-Snapshot-ID: { $ref: '#/components/headers/SnapshotID' }
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/EdgePage' }
+    DiagnosticPage:
+      description: One snapshot-bound page of canonical findings, with a cursor when further matches remain.
+      headers:
+        X-RKC-Snapshot-ID: { $ref: '#/components/headers/SnapshotID' }
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/DiagnosticPage' }
+    PaginationProblem:
+      description: Missing required search q; unknown or repeated parameter; malformed query encoding; oversized or invalid UTF-8 query/filter; or invalid, altered, expired, or mismatched cursor. Unknown filter values instead return a successful empty page. HTTP limits preserve the documented fallback and clamp behavior.
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problem' }
     Problem:
       description: RFC 7807-style problem response.
       content:

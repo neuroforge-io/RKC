@@ -85,6 +85,87 @@ See [the HTTP contract](../api/openapi.yaml),
 [context schema](../schemas/context.schema.json), and
 [public Go types](../pkg/rkcapi/discovery.go).
 
+## Traverse large collections
+
+The HTTP nodes, artifacts, edges, diagnostics, and search endpoints support
+cursor pagination. Collection pages return canonical records in `items`; search
+pages return ranked indexed projections in `hits`. Every page includes:
+
+- `total`: the full number of matching records, including earlier pages;
+- `snapshot_id`: the same immutable identity as `X-RKC-Snapshot-ID`;
+- `truncated`: whether more matching records follow this page;
+- `next_cursor`: an opaque continuation token, present only when more records remain.
+
+Keep the endpoint and all query/filter parameter names and values unchanged
+when following a cursor, including aliases and omitted versus empty parameters.
+You can change `limit`. Never decode, edit, or construct a cursor. Tokens are
+bound to the serving process and dataset generation; a server restart or atlas
+reload invalidates them. If continuation returns HTTP 400, discard the partial
+traversal and start again without a cursor. Do not merge pages from different
+snapshots, even when a request succeeds.
+
+| Endpoint | Filters | Default / maximum page size |
+| --- | --- | --- |
+| `/api/v1/nodes` | `q`, `kind`, `language` | 100 / 1000 |
+| `/api/v1/artifacts` | `language`, `status`, `path_prefix` | 100 / 5000 |
+| `/api/v1/edges` | `kind`, `from`, `to`, `resolution` | 100 / 5000 |
+| `/api/v1/diagnostics` | `severity`, `code` | 100 / 5000 |
+| `/api/v1/search` | required `q`; `kinds`, `languages`, `object_types`, `path_prefix` | 50 / 1000 |
+
+Search list filters are comma-separated. Its older `kind`, `language`, and
+`type` aliases remain available. Nodes with a nonempty `q` follow lexical rank;
+unqueried collections follow deterministic inventory order. Unknown filter
+values return an empty successful page. These endpoints reject unknown or
+duplicate parameters, malformed encoding, invalid UTF-8, query/filter/cursor
+values above 4096 bytes, and raw query strings above 32768 bytes with HTTP 400.
+Invalid or mismatched cursors also return HTTP 400. For HTTP compatibility,
+missing, malformed, and nonpositive limits use defaults; oversized numeric
+limits are clamped. The new Go methods reject negative or oversized limits
+locally, while zero selects the server default.
+
+```sh
+curl --get --data-urlencode 'kind=function' --data-urlencode 'limit=100' \
+  http://127.0.0.1:8787/api/v1/nodes
+# Copy next_cursor from that response; retain the same kind filter.
+curl --get --data-urlencode 'kind=function' --data-urlencode 'limit=100' \
+  --data-urlencode "cursor=$RKC_NEXT_CURSOR" \
+  http://127.0.0.1:8787/api/v1/nodes
+```
+
+The Go client offers `ListNodes`, `ListArtifacts`, `ListEdges`,
+`ListDiagnostics`, and `SearchPage` with typed filter options. The collection
+methods return `rkcapi.CollectionPage[T]` and named aliases such as `NodePage`.
+They require agreeing snapshot headers and bodies, validate page bounds and
+continuation metadata, and reject repeated cursors. Set `ExpectedSnapshotID`
+from the first response to bind subsequent pages; this check is local and is
+not sent as an HTTP query parameter. Methods return errors without silently
+restarting. For example, with `rkcclient` as the import alias for
+`github.com/neuroforge-io/RKC/pkg/client`:
+
+```go
+api, err := rkcclient.New("http://127.0.0.1:8787")
+if err != nil { return err }
+options := rkcclient.NodeListOptions{Kind: "function", Limit: 100}
+for {
+    page, err := api.ListNodes(ctx, options)
+    if err != nil { return err }
+    if options.ExpectedSnapshotID == "" {
+        options.ExpectedSnapshotID = page.SnapshotID
+    }
+    for _, node := range page.Items {
+        fmt.Println(page.SnapshotID, node.ID, node.Name)
+    }
+    if page.NextCursor == "" { break }
+    options.Cursor = page.NextCursor
+}
+```
+
+Use `SearchPage(ctx, query, SearchPageOptions{...})` for the same traversal
+contract over ranked hits. The existing `Search(ctx, query, SearchOptions{...})`
+signature remains compatible with older servers and does not enforce the new
+pagination contract. Graph traversals and component lists retain their existing
+bounded APIs; this cursor contract does not apply to them.
+
 ## Retrieval efficiency
 
 Embedded lexical retrieval scores matching records but retains at most the

@@ -130,18 +130,27 @@ type SearchHit struct {
 	Terms []string `json:"terms"`
 }
 
-// SearchResponse is the ranked result set returned by Search.
+// SearchResponse is the ranked result set returned by Search or SearchPage.
 type SearchResponse struct {
 	// Query is the submitted query string echoed by the server.
 	Query string `json:"query"`
 	// Hits contains ranked canonical search results.
 	Hits []SearchHit `json:"hits"`
-	// Truncated reports whether the server omitted results because of a limit.
+	// Truncated reports whether matching hits remain after this page.
 	Truncated bool `json:"truncated"`
 	// Mode identifies the retrieval strategy used by the server.
 	Mode string `json:"mode"`
 	// IndexVersion identifies the search-index contract used for ranking.
 	IndexVersion string `json:"index_version"`
+	// Total counts all matching indexed objects, including earlier pages. Older
+	// servers can omit this field; SearchPage requires the pagination contract.
+	Total int `json:"total"`
+	// SnapshotID identifies the immutable dataset used for these hits. Search
+	// preserves compatibility with older servers that omit this field.
+	SnapshotID string `json:"snapshot_id,omitempty"`
+	// NextCursor continues the same ranked search with unchanged query/filters.
+	// It is opaque; an empty value means there is no next page.
+	NextCursor string `json:"next_cursor,omitempty"`
 
 	// Count is the number of Hits returned by Search.
 	//
@@ -322,6 +331,11 @@ func (client *Client) Search(ctx context.Context, query string, options SearchOp
 	if err := client.get(ctx, "/api/v1/search", values, &output); err != nil {
 		return output, err
 	}
+	populateSearchCompatibility(&output)
+	return output, nil
+}
+
+func populateSearchCompatibility(output *SearchResponse) {
 	output.Count = len(output.Hits)
 	output.Results = make([]SearchResult, 0, len(output.Hits))
 	for _, hit := range output.Hits {
@@ -337,7 +351,6 @@ func (client *Client) Search(ctx context.Context, query string, options SearchOp
 			Score: hit.Score, Reasons: append([]string(nil), hit.Reasons...),
 		})
 	}
-	return output, nil
 }
 
 // Neighborhood retrieves a bounded graph traversal around nodeID.
@@ -466,6 +479,16 @@ func (client *Client) get(ctx context.Context, endpoint string, query url.Values
 	case *rkcapi.ContextPacket:
 		snapshotID = value.SnapshotID
 	case *rkcapi.Capabilities:
+		snapshotID = value.SnapshotID
+	case *rkcapi.NodePage:
+		snapshotID = value.SnapshotID
+	case *rkcapi.ArtifactPage:
+		snapshotID = value.SnapshotID
+	case *rkcapi.EdgePage:
+		snapshotID = value.SnapshotID
+	case *rkcapi.DiagnosticPage:
+		snapshotID = value.SnapshotID
+	case *searchPageEnvelope:
 		snapshotID = value.SnapshotID
 	default:
 		return nil

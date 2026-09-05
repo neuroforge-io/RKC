@@ -936,7 +936,11 @@ func (dataset *Dataset) handleNodes(w http.ResponseWriter, request *http.Request
 				items = append(items, node)
 			}
 		}
-		writeJSON(w, http.StatusOK, map[string]any{"items": items, "total": response.Total, "truncated": response.Truncated, "snapshot_id": response.SnapshotID, "next_cursor": response.NextCursor, "retrieval": response.Response})
+		page := map[string]any{"items": items, "total": response.Total, "truncated": response.Truncated, "snapshot_id": response.SnapshotID, "retrieval": response.Response}
+		if response.NextCursor != "" {
+			page["next_cursor"] = response.NextCursor
+		}
+		writeJSON(w, http.StatusOK, page)
 		return
 	}
 	page, err := collectionPage(dataset, request, parsed, dataset.Bundle.Nodes, limit, func(node model.Node) bool {
