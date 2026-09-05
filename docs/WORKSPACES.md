@@ -104,6 +104,22 @@ Matching directories are pruned and recorded as one explicit inventory exclusion
 Unmatched reports and documents remain admitted. RKC does not trust repository
 ignore files or silently increase limits after a failure.
 
+The search index also has a fixed 256 MiB total indexed-text bound. A collection
+of individually admissible files can exceed it. Register large report or archive
+trees separately so each atlas stays within its query resource envelope:
+
+```sh
+rkc workspace add --workspace /absolute/private/workspace --id application \
+  --exclude reports /absolute/path/to/application
+rkc workspace add --workspace /absolute/private/workspace --id application-reports \
+  /absolute/path/to/application/reports
+```
+
+Split further by subdirectory when needed. Paths and citations are relative to
+each registered source. MCP discovery shows every alias, and `repositories`
+selects several for a bounded combined query. Inventory exclusions make the
+division explicit; no source files are moved or deleted.
+
 ## Review a synthetic secret finding
 
 An unreviewed high-confidence secret finding blocks publication. A synthetic

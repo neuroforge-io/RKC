@@ -148,7 +148,8 @@ jobs:
           TEMP: ${{ runner.temp }}
         run: |
           test "$(go env GOARCH)" = "$RKC_TESTED_ARCH"
-          go test ./internal/privatepath ./internal/safeoutput ./internal/cas ./internal/snapshot ./internal/scheduler
+          go test ./internal/privatepath ./internal/safeoutput ./internal/cas ./internal/snapshot ./internal/scheduler ./internal/workspace
+          go test ./cmd/rkc -run '^TestWorkspace' -count=1
       - name: Exercise native Windows path comparisons
         if: ${{ !cancelled() && runner.os == 'Windows' }}
         shell: bash
