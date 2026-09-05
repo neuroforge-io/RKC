@@ -139,7 +139,7 @@ func scanSequential(ctx context.Context, opts Options) (rkcmodel.Bundle, rkcmode
 	}
 	opts.Excludes = effectivePipelineExcludes(opts.Excludes)
 
-	inv, err := inventory.Scan(inventory.Options{Root: root, MaxFileBytes: opts.MaxFileBytes, MaxTextBytes: opts.MaxTextBytes, MaxRepositoryBytes: opts.MaxRepositoryBytes, MaxFiles: opts.MaxFiles, Excludes: opts.Excludes})
+	inv, err := inventory.ScanContext(ctx, inventory.Options{Root: root, MaxFileBytes: opts.MaxFileBytes, MaxTextBytes: opts.MaxTextBytes, MaxRepositoryBytes: opts.MaxRepositoryBytes, MaxFiles: opts.MaxFiles, Excludes: opts.Excludes})
 	if err != nil {
 		return rkcmodel.Bundle{}, rkcmodel.Coverage{}, err
 	}

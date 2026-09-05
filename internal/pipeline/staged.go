@@ -459,7 +459,7 @@ func isTypeScriptCacheInput(file pluginapi.FileRef) bool {
 }
 
 func (state *stagedScanState) runInventory(ctx context.Context) (scheduler.Result, error) {
-	inv, err := inventory.Scan(inventory.Options{
+	inv, err := inventory.ScanContext(ctx, inventory.Options{
 		Root: state.root, MaxFileBytes: state.opts.MaxFileBytes, MaxTextBytes: state.opts.MaxTextBytes,
 		MaxRepositoryBytes: state.opts.MaxRepositoryBytes, MaxFiles: state.opts.MaxFiles,
 		Excludes: state.opts.Excludes,

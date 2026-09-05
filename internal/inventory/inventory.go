@@ -5,6 +5,7 @@ package inventory
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
@@ -47,6 +48,18 @@ type Result struct {
 // explicit exclusions, rejects generated-output markers, and hashes admitted
 // regular files under the configured resource limits.
 func Scan(opts Options) (Result, error) {
+	return ScanContext(context.Background(), opts)
+}
+
+// ScanContext is Scan with cancellation between paths and file read chunks.
+// Cancellation returns no partial inventory that a caller could activate.
+func ScanContext(ctx context.Context, opts Options) (Result, error) {
+	if ctx == nil {
+		return Result{}, errors.New("inventory context is required")
+	}
+	if err := ctx.Err(); err != nil {
+		return Result{}, err
+	}
 	root, err := filepath.Abs(opts.Root)
 	if err != nil {
 		return Result{}, fmt.Errorf("resolve root: %w", err)
@@ -83,6 +96,9 @@ func Scan(opts Options) (Result, error) {
 	var encountered int
 	var encounteredBytes int64
 	err = filepath.WalkDir(root, func(path string, entry fs.DirEntry, walkErr error) error {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		rel, relErr := filepath.Rel(root, path)
 		if relErr != nil {
 			return relErr
@@ -175,7 +191,10 @@ func Scan(opts Options) (Result, error) {
 		if opts.MaxRepositoryBytes > 0 && encounteredBytes > opts.MaxRepositoryBytes {
 			return fmt.Errorf("repository byte limit exceeded: %d > %d", encounteredBytes, opts.MaxRepositoryBytes)
 		}
-		artifact, diag := inspectFile(path, rel, info.Size(), opts.MaxFileBytes, opts.MaxTextBytes)
+		artifact, diag := inspectFileContext(ctx, path, rel, info.Size(), opts.MaxFileBytes, opts.MaxTextBytes)
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		artifacts = append(artifacts, artifact)
 		if diag != nil {
 			diagnostics = append(diagnostics, *diag)
@@ -190,6 +209,9 @@ func Scan(opts Options) (Result, error) {
 	sort.Slice(diagnostics, func(i, j int) bool { return diagnostics[i].ID < diagnostics[j].ID })
 	var digestInput strings.Builder
 	for _, artifact := range artifacts {
+		if err := ctx.Err(); err != nil {
+			return Result{}, err
+		}
 		fmt.Fprintf(&digestInput, "%s\x00%s\x00%s\x00%s\n", artifact.Path, artifact.SHA256, artifact.Status, artifact.ExclusionReason)
 	}
 	sum := sha256.Sum256([]byte(digestInput.String()))
@@ -208,6 +230,10 @@ func hasReservedMarker(root string) (bool, error) {
 }
 
 func inspectFile(absPath, relPath string, size, maxFileBytes, maxTextBytes int64) (model.Artifact, *model.Diagnostic) {
+	return inspectFileContext(context.Background(), absPath, relPath, size, maxFileBytes, maxTextBytes)
+}
+
+func inspectFileContext(ctx context.Context, absPath, relPath string, size, maxFileBytes, maxTextBytes int64) (model.Artifact, *model.Diagnostic) {
 	artifact := model.Artifact{
 		ID:        model.StableID("artifact", relPath),
 		Path:      relPath,
@@ -235,7 +261,8 @@ func inspectFile(absPath, relPath string, size, maxFileBytes, maxTextBytes int64
 
 	hash := sha256.New()
 	preview := make([]byte, 8192)
-	n, previewErr := io.ReadFull(file, preview)
+	reader := inventoryContextReader{ctx: ctx, reader: file}
+	n, previewErr := io.ReadFull(reader, preview)
 	if previewErr != nil && previewErr != io.EOF && previewErr != io.ErrUnexpectedEOF {
 		artifact.Status = "unreadable"
 		d := diagnostic("error", "RKC1005", previewErr.Error(), relPath, "inventory")
@@ -247,7 +274,7 @@ func inspectFile(absPath, relPath string, size, maxFileBytes, maxTextBytes int64
 		d := diagnostic("error", "RKC1006", err.Error(), relPath, "inventory")
 		return artifact, &d
 	}
-	if _, err := io.Copy(hash, file); err != nil {
+	if _, err := io.Copy(hash, reader); err != nil {
 		artifact.Status = "unreadable"
 		d := diagnostic("error", "RKC1007", err.Error(), relPath, "inventory")
 		return artifact, &d
@@ -267,7 +294,18 @@ func inspectFile(absPath, relPath string, size, maxFileBytes, maxTextBytes int64
 		return artifact, nil
 	}
 
-	full, err := os.ReadFile(absPath)
+	_, err = file.Seek(0, io.SeekStart)
+	var full []byte
+	readLimit := maxTextBytes + 1
+	if readLimit < 0 {
+		readLimit = maxTextBytes
+	}
+	if err == nil {
+		full, err = io.ReadAll(io.LimitReader(reader, readLimit))
+	}
+	if err == nil && int64(len(full)) > maxTextBytes {
+		err = errors.New("source text grew beyond its inventory limit")
+	}
 	if err != nil {
 		artifact.Status = "unreadable"
 		d := diagnostic("error", "RKC1008", err.Error(), relPath, "inventory")
@@ -281,6 +319,21 @@ func inspectFile(absPath, relPath string, size, maxFileBytes, maxTextBytes int64
 	artifact.LineCount = countLines(full)
 	artifact.Status = "text"
 	return artifact, nil
+}
+
+type inventoryContextReader struct {
+	ctx    context.Context
+	reader io.Reader
+}
+
+func (reader inventoryContextReader) Read(buffer []byte) (int, error) {
+	if err := reader.ctx.Err(); err != nil {
+		return 0, err
+	}
+	if len(buffer) > 32<<10 {
+		buffer = buffer[:32<<10]
+	}
+	return reader.reader.Read(buffer)
 }
 
 func likelyText(preview []byte) bool {
