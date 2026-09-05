@@ -88,6 +88,12 @@ Relations use `target_object_id`, which references a canonical object in the sam
 source, not a knowledge unit ID. Targets can have no exported unit. Relations retain
 their analyzer resolution state; the pack does not infer prerequisites or learning
 order. Claim units also include a `describes` relation to their subject.
+Document-section units retain their parent document's subject associations as
+`describes` relations and their own claim references as `presents_claim` relations.
+These are explicit structural links. Claim evidence remains attached to each
+claim with its original certainty and review state; it is not promoted into a
+direct citation supporting the section. Combined section subject and claim links
+must fit the existing 4,096-reference limit.
 
 ## Determinism and integrity
 

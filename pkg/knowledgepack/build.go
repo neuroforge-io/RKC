@@ -231,6 +231,19 @@ func (builder *Builder) Add(ctx context.Context, input Input) (err error) {
 	}
 	for _, document := range bundle.Documents {
 		for _, section := range document.Sections {
+			if len(document.SubjectIDs) > maximumReferences || len(section.ClaimIDs) > maximumReferences-len(document.SubjectIDs) {
+				return errors.New("knowledge document section exceeds 4096 claim and subject relations")
+			}
+			sectionRelations := make([]Relation, 0, len(document.SubjectIDs)+len(section.ClaimIDs))
+			for _, subjectID := range document.SubjectIDs {
+				sectionRelations = append(sectionRelations, Relation{Kind: "describes", TargetObjectID: subjectID, Resolution: "explicit"})
+			}
+			for _, claimID := range section.ClaimIDs {
+				sectionRelations = append(sectionRelations, Relation{Kind: "presents_claim", TargetObjectID: claimID, Resolution: "explicit"})
+			}
+			// Preserve the document's subject associations and the section's claim
+			// links without treating claim evidence as direct section evidence.
+			// Consumers can follow each claim's own certainty and review state.
 			body := section.PlainText
 			if body == "" {
 				body = section.Markdown
@@ -241,7 +254,7 @@ func (builder *Builder) Add(ctx context.Context, input Input) (err error) {
 			}
 			if err := add(Unit{ObjectID: document.ID, SectionID: section.ID, Kind: "document_section", Title: title, Text: body,
 				Path: document.Path, Citations: citations(section.EvidenceIDs, nil), Generator: document.Generator,
-				Validation: document.Status, MetadataOnly: strings.TrimSpace(body) == ""}); err != nil {
+				Validation: document.Status, Relations: sectionRelations, MetadataOnly: strings.TrimSpace(body) == ""}); err != nil {
 				return err
 			}
 		}
