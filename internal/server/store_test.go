@@ -2,9 +2,11 @@ package server
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"reflect"
 	"strings"
 	"testing"
@@ -65,6 +67,53 @@ func TestLoadStoreBuildsVerifiedDataset(t *testing.T) {
 	}
 	if _, ok := dataset.staticSite["data/atlas.json"]; ok {
 		t.Fatal("live store dataset retained the full static atlas payload")
+	}
+}
+
+func TestLoadStorePaginationGenerationIsSharedOnlyWithinOneLoad(t *testing.T) {
+	bundle := richDataset().Bundle
+	reader := &serverStoreReader{bundle: bundle, coverage: model.BuildCoverage(bundle)}
+	load := func() *Dataset {
+		t.Helper()
+		dataset, err := LoadStore(context.Background(), reader, rkcstore.SnapshotID(bundle.Snapshot.ID))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return dataset
+	}
+	dataset, replacement := load(), load()
+	firstHandler, secondHandler, replacementHandler := dataset.Handler(), dataset.Handler(), replacement.Handler()
+	read := func(handler http.Handler, path string) *httptest.ResponseRecorder {
+		response := httptest.NewRecorder()
+		handler.ServeHTTP(response, httptest.NewRequest(http.MethodGet, path, nil))
+		return response
+	}
+	for _, path := range []string{"/api/v1/nodes?limit=1", "/api/v1/search?q=function&object_types=node&limit=1"} {
+		t.Run(path, func(t *testing.T) {
+			first := read(firstHandler, path)
+			if first.Code != http.StatusOK {
+				t.Fatalf("first page status=%d: %s", first.Code, first.Body.String())
+			}
+			var page struct {
+				NextCursor string `json:"next_cursor"`
+				SnapshotID string `json:"snapshot_id"`
+			}
+			if err := json.Unmarshal(first.Body.Bytes(), &page); err != nil {
+				t.Fatal(err)
+			}
+			if page.NextCursor == "" || page.SnapshotID != bundle.Snapshot.ID {
+				t.Fatalf("first page lacks snapshot-bound continuation: %s", first.Body.String())
+			}
+			next := path + "&cursor=" + url.QueryEscape(page.NextCursor)
+			expected, shared := read(firstHandler, next), read(secondHandler, next)
+			if expected.Code != http.StatusOK || shared.Code != http.StatusOK || expected.Body.String() != shared.Body.String() {
+				t.Fatalf("handlers for one load must share continuation: first=%d %s second=%d %s", expected.Code, expected.Body.String(), shared.Code, shared.Body.String())
+			}
+			stale := read(replacementHandler, next)
+			if stale.Code != http.StatusBadRequest {
+				t.Fatalf("separate load of the same snapshot accepted stale cursor: %d %s", stale.Code, stale.Body.String())
+			}
+		})
 	}
 }
 

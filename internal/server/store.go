@@ -98,6 +98,7 @@ func LoadStore(ctx context.Context, reader rkcstore.SnapshotReader, snapshotID r
 		staticSite:        staticSite,
 		staticSiteTrusted: true,
 	}
+	dataset.pagination = newPaginationState(dataset.Search)
 	for _, node := range bundle.Nodes {
 		dataset.NodeByID[node.ID] = node
 	}

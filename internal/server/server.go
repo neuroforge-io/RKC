@@ -84,6 +84,7 @@ type Dataset struct {
 	// read-only data, but it is not trusted code for a privileged workbench
 	// origin.
 	staticSiteTrusted bool
+	pagination        *paginationState
 }
 
 // Load verifies and decodes an exported atlas, validates canonical bundle and
@@ -195,6 +196,7 @@ func Load(outputRoot string) (*Dataset, error) {
 		Search: searchIndex, Integrity: integrity.status, LoadedAt: time.Now().UTC(),
 		staticSite: staticSite, staticSiteTrusted: true,
 	}
+	dataset.pagination = newPaginationState(dataset.Search)
 	for _, node := range bundle.Nodes {
 		dataset.NodeByID[node.ID] = node
 	}
@@ -737,6 +739,11 @@ func (dataset *Dataset) Handler() http.Handler {
 // HandlerWithWorkbench adds the explicitly enabled local command surface while
 // preserving the read-only Handler contract for every existing caller.
 func (dataset *Dataset) HandlerWithWorkbench(workbench *Workbench) http.Handler {
+	if dataset.pagination == nil {
+		prepared := *dataset
+		prepared.pagination = newPaginationState(dataset.Search)
+		dataset = &prepared
+	}
 	if workbench != nil && !dataset.staticSiteTrusted {
 		// Defense in depth for callers other than cmd/rkc: never mount imported
 		// atlas JavaScript beside privileged APIs. The normal serve path prepares
@@ -873,29 +880,22 @@ func (dataset *Dataset) handleFacets(w http.ResponseWriter, _ *http.Request) {
 }
 
 func (dataset *Dataset) handleArtifacts(w http.ResponseWriter, request *http.Request) {
-	language := request.URL.Query().Get("language")
-	status := request.URL.Query().Get("status")
-	pathPrefix := request.URL.Query().Get("path_prefix")
-	limit := parseLimit(request, 100, 5000)
-	var items []model.Artifact
-	matched := 0
-	for _, artifact := range dataset.Bundle.Artifacts {
-		if language != "" && artifact.Language != language {
-			continue
-		}
-		if status != "" && artifact.Status != status {
-			continue
-		}
-		if pathPrefix != "" && !strings.HasPrefix(artifact.Path, pathPrefix) {
-			continue
-		}
-		matched++
-		if len(items) < limit {
-			items = append(items, artifact)
-		}
+	parsed, err := dataset.parsePageRequest(request, "collection", "language", "status", "path_prefix")
+	if err != nil {
+		writePageError(w, err)
+		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"items": items, "total": matched, "truncated": matched > len(items)})
+	language, status, pathPrefix := parsed.values.Get("language"), parsed.values.Get("status"), parsed.values.Get("path_prefix")
+	page, err := collectionPage(dataset, request, parsed, dataset.Bundle.Artifacts, parseLimit(request, 100, 5000), func(artifact model.Artifact) bool {
+		return (language == "" || artifact.Language == language) && (status == "" || artifact.Status == status) && (pathPrefix == "" || strings.HasPrefix(artifact.Path, pathPrefix))
+	})
+	if err != nil {
+		writePageError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, page)
 }
+
 func (dataset *Dataset) handleArtifact(w http.ResponseWriter, request *http.Request) {
 	artifact, ok := dataset.ArtifactByID[request.PathValue("artifactID")]
 	if !ok {
@@ -913,35 +913,40 @@ func (dataset *Dataset) handleArtifact(w http.ResponseWriter, request *http.Requ
 
 func (dataset *Dataset) handleNodes(w http.ResponseWriter, request *http.Request) {
 	query := strings.TrimSpace(request.URL.Query().Get("q"))
-	kind := request.URL.Query().Get("kind")
-	language := request.URL.Query().Get("language")
+	mode := "collection"
+	if query != "" {
+		mode = "ranked"
+	}
+	parsed, err := dataset.parsePageRequest(request, mode, "q", "kind", "language")
+	if err != nil {
+		writePageError(w, err)
+		return
+	}
+	kind, language := parsed.values.Get("kind"), parsed.values.Get("language")
 	limit := parseLimit(request, 100, 1000)
 	if query != "" {
-		response := dataset.Search.Search(search.Query{Text: query, Kinds: optionalSet(kind), Languages: optionalSet(language), ObjectTypes: map[string]struct{}{"node": {}}, Limit: limit})
-		var items []model.Node
+		response, err := dataset.rankedPage(request, parsed, search.Query{Text: query, Kinds: optionalSet(kind), Languages: optionalSet(language), ObjectTypes: map[string]struct{}{"node": {}}, Limit: limit})
+		if err != nil {
+			writePageError(w, err)
+			return
+		}
+		items := make([]model.Node, 0, len(response.Hits))
 		for _, hit := range response.Hits {
 			if node, ok := dataset.NodeByID[hit.Document.ID]; ok {
 				items = append(items, node)
 			}
 		}
-		writeJSON(w, http.StatusOK, map[string]any{"items": items, "truncated": response.Truncated, "retrieval": response})
+		writeJSON(w, http.StatusOK, map[string]any{"items": items, "total": response.Total, "truncated": response.Truncated, "snapshot_id": response.SnapshotID, "next_cursor": response.NextCursor, "retrieval": response.Response})
 		return
 	}
-	var items []model.Node
-	matched := 0
-	for _, node := range dataset.Bundle.Nodes {
-		if kind != "" && node.Kind != kind {
-			continue
-		}
-		if language != "" && node.Language != language {
-			continue
-		}
-		matched++
-		if len(items) < limit {
-			items = append(items, node)
-		}
+	page, err := collectionPage(dataset, request, parsed, dataset.Bundle.Nodes, limit, func(node model.Node) bool {
+		return (kind == "" || node.Kind == kind) && (language == "" || node.Language == language)
+	})
+	if err != nil {
+		writePageError(w, err)
+		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"items": items, "total": matched, "truncated": matched > len(items)})
+	writeJSON(w, http.StatusOK, page)
 }
 
 func (dataset *Dataset) handleNode(w http.ResponseWriter, request *http.Request) {
@@ -963,32 +968,20 @@ func (dataset *Dataset) handleNode(w http.ResponseWriter, request *http.Request)
 }
 
 func (dataset *Dataset) handleEdges(w http.ResponseWriter, request *http.Request) {
-	kind := request.URL.Query().Get("kind")
-	from := request.URL.Query().Get("from")
-	to := request.URL.Query().Get("to")
-	resolution := request.URL.Query().Get("resolution")
-	limit := parseLimit(request, 100, 5000)
-	var items []model.Edge
-	matched := 0
-	for _, edge := range dataset.Bundle.Edges {
-		if kind != "" && edge.Kind != kind {
-			continue
-		}
-		if from != "" && edge.From != from {
-			continue
-		}
-		if to != "" && edge.To != to {
-			continue
-		}
-		if resolution != "" && model.NormalizeResolution(edge.Resolution) != model.NormalizeResolution(resolution) {
-			continue
-		}
-		matched++
-		if len(items) < limit {
-			items = append(items, edge)
-		}
+	parsed, err := dataset.parsePageRequest(request, "collection", "kind", "from", "to", "resolution")
+	if err != nil {
+		writePageError(w, err)
+		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"items": items, "total": matched, "truncated": matched > len(items)})
+	kind, from, to, resolution := parsed.values.Get("kind"), parsed.values.Get("from"), parsed.values.Get("to"), parsed.values.Get("resolution")
+	page, err := collectionPage(dataset, request, parsed, dataset.Bundle.Edges, parseLimit(request, 100, 5000), func(edge model.Edge) bool {
+		return (kind == "" || edge.Kind == kind) && (from == "" || edge.From == from) && (to == "" || edge.To == to) && (resolution == "" || model.NormalizeResolution(edge.Resolution) == model.NormalizeResolution(resolution))
+	})
+	if err != nil {
+		writePageError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, page)
 }
 
 func (dataset *Dataset) handleEvidence(w http.ResponseWriter, request *http.Request) {
@@ -1001,28 +994,29 @@ func (dataset *Dataset) handleEvidence(w http.ResponseWriter, request *http.Requ
 }
 
 func (dataset *Dataset) handleDiagnostics(w http.ResponseWriter, request *http.Request) {
-	severity := request.URL.Query().Get("severity")
-	code := request.URL.Query().Get("code")
-	limit := parseLimit(request, 100, 5000)
-	var items []model.Diagnostic
-	matched := 0
-	for _, diagnostic := range dataset.Bundle.Diagnostics {
-		if severity != "" && diagnostic.Severity != severity {
-			continue
-		}
-		if code != "" && diagnostic.Code != code {
-			continue
-		}
-		matched++
-		if len(items) < limit {
-			items = append(items, diagnostic)
-		}
+	parsed, err := dataset.parsePageRequest(request, "collection", "severity", "code")
+	if err != nil {
+		writePageError(w, err)
+		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"items": items, "total": matched, "truncated": matched > len(items)})
+	severity, code := parsed.values.Get("severity"), parsed.values.Get("code")
+	page, err := collectionPage(dataset, request, parsed, dataset.Bundle.Diagnostics, parseLimit(request, 100, 5000), func(diagnostic model.Diagnostic) bool {
+		return (severity == "" || diagnostic.Severity == severity) && (code == "" || diagnostic.Code == code)
+	})
+	if err != nil {
+		writePageError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, page)
 }
 
 func (dataset *Dataset) handleSearch(w http.ResponseWriter, request *http.Request) {
-	query := strings.TrimSpace(request.URL.Query().Get("q"))
+	parsed, err := dataset.parsePageRequest(request, "ranked", "q", "kinds", "kind", "languages", "language", "object_types", "type", "path_prefix")
+	if err != nil {
+		writePageError(w, err)
+		return
+	}
+	query := strings.TrimSpace(parsed.values.Get("q"))
 	if query == "" {
 		writeProblem(w, http.StatusBadRequest, "Missing query", "q is required")
 		return
@@ -1030,10 +1024,14 @@ func (dataset *Dataset) handleSearch(w http.ResponseWriter, request *http.Reques
 	kinds := firstQuery(request, "kinds", "kind")
 	languages := firstQuery(request, "languages", "language")
 	objectTypes := firstQuery(request, "object_types", "type")
-	response := dataset.Search.Search(search.Query{
+	response, err := dataset.rankedPage(request, parsed, search.Query{
 		Text: query, Kinds: setFromCSV(kinds), Languages: setFromCSV(languages),
-		ObjectTypes: setFromCSV(objectTypes), PathPrefix: request.URL.Query().Get("path_prefix"), Limit: parseLimit(request, 50, 1000),
+		ObjectTypes: setFromCSV(objectTypes), PathPrefix: parsed.values.Get("path_prefix"), Limit: parseLimit(request, 50, 1000),
 	})
+	if err != nil {
+		writePageError(w, err)
+		return
+	}
 	writeJSON(w, http.StatusOK, response)
 }
 
