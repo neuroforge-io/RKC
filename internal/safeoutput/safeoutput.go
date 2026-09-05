@@ -80,8 +80,8 @@ type Transaction struct {
 }
 
 // ReplacementPlatformDescription reports the pathname availability guarantee
-// used by force replacement on the current platform. Linux requires atomic
-// exchange; Windows retains the prior output in quarantine across a documented
+// used by force replacement on the current platform. Linux and macOS require
+// atomic exchange; Windows retains the prior output in quarantine across a documented
 // bounded target-missing interval; unsupported platforms fail closed.
 func ReplacementPlatformDescription() string { return replacementPlatformDescription }
 
@@ -344,7 +344,7 @@ func (transaction *Transaction) commitNewTarget(snapshotID string) error {
 func (transaction *Transaction) commitExchange(priorIdentity os.FileInfo, snapshotID string, journal *replacementJournal) error {
 	if err := exchangeOperation(transaction.Staging, transaction.Target); err != nil {
 		_ = journal.discard()
-		return fmt.Errorf("atomic force replacement requires renameat2(RENAME_EXCHANGE): %w", err)
+		return fmt.Errorf("atomic force replacement requires pathname exchange: %w", err)
 	}
 	if err := syncDirectory(filepath.Dir(transaction.Target)); err != nil {
 		return fmt.Errorf("sync exchanged output parent; recovery journal retained at %s: %w", journal.root, err)
