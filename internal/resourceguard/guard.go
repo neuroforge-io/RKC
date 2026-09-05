@@ -31,11 +31,14 @@ var (
 	// ancestry.
 	ErrHigherPriorityActive         = errors.New("higher-priority workload blocks RKC work")
 	errLauncherExitedWithActiveUnit = errors.New("model launcher exited while its guarded unit was still active")
+	errUnitObservedActive           = errors.New("model unit is still active")
+	errUnitStateUnobserved          = errors.New("could not observe model unit state")
 )
 
 const (
-	unitQuiescenceWindow = 150 * time.Millisecond
-	unitQuiescencePoll   = 25 * time.Millisecond
+	unitQuiescenceWindow  = 150 * time.Millisecond
+	unitQuiescencePoll    = 25 * time.Millisecond
+	unitStateQueryTimeout = 500 * time.Millisecond
 )
 
 // Config describes one guarded subprocess. Executable should already be an
@@ -349,8 +352,8 @@ func (command *Command) stop(done <-chan error) error {
 
 // cleanupUnitAfterLauncherExit closes the otherwise-dangerous gap where the
 // systemd-run client exits while its transient service remains alive. The
-// boolean reports that cleanup was required; a nil error proves the unit is
-// inactive after bounded TERM/KILL escalation.
+// boolean reports a verified active unit, not an observation failure. A nil
+// error proves the unit is inactive after bounded TERM/KILL escalation.
 func (command *Command) cleanupUnitAfterLauncherExit() (bool, error) {
 	if command == nil || command.unit == "" {
 		return false, nil
@@ -359,13 +362,26 @@ func (command *Command) cleanupUnitAfterLauncherExit() (bool, error) {
 	// exits: the manager can publish an already-delivered transient-unit request
 	// just after that observation. Require repeated settled observations across a
 	// short window before declaring the lifecycle closed.
-	if err := command.waitUnitQuiescent(unitQuiescenceWindow); err == nil {
-		return false, nil
+	var observationErr error
+	observedActive := false
+	for attempt := 0; attempt < 3; attempt++ {
+		err := command.waitUnitQuiescent(unitQuiescenceWindow)
+		if err == nil {
+			return false, nil
+		}
+		if errors.Is(err, errUnitObservedActive) {
+			observedActive = true
+			observationErr = nil
+			break
+		}
+		// A slow or failed query is not evidence of an active service. Retry
+		// a complete settling window before intervening on an unknown state.
+		observationErr = fmt.Errorf("prove model unit quiescent before cleanup: %w", err)
 	}
 	termErr := command.signalUnit(syscall.SIGTERM)
 	if err := command.waitUnitInactive(250 * time.Millisecond); err == nil {
 		if quietErr := command.waitUnitQuiescent(unitQuiescenceWindow); quietErr == nil {
-			return true, nil
+			return observedActive, observationErr
 		}
 	}
 	var failures []error
@@ -374,7 +390,7 @@ func (command *Command) cleanupUnitAfterLauncherExit() (bool, error) {
 		inactiveErr := command.waitUnitInactive(2 * time.Second)
 		if inactiveErr == nil {
 			if quietErr := command.waitUnitQuiescent(unitQuiescenceWindow); quietErr == nil {
-				return true, nil
+				return observedActive, observationErr
 			} else {
 				inactiveErr = quietErr
 			}
@@ -384,7 +400,8 @@ func (command *Command) cleanupUnitAfterLauncherExit() (bool, error) {
 			inactiveErr,
 		)
 	}
-	return true, errors.Join(
+	return observedActive, errors.Join(
+		observationErr,
 		wrapSignalError("terminate model unit after launcher exit", termErr),
 		errors.Join(failures...),
 	)
@@ -397,11 +414,21 @@ func (command *Command) waitUnitQuiescent(window time.Duration) error {
 	if window <= 0 {
 		return errors.New("model unit quiescence window must be positive")
 	}
-	deadline := time.Now().Add(window)
+	var deadline time.Time
 	observations := 0
 	for {
-		if err := command.waitUnitInactive(unitQuiescencePoll); err != nil {
+		// Query latency is independent of the sampling cadence. One query per
+		// observation also prevents an active-to-inactive transition inside a
+		// polling helper from being mistaken for a settled inactive sample.
+		state, err := command.queryUnitState(context.Background())
+		if err != nil {
 			return fmt.Errorf("prove model unit quiescent after %d settled observations: %w", observations, err)
+		}
+		if !unitStateInactive(state) {
+			return fmt.Errorf("prove model unit quiescent after %d settled observations: %w (state %q)", observations, errUnitObservedActive, state)
+		}
+		if observations == 0 {
+			deadline = time.Now().Add(window)
 		}
 		observations++
 		remaining := time.Until(deadline)
@@ -432,25 +459,55 @@ func (command *Command) waitUnitInactive(timeout time.Duration) error {
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 	for {
-		show := exec.CommandContext(ctx, "systemctl", "--user", "is-active", command.unit)
-		show.Env = ResourceGuardEnvironment()
-		output, err := show.Output()
-		state := strings.TrimSpace(string(output))
-		switch state {
-		case "inactive", "failed", "dead", "unknown":
+		state, err := command.queryUnitState(ctx)
+		if err != nil {
+			return fmt.Errorf("prove model unit inactive: %w", err)
+		}
+		if unitStateInactive(state) {
 			return nil
-		case "active", "activating", "deactivating", "reloading":
-		default:
-			if err != nil {
-				return fmt.Errorf("prove model unit inactive: %w", err)
-			}
-			return fmt.Errorf("prove model unit inactive: unexpected state %q", state)
 		}
 		select {
 		case <-ctx.Done():
 			return fmt.Errorf("prove model unit inactive: %w (last state %q)", ctx.Err(), state)
 		case <-time.After(25 * time.Millisecond):
 		}
+	}
+}
+
+func unitStateInactive(state string) bool {
+	switch state {
+	case "inactive", "failed", "dead", "unknown":
+		return true
+	default:
+		return false
+	}
+}
+
+func (command *Command) queryUnitState(parent context.Context) (string, error) {
+	ctx, cancel := context.WithTimeout(parent, unitStateQueryTimeout)
+	defer cancel()
+	show := exec.CommandContext(ctx, "systemctl", "--user", "is-active", command.unit)
+	show.Env = ResourceGuardEnvironment()
+	// Bound pipe draining too, should a failed status command leave a child
+	// holding its output open after the command itself has been terminated.
+	show.WaitDelay = unitQuiescencePoll
+	output, err := show.Output()
+	if ctx.Err() != nil {
+		return "", fmt.Errorf("%w: %w", errUnitStateUnobserved, ctx.Err())
+	}
+	if errors.Is(err, exec.ErrWaitDelay) {
+		return "", fmt.Errorf("%w: %w", errUnitStateUnobserved, err)
+	}
+	state := strings.TrimSpace(string(output))
+	// systemctl returns a nonzero exit code for inactive or collected units.
+	if unitStateInactive(state) {
+		return state, nil
+	}
+	switch state {
+	case "active", "activating", "deactivating", "reloading":
+		return state, nil
+	default:
+		return "", fmt.Errorf("%w: %w", errUnitStateUnobserved, errors.Join(err, fmt.Errorf("unexpected state %q", state)))
 	}
 }
 

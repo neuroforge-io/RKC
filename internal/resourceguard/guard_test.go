@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -471,6 +472,141 @@ exit 0
 	data, err = os.ReadFile(state)
 	if err != nil || strings.TrimSpace(string(data)) != "inactive" {
 		t.Fatalf("settled delayed unit state = %q, %v", data, err)
+	}
+}
+
+func TestLauncherExitAcceptsSlowSettledInactiveQueries(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("Linux transient-service fixture")
+	}
+	state, signals := installFakeResourceGuardCommands(t, "exit 0\n")
+	if err := os.WriteFile(state, []byte("inactive\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	replaceFakeUnitStateProbe(t, state, `printf 'sample\n' >> "$TMPDIR/unit-probes"
+/bin/sleep 0.060
+/bin/cat "$TMPDIR/unit-state"
+exit 4`)
+	command, err := newCommand(context.Background(), Config{
+		Executable: "/bin/true", MaximumRSSBytes: 64 << 20, UnitPrefix: "rkc-slow-query-test",
+	}, func() error { return nil })
+	if err != nil {
+		t.Fatal(err)
+	}
+	started := time.Now()
+	if _, err := command.Run(context.Background(), nil, nil); err != nil {
+		t.Fatalf("slow inactive queries rejected completed command: %v", err)
+	}
+	if elapsed := time.Since(started); elapsed < unitQuiescenceWindow {
+		t.Fatalf("quiescence proof completed too early: %s", elapsed)
+	}
+	probes, err := os.ReadFile(filepath.Join(filepath.Dir(state), "unit-probes"))
+	if err != nil || strings.Count(string(probes), "sample\n") < 3 {
+		t.Fatalf("expected at least three settled samples: %q, %v", probes, err)
+	}
+	if data, err := os.ReadFile(signals); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("inactive unit received cleanup signals: %q, %v", data, err)
+	}
+}
+
+func TestLauncherExitRetriesObservationFailureBeforeCleanup(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("Linux transient-service fixture")
+	}
+	state, signals := installFakeResourceGuardCommands(t, "exit 0\n")
+	replaceFakeUnitStateProbe(t, state, `if [ ! -f "$TMPDIR/unit-probe-failed" ]; then
+    : > "$TMPDIR/unit-probe-failed"
+    exit 1
+fi
+printf 'sample\n' >> "$TMPDIR/unit-probes"
+printf 'inactive\n'`)
+	command, err := newCommand(context.Background(), Config{
+		Executable: "/bin/true", MaximumRSSBytes: 64 << 20, UnitPrefix: "rkc-retry-query-test",
+	}, func() error { return nil })
+	if err != nil {
+		t.Fatal(err)
+	}
+	started := time.Now()
+	if _, err := command.Run(context.Background(), nil, nil); err != nil {
+		t.Fatalf("recovered observation failure rejected command: %v", err)
+	}
+	if time.Since(started) < unitQuiescenceWindow {
+		t.Fatal("observation retry skipped the settling window")
+	}
+	probes, err := os.ReadFile(filepath.Join(filepath.Dir(state), "unit-probes"))
+	if err != nil || strings.Count(string(probes), "sample\n") < 3 {
+		t.Fatalf("retry did not establish three settled samples: %q, %v", probes, err)
+	}
+	if data, err := os.ReadFile(signals); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("transient observation failure triggered cleanup: %q, %v", data, err)
+	}
+}
+
+func TestLauncherExitObservationFailureRemainsFailClosed(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("Linux transient-service fixture")
+	}
+	for _, recoversAfterSignal := range []bool{false, true} {
+		t.Run(fmt.Sprintf("recovers_after_signal_%t", recoversAfterSignal), func(t *testing.T) {
+			state, signals := installFakeResourceGuardCommands(t, "exit 0\n")
+			probe := "exit 1"
+			if recoversAfterSignal {
+				probe = `if [ -f "$TMPDIR/unit-signals" ]; then
+    printf 'inactive\n'
+    exit 0
+fi
+exit 1`
+			}
+			replaceFakeUnitStateProbe(t, state, probe)
+			command, err := newCommand(context.Background(), Config{
+				Executable: "/bin/true", MaximumRSSBytes: 64 << 20, UnitPrefix: "rkc-failed-query-test",
+			}, func() error { return nil })
+			if err != nil {
+				t.Fatal(err)
+			}
+			_, err = command.Run(context.Background(), nil, nil)
+			if !errors.Is(err, errUnitStateUnobserved) || errors.Is(err, errLauncherExitedWithActiveUnit) {
+				t.Fatalf("unverified state must fail without asserting an active service: %v", err)
+			}
+			data, err := os.ReadFile(signals)
+			if err != nil || !strings.Contains(string(data), "--signal=SIGTERM") {
+				t.Fatalf("unverified unit was not contained: %q, %v", data, err)
+			}
+			if !recoversAfterSignal && strings.Count(string(data), "--signal=SIGKILL") != 2 {
+				t.Fatalf("unverified unit did not receive both bounded kill attempts: %q", data)
+			}
+		})
+	}
+}
+
+func TestUnitStateQueryRejectsTimedOutInactiveOutput(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("Linux transient-service fixture")
+	}
+	state, _ := installFakeResourceGuardCommands(t, "exit 0\n")
+	replaceFakeUnitStateProbe(t, state, "printf 'inactive\\n'\nexec /bin/sleep 5")
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+	command := &Command{unit: "rkc-timeout-query-test.service"}
+	observed, err := command.queryUnitState(ctx)
+	if observed != "" || !errors.Is(err, errUnitStateUnobserved) || !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("timed-out output was accepted as state evidence: %q, %v", observed, err)
+	}
+}
+
+func replaceFakeUnitStateProbe(t *testing.T, state, probe string) {
+	t.Helper()
+	controller := filepath.Join(filepath.Dir(state), "systemctl")
+	data, err := os.ReadFile(controller)
+	if err != nil {
+		t.Fatal(err)
+	}
+	original := `/bin/cat "$TMPDIR/unit-state"`
+	if strings.Count(string(data), original) != 1 {
+		t.Fatal("fake systemctl state probe was not found exactly once")
+	}
+	if err := os.WriteFile(controller, []byte(strings.Replace(string(data), original, probe, 1)), 0o700); err != nil {
+		t.Fatal(err)
 	}
 }
 
