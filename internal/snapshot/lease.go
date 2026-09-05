@@ -16,7 +16,7 @@ type transactionLease struct {
 }
 
 func createTransactionLease(path string) (*transactionLease, error) {
-	file, err := os.OpenFile(path, os.O_RDWR|os.O_CREATE|os.O_EXCL, 0o600)
+	file, err := openLeaseFile(path, true)
 	if err != nil {
 		return nil, err
 	}
@@ -55,7 +55,7 @@ func acquireAbandonedTransactionLease(path string) (lease *transactionLease, liv
 	if !before.Mode().IsRegular() {
 		return nil, false, fmt.Errorf("%w: transaction lease is not a regular file", ErrBuildingUnowned)
 	}
-	file, err := os.OpenFile(path, os.O_RDWR, 0)
+	file, err := openLeaseFile(path, false)
 	if err != nil {
 		return nil, false, err
 	}

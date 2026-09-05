@@ -124,6 +124,18 @@ necessarily create a bounded target-name absence interval. The exported
 availability limitation, not authorization to delete an unverified path; all
 identity and manifest checks remain fail closed.
 
+Windows private staging and quarantine directories use a protected ACL granting
+access only to the current user; Unix mode bits are not used as a Windows privacy
+check. Recovery binds the volume and full 128-bit file identifier read from an
+identity-checked directory handle. Journal and marker writers flush their file
+data, and Windows rename operations request `MOVEFILE_WRITE_THROUGH`. Windows
+does not provide the same unprivileged directory flush used on Unix: directory
+checks validate identity and accessibility, and RKC does not claim Unix
+directory-entry power-loss guarantees there. Unavailable filesystem identity or
+permission facilities fail closed. The implementation follows Microsoft's
+[directory move guidance](https://learn.microsoft.com/en-us/windows/win32/fileio/moving-directories)
+and [file flush requirements](https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-flushfilebuffers).
+
 ## Current limitations
 
 The digest-pinned built-in Python AST worker still runs as the invoking OS user.

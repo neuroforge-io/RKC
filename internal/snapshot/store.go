@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/neuroforge-io/RKC/internal/cas"
+	"github.com/neuroforge-io/RKC/internal/privatepath"
 	"github.com/neuroforge-io/RKC/internal/safeoutput"
 	"github.com/neuroforge-io/RKC/pkg/rkcmodel"
 )
@@ -194,7 +195,7 @@ func (store *Store) Begin(snapshotID string, metadata map[string]string) (*Trans
 	// implementation-only temporary name short so MkdirTemp's random suffix does
 	// not make a valid ID exceed the filesystem's per-component name limit. The
 	// complete ID remains bound in both the marker and the building record.
-	temp, err := os.MkdirTemp(filepath.Join(store.root, "building"), buildingDirectoryPrefix)
+	temp, err := privatepath.MkdirTemp(filepath.Join(store.root, "building"), buildingDirectoryPrefix)
 	if err != nil {
 		return nil, fmt.Errorf("begin snapshot: %w", err)
 	}
@@ -387,7 +388,7 @@ func (transaction *Transaction) Commit() error {
 	} else if !errors.Is(err, fs.ErrNotExist) {
 		return fmt.Errorf("inspect snapshot destination: %w", err)
 	}
-	if err := os.Rename(transaction.dir, finalPath); err != nil {
+	if err := privatepath.Rename(transaction.dir, finalPath); err != nil {
 		return fmt.Errorf("publish snapshot: %w", err)
 	}
 	// Rename is the publication point. From here onward Abort must never target
@@ -939,17 +940,17 @@ func removeBuildingDirectory(path string, identity os.FileInfo, marker ownership
 	if err := lease.validate(filepath.Join(path, buildingLeaseName)); err != nil {
 		return err
 	}
-	quarantineRoot, err := os.MkdirTemp(filepath.Dir(path), deleteQuarantinePrefix)
+	quarantineRoot, err := privatepath.MkdirTemp(filepath.Dir(path), deleteQuarantinePrefix)
 	if err != nil {
 		return fmt.Errorf("create private snapshot delete quarantine: %w", err)
 	}
 	rootIdentity, err := os.Lstat(quarantineRoot)
-	if err != nil || !rootIdentity.IsDir() || rootIdentity.Mode().Perm()&0o077 != 0 {
+	if err != nil || !rootIdentity.IsDir() || privatepath.CheckDir(quarantineRoot, rootIdentity) != nil {
 		_ = os.Remove(quarantineRoot)
 		return fmt.Errorf("%w: snapshot delete quarantine is not owner-only", ErrBuildingUnowned)
 	}
 	payload := filepath.Join(quarantineRoot, filepath.Base(path))
-	if err := os.Rename(path, payload); err != nil {
+	if err := privatepath.Rename(path, payload); err != nil {
 		_ = os.Remove(quarantineRoot)
 		return fmt.Errorf("quarantine snapshot transaction: %w", err)
 	}
@@ -1243,7 +1244,7 @@ func writeAtomic(path string, data []byte, mode fs.FileMode) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return err
 	}
-	temp, err := os.CreateTemp(filepath.Dir(path), ".atomic-")
+	temp, err := privatepath.CreateTemp(filepath.Dir(path), ".atomic-")
 	if err != nil {
 		return err
 	}
@@ -1267,7 +1268,7 @@ func writeAtomic(path string, data []byte, mode fs.FileMode) error {
 	if err := temp.Close(); err != nil {
 		return err
 	}
-	if err := os.Rename(tempPath, path); err != nil {
+	if err := privatepath.Rename(tempPath, path); err != nil {
 		return err
 	}
 	committed = true
@@ -1275,10 +1276,5 @@ func writeAtomic(path string, data []byte, mode fs.FileMode) error {
 }
 
 func syncDirectory(path string) error {
-	directory, err := os.Open(path)
-	if err != nil {
-		return err
-	}
-	defer directory.Close()
-	return directory.Sync()
+	return privatepath.SyncDirectory(path)
 }

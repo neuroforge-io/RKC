@@ -15,6 +15,7 @@ import (
 	"reflect"
 	"strings"
 
+	"github.com/neuroforge-io/RKC/internal/privatepath"
 	"github.com/neuroforge-io/RKC/pkg/rkcmodel"
 )
 
@@ -111,7 +112,7 @@ func Begin(target, protectedRoot string, force bool, kind string) (*Transaction,
 	if err := checkExisting(resolved, force, kind); err != nil {
 		return nil, err
 	}
-	staging, err := os.MkdirTemp(parent, ".rkc-build-")
+	staging, err := privatepath.MkdirTemp(parent, ".rkc-build-")
 	if err != nil {
 		return nil, fmt.Errorf("create output staging directory: %w", err)
 	}
@@ -384,7 +385,7 @@ func (transaction *Transaction) rollbackExchange(priorIdentity os.FileInfo, jour
 
 func (transaction *Transaction) commitPortable(priorIdentity os.FileInfo, snapshotID string, journal *replacementJournal) error {
 	payload := filepath.Join(journal.root, "payload")
-	if err := os.Rename(transaction.Target, payload); err != nil {
+	if err := privatepath.Rename(transaction.Target, payload); err != nil {
 		_ = journal.discard()
 		return fmt.Errorf("quarantine prior RKC output: %w", err)
 	}
@@ -415,7 +416,7 @@ func (transaction *Transaction) finishReplacement(priorIdentity os.FileInfo, sna
 		} else if !os.IsNotExist(err) {
 			return fmt.Errorf("inspect quarantine payload: %w", err)
 		}
-		if err := os.Rename(priorPath, payload); err != nil {
+		if err := privatepath.Rename(priorPath, payload); err != nil {
 			return fmt.Errorf("move prior output into durable quarantine: %w", err)
 		}
 	}
@@ -878,11 +879,11 @@ func createReplacementJournal(transaction *Transaction, priorIdentity os.FileInf
 	if err != nil {
 		return nil, err
 	}
-	newToken, err := persistentIdentityToken(transaction.identity)
+	newToken, err := persistentPathIdentityToken(transaction.Staging, transaction.identity)
 	if err != nil {
 		return nil, err
 	}
-	priorToken, err := persistentIdentityToken(priorIdentity)
+	priorToken, err := persistentPathIdentityToken(transaction.Target, priorIdentity)
 	if err != nil {
 		return nil, err
 	}
@@ -894,12 +895,12 @@ func createReplacementJournal(transaction *Transaction, priorIdentity os.FileInf
 	if err != nil {
 		return nil, err
 	}
-	root, err := os.MkdirTemp(filepath.Dir(transaction.Target), ".rkc-quarantine-")
+	root, err := privatepath.MkdirTemp(filepath.Dir(transaction.Target), ".rkc-quarantine-")
 	if err != nil {
 		return nil, err
 	}
 	rootIdentity, err := os.Lstat(root)
-	if err != nil || !rootIdentity.IsDir() || rootIdentity.Mode().Perm()&0o077 != 0 {
+	if err != nil || !rootIdentity.IsDir() || privatepath.CheckDir(root, rootIdentity) != nil {
 		_ = os.Remove(root)
 		return nil, errors.New("replacement journal root is not an owner-only directory")
 	}
@@ -977,7 +978,7 @@ func (journal *replacementJournal) persist() error {
 		return errors.New("missing replacement journal")
 	}
 	root, err := os.Lstat(journal.root)
-	if err != nil || !root.IsDir() || !os.SameFile(journal.rootIdentity, root) || root.Mode().Perm()&0o077 != 0 {
+	if err != nil || !root.IsDir() || !os.SameFile(journal.rootIdentity, root) || privatepath.CheckDir(journal.root, root) != nil {
 		return errors.New("replacement journal root identity changed")
 	}
 	data, err := json.MarshalIndent(journal.record, "", "  ")
@@ -985,7 +986,7 @@ func (journal *replacementJournal) persist() error {
 		return err
 	}
 	data = append(data, '\n')
-	temporary, err := os.CreateTemp(journal.root, ".journal-")
+	temporary, err := privatepath.CreateTemp(journal.root, ".journal-")
 	if err != nil {
 		return err
 	}
@@ -1009,7 +1010,7 @@ func (journal *replacementJournal) persist() error {
 	if err := temporary.Close(); err != nil {
 		return err
 	}
-	if err := os.Rename(temporaryPath, journal.path); err != nil {
+	if err := privatepath.Rename(temporaryPath, journal.path); err != nil {
 		return err
 	}
 	committed = true
@@ -1121,7 +1122,7 @@ func loadReplacementJournal(root string) (*replacementJournal, error) {
 	if err != nil {
 		return nil, err
 	}
-	if !rootIdentity.IsDir() || rootIdentity.Mode().Perm()&0o077 != 0 {
+	if !rootIdentity.IsDir() || privatepath.CheckDir(root, rootIdentity) != nil {
 		return nil, errors.New("replacement journal root is not an owner-only directory")
 	}
 	path := filepath.Join(root, journalName)
@@ -1196,7 +1197,7 @@ func recoverReplacement(parent string, journal *replacementJournal) error {
 			if payloadInfo != nil {
 				return errors.New("both staging and quarantine payload exist during recovery")
 			}
-			if err := os.Rename(staging, payload); err != nil {
+			if err := privatepath.Rename(staging, payload); err != nil {
 				return err
 			}
 			payloadInfo = stagingInfo
@@ -1227,7 +1228,7 @@ func recoverReplacement(parent string, journal *replacementJournal) error {
 		if err := validateJournalBoundOutput(staging, journal.record.Kind, stagingInfo, journal.record.NewSnapshot, journal.record.NewMarkerSHA256, journal.record.NewManifestSHA256); err != nil {
 			return err
 		}
-		if err := os.Rename(staging, payload); err != nil {
+		if err := privatepath.Rename(staging, payload); err != nil {
 			return err
 		}
 		journal.record.Phase = "prior-quarantined"
@@ -1247,7 +1248,7 @@ func recoverReplacement(parent string, journal *replacementJournal) error {
 		if err := validateJournalBoundOutput(target, journal.record.Kind, payloadInfo, journal.record.PriorSnapshot, journal.record.PriorMarkerSHA256, journal.record.PriorManifestSHA256); err != nil {
 			return err
 		}
-		if err := os.Rename(staging, payload); err != nil {
+		if err := privatepath.Rename(staging, payload); err != nil {
 			return err
 		}
 		return journal.quarantine(stagingInfo).remove(ErrTargetUnowned, journal.record.Kind)
@@ -1260,7 +1261,7 @@ func inspectIdentityToken(path string) (os.FileInfo, string) {
 	if err != nil || !info.IsDir() {
 		return nil, ""
 	}
-	token, err := persistentIdentityToken(info)
+	token, err := persistentPathIdentityToken(path, info)
 	if err != nil {
 		return info, ""
 	}
@@ -1283,17 +1284,17 @@ func quarantineOwnedDirectory(path string, identity os.FileInfo, sentinel error,
 	if err := validateOwnedDirectory(path, identity, sentinel, kinds...); err != nil {
 		return nil, err
 	}
-	root, err := os.MkdirTemp(filepath.Dir(path), ".rkc-quarantine-")
+	root, err := privatepath.MkdirTemp(filepath.Dir(path), ".rkc-quarantine-")
 	if err != nil {
 		return nil, fmt.Errorf("%w: create private quarantine: %v", sentinel, err)
 	}
 	rootIdentity, err := os.Lstat(root)
-	if err != nil || !rootIdentity.IsDir() || rootIdentity.Mode().Perm()&0o077 != 0 {
+	if err != nil || !rootIdentity.IsDir() || privatepath.CheckDir(root, rootIdentity) != nil {
 		_ = os.Remove(root)
 		return nil, fmt.Errorf("%w: quarantine is not an owner-only directory", sentinel)
 	}
 	payload := filepath.Join(root, "payload")
-	if err := os.Rename(path, payload); err != nil {
+	if err := privatepath.Rename(path, payload); err != nil {
 		_ = os.Remove(root)
 		return nil, fmt.Errorf("%w: move directory into quarantine: %v", sentinel, err)
 	}
@@ -1314,7 +1315,7 @@ func (quarantine *quarantinedDirectory) validate(sentinel error, kinds ...string
 		return fmt.Errorf("%w: missing quarantine identity", sentinel)
 	}
 	root, err := os.Lstat(quarantine.root)
-	if err != nil || !root.IsDir() || root.Mode().Perm()&0o077 != 0 || !os.SameFile(quarantine.rootIdentity, root) {
+	if err != nil || !root.IsDir() || privatepath.CheckDir(quarantine.root, root) != nil || !os.SameFile(quarantine.rootIdentity, root) {
 		return fmt.Errorf("%w: quarantine identity changed", sentinel)
 	}
 	return validateOwnedDirectory(quarantine.payload, quarantine.identity, sentinel, kinds...)
@@ -1384,7 +1385,7 @@ func writeMarker(root string, marker Marker) error {
 		return err
 	}
 	data = append(data, '\n')
-	temporary, err := os.CreateTemp(root, ".rkc-marker-")
+	temporary, err := privatepath.CreateTemp(root, ".rkc-marker-")
 	if err != nil {
 		return fmt.Errorf("create RKC output marker: %w", err)
 	}
@@ -1405,7 +1406,7 @@ func writeMarker(root string, marker Marker) error {
 	if err := temporary.Close(); err != nil {
 		return err
 	}
-	if err := os.Rename(temporaryPath, filepath.Join(root, MarkerName)); err != nil {
+	if err := privatepath.Rename(temporaryPath, filepath.Join(root, MarkerName)); err != nil {
 		return err
 	}
 	committed = true
@@ -1421,10 +1422,5 @@ func containsPath(parent, child string) bool {
 }
 
 func syncDirectory(path string) error {
-	directory, err := os.Open(path)
-	if err != nil {
-		return err
-	}
-	defer directory.Close()
-	return directory.Sync()
+	return privatepath.SyncDirectory(path)
 }

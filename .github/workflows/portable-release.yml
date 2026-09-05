@@ -79,6 +79,15 @@ jobs:
           sh scripts/with-rkc-limits.sh "$RUNNER_TEMP/rkc-installed/bin/rkc" scan --no-python --out "$RUNNER_TEMP/rkc-atlas" examples/sample-go
           "$RUNNER_TEMP/rkc-installed/bin/rkc" context --dir "$RUNNER_TEMP/rkc-atlas" Login > "$RUNNER_TEMP/rkc-context.json"
           python3 -c 'import json,os,pathlib; assert json.loads(pathlib.Path(os.environ["RUNNER_TEMP"],"rkc-context.json").read_text())["items"]'
+          python3 scripts/smoke-gui.py --rkc "$RUNNER_TEMP/rkc-installed/bin/rkc" > "$RUNNER_TEMP/rkc-gui-smoke.json"
+          python3 - <<'PY'
+          import hashlib, json, os, pathlib
+          archive = pathlib.Path('dist/portable-release/rkc-linux-amd64.zip')
+          gui = json.loads(pathlib.Path(os.environ['RUNNER_TEMP'], 'rkc-gui-smoke.json').read_text())
+          assert gui['ok'] is True
+          report = {'schema_version': 'rkc-portable-smoke/v1', 'platform': 'linux-amd64', 'source_commit': os.environ['GITHUB_SHA'], 'archive_sha256': hashlib.sha256(archive.read_bytes()).hexdigest(), 'checks': ['checksum_verified_install', 'cli_version', 'mcp_version', 'deterministic_scan_no_python', 'cited_context'], 'gui': gui, 'ok': True}
+          pathlib.Path('dist/portable-release/native-smoke-linux-amd64.json').write_text(json.dumps(report, sort_keys=True, indent=2) + '\n')
+          PY
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: rkc-portable-build-${{ github.sha }}
@@ -102,6 +111,16 @@ jobs:
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: '3.11'
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: '1.26.5'
+          cache: true
+          cache-dependency-path: go.sum
+      - name: Exercise native filesystem safety and recovery
+        shell: bash
+        env:
+          GOMAXPROCS: '1'
+        run: go test ./internal/privatepath ./internal/safeoutput ./internal/cas ./internal/snapshot
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: rkc-portable-build-${{ github.sha }}
@@ -118,6 +137,7 @@ jobs:
           "$RUNNER_TEMP/rkc-installed/bin/rkc" scan --no-python --out "$RUNNER_TEMP/rkc-atlas" examples/sample-go
           "$RUNNER_TEMP/rkc-installed/bin/rkc" context --dir "$RUNNER_TEMP/rkc-atlas" Login > "$RUNNER_TEMP/rkc-context.json"
           python3 -c 'import json,os,pathlib; assert json.loads(pathlib.Path(os.environ["RUNNER_TEMP"],"rkc-context.json").read_text())["items"]'
+          python3 scripts/smoke-gui.py --rkc "$RUNNER_TEMP/rkc-installed/bin/rkc" > "$RUNNER_TEMP/rkc-gui-smoke.json"
       - name: Install and exercise native Windows binaries
         if: runner.os == 'Windows'
         shell: pwsh
@@ -139,6 +159,8 @@ jobs:
           $packet = & $rkc context --dir $atlas Login
           if ($LASTEXITCODE -ne 0 -or ($packet | ConvertFrom-Json).items.Count -eq 0) { throw 'Portable cited context failed.' }
           ./scripts/test_install_release.ps1 -Archive portable-downloads/rkc-windows-amd64.zip -Checksums portable-downloads/SHA256SUMS.txt
+          python scripts/smoke-gui.py --rkc $rkc | Out-File -Encoding utf8 (Join-Path $env:RUNNER_TEMP 'rkc-gui-smoke.json')
+          if ($LASTEXITCODE -ne 0) { throw 'Native GUI smoke failed.' }
       - name: Record exact native qualification
         shell: bash
         env:
@@ -149,7 +171,9 @@ jobs:
           import hashlib, json, os, pathlib
           platform = os.environ['RKC_TESTED_PLATFORM']
           archive = pathlib.Path('portable-downloads', 'rkc-' + platform + '.zip')
-          report = {'schema_version': 'rkc-portable-smoke/v1', 'platform': platform, 'source_commit': os.environ['RKC_TESTED_COMMIT'], 'archive_sha256': hashlib.sha256(archive.read_bytes()).hexdigest(), 'checks': ['checksum_verified_install', 'cli_version', 'mcp_version', 'deterministic_scan_no_python', 'cited_context'], 'ok': True}
+          gui = json.loads(pathlib.Path(os.environ['RUNNER_TEMP'], 'rkc-gui-smoke.json').read_text(encoding='utf-8-sig'))
+          assert gui['ok'] is True
+          report = {'schema_version': 'rkc-portable-smoke/v1', 'platform': platform, 'source_commit': os.environ['RKC_TESTED_COMMIT'], 'archive_sha256': hashlib.sha256(archive.read_bytes()).hexdigest(), 'checks': ['native_filesystem_safety_and_recovery', 'checksum_verified_install', 'cli_version', 'mcp_version', 'deterministic_scan_no_python', 'cited_context'], 'gui': gui, 'ok': True}
           pathlib.Path('native-smoke-' + platform + '.json').write_text(json.dumps(report, sort_keys=True, indent=2) + '\n')
           PY
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1

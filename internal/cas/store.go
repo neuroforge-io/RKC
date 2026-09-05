@@ -14,6 +14,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/neuroforge-io/RKC/internal/privatepath"
 )
 
 var (
@@ -682,7 +684,7 @@ func syncDirectoryStable(path string, identity os.FileInfo) error {
 	if err != nil || !opened.IsDir() || !os.SameFile(identity, opened) {
 		return ErrStoreChanged
 	}
-	if err := directory.Sync(); err != nil {
+	if err := privatepath.SyncDirectoryStable(path, identity); err != nil {
 		return err
 	}
 	current, err := os.Lstat(path)
@@ -693,10 +695,5 @@ func syncDirectoryStable(path string, identity os.FileInfo) error {
 }
 
 func syncDirectory(path string) error {
-	directory, err := os.Open(path)
-	if err != nil {
-		return err
-	}
-	defer directory.Close()
-	return directory.Sync()
+	return privatepath.SyncDirectory(path)
 }
