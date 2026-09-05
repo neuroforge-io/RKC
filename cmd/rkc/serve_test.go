@@ -10,7 +10,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"syscall"
 	"testing"
 	"time"
 
@@ -276,7 +275,12 @@ func TestRunServePublishesReadyServesAndShutsDownCleanly(t *testing.T) {
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
-	if err := syscall.Kill(os.Getpid(), syscall.SIGINT); err != nil {
+	process, err := os.FindProcess(os.Getpid())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer process.Release()
+	if err := process.Signal(os.Interrupt); err != nil {
 		t.Fatal(err)
 	}
 	select {

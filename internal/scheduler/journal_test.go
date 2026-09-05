@@ -554,6 +554,12 @@ func TestOpenFileJournalSecurityAndPermissions(t *testing.T) {
 		if _, err := OpenFileJournal(link, testRunID); err == nil {
 			t.Fatal("OpenFileJournal accepted a symlink root")
 		}
+		if _, err := OpenFileJournal(filepath.Join(link, "new-runs"), testRunID); err == nil {
+			t.Fatal("OpenFileJournal accepted a symlink ancestor")
+		}
+		if _, err := os.Lstat(filepath.Join(target, "new-runs")); !errors.Is(err, os.ErrNotExist) {
+			t.Fatalf("rejected symlink ancestor created an unrelated directory: %v", err)
+		}
 	})
 
 	t.Run("symlink run file is rejected", func(t *testing.T) {

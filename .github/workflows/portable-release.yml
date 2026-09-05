@@ -132,7 +132,19 @@ jobs:
           TEMP: ${{ runner.temp }}
         run: |
           test "$(go env GOARCH)" = "$RKC_TESTED_ARCH"
-          go test ./internal/privatepath ./internal/safeoutput ./internal/cas ./internal/snapshot
+          go test ./internal/privatepath ./internal/safeoutput ./internal/cas ./internal/snapshot ./internal/scheduler
+      - name: Exercise native Windows path comparisons
+        if: runner.os == 'Windows'
+        shell: bash
+        env:
+          GOMAXPROCS: '1'
+          RKC_TESTED_ARCH: ${{ matrix.architecture }}
+          TMPDIR: ${{ runner.temp }}
+          TMP: ${{ runner.temp }}
+          TEMP: ${{ runner.temp }}
+        run: |
+          test "$(go env GOARCH)" = "$RKC_TESTED_ARCH"
+          go test ./cmd/rkc -run '^TestWindowsPathComparison' -count=1
 
   native:
     needs: build
@@ -231,12 +243,12 @@ jobs:
           $version = (Get-Content VERSION -Raw).Trim()
           if ((& $rkc version) -ne $version -or $LASTEXITCODE -ne 0) { throw 'CLI version mismatch.' }
           if ((& $mcp --version) -ne $version -or $LASTEXITCODE -ne 0) { throw 'MCP version mismatch.' }
+          ./scripts/test_install_release.ps1 -Archive $archive -Checksums portable-downloads/SHA256SUMS.txt
           $atlas = Join-Path $env:RUNNER_TEMP 'rkc-atlas'
           & $rkc scan --no-python --out $atlas examples/sample-go
           if ($LASTEXITCODE -ne 0) { throw 'Portable scan failed.' }
           $packet = & $rkc context --dir $atlas Login
           if ($LASTEXITCODE -ne 0 -or ($packet | ConvertFrom-Json).items.Count -eq 0) { throw 'Portable cited context failed.' }
-          ./scripts/test_install_release.ps1 -Archive $archive -Checksums portable-downloads/SHA256SUMS.txt
           python scripts/smoke-gui.py --rkc $rkc | Out-File -Encoding utf8 (Join-Path $env:RUNNER_TEMP 'rkc-gui-smoke.json')
           if ($LASTEXITCODE -ne 0) { throw 'Native GUI smoke failed.' }
       - name: Record exact native qualification

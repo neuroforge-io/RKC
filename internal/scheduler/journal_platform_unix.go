@@ -11,6 +11,10 @@ func createJournalRoot(path string) error {
 	return os.MkdirAll(path, 0o700)
 }
 
+func createJournalFile(path string) (*os.File, error) {
+	return os.OpenFile(path, os.O_WRONLY|os.O_APPEND|os.O_CREATE|os.O_EXCL, 0o600)
+}
+
 func secureJournalRoot(path string, identity os.FileInfo) error {
 	return validateJournalRootPrivacy(path, identity)
 }

@@ -499,7 +499,11 @@ func synthesisDatasetIdentity(datasetRoot string) (string, string, error) {
 }
 
 func pathIsWithin(parent, candidate string) (bool, error) {
-	relative, err := filepath.Rel(filepath.Clean(parent), filepath.Clean(candidate))
+	parent, candidate, err := pathComparisonNames(filepath.Clean(parent), filepath.Clean(candidate))
+	if err != nil {
+		return false, err
+	}
+	relative, err := filepath.Rel(parent, candidate)
 	if err != nil {
 		return false, err
 	}

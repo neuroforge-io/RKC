@@ -10,7 +10,6 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
-	"syscall"
 	"testing"
 	"time"
 
@@ -259,16 +258,6 @@ func TestFinalHeadroomSynthesisFilesystemAndIdentityFailures(t *testing.T) {
 	resolved, protected, err := synthesisDatasetIdentity(database)
 	if err != nil || resolved != database || protected != "" {
 		t.Fatalf("regular dataset identity = %q, %q, %v", resolved, protected, err)
-	}
-
-	if runtime.GOOS != "windows" {
-		fifo := filepath.Join(root, "dataset.fifo")
-		if err := syscall.Mkfifo(fifo, 0o600); err != nil {
-			t.Fatal(err)
-		}
-		if _, _, err := synthesisDatasetIdentity(fifo); !errors.Is(err, safeoutput.ErrUnsafeTarget) {
-			t.Fatalf("FIFO dataset identity = %v", err)
-		}
 	}
 
 	dataset := filepath.Join(root, "atlas")

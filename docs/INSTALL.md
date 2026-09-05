@@ -31,9 +31,10 @@ These are runtime baselines, not a statement that every listed OS version has
 completed native release testing. The GUI needs a browser. GitHub acquisition
 needs network access; compiling an existing local folder does not.
 
-On Windows, snapshot storage must be on a local volume. Network shares and
-mapped remote drives cannot provide the host-local transaction coordination
-used during publication and crash recovery, so RKC rejects those store paths.
+On Windows, compilation uses local source, output, and working-storage volumes.
+Network shares and mapped remote drives cannot prove the path separation and
+host-local transaction coordination required during publication and crash
+recovery, so RKC rejects those paths. Different local drives are supported.
 
 On Linux, the default protected envelope is one CPU core with a 4.5 GiB hard
 memory ceiling and deliberately low scheduling priority. If your session lacks

@@ -15,6 +15,8 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/neuroforge-io/RKC/internal/privatepath"
 )
 
 const (
@@ -100,7 +102,7 @@ func validateJournalPathPrivacy(path string, directory bool) error {
 	if err := rejectFileCacheSymlinks(absolute); err != nil {
 		return fmt.Errorf("validate scheduler journal path: %w", err)
 	}
-	identity, err := os.Lstat(absolute)
+	identity, err := privatepath.Lstat(absolute)
 	if err != nil {
 		return fmt.Errorf("stat scheduler journal path: %w", err)
 	}
@@ -120,7 +122,7 @@ func validateJournalPathPrivacy(path string, directory bool) error {
 	if err != nil {
 		return err
 	}
-	current, err := os.Lstat(absolute)
+	current, err := privatepath.Lstat(absolute)
 	if err != nil || !os.SameFile(identity, current) {
 		return errors.New("scheduler journal identity changed while validating privacy")
 	}
@@ -140,13 +142,16 @@ func OpenFileJournal(root, runID string) (*FileJournal, error) {
 	if err != nil {
 		return nil, fmt.Errorf("resolve scheduler journal root: %w", err)
 	}
+	if err := rejectFileCacheSymlinks(absolute); err != nil {
+		return nil, fmt.Errorf("validate scheduler journal root: %w", err)
+	}
 	if err := createJournalRoot(absolute); err != nil {
 		return nil, fmt.Errorf("create scheduler journal root: %w", err)
 	}
 	if err := rejectFileCacheSymlinks(absolute); err != nil {
 		return nil, fmt.Errorf("validate scheduler journal root: %w", err)
 	}
-	rootIdentity, err := os.Lstat(absolute)
+	rootIdentity, err := privatepath.Lstat(absolute)
 	if err != nil {
 		return nil, fmt.Errorf("stat scheduler journal root: %w", err)
 	}
@@ -157,7 +162,7 @@ func OpenFileJournal(root, runID string) (*FileJournal, error) {
 		return nil, fmt.Errorf("secure scheduler journal root: %w", err)
 	}
 	path := filepath.Join(absolute, runID+".jsonl")
-	file, err := os.OpenFile(path, os.O_WRONLY|os.O_APPEND|os.O_CREATE|os.O_EXCL, 0o600)
+	file, err := createJournalFile(path)
 	if err != nil {
 		return nil, fmt.Errorf("create scheduler journal: %w", err)
 	}
@@ -175,7 +180,7 @@ func OpenFileJournal(root, runID string) (*FileJournal, error) {
 	if err := secureJournalFile(path, fileIdentity); err != nil {
 		return nil, fmt.Errorf("secure scheduler journal file: %w", err)
 	}
-	current, err := os.Lstat(path)
+	current, err := privatepath.Lstat(path)
 	if err != nil || current.Mode()&os.ModeSymlink != 0 ||
 		!current.Mode().IsRegular() || !os.SameFile(fileIdentity, current) {
 		return nil, errors.New("scheduler journal identity changed during creation")
@@ -365,7 +370,7 @@ func (journal *FileJournal) validateIdentity() error {
 	if journal.file == nil || journal.rootIdentity == nil || journal.fileIdentity == nil {
 		return errors.New("scheduler journal identity is missing")
 	}
-	root, err := os.Lstat(journal.root)
+	root, err := privatepath.Lstat(journal.root)
 	if err != nil || root.Mode()&os.ModeSymlink != 0 || !root.IsDir() ||
 		!os.SameFile(journal.rootIdentity, root) {
 		return errors.New("scheduler journal root identity changed")
@@ -378,7 +383,7 @@ func (journal *FileJournal) validateIdentity() error {
 		!os.SameFile(journal.fileIdentity, opened) {
 		return errors.New("scheduler journal file identity changed")
 	}
-	current, err := os.Lstat(journal.path)
+	current, err := privatepath.Lstat(journal.path)
 	if err != nil || current.Mode()&os.ModeSymlink != 0 ||
 		!current.Mode().IsRegular() || !os.SameFile(journal.fileIdentity, current) {
 		return errors.New("scheduler journal pathname identity changed")
@@ -423,7 +428,7 @@ func ReadFileJournal(path string) (JournalReport, error) {
 		return JournalReport{}, err
 	}
 	parent := filepath.Dir(absolute)
-	parentIdentity, err := os.Lstat(parent)
+	parentIdentity, err := privatepath.Lstat(parent)
 	if err != nil || parentIdentity.Mode()&os.ModeSymlink != 0 || !parentIdentity.IsDir() {
 		return JournalReport{}, errors.New("scheduler journal parent is not a non-symlink directory")
 	}
@@ -533,7 +538,7 @@ func ReadFileJournal(path string) (JournalReport, error) {
 	if err := validateStableCacheRead(absolute, file, identity, identity.Size()); err != nil {
 		return JournalReport{}, fmt.Errorf("validate scheduler journal replay: %w", err)
 	}
-	currentParent, err := os.Lstat(parent)
+	currentParent, err := privatepath.Lstat(parent)
 	if err != nil || currentParent.Mode()&os.ModeSymlink != 0 ||
 		!currentParent.IsDir() || !os.SameFile(parentIdentity, currentParent) {
 		return JournalReport{}, errors.New("scheduler journal parent identity changed while reading")
