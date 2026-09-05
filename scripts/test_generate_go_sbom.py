@@ -254,6 +254,31 @@ class GenerateGoSBOMTests(unittest.TestCase):
         self.assertEqual(run.call_count, 2)
 
     @mock.patch.object(SBOM.subprocess, "run")
+    def test_windows_executable_suffix_preserves_command_and_artifact_identity(self, run: mock.Mock) -> None:
+        for command in ("rkc", "rkc-mcp"):
+            for architecture in ("amd64", "arm64"):
+                with self.subTest(command=command, architecture=architecture):
+                    binary = self.root / (command + ".exe")
+                    binary.write_bytes(b"Windows executable fixture")
+                    run.return_value = self.completed(self.build_info(
+                        goos="windows", goarch=architecture,
+                        command_path=SBOM.PROJECT_MODULE + "/cmd/" + command,
+                    ))
+                    arguments = self.identity_arguments()
+                    arguments.update(goos="windows", goarch=architecture)
+                    document = SBOM.generate(binary, self.lock, "0.3.0-reference", self.root, **arguments)
+                    self.assertEqual(document["files"][0]["fileName"], "./" + command + ".exe")
+                    self.assertEqual(document["files"][0]["checksums"][0]["checksumValue"], hashlib.sha256(binary.read_bytes()).hexdigest())
+
+        for filename, goos, command in (("rkc.exe", "linux", "rkc"), ("rkc.exe.exe", "windows", "rkc"), ("rkc.exe", "windows", "rkc-mcp")):
+            with self.subTest(filename=filename, goos=goos, command=command):
+                binary = self.root / filename
+                binary.write_bytes(b"mismatched fixture")
+                run.return_value = self.completed(self.build_info(goos=goos, command_path=SBOM.PROJECT_MODULE + "/cmd/" + command))
+                with self.assertRaisesRegex(SBOM.SBOMError, "command path"):
+                    SBOM.binary_build_info(binary, "go1.26.5", goos, "amd64", self.source_commit, self.commit_time)
+
+    @mock.patch.object(SBOM.subprocess, "run")
     def test_binary_metadata_failures_are_closed(self, run: mock.Mock) -> None:
         cases = (
             (self.build_info(cgo="1"), "CGO_ENABLED=0"),

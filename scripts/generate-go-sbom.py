@@ -299,8 +299,14 @@ def binary_build_info(
     except (json.JSONDecodeError, SBOMError) as exc:
         raise SBOMError(f"Go binary metadata is invalid JSON: {exc}") from exc
     require(isinstance(document, dict), "Go binary metadata must be an object")
+    # Windows executable suffixes describe the release artifact, not the Go
+    # package path recorded in build metadata. Only normalize the target OS's
+    # exact suffix; keep the actual filename in the SPDX file inventory.
+    command_name = binary.name
+    if expected_goos == "windows" and command_name.endswith(".exe"):
+        command_name = command_name[:-4]
     require(
-        document.get("Path") == f"{PROJECT_MODULE}/cmd/{binary.name}",
+        document.get("Path") == f"{PROJECT_MODULE}/cmd/{command_name}",
         "Go binary command path does not match its release name",
     )
     require(
