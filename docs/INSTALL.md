@@ -13,10 +13,10 @@ commands below are ready for that publication; they cannot download assets
 that have not been published.
 
 The release workflow builds Linux, macOS, and Windows assets for `amd64` and
-`arm64`. Native installation, compilation, and GUI tests are separate checks.
-Read the receipts attached to the exact release: a cross-built archive is not
-a claim of native qualification. ARM64 remains cross-built until matching
-native execution evidence is supplied. See [Release validation](RELEASE_VALIDATION.md).
+`arm64`, then requires installation, compilation, and GUI checks on all six
+native platforms. A downloadable release must include matching native test
+receipts; building an archive alone does not qualify it. See
+[Release validation](RELEASE_VALIDATION.md#portable-download-gate).
 
 ## Requirements
 
@@ -30,6 +30,10 @@ native execution evidence is supplied. See [Release validation](RELEASE_VALIDATI
 These are runtime baselines, not a statement that every listed OS version has
 completed native release testing. The GUI needs a browser. GitHub acquisition
 needs network access; compiling an existing local folder does not.
+
+On Windows, snapshot storage must be on a local volume. Network shares and
+mapped remote drives cannot provide the host-local transaction coordination
+used during publication and crash recovery, so RKC rejects those store paths.
 
 On Linux, the default protected envelope is one CPU core with a 4.5 GiB hard
 memory ceiling and deliberately low scheduling priority. If your session lacks

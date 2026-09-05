@@ -69,7 +69,7 @@ sibling directory and imports it through the same digest-bound path as an
 explicit `--scip-index`.
 
 The graphical workbench can verify, pin, and import existing indexes. In the
-current `0.3.0-reference` implementation, indexer generation remains
+current implementation, indexer generation remains
 terminal-only because a compiler can detach child processes; digest pinning
 authenticates its bytes but does not prove GUI job lifecycle cleanup. Portable,
 kernel-enforced aggregate containment and a bounded graphical generation

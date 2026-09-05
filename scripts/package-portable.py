@@ -87,8 +87,8 @@ def payload(root: Path, binaries: Path, platform: str, source: dict[str, object]
     manifest = {
         "schema_version": "rkc-portable-release/v1", "platform": platform, "source": source,
         "capabilities": {
-            "portable_analysis": "scan --no-python; open; search, context, knowledge packs, HTTP and MCP",
-            "protected_execution": "Linux user-systemd and delegated cgroup v2 required for workbench, Python adapter, and model execution",
+            "portable_analysis": "gui with local-folder and pinned GitHub compilation; scan --no-python; open; search, context, knowledge packs, HTTP and MCP",
+            "protected_execution": "Linux compilation and protected jobs require user-systemd and delegated cgroup v2; native macOS/Windows GUI compilation uses built-in processing only, without helper or model execution",
             "qualification": "cross-compiled; native execution evidence is published separately by the release workflow",
         },
         "files": [{"path": name, "bytes": len(data), "sha256": hashlib.sha256(data).hexdigest(), "mode": format(mode, "04o")} for name, (data, mode) in sorted(files.items())],

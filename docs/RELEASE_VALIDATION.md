@@ -194,6 +194,47 @@ generation, including the ZIP, all SPDX documents, and the exact raw
 validation/benchmark evidence that is intentionally excluded from the
 reproducible ZIP; mocked unit coverage is not the release integration gate.
 
+## Portable download gate
+
+The separate `portable-release` workflow packages the two Go commands as small
+ZIP downloads for Linux, macOS, and Windows, each for `amd64` and `arm64`.
+It does not include source caches, model weights, Python, or a database server.
+The full Linux complete-package gate above remains required for the same source
+commit.
+
+Before a maintainer publishes portable assets, the workflow must:
+
+1. Bind `VERSION`, the clean Git commit and tree, the exact Go toolchain, and
+   both binaries' SPDX metadata. A tag must equal `v` followed by `VERSION`.
+2. Build all six archives with bounded, deterministic payloads, license notices,
+   dependency records, and a manifest listing each installed file's hash.
+3. Exercise the checksum-verifying installer and both command versions on each
+   native platform. Windows installation uses PowerShell 5.1. Test-only Python
+   is supplied by CI and is not required by an installed RKC.
+4. Compile a public fixture, retrieve cited context, and run the installed GUI
+   through empty welcome, authenticated folder selection, compilation, atlas
+   activation, and search. Linux execution retains the delegated resource guard.
+5. Run native macOS and Windows filesystem tests, including publication,
+   ownership, stable file identity, and transaction recovery. The Windows lease
+   tests use separate processes and abrupt process death. Full Linux tests are
+   also required by the main CI workflow.
+6. Require all six `native-smoke-<platform>.json` receipts to identify the same
+   source commit and their exact archive SHA-256. Add those receipts to
+   `SHA256SUMS.txt` and assemble the final workflow artifact.
+
+The native runners currently use Ubuntu 24.04, macOS 15, Windows Server 2025
+for `amd64`, and Windows 11 for `arm64`. These tests establish behavior on those
+runner images; the older runtime baselines in [Install RKC](INSTALL.md) are not
+additional tested operating-system versions. The GUI check is a real local
+server and installed-binary check; browser layout and accessibility checks have
+their own evidence.
+
+Publishing remains a separate maintainer action after this workflow and main
+CI both pass for the identical source commit. Verify the downloaded release
+assets against the checksums after publication. Archive hashes and build
+receipts identify the payload; they are not independent cryptographic publisher
+signatures or external build attestations.
+
 ## Fresh extraction gate
 
 After packaging, the delivered archive should be extracted into an empty

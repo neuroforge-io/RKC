@@ -5,7 +5,7 @@ This RKC status evidence is published by **NeuroForgeIO** under
 contributors; percentages below are evidence signals, not claims of unmeasured
 semantic completeness.
 
-Version: `0.3.0-reference`
+Version: `0.4.0` (release preparation; portable publication pending)
 
 The labels below mean:
 
@@ -13,9 +13,28 @@ The labels below mean:
 - **planned**: architecture and work order exist, code does not yet satisfy the
   production exit gate.
 
-## Latest commit-bound acceptance evidence (2026-08-30)
+## Portable launch preparation (2026-09-05)
 
-The latest independently reviewed evidence checkpoint is signed commit
+The current implementation adds an empty-workspace `rkc gui` entry point,
+graphical folder selection, public GitHub search, and optional session-only
+GitHub authentication. GitHub acquisition pins a repository revision and archive
+hash before built-in compilation; cancellation and connection changes preserve
+the previous active atlas. Native macOS and Windows GUI compilation uses no
+Python, model, indexer, or Git subprocess. Linux keeps its existing protected
+resource envelope.
+
+Search, entities, artifacts, relationships, and diagnostics have snapshot-bound
+HTTP continuation, typed Go client methods, and bounded GUI paging. Portable
+ZIPs and checksum-verifying installers are implemented for all six OS/architecture
+pairs. The release workflow requires native installation and GUI receipts for
+every asset, alongside main CI. Native qualification and the public download
+release are still pending; this section does not promote older evidence to the
+current source commit. See [Install RKC](INSTALL.md) and the
+[portable download gate](RELEASE_VALIDATION.md#portable-download-gate).
+
+## Previous commit-bound acceptance evidence (2026-08-30)
+
+That independently reviewed evidence checkpoint is signed commit
 `bb5de8250df99c7ee1c2ce91633c136818e5adcc`, tree
 `3fdd5a26e3a5d1e0f2adc59bde84cf995be6390e`. Its [main-branch CI
 run](https://github.com/neuroforge-io/RKC/actions/runs/33311156962) and
