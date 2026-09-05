@@ -50,6 +50,7 @@ type Active struct {
 	ManifestSHA256  string `json:"manifest_sha256"`
 	Fingerprint     string `json:"fingerprint"`
 	CompilerVersion string `json:"compiler_version"`
+	SourceAdvanced  bool   `json:"source_advanced,omitempty"`
 }
 
 // Freshness is safe for public machine descriptors: errors are fixed codes,

@@ -47,11 +47,18 @@ Git metadata inspection is explicitly unavailable. Commit-only changes with
 identical admitted content do not require recompilation.
 
 Each source is checked sequentially. Unchanged content reuses a verified active
-atlas and the incremental stage cache helps changed content. A new generation must
-pass integrity, inventory accounting, symbol evidence, claim citation, error, and
-high-confidence secret gates. RKC checks the source again before switching the
-registry pointer. Changes during compilation, failures, and cancellations leave
-the last good atlas available.
+atlas and the incremental stage cache helps changed content. Local compilation
+uses a private copy, with file hashes and a second source observation proving the
+capture matched the registered folder. Later local edits do not alter that copy.
+A new generation must pass integrity, inventory accounting, symbol evidence,
+claim citation, error, and high-confidence secret gates.
+
+RKC checks the live source again before switching the registry pointer. If newer
+edits arrived during compilation, it publishes the verified captured snapshot as
+`stale`; the next pass catches up. Changes during capture, compilation failures,
+and cancellations leave the last good atlas available. Temporary source copies
+are removed when the compilation finishes. Special files require explicit
+exclusion, and capturing symlinks requires native permission to create them.
 
 The registry reports `pending`, `stale`, `current`, or `error`, along with the last
 check/update time and a fixed error code. `current` means the source matched at its

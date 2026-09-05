@@ -242,7 +242,11 @@ func runWorkspaceSyncContext(ctx context.Context, args []string) error {
 			fmt.Fprintln(os.Stderr, failure)
 			failures = append(failures, failure)
 		} else {
-			fmt.Printf("Workspace source %s is current at its latest check.\n", source.ID)
+			for _, current := range store.Registry.Sources {
+				if current.ID == source.ID {
+					fmt.Printf("Workspace source %s: %s.\n", source.ID, current.Freshness.Status)
+				}
+			}
 		}
 	}
 	if err := store.Prune(); err != nil {
@@ -364,11 +368,31 @@ func compileWorkspaceSourceUsing(ctx context.Context, source workspace.Source, g
 		}
 	}()
 	atlas := filepath.Join(generation, "atlas")
+	scanRoot := root
+	if source.Kind == "local" {
+		captureParent := filepath.Join(generation, "capture")
+		if err := os.Mkdir(captureParent, 0700); err != nil {
+			return nil, err
+		}
+		defer os.RemoveAll(captureParent)
+		scanRoot = filepath.Join(captureParent, filepath.Base(root))
+		if scanRoot == captureParent {
+			return nil, errors.New("cannot capture a filesystem root")
+		}
+		if err := workspace.Capture(ctx, root, scanRoot, before, source.Limits); err != nil {
+			return nil, &workspace.RefreshError{Code: "source_changed", Cause: err}
+		}
+		_, captured, err := workspaceFingerprint(ctx, source, root)
+		afterCaptureIdentity, statErr := os.Stat(root)
+		if err != nil || statErr != nil || !os.SameFile(beforeIdentity, afterCaptureIdentity) || captured != fingerprint {
+			return nil, &workspace.RefreshError{Code: "source_changed", Cause: errors.New("source changed during capture; retrying requires a stable capture")}
+		}
+	}
 	args := []string{"--no-python", "--no-git-metadata", "--out", atlas, "--cache-dir", filepath.Join(filepath.Dir(generations), "cache"), "--runs-dir", filepath.Join(filepath.Dir(generations), "runs"), "--stage-workers", "1", "--stage-memory-mib", "512", "--max-files", strconv.Itoa(source.Limits.MaxFiles), "--max-repository-bytes", strconv.FormatInt(source.Limits.MaxRepositoryBytes, 10), "--max-file-bytes", strconv.FormatInt(source.Limits.MaxFileBytes, 10), "--max-text-bytes", strconv.FormatInt(source.Limits.MaxTextBytes, 10)}
 	for _, exclude := range resolvedExcludes {
 		args = append(args, "--exclude", exclude)
 	}
-	args = append(args, root)
+	args = append(args, scanRoot)
 	if err := scan(ctx, args); err != nil {
 		return nil, err
 	}
@@ -382,9 +406,10 @@ func compileWorkspaceSourceUsing(ctx context.Context, source workspace.Source, g
 	}
 	_, after, err := workspaceFingerprint(ctx, source, root)
 	afterIdentity, statErr := os.Stat(root)
-	if err != nil || statErr != nil || !os.SameFile(beforeIdentity, afterIdentity) || fingerprint != after || dataset.Manifest.ContentDigest != before.Digest {
-		return nil, &workspace.RefreshError{Code: "source_changed", Cause: errors.New("source changed during compilation; retrying requires a stable source")}
+	if dataset.Manifest.ContentDigest != before.Digest {
+		return nil, &workspace.RefreshError{Code: "source_changed", Cause: errors.New("compiled snapshot does not match its captured inventory")}
 	}
+	sourceAdvanced := err != nil || statErr != nil || !os.SameFile(beforeIdentity, afterIdentity) || fingerprint != after
 	manifestDigest, err := workspaceManifestDigest(atlas)
 	if err != nil {
 		return nil, err
@@ -396,7 +421,7 @@ func compileWorkspaceSourceUsing(ctx context.Context, source workspace.Source, g
 		return nil, err
 	}
 	keep = true
-	return &workspace.Active{AtlasPath: atlas, SnapshotID: dataset.Manifest.ID, Generation: filepath.Base(generation), ManifestSHA256: manifestDigest, Fingerprint: fingerprint, CompilerVersion: version}, nil
+	return &workspace.Active{AtlasPath: atlas, SnapshotID: dataset.Manifest.ID, Generation: filepath.Base(generation), ManifestSHA256: manifestDigest, Fingerprint: fingerprint, CompilerVersion: version, SourceAdvanced: sourceAdvanced}, nil
 }
 
 func workspaceFingerprint(ctx context.Context, source workspace.Source, root string) (inventory.Result, string, error) {

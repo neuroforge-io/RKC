@@ -10,6 +10,8 @@ import (
 	"time"
 
 	"github.com/neuroforge-io/RKC/internal/inventory"
+	"github.com/neuroforge-io/RKC/internal/search"
+	"github.com/neuroforge-io/RKC/internal/server"
 	"github.com/neuroforge-io/RKC/internal/workspace"
 )
 
@@ -209,7 +211,7 @@ func TestWorkspaceWatchRetriesSequentiallyAndCancels(t *testing.T) {
 	}
 }
 
-func TestWorkspaceRejectsSourceChangeDuringCompilation(t *testing.T) {
+func TestWorkspaceCompilesCapturedSourceWhileLocalEditsContinue(t *testing.T) {
 	parent := workspaceTestTempDir(t)
 	root := filepath.Join(parent, "workspace")
 	sourcePath := filepath.Join(parent, "source")
@@ -220,23 +222,30 @@ func TestWorkspaceRejectsSourceChangeDuringCompilation(t *testing.T) {
 	}
 	defer store.Close()
 	source := workspace.Source{ID: "sample", Label: "Sample", Kind: "local", LocalPath: sourcePath, Limits: workspace.DefaultLimits(), Excludes: inventory.DefaultExclusions()}
+	var active *workspace.Active
 	_, err = captureStdout(t, func() error {
-		_, err := compileWorkspaceSourceUsing(t.Context(), source, filepath.Join(root, "generations"), func(ctx context.Context, args []string) error {
+		var err error
+		active, err = compileWorkspaceSourceUsing(t.Context(), source, filepath.Join(root, "generations"), func(ctx context.Context, args []string) error {
+			writeTestFile(t, filepath.Join(sourcePath, "README.md"), "# After\n")
 			if err := runScanContext(ctx, args); err != nil {
 				return err
 			}
-			writeTestFile(t, filepath.Join(sourcePath, "README.md"), "# After\n")
 			return nil
 		})
 		return err
 	})
-	var failure *workspace.RefreshError
-	if !errors.As(err, &failure) || failure.Code != "source_changed" {
-		t.Fatal("changed source accepted", err)
+	if err != nil || active == nil || !active.SourceAdvanced {
+		t.Fatal("verified captured snapshot was lost or mislabeled", err)
 	}
-	entries, err := os.ReadDir(filepath.Join(root, "generations"))
-	if err != nil || len(entries) != 0 {
-		t.Fatal("rejected generation left published files", entries, err)
+	dataset, err := server.Load(active.AtlasPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if hits := dataset.Search.Search(search.Query{Text: "Before", Limit: 5}); len(hits.Hits) == 0 {
+		t.Fatal("compiled live edits instead of the verified capture")
+	}
+	if _, err := os.Stat(filepath.Join(filepath.Dir(active.AtlasPath), "capture")); !os.IsNotExist(err) {
+		t.Fatal("temporary source capture was retained")
 	}
 }
 

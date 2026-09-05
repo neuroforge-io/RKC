@@ -225,6 +225,10 @@ func (store *Store) Refresh(ctx context.Context, id string, producer func(contex
 	}
 	current.Freshness.Status = "current"
 	current.Freshness.ErrorCode = ""
+	if active != nil && active.SourceAdvanced {
+		current.Freshness.Status = "stale"
+		current.Freshness.ErrorCode = "source_changed"
+	}
 	return store.save()
 }
 
