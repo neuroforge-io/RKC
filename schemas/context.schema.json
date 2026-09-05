@@ -1,0 +1,115 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/neuroforge-io/RKC/schemas/context.schema.json",
+  "title": "RKC cited context packet v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "snapshot_id",
+    "query",
+    "integrity",
+    "items",
+    "truncated",
+    "bytes",
+    "max_bytes",
+    "warnings",
+    "digest"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "rkc-context/v1"
+    },
+    "snapshot_id": {
+      "type": "string"
+    },
+    "query": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 4096
+    },
+    "integrity": {
+      "type": "string"
+    },
+    "items": {
+      "type": "array",
+      "maxItems": 50,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "citation_id",
+          "object_id",
+          "object_type",
+          "title",
+          "path",
+          "text",
+          "evidence_ids",
+          "score"
+        ],
+        "properties": {
+          "object_id": {
+            "type": "string"
+          },
+          "object_type": {
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          },
+          "path": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string"
+          },
+          "language": {
+            "type": "string"
+          },
+          "text": {
+            "type": "string"
+          },
+          "citation_id": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{64}$"
+          },
+          "evidence_ids": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "source": {
+            "$ref": "rkc-bundle.schema.json#/$defs/sourceRange"
+          },
+          "score": {
+            "type": "number"
+          }
+        }
+      }
+    },
+    "truncated": {
+      "type": "boolean"
+    },
+    "bytes": {
+      "type": "integer",
+      "minimum": 2,
+      "maximum": 262144
+    },
+    "max_bytes": {
+      "type": "integer",
+      "minimum": 1024,
+      "maximum": 262144
+    },
+    "warnings": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "digest": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    }
+  }
+}

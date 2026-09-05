@@ -76,6 +76,9 @@ func Commands(context Context) []Command {
 		{"trace", "Capture, verify, and report bounded runtime assertions.", ModeWrites, append([]string{"report"}, dataset...), "Capture an authorized Go test run into a source-affine digest-bound trace and import it with scan --trace. Current traces are operator assertions: they do not prove producer identity, call execution, dead code, or missing tests. The preview is exact and no shell is used."},
 		{"history", "Compile Git history into semantic symbol deltas.", ModeRead, []string{"--help"}, "History reporting requires an explicit compiled history file. Use the guided help to build one from a repository, then import it with scan --history. The preview is exact and no shell is used."},
 		{"cache", "Inspect, verify, or prune the stage cache.", ModeWrites, []string{"inspect", "--help"}, generalGuidance},
+		{"context", "Retrieve bounded cited context as JSON or Markdown.", ModeRead, withDataset("authentication"), generalGuidance},
+		{"capabilities", "Discover interfaces, workflows, output formats, and limits.", ModeRead, []string{}, generalGuidance},
+		{"knowledge", "Build or verify a portable knowledge pack from compiled atlases.", ModeWrites, []string{"--help"}, "Build with rkc knowledge build --out ../knowledge-pack .rkc; supply more atlas directories to combine sources. Knowledge packs retain source provenance; they grant no source license or training permission. " + generalGuidance},
 		{"version", "Print the RKC version.", ModeRead, []string{}, generalGuidance},
 		{"help", "Show the complete command overview.", ModeRead, []string{}, generalGuidance},
 	}

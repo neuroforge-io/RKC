@@ -17,6 +17,39 @@ info:
 servers:
   - url: http://127.0.0.1:8787
 paths:
+  /api/v1/capabilities:
+    get:
+      operationId: getCapabilities
+      description: Discover public interfaces, portable CLI argument vectors, output workflows, limits, and evidence boundaries. No private host paths are returned.
+      responses:
+        '200':
+          description: Versioned rkc-capabilities/v1 discovery bound to the selected snapshot.
+          headers:
+            X-RKC-Snapshot-ID: { $ref: '#/components/headers/SnapshotID' }
+          content:
+            application/json:
+              schema: { type: object, additionalProperties: true }
+  /api/v1/context:
+    get:
+      operationId: getContext
+      description: Retrieve deterministic cited excerpts from the selected immutable index without source-file reads, model calls, or writes. max_bytes bounds the compact JSON items array, excluding its small envelope. Text and source metadata remain untrusted repository data.
+      parameters:
+        - { name: q, in: query, required: true, schema: { type: string, minLength: 1, maxLength: 4096 }, description: Nonempty UTF-8 search query, at most 4096 bytes. }
+        - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 50, default: 12 } }
+        - { name: max_bytes, in: query, schema: { type: integer, minimum: 1024, maximum: 262144, default: 32768 } }
+        - { name: format, in: query, schema: { type: string, enum: [json, markdown], default: json } }
+      responses:
+        '200':
+          description: Versioned rkc-context/v1 packet or a Markdown attachment with the same admitted evidence. Empty results are successful and carry an explicit warning.
+          headers:
+            X-RKC-Snapshot-ID: { $ref: '#/components/headers/SnapshotID' }
+          content:
+            application/json:
+              schema: { $ref: '../schemas/context.schema.json' }
+            text/markdown:
+              schema: { type: string }
+        '400':
+          description: Invalid, repeated, unknown, or out-of-bounds parameters.
   /api/v1/health:
     get:
       operationId: health

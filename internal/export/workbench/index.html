@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="color-scheme" content="dark light">
+<meta name="description" content="Evidence-backed repository atlas: symbols, relationships, diagnostics, and coverage compiled by RKC.">
+<title>RKC · Repository atlas</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%23111722'/%3E%3Ccircle cx='16' cy='16' r='6' fill='none' stroke='%23a9c5ff' stroke-width='2.5'/%3E%3Ccircle cx='16' cy='7' r='2.6' fill='%2380e1c1'/%3E%3Ccircle cx='25' cy='21' r='2.6' fill='%2380e1c1'/%3E%3Ccircle cx='7' cy='21' r='2.6' fill='%2380e1c1'/%3E%3Cpath d='M16 9.6 22.4 19M16 9.6 9.6 19M18.6 21h-5.2' stroke='%23a9c5ff' stroke-width='1.6' fill='none'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="./styles.css">
+</head>
+<body>
+<a class="skip-link" href="#content">Skip to atlas content</a>
+<header>
+  <div class="brand-block">
+    <span class="brand-mark" aria-hidden="true">r<span>k</span>c<span class="brand-dot">.</span></span>
+    <div>
+    <span class="eyebrow">NeuroForgeIO · Repository Knowledge Compiler</span>
+    <h1 id="title">Repository atlas</h1>
+    <p class="header-intro">Turn your repository into knowledge you can use.</p>
+    </div>
+  </div>
+  <div class="header-actions">
+    <div class="connection" id="runtime-status" role="status" aria-live="polite">Opening snapshot…</div>
+    <div class="header-tools"><button type="button" class="secondary" id="global-search">Search <kbd>/</kbd></button><button type="button" class="secondary" id="keyboard-help" aria-haspopup="dialog">Shortcuts <kbd>?</kbd></button></div>
+  </div>
+</header>
+<nav class="tabs" role="tablist" aria-label="Atlas views" aria-orientation="horizontal">
+  <button id="tab-overview" type="button" role="tab" data-view="overview" class="active" aria-selected="true" aria-controls="content" tabindex="0">Overview</button>
+  <button id="tab-symbol" type="button" role="tab" data-view="symbol" aria-selected="false" aria-controls="content" tabindex="-1">Explore</button>
+  <button id="tab-graph" type="button" role="tab" data-view="graph" aria-selected="false" aria-controls="content" tabindex="-1">Graph</button>
+  <button id="tab-diagnostics" type="button" role="tab" data-view="diagnostics" aria-selected="false" aria-controls="content" tabindex="-1">Diagnostics</button>
+  <button id="tab-coverage" type="button" role="tab" data-view="coverage" aria-selected="false" aria-controls="content" tabindex="-1">Coverage</button>
+  <button id="tab-outputs" type="button" role="tab" data-view="outputs" aria-selected="false" aria-controls="content" tabindex="-1">Outputs &amp; agents</button>
+  <button id="tab-commands" type="button" role="tab" data-view="commands" aria-selected="false" aria-controls="content" tabindex="-1">Workflows</button>
+</nav>
+<div class="workspace-bar"><span class="workspace-caption">YOUR KNOWLEDGE WORKSPACE</span><div class="metrics" id="metrics" aria-label="Repository metrics"></div><button id="explorer-toggle" type="button" class="secondary mobile-only" aria-expanded="false" aria-controls="explorer">Browse repository</button></div>
+<main>
+  <aside id="explorer" aria-label="Repository entity explorer">
+    <label class="search-label" for="search">Find something useful</label>
+    <input id="search" type="search" placeholder="Search symbols, files, and text…" autocomplete="off" aria-describedby="search-help result-summary">
+    <p id="search-help" class="help-text">Press <kbd>/</kbd> to search. Use <kbd>Down Arrow</kbd> to enter the results.</p><p id="search-scope" class="help-text"></p>
+    <div class="filters">
+      <label class="sr-only" for="kind">Filter by node kind</label>
+      <select id="kind" aria-label="Node kind"><option value="">All node kinds</option></select>
+      <label class="sr-only" for="language">Filter by language</label>
+      <select id="language" aria-label="Language"><option value="">All languages</option></select>
+    </div>
+    <div class="result-row">
+      <div id="result-summary" class="muted" role="status" aria-live="polite" aria-atomic="true"></div>
+      <button id="clear-filters" type="button" class="secondary" hidden>Clear filters</button>
+    </div>
+    <div id="list" class="entity-list" role="listbox" tabindex="0" aria-label="Repository entities" aria-describedby="result-summary search-help"></div>
+    <div id="list-empty" class="empty compact" role="status" hidden></div>
+  </aside>
+  <section id="content" role="tabpanel" aria-labelledby="tab-overview" aria-busy="true" tabindex="-1">
+    <div class="loading" role="status" aria-live="polite">Loading repository data…</div>
+  </section>
+</main>
+<footer><span id="snapshot"></span><span>Built with RKC · A NeuroForgeIO open source contribution · Apache-2.0</span></footer>
+<div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
+<dialog id="shortcuts-dialog" aria-labelledby="shortcuts-title"><div class="dialog-heading"><h2 id="shortcuts-title">A little less clicking.</h2><button type="button" class="secondary" id="close-shortcuts" aria-label="Close keyboard shortcuts">Close</button></div><p class="muted">Keyboard shortcuts work outside text fields.</p><dl class="shortcut-list"><dt>Find symbols and files</dt><dd><kbd>/</kbd> or <kbd>Ctrl / ⌘ K</kbd></dd><dt>Move through search results</dt><dd><kbd>↑</kbd> <kbd>↓</kbd></dd><dt>Open a result</dt><dd><kbd>Enter</kbd></dd><dt>Move between workspace tabs</dt><dd><kbd>←</kbd> <kbd>→</kbd></dd><dt>Clear search filters / close a dialog</dt><dd><kbd>Esc</kbd></dd><dt>Show this guide</dt><dd><kbd>?</kbd></dd></dl></dialog>
+<noscript><div class="noscript">This atlas needs JavaScript to load its local snapshot data.</div></noscript>
+<script src="./app.js" defer></script>
+</body>
+</html>

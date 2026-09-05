@@ -7,8 +7,8 @@ import (
 
 func TestCommandsAreUniqueValidAndIndependentlyOwned(t *testing.T) {
 	commands := Commands(Context{})
-	if len(commands) != 25 {
-		t.Fatalf("command count = %d, want 25", len(commands))
+	if len(commands) != 28 {
+		t.Fatalf("command count = %d, want 28", len(commands))
 	}
 	seen := make(map[string]bool, len(commands))
 	for _, command := range commands {

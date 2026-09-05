@@ -510,24 +510,23 @@ func runScipIndexer(ctx context.Context, executable string, arguments []string, 
 // (module caches, package managers, language servers) while fixing parallelism
 // and disabling accelerators so the indexer stays inside the guarded envelope.
 func scipIndexerEnvironment() []string {
-	blocked := map[string]struct{}{
-		"CUDA_VISIBLE_DEVICES": {}, "HIP_VISIBLE_DEVICES": {},
-		"ROCR_VISIBLE_DEVICES": {}, "GGML_VK_VISIBLE_DEVICES": {},
-	}
-	result := make([]string, 0, len(os.Environ())+6)
-	for _, entry := range os.Environ() {
-		name, _, _ := strings.Cut(entry, "=")
-		if _, disable := blocked[name]; disable {
-			continue
-		}
-		result = append(result, entry)
-	}
-	for name, value := range map[string]string{
+	overrides := map[string]string{
 		"GOMAXPROCS": "1", "OMP_NUM_THREADS": "1", "OPENBLAS_NUM_THREADS": "1",
 		"MKL_NUM_THREADS": "1", "NUMEXPR_NUM_THREADS": "1", "CMAKE_BUILD_PARALLEL_LEVEL": "1",
 		"CARGO_BUILD_JOBS": "1", "CUDA_VISIBLE_DEVICES": "-1", "HIP_VISIBLE_DEVICES": "-1",
 		"ROCR_VISIBLE_DEVICES": "-1", "GGML_VK_VISIBLE_DEVICES": "-1",
-	} {
+	}
+	result := make([]string, 0, len(os.Environ())+len(overrides))
+	for _, entry := range os.Environ() {
+		name, _, _ := strings.Cut(entry, "=")
+		// Remove ambient copies before sorting; otherwise a lexically later value
+		// can become the effective value when exec deduplicates the environment.
+		if _, overridden := overrides[name]; overridden {
+			continue
+		}
+		result = append(result, entry)
+	}
+	for name, value := range overrides {
 		result = append(result, name+"="+value)
 	}
 	sort.Strings(result)

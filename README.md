@@ -52,6 +52,25 @@ The governing rule is deliberately unromantic:
   license and `NOTICE`; third-party components remain separately owned and
   licensed.
 
+## For people, programs, and agents
+
+Use the local workbench to explore a source collection, prepare cited context,
+and find useful outputs. Use the same evidence through the command line,
+HTTP, MCP, or the Go client:
+
+```sh
+rkc context --dir .rkc --format markdown "how does authentication work?"
+rkc capabilities
+rkc knowledge build --out ../knowledge-pack /path/to/atlas-a /path/to/atlas-b
+rkc knowledge verify --dir ../knowledge-pack --json
+```
+
+Knowledge packs combine processed repositories, documentation folders, and
+local wiki exports into a portable, integrity-checked evidence collection.
+They preserve provenance and source-rights boundaries for independent
+consumers. Read [Workbench and integrations](docs/WORKBENCH_AND_INTEGRATIONS.md)
+and the [knowledge-pack contract](docs/KNOWLEDGE_PACKS.md).
+
 ## Implemented now
 
 The reference build provides:

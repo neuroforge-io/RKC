@@ -769,6 +769,8 @@ func (dataset *Dataset) HandlerWithWorkbench(workbench *Workbench) http.Handler 
 		}
 	}
 	mux := http.NewServeMux()
+	mux.HandleFunc("GET /api/v1/capabilities", datasetHandler((*Dataset).handleCapabilities))
+	mux.HandleFunc("GET /api/v1/context", datasetHandler((*Dataset).handleContext))
 	mux.HandleFunc("GET /api/v1/health", datasetHandler((*Dataset).handleHealth))
 	mux.HandleFunc("GET /api/v1/manifest", datasetHandler((*Dataset).handleManifest))
 	mux.HandleFunc("GET /api/v1/coverage", datasetHandler((*Dataset).handleCoverage))

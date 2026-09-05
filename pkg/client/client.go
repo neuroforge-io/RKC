@@ -16,6 +16,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/neuroforge-io/RKC/pkg/rkcapi"
 	"github.com/neuroforge-io/RKC/pkg/rkcmodel"
 )
 
@@ -458,6 +459,20 @@ func (client *Client) get(ctx context.Context, endpoint string, query url.Values
 	if err := json.Unmarshal(body, output); err != nil {
 		return fmt.Errorf("decode RKC %s response: %w", endpoint, err)
 	}
+	// New exchange contracts bind their payload to the same immutable selection
+	// as the HTTP header. Reject mixed generations before handing data to callers.
+	var snapshotID string
+	switch value := output.(type) {
+	case *rkcapi.ContextPacket:
+		snapshotID = value.SnapshotID
+	case *rkcapi.Capabilities:
+		snapshotID = value.SnapshotID
+	default:
+		return nil
+	}
+	if snapshotID == "" || response.Header.Get("X-RKC-Snapshot-ID") != snapshotID {
+		return fmt.Errorf("RKC %s response has a missing or mismatched snapshot identity", endpoint)
+	}
 	return nil
 }
 func first(values ...string) string {
@@ -467,4 +482,24 @@ func first(values ...string) string {
 		}
 	}
 	return "unknown error"
+}
+
+// Capabilities discovers implemented workflows and output formats.
+func (client *Client) Capabilities(ctx context.Context) (rkcapi.Capabilities, error) {
+	var output rkcapi.Capabilities
+	return output, client.get(ctx, "/api/v1/capabilities", nil, &output)
+}
+
+// Context retrieves a bounded, cited packet without running a model. A zero
+// limit or maxBytes selects the server default; positive values are explicit.
+func (client *Client) Context(ctx context.Context, query string, limit, maxBytes int) (rkcapi.ContextPacket, error) {
+	values := url.Values{"q": []string{query}}
+	if limit != 0 {
+		values.Set("limit", strconv.Itoa(limit))
+	}
+	if maxBytes != 0 {
+		values.Set("max_bytes", strconv.Itoa(maxBytes))
+	}
+	var output rkcapi.ContextPacket
+	return output, client.get(ctx, "/api/v1/context", values, &output)
 }

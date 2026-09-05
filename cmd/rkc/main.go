@@ -40,6 +40,12 @@ func dispatch(args []string) error {
 		return nil
 	}
 	switch args[0] {
+	case "context":
+		return runContext(args[1:])
+	case "capabilities":
+		return runCapabilities(args[1:])
+	case "knowledge":
+		return runKnowledge(args[1:])
 	case "wizard", "tui":
 		return runWizard(args[1:])
 	case "scan":
@@ -141,6 +147,7 @@ Core commands:
   serve        Browse an atlas through the read-only local HTTP server
 
 Explore and explain:
+  context      Retrieve a cited context packet as JSON or Markdown
   query        Search the compiled repository atlas (alias: search)
   answer       Produce a citation-checked answer (alias: ask)
   synthesize   Build evidence packets or run a qualified local model
@@ -151,6 +158,8 @@ Explore and explain:
   diff         Compare two compiled atlas snapshots
 
 Storage and extension:
+  capabilities Discover machine-readable interfaces, workflows, and outputs
+  knowledge    Build or verify portable packs from one or more compiled atlases
   snapshots    List, show, export, select, or recover snapshots
   plugins      List, validate, lock, or verify plugin manifests
   scip         Generate, verify, or pin compiler-grade SCIP indexes

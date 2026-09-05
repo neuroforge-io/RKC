@@ -1,0 +1,493 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/neuroforge-io/RKC/schemas/knowledge-pack.schema.json",
+  "title": "RKC portable knowledge pack v1",
+  "description": "Neutral source-cited evidence exchange. JSON Schema checks shape; use rkc knowledge verify for byte hashes, IDs, bounds, and cross-file accounting.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "pack_id",
+    "sources_count",
+    "units_count",
+    "options",
+    "files"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "rkc-knowledge-pack/v1"
+    },
+    "pack_id": {
+      "type": "string",
+      "pattern": "^sha256:[a-f0-9]{64}$"
+    },
+    "sources_count": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 32
+    },
+    "units_count": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 100000
+    },
+    "options": {
+      "$ref": "#/$defs/options"
+    },
+    "files": {
+      "type": "array",
+      "minItems": 5,
+      "maxItems": 5,
+      "items": {
+        "$ref": "#/$defs/file"
+      },
+      "prefixItems": [
+        {
+          "allOf": [
+            {
+              "$ref": "#/$defs/file"
+            },
+            {
+              "properties": {
+                "path": {
+                  "const": "README.md"
+                }
+              }
+            }
+          ]
+        },
+        {
+          "allOf": [
+            {
+              "$ref": "#/$defs/file"
+            },
+            {
+              "properties": {
+                "path": {
+                  "const": "options.json"
+                }
+              }
+            }
+          ]
+        },
+        {
+          "allOf": [
+            {
+              "$ref": "#/$defs/file"
+            },
+            {
+              "properties": {
+                "path": {
+                  "const": "quality.json"
+                }
+              }
+            }
+          ]
+        },
+        {
+          "allOf": [
+            {
+              "$ref": "#/$defs/file"
+            },
+            {
+              "properties": {
+                "path": {
+                  "const": "sources.jsonl"
+                }
+              }
+            }
+          ]
+        },
+        {
+          "allOf": [
+            {
+              "$ref": "#/$defs/file"
+            },
+            {
+              "properties": {
+                "path": {
+                  "const": "units.jsonl"
+                }
+              }
+            }
+          ]
+        }
+      ]
+    }
+  },
+  "$defs": {
+    "options": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "max_units",
+        "max_unit_text_bytes",
+        "max_total_text_bytes"
+      ],
+      "properties": {
+        "max_units": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 100000
+        },
+        "max_unit_text_bytes": {
+          "type": "integer",
+          "minimum": 256,
+          "maximum": 65536
+        },
+        "max_total_text_bytes": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 134217728
+        }
+      }
+    },
+    "file": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "path",
+        "sha256",
+        "size_bytes"
+      ],
+      "properties": {
+        "path": {
+          "type": "string",
+          "minLength": 1
+        },
+        "sha256": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "size_bytes": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 268435456
+        }
+      }
+    },
+    "citation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "confidence"
+      ],
+      "properties": {
+        "evidence_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "kind": {
+          "type": "string",
+          "minLength": 1
+        },
+        "method": {
+          "type": "string"
+        },
+        "confidence": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "source": {
+          "$ref": "rkc-bundle.schema.json#/$defs/sourceRange"
+        },
+        "artifact_sha256": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        }
+      }
+    },
+    "relation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "target_object_id",
+        "resolution"
+      ],
+      "properties": {
+        "kind": {
+          "type": "string",
+          "minLength": 1
+        },
+        "target_object_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "resolution": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "unit": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "source_id",
+        "group_id",
+        "object_id",
+        "kind",
+        "title",
+        "text",
+        "content_sha256",
+        "citations",
+        "relations",
+        "metadata_only",
+        "truncated",
+        "original_text_bytes"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^rkc:knowledge_unit:[a-f0-9]{24}$"
+        },
+        "source_id": {
+          "type": "string",
+          "pattern": "^rkc:knowledge_source:[a-f0-9]{24}$"
+        },
+        "group_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "object_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "section_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "kind": {
+          "enum": [
+            "artifact",
+            "node",
+            "document_section",
+            "claim"
+          ]
+        },
+        "title": {
+          "type": "string",
+          "maxLength": 1024
+        },
+        "text": {
+          "type": "string",
+          "maxLength": 65536
+        },
+        "content_sha256": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "path": {
+          "type": "string"
+        },
+        "language": {
+          "type": "string"
+        },
+        "license_expression": {
+          "type": "string"
+        },
+        "citations": {
+          "type": "array",
+          "maxItems": 4096,
+          "items": {
+            "$ref": "#/$defs/citation"
+          }
+        },
+        "relations": {
+          "type": "array",
+          "maxItems": 4096,
+          "items": {
+            "$ref": "#/$defs/relation"
+          }
+        },
+        "metadata_only": {
+          "type": "boolean"
+        },
+        "truncated": {
+          "type": "boolean"
+        },
+        "original_text_bytes": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 8388608
+        },
+        "certainty": {
+          "enum": [
+            "supported",
+            "inferred",
+            "uncertain",
+            "contradicted"
+          ]
+        },
+        "validation": {
+          "type": "string"
+        },
+        "generator": {
+          "type": "string"
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "document_section"
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "section_id"
+            ]
+          },
+          "else": {
+            "not": {
+              "required": [
+                "section_id"
+              ]
+            }
+          }
+        }
+      ]
+    },
+    "source": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "source_id",
+        "group_id",
+        "snapshot_id",
+        "name",
+        "dirty",
+        "content_digest",
+        "bundle_sha256",
+        "integrity",
+        "coverage"
+      ],
+      "properties": {
+        "source_id": {
+          "type": "string",
+          "pattern": "^rkc:knowledge_source:[a-f0-9]{24}$"
+        },
+        "group_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "snapshot_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "repository_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "origin": {
+          "type": "string"
+        },
+        "commit": {
+          "type": "string"
+        },
+        "dirty": {
+          "type": "boolean"
+        },
+        "content_digest": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "bundle_sha256": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "integrity": {
+          "const": "verified"
+        },
+        "coverage": {
+          "type": "object",
+          "required": [
+            "snapshot_id"
+          ],
+          "properties": {
+            "snapshot_id": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "description": "Canonical rkcmodel.Coverage from the verified atlas; counts describe source analysis, not pack quality."
+        }
+      }
+    },
+    "quality": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "sources_count",
+        "units_count",
+        "units_by_kind",
+        "text_bytes",
+        "metadata_only_units",
+        "truncated_units",
+        "uncited_units",
+        "unknown_license_units",
+        "limitations"
+      ],
+      "properties": {
+        "schema_version": {
+          "const": "rkc-knowledge-pack/v1"
+        },
+        "sources_count": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 32
+        },
+        "units_count": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 100000
+        },
+        "units_by_kind": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "text_bytes": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "metadata_only_units": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "truncated_units": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "uncited_units": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "unknown_license_units": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "limitations": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "minItems": 1
+        }
+      }
+    }
+  }
+}

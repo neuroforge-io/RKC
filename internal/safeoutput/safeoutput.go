@@ -88,7 +88,7 @@ func ReplacementPlatformDescription() string { return replacementPlatformDescrip
 // Begin validates a target, verifies any existing output belongs to RKC, and
 // creates a sibling staging directory so the final rename is atomic.
 func Begin(target, protectedRoot string, force bool, kind string) (*Transaction, error) {
-	if kind != "atlas" && kind != "synthesis" {
+	if kind != "atlas" && kind != "synthesis" && kind != "knowledge" {
 		return nil, fmt.Errorf("%w: invalid output kind", ErrUnsafeTarget)
 	}
 	resolved, err := ResolveTarget(target, protectedRoot)
@@ -582,7 +582,7 @@ func validateOwnedOutput(target, kind string, identity os.FileInfo) error {
 	}
 	manifestName := ""
 	switch kind {
-	case "atlas":
+	case "atlas", "knowledge":
 		manifestName = "rkc-export-manifest.json"
 	case "synthesis":
 		manifestName = "manifest.json"
@@ -737,7 +737,7 @@ func validateOwnedOutput(target, kind string, identity os.FileInfo) error {
 
 func manifestFileSize(kind string, file ownershipManifestFile) (int64, error) {
 	var size *int64
-	if kind == "atlas" && file.SizeBytes != nil && file.Bytes == nil {
+	if (kind == "atlas" || kind == "knowledge") && file.SizeBytes != nil && file.Bytes == nil {
 		size = file.SizeBytes
 	}
 	if kind == "synthesis" && file.Bytes != nil && file.SizeBytes == nil {
@@ -830,7 +830,7 @@ func validateOwnedDirectory(path string, identity os.FileInfo, sentinel error, k
 			// marker publication even when manifest validation caused Commit to
 			// fail. Destruction of an existing/prior output always requires the
 			// complete manifest and path revalidation below.
-			if (kind == "atlas" || kind == "synthesis") && !errors.Is(sentinel, ErrInvalidStaging) {
+			if (kind == "atlas" || kind == "synthesis" || kind == "knowledge") && !errors.Is(sentinel, ErrInvalidStaging) {
 				if err := validateOwnedOutput(path, kind, identity); err != nil {
 					return fmt.Errorf("%w: complete ownership validation failed: %v", sentinel, err)
 				}
@@ -928,7 +928,7 @@ func createReplacementJournal(transaction *Transaction, priorIdentity os.FileInf
 func ownershipMetadataDigests(root, kind string) (string, string, error) {
 	manifestName := ""
 	switch kind {
-	case "atlas":
+	case "atlas", "knowledge":
 		manifestName = "rkc-export-manifest.json"
 	case "synthesis":
 		manifestName = "manifest.json"
@@ -1145,7 +1145,7 @@ func loadReplacementJournal(root string) (*replacementJournal, error) {
 	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
 		return nil, errors.New("replacement journal contains trailing JSON")
 	}
-	if record.SchemaVersion != journalVersion || (record.Kind != "atlas" && record.Kind != "synthesis") ||
+	if record.SchemaVersion != journalVersion || (record.Kind != "atlas" && record.Kind != "synthesis" && record.Kind != "knowledge") ||
 		!canonicalBaseName(record.TargetName) || !canonicalBaseName(record.StagingName) ||
 		!strings.HasPrefix(record.StagingName, ".rkc-build-") || record.NewSnapshot == "" ||
 		record.PriorSnapshot == "" || record.NewIdentity == "" || record.PriorIdentity == "" {

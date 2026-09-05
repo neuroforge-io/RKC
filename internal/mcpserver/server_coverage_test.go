@@ -31,6 +31,7 @@ func TestHandleProtocolMethodsResourcesAndTools(t *testing.T) {
 		{"ping", "ping", `{}`, 0, ""},
 		{"tools", "tools/list", `{}`, 0, "rkc.search"},
 		{"resources", "resources/list", `{}`, 0, "rkc://snapshot/manifest"},
+		{"capabilities", "resources/read", `{"uri":"rkc://capabilities"}`, 0, "rkc-capabilities/v1"},
 		{"manifest", "resources/read", `{"uri":"rkc://snapshot/manifest"}`, 0, "snapshot-mcp"},
 		{"coverage", "resources/read", `{"uri":"rkc://snapshot/coverage"}`, 0, "snapshot-mcp"},
 		{"diagnostics", "resources/read", `{"uri":"rkc://snapshot/diagnostics"}`, 0, "diagnostic-mcp"},
@@ -87,6 +88,9 @@ func TestToolCallsSuccessAndBoundedFailures(t *testing.T) {
 		{"neighborhood invalid", `{"name":"rkc.neighborhood","arguments":{"node":"a","direction":"sideways"}}`, "invalid direction", true, 0},
 		{"path", `{"name":"rkc.find_path","arguments":{"from":"a","to":"b"}}`, "edge-ab", false, 0},
 		{"impact", `{"name":"rkc.impact","arguments":{"node":"b"}}`, "Alpha", false, 0},
+		{"context", `{"name":"rkc.context","arguments":{"query":"Alpha","limit":2,"max_bytes":2048}}`, "rkc-context/v1", false, 0},
+		{"context missing query", `{"name":"rkc.context","arguments":{}}`, "q must contain", true, 0},
+		{"context invalid limit", `{"name":"rkc.context","arguments":{"query":"Alpha","limit":51}}`, "invalid params", false, -32602},
 		{"coverage", `{"name":"rkc.coverage","arguments":{}}`, "snapshot-mcp", false, 0},
 		{"unknown", `{"name":"rkc.unknown","arguments":{}}`, "unknown tool", false, -32602},
 		{"invalid params", `{`, "invalid params", false, -32602},
@@ -302,7 +306,7 @@ func TestMCPHelpersAndSchemas(t *testing.T) {
 	if len(setArg(values, "array")) != 1 || len(setArg(values, "strings")) != 1 || len(setArg(values, "csv")) != 2 {
 		t.Fatal("setArg mismatch")
 	}
-	if len(tools()) != 7 || pathSchema()["properties"] == nil || traversalSchema("node")["required"] == nil {
+	if len(tools()) != 8 || pathSchema()["properties"] == nil || traversalSchema("node")["required"] == nil {
 		t.Fatal("tool schema mismatch")
 	}
 	if errorResponse(json.RawMessage("1"), -1, "bad", "data").Error == nil || toolError(errors.New("bad"))["isError"] != true {

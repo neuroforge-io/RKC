@@ -680,6 +680,9 @@ func TestScipVerifyReportsSummary(t *testing.T) {
 }
 
 func TestScipIndexerEnvironment(t *testing.T) {
+	for _, name := range []string{"GOMAXPROCS", "OMP_NUM_THREADS", "OPENBLAS_NUM_THREADS", "MKL_NUM_THREADS", "NUMEXPR_NUM_THREADS", "CMAKE_BUILD_PARALLEL_LEVEL", "CARGO_BUILD_JOBS"} {
+		t.Setenv(name, "8")
+	}
 	t.Setenv("CUDA_VISIBLE_DEVICES", "0")
 	t.Setenv("ROCR_VISIBLE_DEVICES", "1")
 	environment := scipIndexerEnvironment()
@@ -693,10 +696,13 @@ func TestScipIndexerEnvironment(t *testing.T) {
 	for _, entry := range environment {
 		name, value, ok := strings.Cut(entry, "=")
 		if ok {
+			if _, duplicate := values[name]; duplicate {
+				t.Fatalf("duplicate environment key %s", name)
+			}
 			values[name] = value
 		}
 	}
-	for _, name := range []string{"GOMAXPROCS", "OMP_NUM_THREADS", "MKL_NUM_THREADS"} {
+	for _, name := range []string{"GOMAXPROCS", "OMP_NUM_THREADS", "OPENBLAS_NUM_THREADS", "MKL_NUM_THREADS", "NUMEXPR_NUM_THREADS", "CMAKE_BUILD_PARALLEL_LEVEL", "CARGO_BUILD_JOBS"} {
 		if values[name] != "1" {
 			t.Errorf("indexer environment %s = %q; want 1", name, values[name])
 		}
