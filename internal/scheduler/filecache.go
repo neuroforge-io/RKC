@@ -13,6 +13,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/neuroforge-io/RKC/internal/privatepath"
 )
 
 const maximumFileCacheEntryBytes = int64(1 << 20)
@@ -41,13 +43,16 @@ func OpenFileCache(root string) (*FileCache, error) {
 	if err != nil {
 		return nil, err
 	}
+	if err := rejectFileCacheSymlinks(absolute); err != nil {
+		return nil, err
+	}
 	if err := os.MkdirAll(absolute, 0o755); err != nil {
 		return nil, err
 	}
 	if err := rejectFileCacheSymlinks(absolute); err != nil {
 		return nil, err
 	}
-	identity, err := os.Lstat(absolute)
+	identity, err := privatepath.Lstat(absolute)
 	if err != nil {
 		return nil, err
 	}
@@ -104,8 +109,9 @@ func (cache *FileCache) Load(ctx context.Context, key string) (Result, bool, err
 	return result, true, nil
 }
 
-// Store durably installs one immutable metadata entry. Repeating the same bytes
-// is idempotent; an existing key with different bytes is a conflict.
+// Store installs one immutable metadata entry after flushing its contents.
+// Directory synchronization follows the native privatepath contract. Repeating
+// the same bytes is idempotent; a key with different bytes is a conflict.
 func (cache *FileCache) Store(ctx context.Context, key string, result Result) error {
 	if err := ctx.Err(); err != nil {
 		return err
@@ -153,7 +159,7 @@ func (cache *FileCache) Store(ctx context.Context, key string, result Result) er
 	if err := temp.Close(); err != nil {
 		return err
 	}
-	if current, err := os.Lstat(path); err == nil {
+	if current, err := privatepath.Lstat(path); err == nil {
 		if current.Mode()&os.ModeSymlink != 0 || !current.Mode().IsRegular() {
 			return fmt.Errorf("refuse to replace unsafe stage cache entry %q", path)
 		}
@@ -175,7 +181,7 @@ func (cache *FileCache) Store(ctx context.Context, key string, result Result) er
 		return err
 	}
 	if err := os.Link(name, path); err != nil {
-		if current, statErr := os.Lstat(path); statErr == nil &&
+		if current, statErr := privatepath.Lstat(path); statErr == nil &&
 			current.Mode().IsRegular() && current.Mode()&os.ModeSymlink == 0 {
 			if current.Size() <= maximumFileCacheEntryBytes {
 				existing, readErr := os.ReadFile(path)
@@ -299,7 +305,7 @@ func (cache *FileCache) Delete(ctx context.Context, key string) error {
 	if err != nil {
 		return err
 	}
-	info, err := os.Lstat(path)
+	info, err := privatepath.Lstat(path)
 	if errors.Is(err, fs.ErrNotExist) {
 		return nil
 	}
@@ -313,7 +319,7 @@ func (cache *FileCache) Delete(ctx context.Context, key string) error {
 		return err
 	}
 	shard := filepath.Dir(path)
-	shardIdentity, err := os.Lstat(shard)
+	shardIdentity, err := privatepath.Lstat(shard)
 	if err != nil {
 		return err
 	}
@@ -355,7 +361,7 @@ func (cache *FileCache) validateRoot() error {
 	if cache == nil || cache.rootIdentity == nil {
 		return errors.New("stage cache root identity is missing")
 	}
-	current, err := os.Lstat(cache.Root)
+	current, err := privatepath.Lstat(cache.Root)
 	if err != nil || current.Mode()&os.ModeSymlink != 0 ||
 		!current.IsDir() || !os.SameFile(cache.rootIdentity, current) {
 		return errors.New("stage cache root identity changed")
@@ -371,12 +377,12 @@ func (cache *FileCache) ensureShard(name string) (string, os.FileInfo, error) {
 		return "", nil, err
 	}
 	path := filepath.Join(cache.Root, name)
-	identity, err := os.Lstat(path)
+	identity, err := privatepath.Lstat(path)
 	if errors.Is(err, fs.ErrNotExist) {
 		if err := os.Mkdir(path, 0o755); err != nil && !errors.Is(err, fs.ErrExist) {
 			return "", nil, err
 		}
-		identity, err = os.Lstat(path)
+		identity, err = privatepath.Lstat(path)
 	}
 	if err != nil {
 		return "", nil, err
@@ -394,7 +400,7 @@ func (cache *FileCache) validateShard(path string, identity os.FileInfo) error {
 	if err := cache.validateRoot(); err != nil {
 		return err
 	}
-	current, err := os.Lstat(path)
+	current, err := privatepath.Lstat(path)
 	if err != nil || current.Mode()&os.ModeSymlink != 0 ||
 		!current.IsDir() || identity == nil || !os.SameFile(identity, current) {
 		return errors.New("stage cache shard identity changed")
@@ -403,7 +409,7 @@ func (cache *FileCache) validateShard(path string, identity os.FileInfo) error {
 }
 
 func openStableCacheFile(path string) (*os.File, os.FileInfo, error) {
-	before, err := os.Lstat(path)
+	before, err := privatepath.Lstat(path)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -433,7 +439,7 @@ func validateStableCacheRead(
 		!os.SameFile(identity, opened) || opened.Size() != bytesRead {
 		return errors.New("stage cache entry changed while reading")
 	}
-	current, err := os.Lstat(path)
+	current, err := privatepath.Lstat(path)
 	if err != nil || !current.Mode().IsRegular() || !os.SameFile(identity, current) {
 		return errors.New("stage cache entry pathname changed while reading")
 	}
@@ -441,7 +447,7 @@ func validateStableCacheRead(
 }
 
 func validateStableCachePath(path string, identity os.FileInfo, size int64) error {
-	current, err := os.Lstat(path)
+	current, err := privatepath.Lstat(path)
 	if err != nil || !current.Mode().IsRegular() ||
 		identity == nil || !os.SameFile(identity, current) || current.Size() != size {
 		return errors.New("stage cache entry pathname changed while reading")
@@ -450,23 +456,7 @@ func validateStableCachePath(path string, identity os.FileInfo, size int64) erro
 }
 
 func syncStableCacheDirectory(path string, identity os.FileInfo) error {
-	directory, err := os.Open(path)
-	if err != nil {
-		return err
-	}
-	defer directory.Close()
-	opened, err := directory.Stat()
-	if err != nil || identity == nil || !opened.IsDir() || !os.SameFile(identity, opened) {
-		return errors.New("stage cache directory identity changed")
-	}
-	if err := directory.Sync(); err != nil {
-		return err
-	}
-	current, err := os.Lstat(path)
-	if err != nil || !current.IsDir() || !os.SameFile(identity, current) {
-		return errors.New("stage cache directory identity changed")
-	}
-	return nil
+	return privatepath.SyncDirectoryStable(path, identity)
 }
 
 func rejectFileCacheSymlinks(path string) error {
@@ -483,7 +473,7 @@ func rejectFileCacheSymlinks(path string) error {
 			continue
 		}
 		current = filepath.Join(current, component)
-		info, err := os.Lstat(current)
+		info, err := privatepath.Lstat(current)
 		if errors.Is(err, fs.ErrNotExist) {
 			return nil
 		}

@@ -6,11 +6,10 @@ build/provenance receipts. They do not download model weights.
 
 ## Release availability
 
-The first portable GitHub release is being prepared and is **not published yet**.
-Use [Build from source](#build-from-source) until downloads appear on the
-[release page](https://github.com/neuroforge-io/RKC/releases). The release
-commands below are ready for that publication; they cannot download assets
-that have not been published.
+The [release page](https://github.com/neuroforge-io/RKC/releases) is the source of
+portable downloads and their native test receipts. The commands below install
+its latest published portable release. For an unreleased checkout, or if no
+portable assets are listed, use [Build from source](#build-from-source).
 
 The release workflow builds Linux, macOS, and Windows assets for `amd64` and
 `arm64`, then requires installation, compilation, and GUI checks on all six

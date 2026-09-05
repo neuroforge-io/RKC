@@ -160,7 +160,9 @@ func TestExecuteDependenciesEventsValuesAndDeterministicReport(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(report.Results) != 3 || report.Duration <= 0 {
+	// Fast stages may finish within one Windows monotonic-clock tick.
+	// Zero elapsed time is valid; a negative duration is not.
+	if len(report.Results) != 3 || report.Duration < 0 {
 		t.Fatalf("Execute() report = %+v", report)
 	}
 	for id, result := range report.Results {

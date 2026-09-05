@@ -134,7 +134,7 @@ jobs:
           test "$(go env GOARCH)" = "$RKC_TESTED_ARCH"
           go test ./internal/privatepath ./internal/safeoutput ./internal/cas ./internal/snapshot ./internal/scheduler
       - name: Exercise native Windows path comparisons
-        if: runner.os == 'Windows'
+        if: ${{ !cancelled() && runner.os == 'Windows' }}
         shell: bash
         env:
           GOMAXPROCS: '1'

@@ -417,6 +417,19 @@ func TestFileCacheRejectsRootIdentityReplacement(t *testing.T) {
 		!strings.Contains(err.Error(), "identity changed") {
 		t.Fatalf("Entries(replaced root) = %v", err)
 	}
+	if err := cache.Store(context.Background(), cacheKey("e"), Result{}); err == nil {
+		t.Fatal("Store accepted a replaced root")
+	}
+	if err := cache.Delete(context.Background(), cacheKey("e")); err == nil {
+		t.Fatal("Delete accepted a replaced root")
+	}
+	if err := syncStableCacheDirectory(root, cache.rootIdentity); err == nil {
+		t.Fatal("directory synchronization accepted a replaced root")
+	}
+	entries, err := os.ReadDir(root)
+	if err != nil || len(entries) != 0 {
+		t.Fatalf("rejected cache operations changed replacement root: %v, %v", entries, err)
+	}
 }
 
 func TestFileCacheBoundedAndSymlinkContracts(t *testing.T) {

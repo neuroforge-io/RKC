@@ -23,11 +23,10 @@ provides folder and GitHub source selection.*
 
 ## Install and open
 
-> **Release availability:** the first portable downloads are not published yet.
-> The commands below are the release installation path once assets are published.
-> [Install from source now](docs/INSTALL.md#build-from-source), or check the
-> [release page](https://github.com/neuroforge-io/RKC/releases) for downloads
-> and the native test evidence accompanying them.
+The installers below use the latest portable assets on the
+[release page](https://github.com/neuroforge-io/RKC/releases), where each download
+has matching native test receipts. For an unreleased checkout, or if no portable
+assets are listed, [build from source](docs/INSTALL.md#build-from-source).
 
 **Linux / macOS — Terminal**
 

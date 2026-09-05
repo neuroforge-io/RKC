@@ -5,7 +5,8 @@ This RKC status evidence is published by **NeuroForgeIO** under
 contributors; percentages below are evidence signals, not claims of unmeasured
 semantic completeness.
 
-Version: `0.4.0` (release preparation; portable publication pending)
+Version: `0.4.0`. See the [release page](https://github.com/neuroforge-io/RKC/releases)
+for published assets and their exact native qualification receipts.
 
 The labels below mean:
 
@@ -13,7 +14,7 @@ The labels below mean:
 - **planned**: architecture and work order exist, code does not yet satisfy the
   production exit gate.
 
-## Portable launch preparation (2026-09-05)
+## Portable launch implementation (2026-09-05)
 
 The current implementation adds an empty-workspace `rkc gui` entry point,
 graphical folder selection, public GitHub search, and optional session-only
@@ -27,9 +28,9 @@ Search, entities, artifacts, relationships, and diagnostics have snapshot-bound
 HTTP continuation, typed Go client methods, and bounded GUI paging. Portable
 ZIPs and checksum-verifying installers are implemented for all six OS/architecture
 pairs. The release workflow requires native installation and GUI receipts for
-every asset, alongside main CI. Native qualification and the public download
-release are still pending; this section does not promote older evidence to the
-current source commit. See [Install RKC](INSTALL.md) and the
+every asset, alongside main CI. Release readiness depends on those exact-source
+results; this section does not promote older evidence to the current source
+commit. See [Install RKC](INSTALL.md) and the
 [portable download gate](RELEASE_VALIDATION.md#portable-download-gate).
 
 ## Previous commit-bound acceptance evidence (2026-08-30)
@@ -178,7 +179,7 @@ rejected operation.
 | Pipeline DAG and cache library | Implemented | All 20 canonical scan stages route through the deterministic DAG with bounded resource admission; owner-only hash-chained command journals and ownership-bound verified CAS payloads provide selective keys plus `plan`/inspect/verify/prune UX. `plan` also exposes non-executing evidence opportunities for missing compiler, runtime, and history authority; it is not yet a question-driven acquisition loop. Retries, additional derived-output stages, and SQLite journal projection are future extensions, not hidden fallbacks |
 | Clean/incremental equivalence | Implemented | Cold, warm, reversed-input, and localized-change paths are differentially checked against clean canonical output; the release benchmark and guarded RKC self-catalogue exercise repository-scale determinism |
 | Live atlas load efficiency | Implemented and self-profiled | A one-core, nice-19, idle-I/O load of the 7,840-file RKC self-atlas now streams verified projection files through one reusable hash buffer, retains only the three canonical inputs used by the live server, and validates canonical ordering without cloning the decoded 62,585,787-byte bundle. Cumulative allocation fell from 1,727.15 MiB to 1,031.66 MiB (40.27%); a separate final run completed in 2.90 seconds with 612,504 KiB maximum RSS and no swap. Every file remains size/SHA-256 verified, imported executable assets remain untrusted, and wall time is intentionally secondary while ERAIS has priority |
-| Portable command builds | Implemented | `make portable-build` compiles both CGO-free commands for Linux, macOS, and Windows `amd64`/`arm64` targets in a private temporary workspace; the reproducible reference package still publishes Linux binaries only until native packaging and install smoke gates are added for the other targets |
+| Portable command builds and installers | Implemented; publication requires exact native qualification | Both CGO-free commands build for Linux, macOS, and Windows `amd64`/`arm64`; the separate portable release workflow requires checksum-verifying installation and GUI smoke receipts for all six assets. The complete reference package retains its Linux binaries and full validation evidence |
 
 ## Analysis
 

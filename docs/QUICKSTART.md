@@ -5,11 +5,11 @@ agent. No model is needed for compilation, search, or cited context.
 
 ## 1. Install and open
 
-> **Portable downloads are not published yet.** Use the
-> [source install](INSTALL.md#build-from-source) now. The download commands below
-> become available with the first portable release; check
-> [release availability and platform qualification](INSTALL.md#release-availability)
-> before using them.
+The download commands use the latest published portable release. For an
+unreleased checkout, or if no portable assets are listed, use the
+[source install](INSTALL.md#build-from-source). See
+[release availability and platform qualification](INSTALL.md#release-availability)
+for the download and test receipts.
 
 ### Linux or macOS
 
