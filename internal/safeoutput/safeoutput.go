@@ -197,6 +197,13 @@ func resolveExistingParent(path string) (string, error) {
 			if err != nil {
 				return "", fmt.Errorf("resolve output parent: %w", err)
 			}
+			resolvedInfo, err := privatepath.Lstat(resolved)
+			if err != nil {
+				return "", fmt.Errorf("inspect resolved output parent: %w", err)
+			}
+			if !resolvedInfo.IsDir() {
+				return "", errors.New("resolved output parent is not a directory")
+			}
 			for index := len(missing) - 1; index >= 0; index-- {
 				resolved = filepath.Join(resolved, missing[index])
 			}
@@ -509,6 +516,11 @@ func checkExisting(target string, force bool, kind string) error {
 func inspectExisting(target string, force bool, kind string) (os.FileInfo, error) {
 	info, err := privatepath.Lstat(target)
 	if os.IsNotExist(err) {
+		// Windows also reports ERROR_PATH_NOT_FOUND when an ancestor is a
+		// regular file. Only a missing path beneath a real directory is absent.
+		if _, parentErr := resolveExistingParent(filepath.Dir(target)); parentErr != nil {
+			return nil, fmt.Errorf("inspect output target: %w", parentErr)
+		}
 		return nil, nil
 	}
 	if err != nil {

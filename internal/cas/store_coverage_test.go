@@ -137,18 +137,29 @@ func TestCASCoveragePutRejectsTemporaryPathReplacement(t *testing.T) {
 	}
 	payload := []byte("replace the temporary pathname after the complete write")
 	reader := &actionAtEOFReader{payload: payload}
+	var deniedRename error
 	reader.action = func() error {
 		path, err := onlyTemporaryObject(store.temporaryRoot)
 		if err != nil {
 			return err
 		}
 		if err := os.Rename(path, path+".retained"); err != nil {
+			if isOpenFileRenameDenied(err) {
+				deniedRename = err
+			}
 			return err
 		}
 		return os.WriteFile(path, []byte("attacker replacement"), 0o600)
 	}
-	if _, err := store.Put(reader); !errors.Is(err, ErrUnsafeObject) {
-		t.Fatalf("Put(replaced temporary pathname) = %v, want ErrUnsafeObject", err)
+	_, putErr := store.Put(reader)
+	want := ErrUnsafeObject
+	if deniedRename != nil {
+		// Windows prevents the mutation before it can substitute an object;
+		// the failed writer must still publish nothing and report that denial.
+		want = deniedRename
+	}
+	if !errors.Is(putErr, want) {
+		t.Fatalf("Put(replaced temporary pathname) = %v, want %v", putErr, want)
 	}
 	if present, err := store.Has(DigestBytes(payload)); err != nil || present {
 		t.Fatalf("Has(rejected payload) = %v, %v; want false, nil", present, err)

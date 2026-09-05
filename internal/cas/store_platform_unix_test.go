@@ -11,6 +11,8 @@ import (
 	"testing"
 )
 
+func isOpenFileRenameDenied(error) bool { return false }
+
 func TestCASCoverageWalkRejectsSpecialObjects(t *testing.T) {
 	store, err := Open(t.TempDir())
 	if err != nil {

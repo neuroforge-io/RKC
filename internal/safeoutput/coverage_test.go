@@ -357,9 +357,7 @@ func TestReplacementJournalPersistenceLoadAndValidation(t *testing.T) {
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			journalRoot := filepath.Join(t.TempDir(), ".rkc-quarantine-test")
-			if err := os.Mkdir(journalRoot, 0o700); err != nil {
-				t.Fatal(err)
-			}
+			privateDirectoryFixture(t, journalRoot)
 			if err := os.WriteFile(filepath.Join(journalRoot, journalName), []byte(test.body), 0o600); err != nil {
 				t.Fatal(err)
 			}
@@ -383,9 +381,7 @@ func validReplacementJournalRecord() replacementJournalRecord {
 func replacementJournalJSON(t *testing.T, record replacementJournalRecord) string {
 	t.Helper()
 	root := filepath.Join(t.TempDir(), ".journal-encoder")
-	if err := os.Mkdir(root, 0o700); err != nil {
-		t.Fatal(err)
-	}
+	privateDirectoryFixture(t, root)
 	identity, err := privatepath.Lstat(root)
 	if err != nil {
 		t.Fatal(err)

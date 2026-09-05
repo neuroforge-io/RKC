@@ -200,6 +200,17 @@ func TestValidateReadDetectsLengthAndPathReplacement(t *testing.T) {
 	}
 	retained := path + ".retained"
 	if err := os.Rename(path, retained); err != nil {
+		if isOpenFileRenameDenied(err) {
+			// Windows denies the replacement while the reader is open. Prove
+			// the original object remains bound and intact under that policy.
+			if err := store.validateRead(path, file, identity, shard, identity.Size()); err != nil {
+				t.Fatalf("validateRead(after denied replacement) = %v", err)
+			}
+			if err := store.Verify(object.Digest); err != nil {
+				t.Fatalf("Verify(after denied replacement) = %v", err)
+			}
+			return
+		}
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(path, []byte("stable"), 0o444); err != nil {

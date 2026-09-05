@@ -990,6 +990,23 @@ func TestFilesystemShapeErrorsFailClosed(t *testing.T) {
 	if err := checkExisting(target, true, "atlas"); err == nil || !strings.Contains(err.Error(), "inspect output target") {
 		t.Fatalf("checkExisting(path below file) = %v", err)
 	}
+	if err := checkExisting(filepath.Join(parentFile, "missing", "output"), false, "atlas"); err == nil {
+		t.Fatal("checkExisting(deep path below file) succeeded")
+	}
+	if err := checkExisting(filepath.Join(base, "missing", "output"), false, "atlas"); err != nil {
+		t.Fatalf("checkExisting(absent path below directory) = %v", err)
+	}
+	linkedFile := filepath.Join(base, "linked-file")
+	if err := os.Symlink(parentFile, linkedFile); err != nil {
+		t.Fatal(err)
+	}
+	linkedTarget := filepath.Join(linkedFile, "output")
+	if _, err := ResolveTarget(linkedTarget, ""); err == nil {
+		t.Fatal("ResolveTarget(path below symlink to file) succeeded")
+	}
+	if err := checkExisting(linkedTarget, true, "atlas"); err == nil {
+		t.Fatal("checkExisting(path below symlink to file) succeeded")
+	}
 	if err := writeMarker(filepath.Join(base, "missing-root"), Marker{SchemaVersion: markerVersion, Producer: producer, Kind: "atlas"}); err == nil || !strings.Contains(err.Error(), "create RKC output marker") {
 		t.Fatalf("writeMarker(missing root) = %v", err)
 	}
