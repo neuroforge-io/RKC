@@ -850,7 +850,7 @@ func TestLoadRejectsNonCanonicalCoverageAndUnknownRecordFields(t *testing.T) {
 	}
 
 	unknownID := "unknown-record-field"
-	unknownRoot := filepath.Join(store.Root(), "snapshots", unknownID)
+	unknownRoot := filepath.Join(store.Root(), "snapshots", snapshotDirectoryName(unknownID))
 	if err := os.Mkdir(unknownRoot, 0o755); err != nil {
 		t.Fatal(err)
 	}

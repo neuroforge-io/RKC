@@ -260,7 +260,7 @@ func TestCommitLoadCurrentAndTransactionLifecycle(t *testing.T) {
 	if err := transaction.Commit(); err != nil {
 		t.Fatal(err)
 	}
-	if !transaction.committed || !transaction.closed || !strings.Contains(transaction.dir, filepath.Join("snapshots", "snapshot-1")) {
+	if !transaction.committed || !transaction.closed || !strings.Contains(transaction.dir, filepath.Join("snapshots", snapshotDirectoryName("snapshot-1"))) {
 		t.Fatalf("committed transaction state = %+v", transaction)
 	}
 
@@ -372,7 +372,7 @@ func TestCommitCurrentFailureLeavesPublishedSnapshotRepairable(t *testing.T) {
 	if err := transaction.Commit(); !errors.Is(err, ErrCurrentUpdate) {
 		t.Fatalf("Commit() CURRENT failure = %v, want ErrCurrentUpdate", err)
 	}
-	if !transaction.committed || !transaction.closed || transaction.dir != filepath.Join(store.Root(), "snapshots", "repair-current") {
+	if !transaction.committed || !transaction.closed || transaction.dir != filepath.Join(store.Root(), "snapshots", snapshotDirectoryName("repair-current")) {
 		t.Fatalf("post-publication transaction state = %+v", transaction)
 	}
 	if _, _, _, err := store.Load("repair-current"); err != nil {
@@ -512,7 +512,7 @@ func TestLoadReportsMissingAndCorruptState(t *testing.T) {
 		t.Fatalf("Load(missing) = %v, want ErrSnapshotNotFound", err)
 	}
 
-	badRecordDir := filepath.Join(store.Root(), "snapshots", "bad-record")
+	badRecordDir := filepath.Join(store.Root(), "snapshots", snapshotDirectoryName("bad-record"))
 	if err := os.MkdirAll(badRecordDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -694,7 +694,7 @@ func TestListUsesStableNewestFirstOrder(t *testing.T) {
 		t.Fatalf("List() IDs = %v, want %v", got, want)
 	}
 
-	badDir := filepath.Join(store.Root(), "snapshots", "zz-bad")
+	badDir := filepath.Join(store.Root(), "snapshots", snapshotDirectoryName("zz-bad"))
 	if err := os.MkdirAll(badDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -850,7 +850,7 @@ func TestCommitRefusesPreexistingEmptyDestination(t *testing.T) {
 	if err := transaction.WriteBundle(testBundle("destination-race", "source")); err != nil {
 		t.Fatal(err)
 	}
-	destination := filepath.Join(store.Root(), "snapshots", "destination-race")
+	destination := filepath.Join(store.Root(), "snapshots", snapshotDirectoryName("destination-race"))
 	if err := os.Mkdir(destination, 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -1021,7 +1021,7 @@ func writeRecordForTest(t *testing.T, store *Store, record Record) {
 	if record.CoverageObject != "" && record.CoverageDigest == "" {
 		record.CoverageDigest = record.CoverageObject
 	}
-	directory := filepath.Join(store.Root(), "snapshots", record.SnapshotID)
+	directory := filepath.Join(store.Root(), "snapshots", snapshotDirectoryName(record.SnapshotID))
 	if err := os.MkdirAll(directory, 0o755); err != nil {
 		t.Fatal(err)
 	}

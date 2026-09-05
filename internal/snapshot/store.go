@@ -186,7 +186,7 @@ func (store *Store) Begin(snapshotID string, metadata map[string]string) (*Trans
 	if err := store.validateSnapshotsRoot(); err != nil {
 		return nil, err
 	}
-	if _, err := os.Lstat(filepath.Join(store.root, "snapshots", snapshotID)); err == nil {
+	if _, err := os.Lstat(filepath.Join(store.root, "snapshots", snapshotDirectoryName(snapshotID))); err == nil {
 		return nil, fmt.Errorf("%w: %s", ErrSnapshotExists, snapshotID)
 	} else if !errors.Is(err, fs.ErrNotExist) {
 		return nil, err
@@ -377,7 +377,7 @@ func (transaction *Transaction) Commit() error {
 	if err := transaction.validateBuilding("committed"); err != nil {
 		return err
 	}
-	finalPath := filepath.Join(transaction.store.root, "snapshots", transaction.record.SnapshotID)
+	finalPath := filepath.Join(transaction.store.root, "snapshots", snapshotDirectoryName(transaction.record.SnapshotID))
 	// os.Rename cannot provide portable no-replace semantics for directories.
 	// The destination check handles cooperative races; the exact-inode and
 	// committed-record check immediately after rename fails closed against a
@@ -565,7 +565,7 @@ func (store *Store) Load(snapshotID string) (rkcmodel.Bundle, rkcmodel.Coverage,
 	if err := store.validateSnapshotsRoot(); err != nil {
 		return rkcmodel.Bundle{}, rkcmodel.Coverage{}, Record{}, err
 	}
-	snapshotRoot := filepath.Join(store.root, "snapshots", snapshotID)
+	snapshotRoot := filepath.Join(store.root, "snapshots", snapshotDirectoryName(snapshotID))
 	snapshotInfo, err := os.Lstat(snapshotRoot)
 	if err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
@@ -576,7 +576,7 @@ func (store *Store) Load(snapshotID string) (rkcmodel.Bundle, rkcmodel.Coverage,
 	if snapshotInfo.Mode()&os.ModeSymlink != 0 || !snapshotInfo.IsDir() {
 		return rkcmodel.Bundle{}, rkcmodel.Coverage{}, Record{}, errors.New("snapshot path is not a regular directory")
 	}
-	recordPath := filepath.Join(store.root, "snapshots", snapshotID, "snapshot.json")
+	recordPath := filepath.Join(store.root, "snapshots", snapshotDirectoryName(snapshotID), "snapshot.json")
 	var record Record
 	if err := readBoundedJSONRegular(recordPath, buildingRecordMaxSize, &record); err != nil {
 		return rkcmodel.Bundle{}, rkcmodel.Coverage{}, Record{}, err
@@ -648,7 +648,7 @@ func (store *Store) List() ([]Record, error) {
 	}
 	var records []Record
 	for _, entry := range entries {
-		if !entry.IsDir() || !validSnapshotID(entry.Name()) {
+		if !entry.IsDir() || !validSnapshotDirectoryName(entry.Name()) {
 			continue
 		}
 		snapshotPath := filepath.Join(store.root, "snapshots", entry.Name())
@@ -660,7 +660,10 @@ func (store *Store) List() ([]Record, error) {
 		if err := readBoundedJSONRegular(filepath.Join(snapshotPath, "snapshot.json"), buildingRecordMaxSize, &record); err != nil {
 			return nil, err
 		}
-		if err := validateCommittedRecord(record, entry.Name()); err != nil {
+		if !validSnapshotID(record.SnapshotID) || snapshotDirectoryName(record.SnapshotID) != entry.Name() {
+			return nil, errors.New("snapshot directory name does not match its committed record identity")
+		}
+		if err := validateCommittedRecord(record, record.SnapshotID); err != nil {
 			return nil, fmt.Errorf("snapshot list contains an invalid committed record: %w", err)
 		}
 		if current, err := os.Lstat(snapshotPath); err != nil || !current.IsDir() || !os.SameFile(snapshotInfo, current) {

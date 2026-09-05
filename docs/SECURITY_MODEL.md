@@ -136,6 +136,14 @@ permission facilities fail closed. The implementation follows Microsoft's
 [directory move guidance](https://learn.microsoft.com/en-us/windows/win32/fileio/moving-directories)
 and [file flush requirements](https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-flushfilebuffers).
 
+Windows local snapshot stores name snapshot directories `snapshot-` followed by
+the SHA-256 of the exact snapshot ID, because canonical IDs contain characters
+Windows forbids in filenames. The public IDs in bundles, records, HTTP responses,
+and `CURRENT` remain unchanged. Listing and loading bind each directory name to
+its record's full ID. Unix local stores retain their existing directory layout;
+use exported atlases or knowledge packs for cross-platform interchange instead
+of copying a local snapshot store between operating systems.
+
 ## Current limitations
 
 The digest-pinned built-in Python AST worker still runs as the invoking OS user.
