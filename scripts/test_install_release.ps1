@@ -8,9 +8,13 @@ $work = Join-Path ([IO.Path]::GetTempPath()) ('rkc-installer-test-' + [Guid]::Ne
 [IO.Directory]::CreateDirectory($work) | Out-Null
 
 function Invoke-InstallerTest([string[]]$Arguments, [bool]$Success, [string]$HostPath = 'powershell') {
-    $output = & $HostPath -NoProfile -File $installer @Arguments 2>&1
+    # The Windows ARM runner's emulated host defaults to Restricted. Allow this
+    # checked-out local test script for the child process only; RemoteSigned
+    # retains remote signing checks and never overrides Group Policy or changes
+    # the user's/machine's persisted execution policy.
+    $output = & $HostPath -NoProfile -NonInteractive -ExecutionPolicy RemoteSigned -File $installer @Arguments 2>&1
     $status = $LASTEXITCODE
-    if (($status -eq 0) -ne $Success) { throw "Unexpected installer status $status : $output" }
+    if (($status -eq 0) -ne $Success) { throw "Unexpected installer status $status from $HostPath : $output" }
 }
 
 try {
