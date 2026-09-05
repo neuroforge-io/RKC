@@ -127,7 +127,7 @@ func TestTransactionLeaseRejectsUnreadableAndInvalidPaths(t *testing.T) {
 
 func mustOpenSnapshotFile(t *testing.T, path string) *os.File {
 	t.Helper()
-	file, err := os.OpenFile(path, os.O_RDWR, 0)
+	file, err := openLeaseFile(path, false)
 	if err != nil {
 		t.Fatal(err)
 	}
