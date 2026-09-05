@@ -238,7 +238,9 @@ func runWorkspaceSyncContext(ctx context.Context, args []string) error {
 		err := store.Refresh(sourceContext, source.ID, compileWorkspaceSource)
 		cancel()
 		if err != nil {
-			failures = append(failures, fmt.Errorf("source %s refresh failed: %w", source.ID, err))
+			failure := fmt.Errorf("source %s refresh failed: %w", source.ID, err)
+			fmt.Fprintln(os.Stderr, failure)
+			failures = append(failures, failure)
 		} else {
 			fmt.Printf("Workspace source %s is current at its latest check.\n", source.ID)
 		}
@@ -376,7 +378,7 @@ func compileWorkspaceSourceUsing(ctx context.Context, source workspace.Source, g
 	}
 	coverage := dataset.Coverage
 	if dataset.Integrity != server.IntegrityVerified || coverage.DiagnosticsBySeverity["error"] > 0 || coverage.HighConfidenceSecretFindings > 0 || coverage.InventoryAccountingRatio < 1 || coverage.SymbolEvidenceRatio < 1 || coverage.ClaimCitationRatio < 1 {
-		return nil, &workspace.RefreshError{Code: "quality_failed", Cause: errors.New("new atlas failed workspace integrity, evidence, error, or secret gates")}
+		return nil, &workspace.RefreshError{Code: "quality_failed", Cause: fmt.Errorf("new atlas failed workspace quality gates: integrity=%s errors=%d high_confidence_secrets=%d inventory_accounting=%.6f symbol_evidence=%.6f claim_citations=%.6f", dataset.Integrity, coverage.DiagnosticsBySeverity["error"], coverage.HighConfidenceSecretFindings, coverage.InventoryAccountingRatio, coverage.SymbolEvidenceRatio, coverage.ClaimCitationRatio)}
 	}
 	_, after, err := workspaceFingerprint(ctx, source, root)
 	afterIdentity, statErr := os.Stat(root)

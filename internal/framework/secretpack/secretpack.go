@@ -17,7 +17,7 @@ const (
 	// PluginID is the stable producer identity attached to secret findings.
 	PluginID = "rkc.secret-scan"
 	// PluginVersion identifies the detector and redaction semantics in use.
-	PluginVersion = "0.2.0"
+	PluginVersion = "0.2.1"
 )
 
 // Options supplies the confined repository root and digest-bound files whose

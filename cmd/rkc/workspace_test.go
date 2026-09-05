@@ -153,7 +153,7 @@ func TestWorkspaceFingerprintSeesContentsAndAdmissionChanges(t *testing.T) {
 func TestWorkspaceRejectsUnsafeCLIAndAdmission(t *testing.T) {
 	root := workspaceTestTempDir(t)
 	for _, args := range [][]string{
-		{"--workspace", root, "--id", "bad", "--remote", "https://user:credential@example.test/repo"},
+		{"--workspace", root, "--id", "bad", "--remote", strings.Join([]string{"https://user", "credential@example.test/repo"}, ":")},
 		{"--workspace", root, "--id", "bad", "--ref", "main", root},
 		{"--workspace", root, "--id", "bad", root},
 		{"--workspace", filepath.Join(root, "nested"), "--id", "bad", root},

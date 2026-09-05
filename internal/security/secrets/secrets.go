@@ -48,6 +48,8 @@ var detectors = []detector{
 
 var assignmentPattern = regexp.MustCompile(`(?im)\b(password|passwd|secret|api[_-]?key|access[_-]?token|auth[_-]?token|private[_-]?key|client[_-]?secret)\b\s*[:=]\s*["']?([^\s"'#,;]{8,512})`)
 
+var sourceReferencePattern = regexp.MustCompile(`^(?:config|cfg|settings|env|self|this|process\.env)(?:\.[A-Za-z_][A-Za-z0-9_]*)+$`)
+
 var placeholderValues = map[string]struct{}{
 	"changeme": {}, "change-me": {}, "replace-me": {}, "replace_me": {}, "example": {},
 	"example-value": {}, "dummy": {}, "placeholder": {}, "not-a-secret": {}, "your-secret-here": {},
@@ -88,7 +90,7 @@ func Scan(data []byte) []Finding {
 		key := string(data[match[2]:match[3]])
 		start, end := match[4], match[5]
 		value := string(data[start:end])
-		if isPlaceholder(value) || looksLikeReference(value) {
+		if isPlaceholder(value) || looksLikeReference(value) || isUnquotedSourceReference(data, start, value) {
 			continue
 		}
 		confidence := 0.86
@@ -98,6 +100,16 @@ func Scan(data []byte) []Finding {
 		findings = append(findings, makeFinding(data, start, end, "secret_assignment", confidence, key))
 	}
 	return mergeFindings(findings)
+}
+
+// Known configuration objects in source expressions refer to a value held
+// elsewhere. Keep quoted lookalikes eligible for detection: a literal is still
+// credential material even when it happens to look like a property path.
+func isUnquotedSourceReference(data []byte, start int, value string) bool {
+	if start <= 0 || start > len(data) || data[start-1] == '\'' || data[start-1] == '"' {
+		return false
+	}
+	return sourceReferencePattern.MatchString(strings.TrimRight(value, ")"))
 }
 
 func isTypedParameterAnnotation(data []byte, keyStart, keyEnd, valueStart int) bool {
