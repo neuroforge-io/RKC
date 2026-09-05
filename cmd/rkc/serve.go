@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/neuroforge-io/RKC/internal/commandcatalog"
+	"github.com/neuroforge-io/RKC/internal/privatepath"
 	"github.com/neuroforge-io/RKC/internal/resourceguard"
 	"github.com/neuroforge-io/RKC/internal/server"
 )
@@ -151,6 +152,7 @@ func runServeWithSafety(ctx context.Context, args []string, safety serveSafetyCh
 		commandContext := servedWorkbenchCommandContext(dataset.Root, dataset.Manifest.ID, *database)
 		config := server.WorkbenchConfig{
 			Workspace: *workspace, Executable: executable, Timeout: *workbenchTimeout, CommandContext: commandContext,
+			CompileGitHub: runGUIArchive,
 		}
 		if portableWorkbench {
 			config.CompileFolder = func(ctx context.Context, folder string) error {
@@ -391,13 +393,18 @@ func publishServeReadyFile(path string, receipt serveReadyReceipt) error {
 	}
 	data = append(data, '\n')
 	parent := filepath.Dir(absolute)
-	temporary, err := os.CreateTemp(parent, "."+filepath.Base(absolute)+".tmp-")
+	temporary, err := privatepath.CreateTemp(parent, "."+filepath.Base(absolute)+".tmp-")
 	if err != nil {
 		return fmt.Errorf("create readiness staging file: %w", err)
 	}
 	temporaryPath := temporary.Name()
 	defer os.Remove(temporaryPath)
-	if err := temporary.Chmod(0o600); err != nil {
+	identity, err := temporary.Stat()
+	if err != nil {
+		temporary.Close()
+		return fmt.Errorf("inspect readiness staging file: %w", err)
+	}
+	if err := privatepath.CheckFile(temporaryPath, identity); err != nil {
 		temporary.Close()
 		return fmt.Errorf("protect readiness staging file: %w", err)
 	}

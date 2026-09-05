@@ -58,7 +58,7 @@ function initialFetch(path){
  global.fetch=async(path,options)=>{if(path==='/api/v1/workbench/session'){exchanges++;assert(options.headers['X-RKC-Workbench-Bootstrap']==='test-bootstrap'&&!location.hash,'bootstrap was not removed before authenticated exchange');return response(session(true))}return initialFetch(path)};
  await boot();assert(exchanges===1&&storedToken==='test-session'&&state.view==='sources'&&isEmptyWorkspace(),'empty startup did not exchange authentication and open source choice');
  assert(element('content').innerHTML.includes('Make sense of your source.')&&classes.get('empty-workspace')&&classes.get('source-view'),'empty startup exposed atlas chrome');
- assert(element('runtime-status').textContent==='Local folder workspace'&&!element('content').innerHTML.includes('GitHub'),'portable session claims containment or advertises a missing provider');
+ assert(element('runtime-status').textContent==='Local folder workspace'&&!element('content').innerHTML.includes('OAuth'),'portable session claims containment or promises OAuth');
  assert(!element('snapshot').textContent.startsWith('Snapshot'),'empty workspace claims an analyzed snapshot');
 
  reset();state.workbench=null;global.fetch=async(path)=>path==='/api/v1/workbench/session'?response({},403):initialFetch(path);

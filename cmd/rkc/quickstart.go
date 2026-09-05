@@ -23,6 +23,10 @@ func runQuickstart(args []string) error {
 }
 
 func runQuickstartContext(ctx context.Context, args []string) error {
+	return runQuickstartWithSource(ctx, args, nil)
+}
+
+func runQuickstartWithSource(ctx context.Context, args []string, source *guiSourceProvenance) error {
 	fs := flag.NewFlagSet("quickstart", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
 	config := fs.String("config", "", "optional RKC JSON configuration")
@@ -120,7 +124,7 @@ func runQuickstartContext(ctx context.Context, args []string) error {
 		scanArguments = append(scanArguments, "--history", *historyPath)
 	}
 	scanArguments = append(scanArguments, root)
-	if err := runScanContext(ctx, scanArguments); err != nil {
+	if err := runScanWithSource(ctx, scanArguments, source); err != nil {
 		return fmt.Errorf("quickstart scan: %w", err)
 	}
 

@@ -17,6 +17,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/neuroforge-io/RKC/internal/privatepath"
 	"github.com/neuroforge-io/RKC/internal/resourceguard"
 )
 
@@ -96,7 +97,7 @@ type guardedOpenLaunchDependencies struct {
 func defaultGuardedOpenLaunchDependencies() guardedOpenLaunchDependencies {
 	return guardedOpenLaunchDependencies{
 		executable:        os.Executable,
-		makeTempDirectory: os.MkdirTemp,
+		makeTempDirectory: privatepath.MkdirTemp,
 		removeAll:         os.RemoveAll,
 		absolutePath:      filepath.Abs,
 		newCommand: func(ctx context.Context, config resourceguard.Config) (guardedOpenRunner, error) {
@@ -235,7 +236,7 @@ func readOpenReadyReceipt(path string) (serveReadyReceipt, error) {
 	if err != nil {
 		return serveReadyReceipt{}, err
 	}
-	if !info.Mode().IsRegular() || info.Mode().Perm()&0o077 != 0 {
+	if err := privatepath.CheckFile(path, info); err != nil {
 		return serveReadyReceipt{}, errors.New("protected open readiness file must be an owner-private regular file")
 	}
 	file, err := os.Open(path)

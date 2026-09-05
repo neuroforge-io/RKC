@@ -44,6 +44,52 @@ the original source folders: otherwise a later scan will correctly reject their
 generated-output marker unless explicitly excluded. Input source licenses and
 permissions remain attached to those sources.
 
+## Choose a GitHub source
+
+In `rkc gui`, choose **GitHub**, search for a repository, select it, then
+compile it. Public repositories require no account. To include private
+repositories, explicitly connect with a GitHub token that has read access to
+the repositories you want to use. The token is sent in the authenticated local
+request body and held only in the running server's memory. It is not put in
+browser storage, configuration files, command arguments, or exported atlases.
+RKC does not discover tokens from your environment or Git credential helpers.
+Disconnecting or changing accounts cancels requests and source jobs using the
+previous connection; a canceled job keeps its execution slot until cleanup ends.
+
+The source picker shows at most 25 results per page. GitHub's search limit is
+1000 results; the interface reports an incomplete result set when that limit or
+an upstream truncation applies. Narrow the query to find a specific source.
+
+RKC resolves the default branch to an immutable commit, downloads its source
+archive, checks archive structure and limits, then runs the built-in compiler.
+No Git process, repository script, hook, build, or model runs along this path.
+Successful source folders and atlases remain in an owner-private directory in
+your local cache. Failed jobs remove their owned temporary source directory and
+leave the previous atlas active. GitHub compilation bypasses the shared stage
+cache so failed private-source jobs do not leave source text in cached stages.
+
+The archive profile accepts up to 128 MiB compressed, 512 MiB expanded, 50,000
+paths, and 32 MiB per file. It rejects symlinks, special files, ZIP64, encrypted
+archives, path escapes, case-colliding names, and filenames that cannot be used
+on supported desktop platforms. Submodules and Git LFS objects are not fetched
+separately. For sources needing a full checkout or unsupported archive features,
+prepare a local folder and select it through **Browse**.
+
+The canonical snapshot retains `source_provider`, `source_revision`, and
+`source_archive_sha256`. The revision pins the requested GitHub source; the hash
+identifies the exact downloaded archive, which GitHub may recompress later.
+These receipts participate in snapshot identity. Git metadata remains explicitly
+unavailable, with no invented working-tree commit. Redacted export privacy
+removes the archive receipt and origin fields; default relative-path privacy
+retains them for attribution and reproducibility.
+
+The protected API exposes `/api/v1/workbench/github/session` for connection
+state, `/api/v1/workbench/github/repositories` for search, and the ordinary jobs
+endpoint with `{"github_repository":"owner/name"}` for compilation. Supply
+exactly one of `github_repository` or `args`. These routes use the same
+out-of-band workbench session and origin checks as the folder picker. See the
+[API contract](../api/openapi.yaml) for request and response fields.
+
 ## Cited context for programs and agents
 
 ```sh

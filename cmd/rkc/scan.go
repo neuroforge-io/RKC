@@ -34,6 +34,10 @@ func runScan(args []string) error {
 }
 
 func runScanContext(ctx context.Context, args []string) (resultErr error) {
+	return runScanWithSource(ctx, args, nil)
+}
+
+func runScanWithSource(ctx context.Context, args []string, importedSource *guiSourceProvenance) (resultErr error) {
 	if err := scanCancellation(ctx); err != nil {
 		return err
 	}
@@ -354,6 +358,16 @@ func runScanContext(ctx context.Context, args []string) (resultErr error) {
 	}
 
 	repositoryOrigin := acquired.Origin
+	if importedSource != nil {
+		if !*noGitMetadata || acquired.Temporary {
+			return errors.New("an acquired archive must use built-in local analysis without Git inspection")
+		}
+		repositoryOrigin = importedSource.Origin
+	}
+	var archiveProvenance *pipeline.ArchiveProvenance
+	if importedSource != nil {
+		archiveProvenance = importedSource.Archive
+	}
 	var stageEventMu sync.Mutex
 	var stageEvents []scheduler.Event
 	runID, err := scheduler.NewRunID()
@@ -389,6 +403,7 @@ func runScanContext(ctx context.Context, args []string) (resultErr error) {
 	}()
 	runJournalPath := runJournal.Path()
 	bundle, coverage, scanErr := pipeline.Scan(ctx, pipeline.Options{
+		ArchiveProvenance: archiveProvenance,
 		SkipGitInspection: *noGitMetadata,
 		Root:              rootAbs, MaxFileBytes: *maxFile, MaxTextBytes: *maxText, MaxRepositoryBytes: *maxRepository, MaxFiles: *maxFiles,
 		Excludes: excludes, SCIPIndexes: append([]string(nil), scipIndexes...),
@@ -663,7 +678,7 @@ func enforceWorkspacePrivacyWithCoverage(bundle *rkcmodel.Bundle, mode string, _
 		bundle.Snapshot.Git.Origin = ""
 		if bundle.Snapshot.Metadata != nil {
 			for key, value := range bundle.Snapshot.Metadata {
-				if key == "source_reference" || key == "repository_origin" || origin != "" && value == origin {
+				if key == "source_reference" || key == "repository_origin" || key == "source_provider" || key == "source_revision" || key == "source_archive_sha256" || origin != "" && value == origin {
 					delete(bundle.Snapshot.Metadata, key)
 				}
 			}

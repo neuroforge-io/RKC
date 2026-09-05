@@ -1,6 +1,6 @@
 'use strict';
 const commandCatalog=__RKC_COMMAND_CATALOG__;
-const state={bundle:null,coverage:null,nodes:new Map(),artifacts:new Map(),evidence:new Map(),outgoing:new Map(),incoming:new Map(),selected:null,selectedArtifact:null,selectedArtifactContext:null,view:'overview',navigationRevision:0,listPaging:null,staticPaging:null,staticPageIndex:0,staticResultCount:0,browseNodeIDs:new Set(),hydratedNodeIDs:new Set(),results:[],apiSearchResults:null,workbench:null,commandName:'quickstart',repositoryFolder:'',directoryListing:null,directoryRevision:0,sourceFolder:'',jobError:'',jobPolling:false,jobCanceling:false,pendingActivation:null,activationLoading:false,activationNotice:null,api:false,facets:null,listTruncated:false,diagnosticsTruncated:false,diagnosticPaging:null,diagnosticRequest:null,diagnosticRevision:0,diagnosticPageIndex:0,diagnosticResultCount:0,diagnosticFilters:{severity:'',code:''},diagnosticDraft:{severity:'',code:''},searchTimer:null,searchRevision:0,atlasRevision:0,staticBootstrap:false,staticLoad:null,staticSearchRecords:null,staticSearchByID:new Map(),staticSearchLoad:null,capabilities:null,contextQuery:'',contextPacket:null,contextRevision:0,contextLoading:false,contextError:'',commandFilter:'',commandGroup:'all',commandDrafts:new Map(),activeJob:null,lastJob:null,jobCommand:'',submittingJob:false,toastTimer:null};
+const state={bundle:null,coverage:null,nodes:new Map(),artifacts:new Map(),evidence:new Map(),outgoing:new Map(),incoming:new Map(),selected:null,selectedArtifact:null,selectedArtifactContext:null,view:'overview',navigationRevision:0,listPaging:null,staticPaging:null,staticPageIndex:0,staticResultCount:0,browseNodeIDs:new Set(),hydratedNodeIDs:new Set(),results:[],apiSearchResults:null,workbench:null,commandName:'quickstart',repositoryFolder:'',directoryListing:null,directoryRevision:0,sourceFolder:'',sourceProvider:'folder',github:{session:null,sessionLoading:false,sessionRevision:0,authPending:false,authError:'',draft:'',query:'',page:1,items:[],total:0,incomplete:false,nextPage:null,requestRevision:0,loading:false,error:'',selected:null},jobError:'',jobPolling:false,jobCanceling:false,pendingActivation:null,activationLoading:false,activationNotice:null,api:false,facets:null,listTruncated:false,diagnosticsTruncated:false,diagnosticPaging:null,diagnosticRequest:null,diagnosticRevision:0,diagnosticPageIndex:0,diagnosticResultCount:0,diagnosticFilters:{severity:'',code:''},diagnosticDraft:{severity:'',code:''},searchTimer:null,searchRevision:0,atlasRevision:0,staticBootstrap:false,staticLoad:null,staticSearchRecords:null,staticSearchByID:new Map(),staticSearchLoad:null,capabilities:null,contextQuery:'',contextPacket:null,contextRevision:0,contextLoading:false,contextError:'',commandFilter:'',commandGroup:'all',commandDrafts:new Map(),activeJob:null,lastJob:null,jobCommand:'',submittingJob:false,toastTimer:null};
 const maximumGraphNeighbors=32,maximumGraphNodesShown=16;
 const maximumListRows=200;
 const snapshotGenerationHeader='X-RKC-Snapshot-ID',snapshotGenerationErrorCode='RKC_SNAPSHOT_GENERATION_CHANGED',maximumSnapshotLoadAttempts=3;
@@ -150,7 +150,7 @@ async function fetchSnapshotJSON(path){
 
 function snapshotGenerationError(message){const error=new Error(message);error.code=snapshotGenerationErrorCode;return error}
 function isSnapshotGenerationError(error){return error?.code===snapshotGenerationErrorCode}
-function advanceAtlasGeneration(){state.atlasRevision++;state.navigationRevision++;state.searchRevision++;state.listPaging=null;state.staticPaging=null;state.staticPageIndex=0;resetDiagnosticPaging();clearTimeout(state.searchTimer);return state.atlasRevision}
+function advanceAtlasGeneration(){resetGitHubResults();state.atlasRevision++;state.navigationRevision++;state.searchRevision++;state.listPaging=null;state.staticPaging=null;state.staticPageIndex=0;resetDiagnosticPaging();clearTimeout(state.searchTimer);return state.atlasRevision}
 
 function push(map,key,value){if(!map.has(key))map.set(key,[]);map.get(key).push(value)}
 function safeHash(){try{return decodeURIComponent(location.hash.slice(1))}catch(_error){return''}}
@@ -900,13 +900,104 @@ function defaultCommandArgs(name){
 // provider can render its chooser here and submit its server-defined job payload.
 function renderSourceChooser(){
   const enabled=Boolean(state.workbench?.enabled),empty=isEmptyWorkspace();
-  $('content').innerHTML='<div class="source-shell"><div class="source-heading">'+(!empty?'<button type="button" class="secondary" id="back-to-atlas">← Back to atlas</button>':'<span class="eyebrow">Your knowledge starts here</span>')+'<h2 id="source-title">'+(empty?'Make sense of your source.':'Choose your next source.')+'</h2><p>Turn a folder of code, documents, or both into a searchable map. Explore what connects, inspect the evidence, and create useful context for people and agents.</p></div><div class="card source-picker"><span class="source-icon" aria-hidden="true"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M3 7V5a1 1 0 0 1 1-1h5l2 3h9a1 1 0 0 1 1 1v11a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V7Z"/></svg></span><h3>Start with a local folder</h3><p>Choose a project, repository, or exported wiki on this computer. A model is not required.</p>'+(enabled?'<div class="source-folder-field"><label class="search-label" for="repository-folder">Folder on this computer</label><div class="source-folder-input"><input id="repository-folder" type="text" maxlength="4096" autocomplete="off" spellcheck="false" aria-describedby="folder-status" placeholder="Choose a folder or enter its full path" value="'+esc(state.sourceFolder)+'"><button type="button" class="secondary" id="browse-folder">Choose folder</button></div></div><p id="folder-status" class="help-text" role="status" aria-live="polite">Browse folders, or paste a path. Your files stay on this computer.</p><div id="folder-browser" class="folder-browser" hidden></div><div class="source-submit"><button type="button" class="primary" id="analyze-folder">Compile folder</button><p class="help-text">Creates an RKC atlas in the chosen folder. Source files are not rewritten.</p></div>':'<div class="diagnostic warning" role="status"><h4>Connect your local session</h4><p>This page needs the trusted browser session opened by RKC before it can choose or compile a folder.</p><p>Run <code>rkc gui</code> and use the browser page it opens. If your connection was interrupted, try reconnecting below.</p><button type="button" class="secondary" id="reconnect-workbench">Reconnect</button></div>')+'</div><div id="source-progress" class="card source-progress" hidden><div class="source-progress-heading"><span class="eyebrow">Folder → searchable knowledge</span><h3 id="source-job-status" role="status" aria-live="polite"></h3></div><p id="source-job-help" class="help-text"></p><p id="source-job-error" class="status-bad" role="status" hidden></p><div class="button-row"><button type="button" class="danger" id="source-cancel" hidden>Cancel scan</button><button type="button" class="secondary" id="source-resume" hidden>Check status</button></div><details><summary>Scan details</summary><pre id="source-job-output" class="job-output" tabindex="0"></pre></details></div><div class="source-benefits"><div><span class="eyebrow">01 · Compile</span><p>Index the source and record its evidence.</p></div><div><span class="eyebrow">02 · Explore</span><p>Search files, symbols, and relationships.</p></div><div><span class="eyebrow">03 · Use</span><p>Share cited context and portable outputs.</p></div></div></div>';
+  $('content').innerHTML='<div class="source-shell"><div class="source-heading">'+(!empty?'<button type="button" class="secondary" id="back-to-atlas">← Back to atlas</button>':'<span class="eyebrow">Your knowledge starts here</span>')+'<h2 id="source-title">'+(empty?'Make sense of your source.':'Choose your next source.')+'</h2><p>Turn a folder of code, documents, or both into a searchable map. Explore what connects, inspect the evidence, and create useful context for people and agents.</p></div><div class="card source-picker">'+sourceProviderButtons()+(enabled&&state.sourceProvider==='github'?githubSourceContent():folderSourceContent(enabled))+'</div><div id="source-progress" class="card source-progress" hidden><div class="source-progress-heading"><span class="eyebrow">Source → searchable knowledge</span><h3 id="source-job-status" role="status" aria-live="polite"></h3></div><p id="source-job-help" class="help-text"></p><p id="source-job-error" class="status-bad" role="status" hidden></p><div class="button-row"><button type="button" class="danger" id="source-cancel" hidden>Cancel scan</button><button type="button" class="secondary" id="source-resume" hidden>Check status</button></div><details><summary>Scan details</summary><pre id="source-job-output" class="job-output" tabindex="0"></pre></details></div><div class="source-benefits"><div><span class="eyebrow">01 · Compile</span><p>Index the source and record its evidence.</p></div><div><span class="eyebrow">02 · Explore</span><p>Search files, symbols, and relationships.</p></div><div><span class="eyebrow">03 · Use</span><p>Share cited context and portable outputs.</p></div></div></div>';
   $('back-to-atlas')?.addEventListener('click',()=>setView('overview'));
   $('reconnect-workbench')?.addEventListener('click',async()=>{const revision=state.navigationRevision,button=$('reconnect-workbench');button.disabled=true;button.textContent='Connecting…';await probeWorkbench();if(revision===state.navigationRevision)renderSourceChooser()});
-  if(enabled)wireFolderChooser(true);
+  for(const button of $('content').querySelectorAll('[data-source-provider]'))button.addEventListener('click',()=>{state.sourceProvider=button.dataset.sourceProvider;state.directoryRevision++;renderSourceChooser()});
+  if(enabled){if(state.sourceProvider==='github')wireGitHubChooser();else wireFolderChooser(true)}
   $('source-cancel').addEventListener('click',()=>cancelWorkbenchJob(state.activeJob));
   $('source-resume').addEventListener('click',resumeWorkbenchJob);
   updateWorkbenchJobUI();
+}
+
+function folderSourceContent(enabled){return '<span class="source-icon" aria-hidden="true"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M3 7V5a1 1 0 0 1 1-1h5l2 3h9a1 1 0 0 1 1 1v11a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V7Z"/></svg></span><h3>Start with a local folder</h3><p>Choose a project, repository, or exported wiki on this computer. A model is not required.</p>'+(enabled?'<div class="source-folder-field"><label class="search-label" for="repository-folder">Folder on this computer</label><div class="source-folder-input"><input id="repository-folder" type="text" maxlength="4096" autocomplete="off" spellcheck="false" aria-describedby="folder-status" placeholder="Choose a folder or enter its full path" value="'+esc(state.sourceFolder)+'"><button type="button" class="secondary" id="browse-folder">Choose folder</button></div></div><p id="folder-status" class="help-text" role="status" aria-live="polite">Browse folders, or paste a path. Your files stay on this computer.</p><div id="folder-browser" class="folder-browser" hidden></div><div class="source-submit"><button type="button" class="primary" id="analyze-folder">Compile folder</button><p class="help-text">Creates an RKC atlas in the chosen folder. Source files are not rewritten.</p></div>':'<div class="diagnostic warning" role="status"><h4>Connect your local session</h4><p>This page needs the trusted browser session opened by RKC before it can choose or compile a folder.</p><p>Run <code>rkc gui</code> and use the browser page it opens. If your connection was interrupted, try reconnecting below.</p><button type="button" class="secondary" id="reconnect-workbench">Reconnect</button></div>')}
+
+function sourceProviderButtons(){return state.workbench?.enabled?'<div class="source-providers" role="group" aria-label="Source type">'+[['folder','Local folder'],['github','GitHub repository']].map(([id,title])=>'<button type="button" class="secondary" data-source-provider="'+id+'" aria-pressed="'+(state.sourceProvider===id)+'">'+title+'</button>').join('')+'</div>':''}
+function githubSourceContent(){return '<h3>Find a GitHub repository</h3><p>Search public repositories, or connect your account to include private repositories you can access.</p><div id="github-account"></div><form id="github-search-form" class="source-folder-field"><label class="search-label" for="github-query">Repository name or search terms</label><div class="source-folder-input"><input id="github-query" type="search" maxlength="256" autocomplete="off" spellcheck="false" placeholder="For example: owner/repository" value="'+esc(state.github.draft)+'"><button type="submit" class="secondary" id="github-search">Search GitHub</button></div></form><div id="github-results" class="github-results" aria-busy="false"></div><div class="source-submit"><button type="button" class="primary" id="github-compile" disabled>Compile repository</button><p id="github-selection" class="help-text">Choose a repository from the results. RKC will download and compile a pinned revision locally.</p></div>'}
+function visibleGitHubChooser(){return state.view==='sources'&&state.sourceProvider==='github'&&Boolean($('github-results'))}
+function resetGitHubResults(){const github=state.github;if(!github)return;github.requestRevision++;github.loading=false;github.query='';github.page=1;github.items=[];github.total=0;github.incomplete=false;github.nextPage=null;github.selected=null;github.error=''}
+function wireGitHubChooser(){
+  renderGitHubAccount();renderGitHubResults();
+  $('github-query').addEventListener('input',()=>{state.github.draft=$('github-query').value;resetGitHubResults();renderGitHubResults()});
+  $('github-search-form').addEventListener('submit',event=>{event.preventDefault();searchGitHubRepositories(1)});
+  $('github-compile').addEventListener('click',()=>{const repository=state.github.selected;if(repository&&!state.github.loading)return submitWorkbenchJob({github_repository:repository.full_name})});
+  if(!state.github.session&&!state.github.sessionLoading&&!state.github.authPending)loadGitHubSession();
+}
+function validGitHubSession(session){return typeof session?.connected==='boolean'&&(!session.connected||typeof session.login==='string'&&Boolean(session.login))}
+async function loadGitHubSession(preserveError=false){
+  if(!state.workbench?.enabled||state.github.authPending)return;
+  const github=state.github,revision=++github.sessionRevision;github.sessionLoading=true;if(!preserveError)github.authError='';renderGitHubAccount();
+  try{
+    const response=await fetch('/api/v1/workbench/github/session',{cache:'no-store',headers:{Accept:'application/json','X-RKC-Workbench-Token':state.workbench.token}});
+    const session=await response.json();if(revision!==github.sessionRevision)return;
+    if(!response.ok||!validGitHubSession(session))throw new Error('GitHub session status unavailable');
+    github.session=session;
+  }catch(_error){if(revision===github.sessionRevision){github.session=null;if(!github.authError)github.authError='GitHub session status is unavailable. Try checking the connection again.'}}
+  finally{if(revision===github.sessionRevision){github.sessionLoading=false;renderGitHubAccount()}}
+}
+function renderGitHubAccount(){
+  if(!visibleGitHubChooser())return;
+  const github=state.github,session=github.session,connected=session?.connected,busy=github.authPending||github.sessionLoading;
+  $('github-account').innerHTML='<div class="github-account"><div class="github-account-status" role="status" aria-live="polite"><span class="badge">'+(github.authPending?(connected?'Disconnecting…':'Connecting…'):connected?'Connected · '+esc(session.login):github.sessionLoading?'Checking connection…':'Public search available')+'</span>'+(connected?'<button type="button" class="secondary" id="github-disconnect" '+(busy?'disabled':'')+'>Disconnect</button>':'')+'</div>'+(github.authError?'<p class="status-bad" role="status">'+esc(github.authError)+'</p><button type="button" class="secondary" id="github-session-retry" '+(busy?'disabled':'')+'>Check connection</button>':'')+(connected?'<p class="help-text">Private results use your GitHub access. Disconnect to forget this session’s token.</p>':'<details><summary>Connect for private repositories</summary><p id="github-token-help" class="help-text">Use a GitHub personal access token with read access to the repositories you choose. The token is held only in this local server’s memory for this session and sent to GitHub to verify access and read repositories. It is not saved in browser storage. Disconnect to forget it.</p><form id="github-connect-form"><label class="search-label" for="github-token">Personal access token</label><input id="github-token" type="password" maxlength="512" autocomplete="off" spellcheck="false" aria-describedby="github-token-help"><div class="button-row"><button type="submit" class="secondary" id="github-connect" '+(busy?'disabled':'')+'>'+(github.authPending?'Connecting…':'Connect GitHub')+'</button></div></form></details>')+'</div>';
+  $('github-disconnect')?.addEventListener('click',()=>changeGitHubConnection('DELETE'));
+  $('github-session-retry')?.addEventListener('click',()=>loadGitHubSession());
+  $('github-connect-form')?.addEventListener('submit',event=>{event.preventDefault();changeGitHubConnection('POST')});
+  updateGitHubControls();
+}
+async function changeGitHubConnection(method){
+  const github=state.github;if(!state.workbench?.enabled||github.authPending||!['POST','DELETE'].includes(method))return;
+  const input=$('github-token'),token=method==='POST'?String(input?.value||'').trim():'';
+  if(input)input.value='';
+  if(method==='POST'&&!token){github.authError='Enter a personal access token to connect.';renderGitHubAccount();return}
+  const revision=++github.sessionRevision;github.authPending=true;github.sessionLoading=false;github.authError='';resetGitHubResults();renderGitHubAccount();renderGitHubResults();
+  let failed=false;
+  try{
+    const response=await fetch('/api/v1/workbench/github/session',{method,cache:'no-store',headers:{Accept:'application/json','X-RKC-Workbench-Token':state.workbench.token,...(method==='POST'?{'Content-Type':'application/json'}:{})},...(method==='POST'?{body:JSON.stringify({token})}:{})});
+    const session=await response.json();if(revision!==github.sessionRevision)return;
+    if(!response.ok||!validGitHubSession(session)||session.connected!==(method==='POST'))throw new Error('GitHub connection request failed');
+    github.session=session;
+  }catch(_error){if(revision===github.sessionRevision){failed=true;github.session=null;github.authError=method==='POST'?'GitHub could not connect. Check the token and its repository access, then try again.':'GitHub could not confirm disconnection. Check the connection before leaving this session.'}}
+  finally{if(revision===github.sessionRevision){github.authPending=false;renderGitHubAccount();renderGitHubResults();if(failed)await loadGitHubSession(true)}}
+}
+function validGitHubRepositoryName(value){return typeof value==='string'&&/^[A-Za-z0-9][A-Za-z0-9-]{0,38}\/[A-Za-z0-9_.-]{1,100}$/.test(value)}
+function validGitHubRepository(item){
+  if(!validGitHubRepositoryName(item?.full_name)||typeof item.private!=='boolean'||typeof item.default_branch!=='string'||item.description!=null&&typeof item.description!=='string')return false;
+  try{const url=new URL(item.html_url);return url.protocol==='https:'&&url.hostname==='github.com'&&!url.username&&!url.password&&!url.port&&url.pathname==='/'+item.full_name&&!url.search&&!url.hash}catch(_error){return false}
+}
+async function searchGitHubRepositories(page=1){
+  const github=state.github,query=github.draft.trim();
+  if(!state.workbench?.enabled||github.loading||github.authPending||workbenchBusy()||!query)return;
+  if(!Number.isSafeInteger(page)||page<1||page>40)return;
+  const revision=++github.requestRevision,atlasRevision=state.atlasRevision;github.loading=true;github.error='';github.selected=null;renderGitHubResults();
+  try{
+    const parameters=new URLSearchParams({q:query,page:String(page)}),response=await fetch('/api/v1/workbench/github/repositories?'+parameters,{cache:'no-store',headers:{Accept:'application/json','X-RKC-Workbench-Token':state.workbench.token}});
+    const data=await response.json();if(revision!==github.requestRevision||atlasRevision!==state.atlasRevision)return;
+    if(!response.ok)throw new Error(data.detail||data.title||'GitHub search is unavailable');
+    if(!Array.isArray(data.items)||data.items.length>25||data.items.some(item=>!validGitHubRepository(item))||new Set(data.items.map(item=>item.full_name)).size!==data.items.length||!Number.isSafeInteger(data.total)||data.total<data.items.length||typeof data.incomplete!=='boolean'||data.next_page!=null&&data.next_page!==0&&(!Number.isSafeInteger(data.next_page)||data.next_page!==page+1||page>=40||!data.items.length))throw new Error('GitHub returned an invalid result page');
+    github.items=data.items;github.query=query;github.page=page;github.total=data.total;github.incomplete=data.incomplete;github.nextPage=data.next_page||null;
+  }catch(error){if(revision===github.requestRevision&&atlasRevision===state.atlasRevision)github.error='Repositories could not be loaded: '+String(error?.message||error)+'. Try searching or opening the page again.'}
+  finally{if(revision===github.requestRevision&&atlasRevision===state.atlasRevision){github.loading=false;renderGitHubResults()}}
+}
+function renderGitHubResults(){
+  if(!visibleGitHubChooser())return;
+  const github=state.github,result=$('github-results');result.setAttribute('aria-busy',String(github.loading));
+  const message=github.loading?'Searching GitHub…':github.query?(github.items.length?'Page '+github.page+' · '+number(github.items.length)+' of '+number(github.total)+' matches for “'+github.query+'”':'No repositories matched “'+github.query+'”. Try a different name or connect for private access.'):'Search by repository name, owner/repository, or topic.';
+  result.innerHTML='<p class="help-text" role="status" aria-live="polite">'+esc(message)+'</p>'+(github.error?'<p class="status-bad" role="status">'+esc(github.error)+'</p>':'')+(github.total>1000?'<p class="help-text">GitHub search exposes up to 1,000 matches. Narrow your query to find a specific repository.</p>':'')+(github.incomplete?'<p class="help-text">GitHub returned an incomplete search. Narrow your query for more reliable results.</p>':'')+'<div class="github-repository-list" aria-label="GitHub repositories">'+github.items.map(item=>'<article class="github-repository"><button type="button" class="github-repository-choice" data-github-repository="'+esc(item.full_name)+'" aria-pressed="'+(github.selected?.full_name===item.full_name)+'"><span class="github-repository-title"><strong>'+esc(item.full_name)+'</strong><span class="badge">'+(item.private?'Private':'Public')+'</span></span><span class="help-text">'+esc(truncate(item.description||'No description provided.',220))+'</span><span class="help-text">Default branch · '+esc(item.default_branch)+'</span></button><a href="'+esc(item.html_url)+'" target="_blank" rel="noopener noreferrer" class="github-repository-link" aria-label="Open '+esc(item.full_name)+' on GitHub">View on GitHub ↗</a></article>').join('')+'</div>'+((github.page>1||github.nextPage)?'<nav class="button-row" aria-label="GitHub search pages"><button type="button" class="secondary" id="github-previous" '+(github.page<=1?'disabled':'')+'>Previous page</button><button type="button" class="secondary" id="github-next" '+(!github.nextPage?'disabled':'')+'>Next page</button></nav>':'');
+  for(const button of result.querySelectorAll('[data-github-repository]'))button.addEventListener('click',()=>{if(github.loading||workbenchBusy())return;github.selected=github.items.find(item=>item.full_name===button.dataset.githubRepository)||null;renderGitHubResults();$('github-compile')?.focus()});
+  $('github-previous')?.addEventListener('click',()=>searchGitHubRepositories(github.page-1));
+  $('github-next')?.addEventListener('click',()=>{if(github.nextPage)searchGitHubRepositories(github.nextPage)});
+  updateGitHubControls();
+}
+function updateGitHubControls(){
+  if(!visibleGitHubChooser())return;
+  const github=state.github,busy=workbenchBusy(),pending=github.loading||github.authPending;
+  if($('github-query'))$('github-query').disabled=busy||github.authPending;
+  if($('github-search'))$('github-search').disabled=busy||pending||!github.draft.trim();
+  if($('github-compile')){$('github-compile').disabled=busy||pending||!github.selected;$('github-compile').textContent=!busy&&(state.jobError||['failed','timed_out','canceled'].includes(state.lastJob?.status))?'Try compiling again':'Compile repository'}
+  if($('github-selection'))$('github-selection').textContent=github.selected?'Selected '+github.selected.full_name+'. A pinned revision will be downloaded and compiled locally.':'Choose a repository from the results. RKC will download and compile a pinned revision locally.';
+  for(const button of $('github-results').querySelectorAll('[data-github-repository]'))button.disabled=busy||pending;
+  if($('github-previous'))$('github-previous').disabled=busy||pending||github.page<=1;
+  if($('github-next'))$('github-next').disabled=busy||pending||!github.nextPage;
 }
 
 function wireFolderChooser(source=false){
@@ -954,7 +1045,7 @@ function selectRepositoryFolder(path){
 
 function analyzeRepositoryFolder(path){
   const folder=String(path||'').trim();if(!folder){$('folder-status').textContent='Choose a folder first.';$('folder-status').className='status-bad';return}
-  state.repositoryFolder=folder;state.sourceFolder=folder;state.directoryRevision++;state.directoryListing=null;
+  state.repositoryFolder=folder;state.sourceFolder=folder;state.sourceProvider='folder';state.directoryRevision++;state.directoryListing=null;
   if($('folder-browser'))$('folder-browser').hidden=true;
   if(state.view!=='sources')setView('sources');
   return submitWorkbenchJob({args:['quickstart',folder]});
@@ -984,7 +1075,7 @@ function applyWorkflowSettings(){
   const args=['build','--out',output,...sources].map(shellQuote).join(' ');
   state.commandDrafts.set('knowledge',args);$('command-args').value=args;$('command-preview').textContent=commandPreview();notify('Settings applied. Review the command, then run when ready.');
 }
-function jobOutputText(job){return (job.output||'')+(job.truncated?'\n\n[output truncated at the server safety bound]':'')+(job.error?'\n\n'+job.error:'')}
+function jobOutputText(job){const source=job.github_source;return (job.output||'')+(job.truncated?'\n\n[output truncated at the server safety bound]':'')+(job.error?'\n\n'+job.error:'')+(source?'\n\nGitHub source: '+source.repository+'\nPinned commit: '+source.commit_sha+'\nArchive SHA-256: '+source.archive_sha256:'')}
 
 function commandGuidance(name){
   const commands=state.workbench?.commands||defaultCommands(),command=commands.find(item=>item.name===name);
@@ -1017,6 +1108,7 @@ function canRunWorkbenchArguments(args){
   if(state.workbench.folder_compilation_only)return args.length===2&&args[0]==='quickstart'&&typeof args[1]==='string'&&Boolean(args[1].trim())&&!args[1].startsWith('-');
   return (state.workbench.commands||[]).some(command=>command.name===args[0]&&command.default_executable!==false);
 }
+function canSubmitWorkbenchJob(payload){return payload?.github_repository!==undefined?Boolean(state.workbench?.enabled)&&!payload.args&&validGitHubRepositoryName(payload.github_repository):canRunWorkbenchArguments(payload?.args)}
 function workbenchBusy(){return Boolean(state.activeJob||state.submittingJob||state.pendingActivation||state.activationLoading)}
 function terminalWorkbenchJob(job){return ['succeeded','failed','timed_out','canceled','cleanup_failed'].includes(job?.status)}
 
@@ -1027,8 +1119,8 @@ async function runWorkbenchCommand(){
 
 async function submitWorkbenchJob(payload){
   if(workbenchBusy()){notify('A job is already open. Wait for it to finish, check its status, or cancel it.');return}
-  if(!canRunWorkbenchArguments(payload?.args)){state.jobError='This workflow cannot run in this browser session. Use the copied command in a terminal.';updateWorkbenchJobUI();return}
-  state.submittingJob=true;state.lastJob=null;state.jobError='';state.jobCommand=payload.args.map(shellQuote).join(' ');updateWorkbenchJobUI();
+  if(!canSubmitWorkbenchJob(payload)){state.jobError='This workflow cannot run in this browser session. Use the copied command in a terminal.';updateWorkbenchJobUI();return}
+  state.submittingJob=true;state.lastJob=null;state.jobError='';state.jobCommand=payload.github_repository?'GitHub · '+payload.github_repository:payload.args.map(shellQuote).join(' ');updateWorkbenchJobUI();
   if(state.view==='sources')$('source-job-status')?.scrollIntoView?.({block:'nearest'});
   try{
     const response=await fetch('/api/v1/workbench/jobs',{method:'POST',headers:{'Content-Type':'application/json','Accept':'application/json','X-RKC-Workbench-Token':state.workbench.token},body:JSON.stringify(payload)});
@@ -1078,10 +1170,11 @@ function updateWorkbenchJobUI(){
   const message=state.activationLoading?'Opening your atlas…':state.pendingActivation?'Atlas ready to open':state.submittingJob?'Starting the scan…':state.activeJob&&!state.jobPolling?'Status connection interrupted':state.jobCanceling?'Canceling…':job?workbenchStatusLabel(job.status):state.jobError?'Could not start':'Ready';
   const statusClass=state.jobError||['failed','timed_out','cleanup_failed'].includes(job?.status)?'status-bad':job?.status==='succeeded'?'status-good':job?.status==='canceled'?'status-warn':'muted';
   if(state.view==='sources'){
+    updateGitHubControls();
     const visible=Boolean(job||state.submittingJob||state.jobError||state.pendingActivation),progress=$('source-progress');if(progress)progress.hidden=!visible;
     if($('source-job-status'))$('source-job-status').textContent=message;
     if($('source-job-status'))$('source-job-status').className=statusClass;
-    if($('source-job-help'))$('source-job-help').textContent=state.activeJob&&!state.jobPolling?'The job may still be running. Check its status before starting another scan.':state.pendingActivation?'Retry opening the compiled atlas without running the scan again.':job?.status==='canceled'?'Scan canceled. Choose a folder and compile when you are ready.':['failed','timed_out','cleanup_failed'].includes(job?.status)?'Review the details below, then try compiling the folder again.':busy?'RKC is indexing source and validating its evidence. Large folders can take a while. You can cancel below.':'Choose a folder to compile another source.';
+    if($('source-job-help'))$('source-job-help').textContent=state.activeJob&&!state.jobPolling?'The job may still be running. Check its status before starting another scan.':state.pendingActivation?'Retry opening the compiled atlas without running the scan again.':job?.status==='canceled'?'Scan canceled. Choose a source and compile when you are ready.':['failed','timed_out','cleanup_failed'].includes(job?.status)?'Review the details below, then try compiling the source again.':busy?'RKC is indexing source and validating its evidence. Large folders can take a while. You can cancel below.':'Choose a source to compile another atlas.';
     if($('source-job-error')){$('source-job-error').hidden=!state.jobError&&!job?.error;$('source-job-error').textContent=state.jobError||job?.error||''}
     if($('source-job-output'))$('source-job-output').textContent=job?jobOutputText(job):state.jobError||'Waiting for the local workspace…';
   }

@@ -14,9 +14,11 @@ import (
 	"os/signal"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"syscall"
 	"time"
 
+	"github.com/neuroforge-io/RKC/internal/privatepath"
 	"github.com/neuroforge-io/RKC/internal/resourceguard"
 )
 
@@ -279,16 +281,16 @@ func launchBrowserPrivately(target string) error {
 	if parsed.Fragment == "" {
 		return launchBrowser(target)
 	}
-	directory, err := os.MkdirTemp("", "rkc-browser-bootstrap-")
+	directory, err := privatepath.MkdirTemp("", "rkc-browser-bootstrap-")
 	if err != nil {
 		return fmt.Errorf("create private browser bootstrap directory: %w", err)
 	}
-	page := filepath.Join(directory, "open.html")
-	file, err := os.OpenFile(page, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	file, err := privatepath.CreateTemp(directory, "open-*.html")
 	if err != nil {
 		os.RemoveAll(directory)
 		return fmt.Errorf("create private browser bootstrap page: %w", err)
 	}
+	page := file.Name()
 	content := "<!doctype html><meta charset=\"utf-8\"><meta name=\"referrer\" content=\"no-referrer\">" +
 		"<meta http-equiv=\"refresh\" content=\"0;url=" + html.EscapeString(target) + "\">" +
 		"<title>Opening RKC</title><p>Opening the protected local RKC workbench…</p>"
@@ -306,7 +308,11 @@ func launchBrowserPrivately(target string) error {
 		os.RemoveAll(directory)
 		return fmt.Errorf("close private browser bootstrap page: %w", err)
 	}
-	fileURL := (&url.URL{Scheme: "file", Path: page}).String()
+	filePath := filepath.ToSlash(page)
+	if !strings.HasPrefix(filePath, "/") {
+		filePath = "/" + filePath
+	}
+	fileURL := (&url.URL{Scheme: "file", Path: filePath}).String()
 	command, err := browserCommand(fileURL)
 	if err != nil {
 		os.RemoveAll(directory)

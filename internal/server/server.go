@@ -797,6 +797,10 @@ func (dataset *Dataset) HandlerWithWorkbench(workbench *Workbench) http.Handler 
 	if workbench != nil {
 		mux.HandleFunc("GET /api/v1/workbench/session", workbench.handleSession)
 		mux.HandleFunc("GET /api/v1/workbench/directories", workbench.handleDirectories)
+		mux.HandleFunc("GET /api/v1/workbench/github/session", workbench.handleGitHubSession)
+		mux.HandleFunc("POST /api/v1/workbench/github/session", workbench.handleGitHubSession)
+		mux.HandleFunc("DELETE /api/v1/workbench/github/session", workbench.handleGitHubSession)
+		mux.HandleFunc("GET /api/v1/workbench/github/repositories", workbench.handleGitHubRepositories)
 		mux.HandleFunc("POST /api/v1/workbench/jobs", workbench.handleJobs)
 		mux.HandleFunc("GET /api/v1/workbench/jobs/{jobID}", workbench.handleJob)
 		mux.HandleFunc("DELETE /api/v1/workbench/jobs/{jobID}", workbench.handleCancelJob)

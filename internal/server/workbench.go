@@ -25,6 +25,7 @@ import (
 	"unicode"
 
 	"github.com/neuroforge-io/RKC/internal/commandcatalog"
+	"github.com/neuroforge-io/RKC/internal/githubsource"
 )
 
 const (
@@ -63,20 +64,28 @@ type WorkbenchConfig struct {
 	// command process. The callback must honor cancellation and never execute
 	// repository code, plugins, indexers, or model runtimes.
 	CompileFolder func(context.Context, string) error
+	// CompileGitHub compiles an already verified archive without running source
+	// code or helpers. Acquisition and credentials remain owned by the server.
+	CompileGitHub func(context.Context, githubsource.Checkout) error
 }
 
 // Workbench runs exact RKC argv vectors without a shell. It is deliberately
 // loopback-only, single-job, bounded, and token authenticated.
 type Workbench struct {
-	workspace     string
-	executable    string
-	timeout       time.Duration
-	token         string
-	bootstrap     string
-	slot          chan struct{}
-	environment   []string
-	commands      []workbenchCommand
-	compileFolder func(context.Context, string) error
+	workspace           string
+	executable          string
+	timeout             time.Duration
+	token               string
+	bootstrap           string
+	slot                chan struct{}
+	environment         []string
+	commands            []workbenchCommand
+	compileFolder       func(context.Context, string) error
+	compileGitHub       func(context.Context, githubsource.Checkout) error
+	githubConnection    *workbenchGitHubConnection
+	githubGeneration    uint64
+	githubConnectCancel context.CancelFunc
+	newGitHubClient     func(string) (workbenchGitHubClient, error)
 
 	mu   sync.RWMutex
 	jobs map[string]*workbenchJob
@@ -113,12 +122,16 @@ type workbenchJob struct {
 	// quickstart output, checked its snapshot/repository identity, and atomically
 	// made it the dataset served by the read APIs.
 	ActivatedDataset *workbenchDatasetIdentity `json:"activated_dataset,omitempty"`
+	GitHubRepository string                    `json:"github_repository,omitempty"`
+	GitHubSource     *workbenchGitHubSource    `json:"github_source,omitempty"`
 
 	context               context.Context
 	cancel                context.CancelFunc
 	done                  chan struct{}
 	retain                int
 	mayLaunchManagedUnits bool
+	sourceConnection      *workbenchGitHubConnection
+	stopSource            func() bool
 }
 
 type workbenchDirectoryEntry struct {
@@ -184,13 +197,23 @@ func NewWorkbench(config WorkbenchConfig) (*Workbench, error) {
 	if err != nil {
 		return nil, fmt.Errorf("create workbench bootstrap capability: %w", err)
 	}
-	return &Workbench{
+	workbench := &Workbench{
 		workspace: workspace, executable: executable, timeout: config.Timeout,
 		token: token, bootstrap: bootstrap, slot: make(chan struct{}, 1), environment: environment,
-		commands:      workbenchCommandViews(commandcatalog.Commands(config.CommandContext)),
-		jobs:          make(map[string]*workbenchJob),
-		compileFolder: config.CompileFolder,
-	}, nil
+		commands:        workbenchCommandViews(commandcatalog.Commands(config.CommandContext)),
+		jobs:            make(map[string]*workbenchJob),
+		compileFolder:   config.CompileFolder,
+		compileGitHub:   config.CompileGitHub,
+		newGitHubClient: func(token string) (workbenchGitHubClient, error) { return githubsource.New(token) },
+	}
+	if config.CompileGitHub != nil {
+		client, err := workbench.newGitHubClient("")
+		if err != nil {
+			return nil, err
+		}
+		workbench.githubConnection = newWorkbenchGitHubConnection(client, "")
+	}
+	return workbench, nil
 }
 
 func workbenchCommandViews(commands []commandcatalog.Command) []workbenchCommand {
@@ -342,6 +365,9 @@ func (workbench *Workbench) activateCompletedQuickstart(id string, args []string
 	if err := job.context.Err(); err != nil {
 		return fmt.Errorf("analyzed atlas activation was canceled: %w", err)
 	}
+	if job.sourceConnection != nil && (job.sourceConnection != workbench.githubConnection || job.sourceConnection.context.Err() != nil) {
+		return errors.New("GitHub connection changed before source activation")
+	}
 	if workbench.closed || workbench.activeDataset == nil {
 		return errors.New("live dataset activation is unavailable while the workbench is shutting down")
 	}
@@ -431,31 +457,36 @@ func (workbench *Workbench) handleJobs(w http.ResponseWriter, request *http.Requ
 		writeProblem(w, http.StatusForbidden, "Workbench authorization failed", "same-origin token authentication is required")
 		return
 	}
-	var payload struct {
-		Args []string `json:"args"`
-	}
-	request.Body = http.MaxBytesReader(w, request.Body, workbenchMaximumRequestBytes)
-	decoder := json.NewDecoder(request.Body)
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&payload); err != nil {
-		writeProblem(w, http.StatusBadRequest, "Invalid command request", err.Error())
+	fields, err := decodeWorkbenchObject(w, request, workbenchMaximumRequestBytes, "args", "github_repository")
+	if err != nil || len(fields) != 1 {
+		writeProblem(w, http.StatusBadRequest, "Invalid command request", "provide exactly one of args or github_repository in one JSON object")
 		return
 	}
-	if err := decoder.Decode(&struct{}{}); err != io.EOF {
-		writeProblem(w, http.StatusBadRequest, "Invalid command request", "request must contain one JSON object")
+	if raw, supplied := fields["github_repository"]; supplied {
+		var repository string
+		if err := json.Unmarshal(raw, &repository); err != nil || repository == "" {
+			writeProblem(w, http.StatusBadRequest, "Invalid GitHub repository", "github_repository must be a nonempty string")
+			return
+		}
+		workbench.handleGitHubJob(w, request, repository)
 		return
 	}
-	if err := validateWorkbenchExecution(payload.Args); err != nil {
+	var args []string
+	if err := json.Unmarshal(fields["args"], &args); err != nil {
+		writeProblem(w, http.StatusBadRequest, "Invalid command request", "args must be an array of strings")
+		return
+	}
+	if err := validateWorkbenchExecution(args); err != nil {
 		writeProblem(w, http.StatusBadRequest, "Command rejected", err.Error())
 		return
 	}
 	if workbench.compileFolder != nil {
-		if _, err := portableCompileFolder(workbench.workspace, payload.Args); err != nil {
+		if _, err := portableCompileFolder(workbench.workspace, args); err != nil {
 			writeProblem(w, http.StatusBadRequest, "Folder compilation rejected", err.Error())
 			return
 		}
 	}
-	job, err := workbench.createJob(payload.Args)
+	job, err := workbench.createJob(args)
 	if err != nil {
 		if errors.Is(err, ErrWorkbenchClosed) {
 			writeProblem(w, http.StatusServiceUnavailable, "Workbench is shutting down", err.Error())
@@ -733,7 +764,11 @@ func validateWorkbenchArgs(args []string) error {
 }
 
 func (workbench *Workbench) createJob(args []string) (*workbenchJob, error) {
-	if workbench.compileFolder != nil {
+	return workbench.createSourceJob(args, "", nil)
+}
+
+func (workbench *Workbench) createSourceJob(args []string, repository string, connection *workbenchGitHubConnection) (*workbenchJob, error) {
+	if workbench.compileFolder != nil && connection == nil {
 		if _, err := portableCompileFolder(workbench.workspace, args); err != nil {
 			return nil, err
 		}
@@ -747,6 +782,9 @@ func (workbench *Workbench) createJob(args []string) (*workbenchJob, error) {
 	if workbench.closed {
 		return nil, ErrWorkbenchClosed
 	}
+	if connection != nil && (connection != workbench.githubConnection || connection.context.Err() != nil) {
+		return nil, errors.New("GitHub connection changed; choose the repository again")
+	}
 	if len(workbench.jobs) >= workbenchMaximumJobs {
 		workbench.evictOneTerminalJobLocked()
 	}
@@ -757,13 +795,18 @@ func (workbench *Workbench) createJob(args []string) (*workbenchJob, error) {
 	deadline := created.Add(workbench.timeout)
 	ctx, cancel := context.WithDeadline(context.Background(), deadline)
 	job := &workbenchJob{
-		ID: id, Args: append([]string(nil), args...), Status: "queued",
+		ID: id, Args: append([]string{}, args...), Status: "queued",
 		CreatedAt: created, DeadlineAt: deadline, context: ctx, cancel: cancel, done: make(chan struct{}),
 		CleanupScope: workbenchCleanupScope(), mayLaunchManagedUnits: workbenchMayLaunchManagedUnits(args),
 	}
-	if workbench.compileFolder != nil {
+	if workbench.compileFolder != nil || connection != nil {
 		job.CleanupScope = "in_process"
 		job.mayLaunchManagedUnits = false
+	}
+	if connection != nil {
+		job.GitHubRepository = repository
+		job.sourceConnection = connection
+		job.stopSource = context.AfterFunc(connection.context, cancel)
 	}
 	workbench.jobs[id] = job
 	return copyWorkbenchJob(job), nil
@@ -800,7 +843,8 @@ func (workbench *Workbench) runJob(id string) {
 		workbench.mu.Unlock()
 		return
 	}
-	if ctx.Err() != nil {
+	if ctx.Err() != nil || job.sourceConnection != nil && (job.sourceConnection != workbench.githubConnection || job.sourceConnection.context.Err() != nil) {
+		job.cancel()
 		workbench.mu.Unlock()
 		releaseSlot()
 		workbench.finishJobFromContext(id, nil, nil)
@@ -810,8 +854,14 @@ func (workbench *Workbench) runJob(id string) {
 	job.Status = "running"
 	job.StartedAt = &started
 	args := append([]string(nil), job.Args...)
+	sourceConnection := job.sourceConnection
+	githubRepository := job.GitHubRepository
 	workbench.mu.Unlock()
 
+	if sourceConnection != nil {
+		workbench.runGitHubJob(ctx, id, githubRepository, sourceConnection, releaseSlot)
+		return
+	}
 	if workbench.compileFolder != nil {
 		workbench.runFolderJob(ctx, id, args, releaseSlot)
 		return
@@ -991,6 +1041,14 @@ func (workbench *Workbench) Close(ctx context.Context) error {
 	}
 	workbench.mu.Lock()
 	workbench.closed = true
+	if workbench.githubConnectCancel != nil {
+		workbench.githubConnectCancel()
+		workbench.githubConnectCancel = nil
+	}
+	if workbench.githubConnection != nil {
+		workbench.githubConnection.cancel()
+		workbench.githubConnection = nil
+	}
 	pending := make([]pendingJob, 0, len(workbench.jobs))
 	var failedIDs []string
 	for id, job := range workbench.jobs {
@@ -1079,6 +1137,11 @@ func (workbench *Workbench) finishJobLocked(job *workbenchJob, status string, ex
 	job.Truncated = truncated
 	job.Error = message
 	job.cancel()
+	if job.stopSource != nil {
+		job.stopSource()
+		job.stopSource = nil
+	}
+	job.sourceConnection = nil
 	close(job.done)
 }
 
@@ -1094,11 +1157,17 @@ func (workbench *Workbench) jobSnapshot(id string) (*workbenchJob, bool) {
 
 func copyWorkbenchJob(job *workbenchJob) *workbenchJob {
 	copy := *job
-	copy.Args = append([]string(nil), job.Args...)
+	copy.Args = append([]string{}, job.Args...)
 	if job.ActivatedDataset != nil {
 		identity := *job.ActivatedDataset
 		copy.ActivatedDataset = &identity
 	}
+	if job.GitHubSource != nil {
+		source := *job.GitHubSource
+		copy.GitHubSource = &source
+	}
+	copy.sourceConnection = nil
+	copy.stopSource = nil
 	copy.context = nil
 	copy.cancel = nil
 	copy.done = nil

@@ -89,6 +89,9 @@ func Scan(ctx context.Context, opts Options) (rkcmodel.Bundle, rkcmodel.Coverage
 	if ctx == nil {
 		return rkcmodel.Bundle{}, rkcmodel.Coverage{}, errors.New("pipeline scan context is required")
 	}
+	if err := validateArchiveOptions(&opts); err != nil {
+		return rkcmodel.Bundle{}, rkcmodel.Coverage{}, err
+	}
 	if (opts.RunID == "") != (opts.Journal == nil) {
 		return rkcmodel.Bundle{}, rkcmodel.Coverage{},
 			errors.New("pipeline run ID and journal must be supplied together")
@@ -490,6 +493,7 @@ func (state *stagedScanState) runInventory(ctx context.Context) (scheduler.Resul
 		gitInfo.WorkingTreeDigest = inv.Digest
 	}
 	metadata := map[string]string{"scip_input_digest": state.scipDigest}
+	addArchiveMetadata(metadata, state.opts.ArchiveProvenance)
 	if state.traceDigest != "" {
 		metadata["trace_input_digest"] = state.traceDigest
 	}

@@ -45,7 +45,10 @@ import (
 type Options struct {
 	// SkipGitInspection avoids launching Git for metadata in a built-in-only
 	// scan. Provenance explicitly records Git as unavailable.
-	SkipGitInspection  bool
+	SkipGitInspection bool
+	// ArchiveProvenance is an optional trusted acquisition receipt. Git metadata
+	// must remain unavailable when this receipt identifies an archive snapshot.
+	ArchiveProvenance  *ArchiveProvenance
 	Root               string
 	MaxFileBytes       int64
 	MaxTextBytes       int64
@@ -120,6 +123,9 @@ func scanSequential(ctx context.Context, opts Options) (rkcmodel.Bundle, rkcmode
 	if ctx == nil {
 		return rkcmodel.Bundle{}, rkcmodel.Coverage{}, errors.New("pipeline scan context is required")
 	}
+	if err := validateArchiveOptions(&opts); err != nil {
+		return rkcmodel.Bundle{}, rkcmodel.Coverage{}, err
+	}
 	root, err := filepath.Abs(opts.Root)
 	if err != nil {
 		return rkcmodel.Bundle{}, rkcmodel.Coverage{}, fmt.Errorf("resolve root: %w", err)
@@ -182,6 +188,7 @@ func scanSequential(ctx context.Context, opts Options) (rkcmodel.Bundle, rkcmode
 		gitInfo.WorkingTreeDigest = inv.Digest
 	}
 	metadata := map[string]string{"scip_input_digest": scipDigest}
+	addArchiveMetadata(metadata, opts.ArchiveProvenance)
 	if traceDigest != "" {
 		metadata["trace_input_digest"] = traceDigest
 	}
@@ -413,6 +420,9 @@ func stableSnapshotID(
 	}
 	if historyDigest != "" {
 		parts = append(parts, "history-input", historyDigest)
+	}
+	if provenance := opts.ArchiveProvenance; provenance != nil {
+		parts = append(parts, "source-archive/v1", provenance.Provider, provenance.Revision, provenance.ArchiveSHA256)
 	}
 	parts = append(
 		parts,

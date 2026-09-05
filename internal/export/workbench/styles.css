@@ -367,3 +367,26 @@ body.source-view #content { max-width: 920px; padding-block: 48px; }
   .source-benefits { gap: 12px; }
   .source-benefits .eyebrow { font-size: 10px; letter-spacing: .03em; }
 }
+
+.source-providers { display: flex; gap: 6px; padding: 4px; margin: 0 0 24px; background: var(--panel2); border: 1px solid var(--line); border-radius: 10px; }
+.source-providers button { flex: 1; min-height: 42px; border-color: transparent; color: var(--muted); }
+.source-providers button[aria-pressed="true"] { color: var(--text); background: var(--panel); border-color: var(--line); box-shadow: var(--shadow); }
+.github-account { padding: 14px; margin-bottom: 22px; border: 1px solid var(--line); border-radius: 9px; }
+.github-account-status { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+.github-account details { margin: 10px 0 0; }
+.github-account form { margin-top: 14px; }
+.github-results { margin-top: 14px; }
+.github-repository-list { display: grid; gap: 8px; max-height: 480px; overflow: auto; margin-top: 12px; padding: 3px; }
+.github-repository { border: 1px solid var(--line); border-radius: 9px; overflow: hidden; }
+.github-repository-choice { display: block; width: 100%; text-align: left; padding: 12px; color: var(--text); background: var(--panel); border: 0; cursor: pointer; }
+.github-repository-choice[aria-pressed="true"] { background: var(--panel2); box-shadow: inset 3px 0 0 var(--accent); }
+.github-repository-choice:focus-visible { outline-offset: -3px; }
+.github-repository-choice > span { display: block; overflow-wrap: anywhere; }
+.github-repository-choice .github-repository-title { display: flex; align-items: flex-start; justify-content: space-between; gap: 8px; }
+.github-repository-title strong { min-width: 0; overflow-wrap: anywhere; }
+.github-repository-link { display: inline-block; padding: 6px 12px 9px; font-size: 12px; color: var(--accent); }
+@media (max-width: 560px) {
+ .source-providers { gap: 2px; }
+ .source-providers button { padding-inline: 4px; font-size: 12px; }
+ .github-repository-choice .github-repository-title { flex-wrap: wrap; }
+}
