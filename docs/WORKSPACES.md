@@ -57,7 +57,7 @@ The registry reports `pending`, `stale`, `current`, or `error`, along with the l
 check/update time and a fixed error code. `current` means the source matched at its
 last check; it does not promise continuous observation. If resource admission
 blocks a pass, the prior check time remains visible. Linux work uses the existing
-[resource admission policy](RESOURCE_GUARD.md), including user-systemd and cgroup
+[resource admission policy](FLOW_AND_RUNTIME.md), including user-systemd and cgroup
 requirements. Local folder compilation is also available on supported macOS and
 Windows hosts using the built-in profile.
 
@@ -147,5 +147,6 @@ process, not a background task after its process has exited.
 ---
 _RKC is open source, published and maintained by **NeuroForgeIO**, under the
 **Apache License, Version 2.0**. Copyright 2026 NeuroForgeIO and RKC
-contributors. Redistributed works must preserve applicable license and `NOTICE`
-terms. Third-party materials retain their own licenses and ownership._
+contributors. Redistributed
+works must preserve applicable license and `NOTICE` terms. Third-party materials
+retain their own licenses and ownership._
