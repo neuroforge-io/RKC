@@ -3,10 +3,10 @@ package workspace
 import (
 	"encoding/json"
 	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/neuroforge-io/RKC/internal/privatepath"
 	"github.com/neuroforge-io/RKC/pkg/rkcmodel"
 )
 
@@ -75,7 +75,14 @@ func TestSecretReviewPolicyPreservesSourceAndLastGood(t *testing.T) {
 func TestSecretReviewsRequirePrivateStrictOperatorFile(t *testing.T) {
 	review := SecretReview{Path: "tests/fixture.go", SHA256: strings.Repeat("a", 64), Fingerprint: strings.Repeat("b", 16), Reason: "test_fixture"}
 	root := workspaceTempDir(t)
-	file := filepath.Join(root, "reviews.json")
+	privateFile, err := privatepath.CreateTemp(root, "reviews-*.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	file := privateFile.Name()
+	if err := privateFile.Close(); err != nil {
+		t.Fatal(err)
+	}
 	data, err := json.Marshal([]SecretReview{review})
 	if err != nil {
 		t.Fatal(err)

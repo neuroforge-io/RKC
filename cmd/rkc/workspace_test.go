@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/neuroforge-io/RKC/internal/inventory"
+	"github.com/neuroforge-io/RKC/internal/privatepath"
 	"github.com/neuroforge-io/RKC/internal/search"
 	"github.com/neuroforge-io/RKC/internal/security/secrets"
 	"github.com/neuroforge-io/RKC/internal/server"
@@ -134,7 +135,14 @@ func TestWorkspaceCLIReviewedFixtureExpiresOnSourceEdit(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	reviewFile := filepath.Join(parent, "reviews.json")
+	privateFile, err := privatepath.CreateTemp(parent, "reviews-*.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	reviewFile := privateFile.Name()
+	if err := privateFile.Close(); err != nil {
+		t.Fatal(err)
+	}
 	if err := os.WriteFile(reviewFile, reviews, 0600); err != nil {
 		t.Fatal(err)
 	}
