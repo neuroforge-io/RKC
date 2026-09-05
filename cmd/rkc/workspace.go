@@ -383,10 +383,8 @@ func compileWorkspaceSourceUsing(ctx context.Context, source workspace.Source, g
 	if source.Active != nil && source.Active.Fingerprint == fingerprint && source.Active.CompilerVersion == version {
 		// A damaged or removed active atlas is repaired on the next pass, even
 		// when source bytes have not changed.
-		if dataset, err := server.Load(source.Active.AtlasPath); err == nil && dataset.Integrity == server.IntegrityVerified && dataset.Manifest.ID == source.Active.SnapshotID {
-			if digest, err := workspaceManifestDigest(source.Active.AtlasPath); err == nil && digest == source.Active.ManifestSHA256 {
-				return nil, nil
-			}
+		if err := server.VerifyUnchangedExport(ctx, source.Active.AtlasPath, source.Active.SnapshotID, source.Active.ManifestSHA256); err == nil {
+			return nil, nil
 		}
 	}
 	identity, err := privatepath.Lstat(generations)

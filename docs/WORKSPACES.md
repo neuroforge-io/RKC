@@ -47,7 +47,9 @@ Git metadata inspection is explicitly unavailable. Commit-only changes with
 identical admitted content do not require recompilation.
 
 Each source is checked sequentially. Unchanged content reuses a verified active
-atlas and the incremental stage cache helps changed content. Local compilation
+atlas after streaming verification of its pinned export manifest and every
+exported file; this avoids decoding its search index and graph on every poll.
+The incremental stage cache helps changed content. Local compilation
 uses a private copy, with file hashes and a second source observation proving the
 capture matched the registered folder. Later local edits do not alter that copy.
 A new generation must pass integrity, inventory accounting, symbol evidence,

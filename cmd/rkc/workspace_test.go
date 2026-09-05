@@ -184,6 +184,39 @@ func TestWorkspaceCLIReviewedFixtureExpiresOnSourceEdit(t *testing.T) {
 	}
 }
 
+func TestWorkspaceRepairsDamagedUnchangedAtlas(t *testing.T) {
+	parent := workspaceTestTempDir(t)
+	root, sourcePath := filepath.Join(parent, "workspace"), filepath.Join(parent, "source")
+	writeTestFile(t, filepath.Join(sourcePath, "README.md"), "# Immutable source\n\nThe atlas must repair derived file damage.\n")
+	_, err := captureStdout(t, func() error { return runWorkspaceAdd([]string{"--workspace", root, "--id", "sample", sourcePath}) })
+	if err != nil {
+		t.Fatal(err)
+	}
+	syncSource := func() workspace.Source {
+		t.Helper()
+		_, err := captureStdout(t, func() error { return runWorkspaceSyncContext(t.Context(), []string{"sync", "--workspace", root}) })
+		if err != nil {
+			t.Fatal(err)
+		}
+		registry, err := workspace.Load(filepath.Join(root, "registry.json"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return registry.Sources[0]
+	}
+	first := syncSource()
+	if err := os.WriteFile(filepath.Join(first.Active.AtlasPath, "site", "index.html"), []byte("changed derived output"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	second := syncSource()
+	if second.Active.Generation == first.Active.Generation || second.Active.SnapshotID != first.Active.SnapshotID || second.Freshness.Status != "current" {
+		t.Fatal("unchanged source reused a damaged atlas")
+	}
+	if _, err := server.Load(second.Active.AtlasPath); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestWorkspaceFingerprintSeesContentsAndAdmissionChanges(t *testing.T) {
 	root := workspaceTestTempDir(t)
 	path := filepath.Join(root, "sample.md")

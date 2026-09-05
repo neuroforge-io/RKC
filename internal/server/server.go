@@ -5,6 +5,7 @@ package server
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -350,6 +351,10 @@ func inspectDatasetIntegrity(root string) (datasetIntegrity, error) {
 }
 
 func verifyDatasetExportManifest(root, manifestPath string) (datasetExportManifest, map[string][]byte, error) {
+	return verifyDatasetExportManifestMode(context.Background(), root, manifestPath, true)
+}
+
+func verifyDatasetExportManifestMode(ctx context.Context, root, manifestPath string, capture bool) (datasetExportManifest, map[string][]byte, error) {
 	var manifest datasetExportManifest
 	manifestData, _, _, err := readAndHashRegularFile(manifestPath, maximumExportManifestFileSize)
 	if err != nil {
@@ -376,6 +381,9 @@ func verifyDatasetExportManifest(root, manifestPath string) (datasetExportManife
 	staticSiteFiles := 0
 	previous := ""
 	for _, record := range manifest.Files {
+		if err := ctx.Err(); err != nil {
+			return manifest, nil, err
+		}
 		clean, err := canonicalDatasetPath(record.Path)
 		if err != nil {
 			return manifest, nil, fmt.Errorf("unsafe export path %q: %w", record.Path, err)
@@ -401,7 +409,12 @@ func verifyDatasetExportManifest(root, manifestPath string) (datasetExportManife
 		}
 		captureLimit := int64(0)
 		if captureCanonical {
-			captureLimit = maximumCanonicalDatasetFileSize
+			if record.Size > maximumCanonicalDatasetFileSize {
+				return manifest, nil, errors.New("canonical file exceeds capture limit")
+			}
+			if capture {
+				captureLimit = maximumCanonicalDatasetFileSize
+			}
 		}
 		if staticProjection {
 			staticSiteFiles++
@@ -416,14 +429,14 @@ func verifyDatasetExportManifest(root, manifestPath string) (datasetExportManife
 			}
 			staticSiteBytes += record.Size
 		}
-		data, size, digest, err := readAndHashRegularFileWithBuffer(path, captureLimit, hashBuffer)
+		data, size, digest, err := readAndHashRegularFileContext(ctx, path, captureLimit, hashBuffer)
 		if err != nil {
 			return manifest, nil, fmt.Errorf("verify exported file %q: %w", clean, err)
 		}
 		if size != record.Size || digest != record.SHA256 {
 			return manifest, nil, fmt.Errorf("exported file %q does not match its size or sha256", clean)
 		}
-		if captureCanonical {
+		if captureCanonical && capture {
 			captured[clean] = data
 		}
 		seen[clean] = struct{}{}
@@ -446,7 +459,7 @@ func verifyDatasetExportManifest(root, manifestPath string) (datasetExportManife
 		}
 	}
 	for _, required := range []string{"bundle.json", "rkc.manifest.json", "coverage.json"} {
-		if _, ok := captured[required]; !ok {
+		if _, ok := seen[required]; !ok {
 			return manifest, nil, fmt.Errorf("export manifest is missing required canonical file %q", required)
 		}
 	}
@@ -523,6 +536,13 @@ func readAndHashRegularFile(path string, captureLimit int64) ([]byte, int64, str
 }
 
 func readAndHashRegularFileWithBuffer(path string, captureLimit int64, copyBuffer []byte) ([]byte, int64, string, error) {
+	return readAndHashRegularFileContext(context.Background(), path, captureLimit, copyBuffer)
+}
+
+func readAndHashRegularFileContext(ctx context.Context, path string, captureLimit int64, copyBuffer []byte) ([]byte, int64, string, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, 0, "", err
+	}
 	before, err := os.Lstat(path)
 	if err != nil {
 		return nil, 0, "", err
@@ -562,7 +582,7 @@ func readAndHashRegularFileWithBuffer(path string, captureLimit int64, copyBuffe
 	}
 	// Hide os.File.WriteTo so io.CopyBuffer uses the caller's reusable bounded
 	// buffer instead of allocating one scratch region for every exported file.
-	reader = struct{ io.Reader }{reader}
+	reader = integrityReader{ctx: ctx, reader: reader}
 	size, err := io.CopyBuffer(writer, reader, copyBuffer)
 	if err != nil {
 		return nil, 0, "", err
