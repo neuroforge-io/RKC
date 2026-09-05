@@ -1,103 +1,102 @@
 # Quickstart
 
-## 1. Install
+Start in the browser, then use the same atlas from the command line or an
+agent. No model is needed for compilation, search, or cited context.
 
-The shortest source-checkout path is:
+## 1. Install and open
+
+> **Portable downloads are not published yet.** Use the
+> [source install](INSTALL.md#build-from-source) now. The download commands below
+> become available with the first portable release; check
+> [release availability and platform qualification](INSTALL.md#release-availability)
+> before using them.
+
+### Linux or macOS
+
+Run the installer, then make the default install directory available in this
+terminal:
 
 ```sh
-git clone https://github.com/neuroforge-io/RKC.git
-cd RKC
-./install.sh
+curl -fsSL https://github.com/neuroforge-io/RKC/releases/latest/download/install-release.sh | sh
 export PATH="$HOME/.local/bin:$PATH"
+```
+
+### Windows
+
+Run this in PowerShell 5.1 or newer:
+
+```powershell
+irm https://github.com/neuroforge-io/RKC/releases/latest/download/install-release.ps1 | iex
+```
+
+The installer selects your platform, verifies the archive checksum, and installs
+`rkc` and `rkc-mcp` for your user account. Portable downloads need no Go, Python,
+model, or database server. Linux requires a reachable user-systemd manager with
+delegated cgroup v2 controllers for compilation and protected workbench jobs.
+The native portable baselines are macOS 12+ and Windows 10+; their built-in
+compilation does not claim Linux cgroup enforcement. See [Install](INSTALL.md)
+for prerequisites, custom locations, offline installation, and qualification status.
+
+### Choose a source
+
+```sh
 rkc gui
 ```
 
-The installer builds both CGO-free binaries, installs them under
-`$HOME/.local/bin` by default, preserves the Apache-2.0 license and NOTICE
-under `$HOME/.local/share/doc/rkc` (including the complete third-party notice),
-and prints an immediately executable first-run command plus a copy-ready PATH
-command when the install directory is not already reachable. Use
-`./install.sh --prefix /another/prefix` for another user-owned destination.
-Original RKC code and generated tooling are copyright 2026 **NeuroForgeIO**;
-see [`BRANDING_AND_ATTRIBUTION.md`](BRANDING_AND_ATTRIBUTION.md)
-for the commercial attribution and third-party license boundary.
-Existing symbolic-link or non-file destinations are rejected.
+The local app opens without scanning a folder first:
 
-`rkc gui` opens the local browser at a source chooser without scanning the
-initial folder. Use **Browse** to choose a folder, then **Compile folder**.
-The completed atlas opens in the same window, with search, graph navigation,
-source evidence, diagnostics, and outputs. **Change source** returns to the
-chooser. Press Ctrl-C in the launching terminal to stop the local app.
+1. Select **Local folder**, choose **Choose folder**, and select a source folder.
+   Then choose **Compile folder**.
+2. Alternatively, select **GitHub repository**, search, select a repository, and
+   choose **Compile repository**. Public search works without connecting an
+   account; private access uses the optional session-only token form.
+3. Watch scan progress. You can cancel or retry; a lost status connection offers
+   **Check status** instead of silently starting a second scan.
+4. The verified atlas opens in the same window. **Change source** returns to the
+   chooser. Press Ctrl-C in the launching terminal to stop the local app.
 
-`rkc wizard` (alias `rkc tui`) is a dependency-free terminal guide. It asks for
-the folder and offers only three bounded first-run choices: build and open the
-read-only local browser, compile and verify without a server, or print the full
-CLI help. It also offers an explicit cancel choice, and EOF starts no work. The
-wizard calls the existing `open` and `quickstart` implementations directly; it
-does not invoke a shell or claim to expose every CLI option. You can still run
-either command below directly when you already know which workflow you need.
+For a local folder, RKC writes its atlas to `<folder>/.rkc` and snapshot state
+to `<folder>/.rkc-state`. Existing source files are not rewritten. GitHub
+sources are acquired into a private local cache at a pinned revision, whose
+commit and archive digest appear in scan details. See
+[Workbench and integrations](WORKBENCH_AND_INTEGRATIONS.md) for connection,
+source, and job behavior.
 
-`rkc open /path/to/repository` produces an atlas, retains immutable snapshot
-state, runs the strict local integrity and quality checks, and prints the local
-URL while opening the read-only browser when a desktop opener is available.
-On an ordinary Linux host, `open`, direct `quickstart`, and direct `scan`
-self-admit to RKC's exact one-core, lowest-priority, 4 GiB pressure / 4.5 GiB
-hard ceiling before any atlas, cache, journal, or snapshot write. An existing
-exact RKC unit is reused; the scratch-container path instead requires a private
-cgroup root to prove an equal-or-tighter hard ceiling, swap/task/weight/OOM
-controls, and lowered per-thread scheduling. Both paths continuously recheck
-the envelope and yield to configured higher-priority workload classes. Set
-`RKC_HOST_AVAILABLE_MEMORY_MIN_MIB` to an integer MiB floor when RKC must also
-reserve host-wide Linux `MemAvailable` for those peers; protected first-run and
-workbench paths check it before work and once per second. Zero or unset disables
-that optional floor, while malformed configuration fails closed. The
-generic marker set is `torchrun,lm_eval`;
-`RKC_HIGHER_PRIORITY_MARKERS=training,benchmark` replaces it with 1-16 unique
-lower-case ASCII classes, each at most 32 bytes and 255 bytes total. Empty
-retains the default and invalid configuration fails closed. The default `yield`
-policy keeps RKC subordinate while such work merely runs and cancels promptly
-when its aggregate CPU load reaches the configured threshold, while
-`RKC_HIGHER_PRIORITY_POLICY=refuse` restores the strict refusal whenever any
-higher-priority process is visible. Press Ctrl-C to stop
-cleanly, or pass `--no-browser` on a headless host.
-It safely replaces only a previous RKC-owned atlas. The portable default does
-not invoke Python. Protected `open` and direct `quickstart` reject `--python`
-until its separately sandboxed adapter and parent scan can prove one aggregate
-ceiling; deterministic built-in analysis remains available.
+### Put the atlas to use
 
-For a trusted single-user Linux checkout, `rkc open --workbench
-/path/to/repository` explicitly enables the protected local command center.
-The macOS and Windows workbench runs built-in local-folder compilation in the
-serving process, with cancellation and one active job. It does not run Git,
-Python, plugins, indexers, or model helpers, and marks Git metadata unavailable.
-Use their command-line routes for other workflows; the portable GUI does not
-claim Linux kernel resource admission. In Linux workbench mode the guarded
-child publishes a one-time
-URL-fragment capability only through an owner-private readiness file. The outer
-`open` process validates the receipt, launches the desktop browser outside the
-cgroup through an owner-private redirect, and the browser removes the fragment
-before exchanging it once for its same-origin session token. The OS selects a
-ephemeral loopback port for every `open` session, avoiding deliberate reuse of
-the familiar fixed port. The OS may still reuse an earlier ephemeral port, so
-this is risk reduction rather than proof of a new origin; use a trusted browser
-profile. Browser policy forbids registration of new workers and manifests. The
-advanced direct `serve` command retains its explicit address option.
+| You want to… | Open… |
+| --- | --- |
+| Find a file or symbol | Search or Explore |
+| Follow relationships | Graph |
+| Review gaps and errors | Diagnostics and Coverage |
+| Prepare cited context for an agent | Outputs & agents |
+| Build another atlas or a knowledge pack | Workflows |
 
-Once open, use **Browse** to choose a folder and **Compile folder** to
-compile it. Success is reported only after the generated `<folder>/.rkc`
-dataset passes the normal canonical, coverage, ownership-marker, and manifest
-checks. RKC then switches every graphical read view and dataset-aware command
-default in one operation. A failed or corrupt analysis leaves the prior atlas
-active.
+The Workflows view previews exact commands and exposes the actions supported
+by the current platform. macOS and Windows use built-in source compilation;
+other workflows can be copied to the command line. The local app runs with your
+account’s filesystem authority. Keep it local and use a trusted browser profile.
 
-For a compile-only first run, use `rkc quickstart /path/to/repository`; it
-performs the same scan and quality gates without starting a server. A direct
-advanced scan must include an explicit final `--no-python=true` or
-`--no-plugins=true` setting before the repository path; `--no-python` is the
-equivalent shorter true form. Both commands accept any local folder, including
-folders that are not Git worktrees. macOS and Windows use the same deterministic
-safety preflight and portable analysis, but cannot claim Linux's kernel cgroup
-or scheduling enforcement.
+### Prefer the terminal?
+
+Replace `./my-project` with your folder. These commands compile and verify,
+search, and produce cited Markdown without a model:
+
+```sh
+rkc quickstart ./my-project
+rkc query --dir ./my-project/.rkc "authentication"
+rkc context --dir ./my-project/.rkc --format markdown "How does authentication work?"
+```
+
+Use `rkc open ./my-project` to compile and open a read-only browser, or
+`rkc wizard` for a terminal guide. Compilation on Linux uses RKC’s subordinate
+resource envelope and yields to configured higher-priority workloads. Read
+[Operations](OPERATIONS.md#protected-first-run) for the guard prerequisites,
+resource policy, shared-host settings, and advanced launch routes.
+
+The remaining sections cover development setup and more detailed workflows.
+A portable-binary user can continue directly to [search and browse](#8-search-and-browse)
+or [MCP](#9-use-mcp).
 
 ## 2. Development prerequisites
 
@@ -160,9 +159,10 @@ targets without publishing anything, run `make portable-build`. This checks
 Linux, macOS, and Windows on `amd64` and `arm64`; the temporary binaries are
 removed after the check. The complete reproducible package targets Linux `amd64`/`arm64`. The separate
 portable-release workflow assembles six checksum-verified ZIP downloads and
-qualifies native Linux, macOS, and Windows `amd64` installation, compilation,
-and GUI startup. ARM64 downloads remain labelled as cross-built until native
-execution evidence is available.
+runs native Linux, macOS, and Windows `amd64` installation, compilation,
+and GUI-startup checks. A platform is qualified only when its exact archive has
+a passing published native receipt. ARM64 downloads remain labelled as
+cross-built until native execution evidence is available.
 
 ## 5. Generate configuration
 
