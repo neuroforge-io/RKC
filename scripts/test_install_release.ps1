@@ -25,6 +25,11 @@ try {
     Invoke-InstallerTest $arguments $true
     if ((Get-FileHash -LiteralPath $binary -Algorithm SHA256).Hash -ne $before) { throw 'Repeat installation changed binary bytes.' }
 
+    # Reinstallation must replace stale bytes, not merely skip existing files.
+    [IO.File]::WriteAllText($binary, 'Previous installation fixture.')
+    Invoke-InstallerTest $arguments $true
+    if ((Get-FileHash -LiteralPath $binary -Algorithm SHA256).Hash -ne $before) { throw 'Reinstallation did not restore the verified release binary.' }
+
     # Exercise the baseline interpreter under x86 emulation as well, where
     # Framework RuntimeInformation historically hid the native ARM64 machine.
     $emulatedHost = Join-Path $env:WINDIR 'SysWOW64\WindowsPowerShell\v1.0\powershell.exe'

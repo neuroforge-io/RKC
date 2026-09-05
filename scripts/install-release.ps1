@@ -180,7 +180,12 @@ function Install-RkcRelease {
                 try {
                     [IO.Compression.ZipFileExtensions]::ExtractToFile($entry, $temporary, $false)
                     Assert-RkcPath $destination $false
-                    if ([IO.File]::Exists($destination)) { [IO.File]::Replace($temporary, $destination, $null) }
+                    if ([IO.File]::Exists($destination)) {
+                        # Windows PowerShell coerces $null to an empty string for
+                        # this .NET string parameter. Pass a true null backup path
+                        # while retaining atomic replacement of the existing file.
+                        [IO.File]::Replace($temporary, $destination, [System.Management.Automation.Language.NullString]::Value)
+                    }
                     else { [IO.File]::Move($temporary, $destination) }
                 } finally { if (Test-Path -LiteralPath $temporary) { Remove-Item -Force -LiteralPath $temporary } }
             }

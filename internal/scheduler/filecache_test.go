@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -67,8 +68,16 @@ func TestFileCacheStoreLoadImmutabilityAndMiss(t *testing.T) {
 		t.Fatal("cache entry is not newline terminated")
 	}
 	info, err := os.Stat(path)
-	if err != nil || info.Mode().Perm() != 0o644 {
-		t.Fatalf("cache entry mode = %v, %v", info.Mode(), err)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !info.Mode().IsRegular() || info.Mode().Perm()&0o200 == 0 {
+		t.Fatalf("cache entry mode = %v, want a writable regular file", info.Mode())
+	}
+	// Windows mode bits report the read-only attribute, not POSIX permissions.
+	// This public metadata cache intentionally uses 0644 on POSIX systems.
+	if runtime.GOOS != "windows" && info.Mode().Perm() != 0o644 {
+		t.Fatalf("cache entry mode = %v, want 0644", info.Mode())
 	}
 	loaded, ok, err := cache.Load(context.Background(), key)
 	if err != nil || !ok || !reflect.DeepEqual(loaded, first) {
