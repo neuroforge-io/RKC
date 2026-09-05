@@ -40,6 +40,7 @@ type openOptions struct {
 	readyFile    string
 	noBrowser    bool
 	workbench    bool
+	welcome      bool
 	scipIndexes  stringList
 	tracePaths   stringList
 	historyPath  string
@@ -58,7 +59,8 @@ func newOpenFlagSet(output io.Writer) (*flag.FlagSet, *openOptions) {
 	fs.StringVar(&options.address, "addr", options.address, "HTTP listen address for the local browser")
 	fs.StringVar(&options.readyFile, "ready-file", "", "atomically write the server readiness receipt to this path")
 	fs.BoolVar(&options.noBrowser, "no-browser", false, "serve the atlas without opening a browser (useful for headless hosts)")
-	fs.BoolVar(&options.workbench, "workbench", false, "enable the trusted-user local command launcher (Linux only; not a filesystem sandbox)")
+	fs.BoolVar(&options.workbench, "workbench", false, "enable local folder compilation and protected command workflows where supported")
+	fs.BoolVar(&options.welcome, "welcome", false, "open a fresh workspace so a source can be chosen in the GUI")
 	fs.Var(&options.scipIndexes, "scip-index", "SCIP index to import; external files remain producer-unverified; repeatable")
 	fs.Var(&options.tracePaths, "trace", "runtime trace file to import; repeatable")
 	fs.StringVar(&options.historyPath, "history", "", "compiled semantic history file to import")
@@ -73,6 +75,16 @@ func runOpenContext(ctx context.Context, args []string) error {
 	finalizeOpenOptions(fs, options)
 	if fs.NArg() > 1 {
 		return errors.New("open accepts at most one repository path")
+	}
+	if options.welcome && !options.workbench {
+		return errors.New("a fresh workspace requires --workbench; use rkc gui")
+	}
+	if options.welcome {
+		for _, name := range []string{"config", "out", "state-dir", "python", "clean", "force", "scip-index", "trace", "history"} {
+			if flagWasSet(fs, name) {
+				return fmt.Errorf("a fresh workspace does not accept --%s; choose a source in the GUI or use rkc open for configured compilation", name)
+			}
+		}
 	}
 	if options.enablePython {
 		return errors.New("open --python is disabled until the Python adapter can prove one aggregate resource ceiling with its parent scan; use the deterministic default")
@@ -113,6 +125,9 @@ func runOpenContext(ctx context.Context, args []string) error {
 	}
 
 	quickstartArgs := make([]string, 0, 14+(len(options.scipIndexes)+len(options.tracePaths))*2)
+	if options.workbench && runtime.GOOS != "linux" {
+		quickstartArgs = append(quickstartArgs, "--no-git-metadata")
+	}
 	if options.config != "" {
 		quickstartArgs = append(quickstartArgs, "--config", options.config)
 	}
@@ -139,8 +154,10 @@ func runOpenContext(ctx context.Context, args []string) error {
 		quickstartArgs = append(quickstartArgs, "--history", options.historyPath)
 	}
 	quickstartArgs = append(quickstartArgs, root)
-	if err := runQuickstartContext(ctx, quickstartArgs); err != nil {
-		return fmt.Errorf("open quickstart: %w", err)
+	if !options.welcome {
+		if err := runQuickstartContext(ctx, quickstartArgs); err != nil {
+			return fmt.Errorf("open quickstart: %w", err)
+		}
 	}
 
 	readyFile := options.readyFile
@@ -156,6 +173,9 @@ func runOpenContext(ctx context.Context, args []string) error {
 		options.workbench,
 		!options.noBrowser && !guardedChild,
 	)
+	if options.welcome {
+		serveArgs = append(serveArgs, "--welcome")
+	}
 	if err := runServeContext(ctx, serveArgs); err != nil {
 		return fmt.Errorf("open server: %w", err)
 	}
@@ -178,7 +198,9 @@ func validateOpenExecutionMode(workbench bool, platform string, requireEnvelope 
 		return nil
 	}
 	if platform != "linux" {
-		return errors.New("the interactive workbench requires the Linux low-priority resource envelope; omit --workbench on this platform")
+		// Non-Linux workspaces use the built-in, local-folder-only callback.
+		// They cannot launch the protected external-command surface.
+		return nil
 	}
 	if requireEnvelope == nil {
 		return errors.New("interactive open resource admission is not configured")

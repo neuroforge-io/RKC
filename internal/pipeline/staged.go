@@ -465,7 +465,7 @@ func (state *stagedScanState) runInventory(ctx context.Context) (scheduler.Resul
 		return scheduler.Result{}, err
 	}
 	state.inventory = inv
-	gitInfo, err := inspectGit(ctx, state.root)
+	gitInfo, err := inspectGitForScan(ctx, state.root, state.opts.SkipGitInspection)
 	if err != nil {
 		return scheduler.Result{}, err
 	}

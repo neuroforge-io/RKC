@@ -10,11 +10,24 @@ knowledge packs.
 | Goal | Start here | Result |
 | --- | --- | --- |
 | Understand a folder or repository | `rkc open /path/to/source` | Searchable browser atlas |
-| Operate through the local GUI | `rkc open --workbench /path/to/source` | Protected Analyze and command workflows |
+| Choose a source in the local GUI | `rkc gui` | Folder browser, compilation, and a searchable atlas |
+| Open a known source directly | `rkc open --workbench /path/to/source` | Compile the source, then open its atlas |
 | Give an agent relevant context | `rkc context --dir .rkc authentication` | Cited JSON packet |
 | Save a readable evidence note | `rkc context --dir .rkc --format markdown authentication` | Markdown on standard output |
 | Combine processed source collections | `rkc knowledge build --out ../knowledge-pack atlas-a atlas-b` | Portable knowledge pack |
 | Discover integrations from code | `rkc capabilities` | Versioned JSON capability document |
+
+`rkc gui` opens a fresh workspace before reading or compiling any source. Choose
+**Browse**, select a folder, then choose **Compile folder**. A successful job
+activates its verified atlas in the same window. **Change source** returns to
+the source chooser; **Back to atlas** retains the current result. Failure leaves
+the previous atlas available, with retry and cancellation controls.
+
+Linux uses the existing one-core, low-priority user-systemd resource envelope.
+The native macOS and Windows workspace runs only built-in local-folder
+compilation. It starts no Git, Python, plugin, indexer, or model helper, and
+records Git metadata as unavailable. Other workflows provide command-line
+instructions. This portable profile does not claim Linux resource containment.
 
 The browser can explore existing exports without command authority. The
 opt-in workbench uses the existing trusted-user, loopback-only, protected

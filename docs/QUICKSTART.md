@@ -9,7 +9,7 @@ git clone https://github.com/neuroforge-io/RKC.git
 cd RKC
 ./install.sh
 export PATH="$HOME/.local/bin:$PATH"
-rkc wizard
+rkc gui
 ```
 
 The installer builds both CGO-free binaries, installs them under
@@ -22,6 +22,12 @@ Original RKC code and generated tooling are copyright 2026 **NeuroForgeIO**;
 see [`BRANDING_AND_ATTRIBUTION.md`](BRANDING_AND_ATTRIBUTION.md)
 for the commercial attribution and third-party license boundary.
 Existing symbolic-link or non-file destinations are rejected.
+
+`rkc gui` opens the local browser at a source chooser without scanning the
+initial folder. Use **Browse** to choose a folder, then **Compile folder**.
+The completed atlas opens in the same window, with search, graph navigation,
+source evidence, diagnostics, and outputs. **Change source** returns to the
+chooser. Press Ctrl-C in the launching terminal to stop the local app.
 
 `rkc wizard` (alias `rkc tui`) is a dependency-free terminal guide. It asks for
 the folder and offers only three bounded first-run choices: build and open the
@@ -61,9 +67,12 @@ ceiling; deterministic built-in analysis remains available.
 
 For a trusted single-user Linux checkout, `rkc open --workbench
 /path/to/repository` explicitly enables the protected local command center.
-The default static browser remains portable on macOS and Windows; their
-interactive workbench stays disabled until equivalent native resource
-admission is proved. In workbench mode the guarded child publishes a one-time
+The macOS and Windows workbench runs built-in local-folder compilation in the
+serving process, with cancellation and one active job. It does not run Git,
+Python, plugins, indexers, or model helpers, and marks Git metadata unavailable.
+Use their command-line routes for other workflows; the portable GUI does not
+claim Linux kernel resource admission. In Linux workbench mode the guarded
+child publishes a one-time
 URL-fragment capability only through an owner-private readiness file. The outer
 `open` process validates the receipt, launches the desktop browser outside the
 cgroup through an owner-private redirect, and the browser removes the fragment
@@ -74,7 +83,7 @@ this is risk reduction rather than proof of a new origin; use a trusted browser
 profile. Browser policy forbids registration of new workers and manifests. The
 advanced direct `serve` command retains its explicit address option.
 
-Once open, use **Browse** to choose a folder and **Analyze this folder** to
+Once open, use **Browse** to choose a folder and **Compile folder** to
 compile it. Success is reported only after the generated `<folder>/.rkc`
 dataset passes the normal canonical, coverage, ownership-marker, and manifest
 checks. RKC then switches every graphical read view and dataset-aware command
@@ -149,9 +158,11 @@ binary build under RKC's deliberately subordinate resource envelope.
 To verify the CGO-free commands compile for the maintained desktop/server
 targets without publishing anything, run `make portable-build`. This checks
 Linux, macOS, and Windows on `amd64` and `arm64`; the temporary binaries are
-removed after the check. The complete reproducible package currently publishes
-Linux `amd64`/`arm64` artifacts, while the portable source build contract keeps
-the command layer ready for native packaging on the other targets.
+removed after the check. The complete reproducible package targets Linux `amd64`/`arm64`. The separate
+portable-release workflow assembles six checksum-verified ZIP downloads and
+qualifies native Linux, macOS, and Windows `amd64` installation, compilation,
+and GUI startup. ARM64 downloads remain labelled as cross-built until native
+execution evidence is available.
 
 ## 5. Generate configuration
 
@@ -232,6 +243,10 @@ replayed before a successful scan returns. Inspect it with:
 Use the same `--runs-dir /owner-only/path` override on `scan`, `runs list`, and
 `runs show` when durable operational state must live somewhere other than the
 platform user-cache directory.
+
+`scan --no-git-metadata` and `quickstart --no-git-metadata` explicitly omit the
+Git metadata helper. They preserve content-derived identity and mark Git
+metadata unavailable. The portable GUI selects this option automatically.
 
 This still performs deterministic Go and JavaScript/TypeScript syntax
 analysis, framework and document extraction, secret-pattern detection, graph
@@ -373,22 +388,25 @@ command catalogue. Normal serving and the default `rkc open` mode remain read-on
 The protected workbench executes only its explicit allowlist; server lifecycle
 and separately managed model or Python operations stay in their guarded CLI
 paths.
-For a trusted single-user Linux repository, the preferred opt-in command center
-is:
+To choose a folder from the GUI, start:
 
 ```sh
-rkc open --workbench .
+rkc gui
 ```
 
+For a known folder, `rkc open --workbench .` compiles it before opening the
+workbench. Linux enables protected command workflows; macOS and Windows run
+only built-in folder compilation inside the GUI.
+
 Use the folder picker to select another folder available to the invoking
-account and run Analyze. The
+account and choose **Compile folder**. The
 same live page then changes to the verified new snapshot—Overview, Search,
 Graph, details, and command defaults cannot diverge onto different datasets.
 Activation failure is terminal for that job and does not replace the previous
 snapshot.
 
 For an already-built atlas, use this low-level advanced route.
-Direct `serve --workbench` requires a nonexistent readiness path in an
+On Linux, direct `serve --workbench` requires a nonexistent readiness path in an
 owner-private directory and cannot be combined with `--open`; a trusted
 launcher must consume the receipt without logging its `browser_url`:
 
@@ -404,7 +422,7 @@ scripts/with-rkc-limits.sh ./bin/rkc serve \
 ```
 
 The workbench refuses fixed-port or non-loopback binding and refuses to start
-outside the protected cgroup. It authenticates same-origin requests through the one-time
+outside the protected cgroup on Linux. It authenticates same-origin requests through the one-time
 bootstrap, invokes RKC directly without a shell, serializes jobs, and bounds
 both duration and captured output. Commands that could create a separately
 managed Python or model unit fail closed until an aggregate session ceiling is

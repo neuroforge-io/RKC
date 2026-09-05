@@ -457,7 +457,7 @@ func TestOpenExecutionModeFailsBeforeInteractiveWorkWithoutEnvelope(t *testing.T
 	if err := validateOpenExecutionMode(false, "windows", nil); err != nil {
 		t.Fatalf("portable static mode = %v", err)
 	}
-	if err := validateOpenExecutionMode(true, "darwin", func() error { return nil }); err == nil || !strings.Contains(err.Error(), "--workbench") {
+	if err := validateOpenExecutionMode(true, "darwin", func() error { t.Fatal("portable folder mode requested a Linux envelope"); return nil }); err != nil {
 		t.Fatalf("portable interactive mode = %v", err)
 	}
 	if err := validateOpenExecutionMode(true, "linux", nil); err == nil || !strings.Contains(err.Error(), "not configured") {

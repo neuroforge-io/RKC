@@ -52,6 +52,8 @@ func dispatch(args []string) error {
 		return runScan(args[1:])
 	case "quickstart":
 		return runQuickstart(args[1:])
+	case "gui":
+		return runOpen(append([]string{"--welcome", "--workbench"}, args[1:]...))
 	case "open", "start":
 		return runOpen(args[1:])
 	case "plan":
@@ -137,6 +139,7 @@ Get started:
 
 Core commands:
   wizard       Guided terminal first run (alias: tui)
+  gui          Open a workspace and choose a source in the browser
   open         Compile, verify, and open a local browser atlas (alias: start)
   quickstart   Build and verify a ready-to-search atlas in one command
   init         Generate a complete, safe local configuration

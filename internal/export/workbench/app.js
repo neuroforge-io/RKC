@@ -1,6 +1,6 @@
 'use strict';
 const commandCatalog=__RKC_COMMAND_CATALOG__;
-const state={bundle:null,coverage:null,nodes:new Map(),artifacts:new Map(),evidence:new Map(),outgoing:new Map(),incoming:new Map(),selected:null,selectedArtifact:null,selectedArtifactContext:null,view:'overview',navigationRevision:0,listPaging:null,staticPaging:null,staticPageIndex:0,staticResultCount:0,browseNodeIDs:new Set(),hydratedNodeIDs:new Set(),results:[],apiSearchResults:null,workbench:null,commandName:'quickstart',repositoryFolder:'',directoryListing:null,activationNotice:null,api:false,facets:null,listTruncated:false,diagnosticsTruncated:false,diagnosticPaging:null,diagnosticRequest:null,diagnosticRevision:0,diagnosticPageIndex:0,diagnosticResultCount:0,diagnosticFilters:{severity:'',code:''},diagnosticDraft:{severity:'',code:''},searchTimer:null,searchRevision:0,atlasRevision:0,staticBootstrap:false,staticLoad:null,staticSearchRecords:null,staticSearchByID:new Map(),staticSearchLoad:null,capabilities:null,contextQuery:'',contextPacket:null,contextRevision:0,contextLoading:false,contextError:'',commandFilter:'',commandGroup:'all',commandDrafts:new Map(),activeJob:null,lastJob:null,jobCommand:'',submittingJob:false,toastTimer:null};
+const state={bundle:null,coverage:null,nodes:new Map(),artifacts:new Map(),evidence:new Map(),outgoing:new Map(),incoming:new Map(),selected:null,selectedArtifact:null,selectedArtifactContext:null,view:'overview',navigationRevision:0,listPaging:null,staticPaging:null,staticPageIndex:0,staticResultCount:0,browseNodeIDs:new Set(),hydratedNodeIDs:new Set(),results:[],apiSearchResults:null,workbench:null,commandName:'quickstart',repositoryFolder:'',directoryListing:null,directoryRevision:0,sourceFolder:'',jobError:'',jobPolling:false,jobCanceling:false,pendingActivation:null,activationLoading:false,activationNotice:null,api:false,facets:null,listTruncated:false,diagnosticsTruncated:false,diagnosticPaging:null,diagnosticRequest:null,diagnosticRevision:0,diagnosticPageIndex:0,diagnosticResultCount:0,diagnosticFilters:{severity:'',code:''},diagnosticDraft:{severity:'',code:''},searchTimer:null,searchRevision:0,atlasRevision:0,staticBootstrap:false,staticLoad:null,staticSearchRecords:null,staticSearchByID:new Map(),staticSearchLoad:null,capabilities:null,contextQuery:'',contextPacket:null,contextRevision:0,contextLoading:false,contextError:'',commandFilter:'',commandGroup:'all',commandDrafts:new Map(),activeJob:null,lastJob:null,jobCommand:'',submittingJob:false,toastTimer:null};
 const maximumGraphNeighbors=32,maximumGraphNodesShown=16;
 const maximumListRows=200;
 const snapshotGenerationHeader='X-RKC-Snapshot-ID',snapshotGenerationErrorCode='RKC_SNAPSHOT_GENERATION_CHANGED',maximumSnapshotLoadAttempts=3;
@@ -20,12 +20,12 @@ async function boot(){
     renderList();
     const navigationRevision=state.navigationRevision;
     await probeWorkbench();
-    if(navigationRevision!==state.navigationRevision){$('content').setAttribute('aria-busy','false');return}
+    if(navigationRevision!==state.navigationRevision){if(state.view==='sources')renderSourceChooser();else if(state.view==='commands')renderCommands();$('content').setAttribute('aria-busy','false');return}
     const hash=safeHash();
-    if(hash&&(state.api||state.staticBootstrap||state.nodes.has(hash))){
+    if(!isEmptyWorkspace()&&hash&&(state.api||state.staticBootstrap||state.nodes.has(hash))){
       const selection=selectNode(hash,'symbol',false),selectionRevision=state.navigationRevision;
       try{await selection}catch(error){if(selectionRevision===state.navigationRevision)throw error}
-    }else setView('overview',false);
+    }else setView(isEmptyWorkspace()?'sources':'overview',false);
     $('content').setAttribute('aria-busy','false');
   }catch(error){
     $('content').setAttribute('aria-busy','false');
@@ -158,6 +158,7 @@ function safeHash(){try{return decodeURIComponent(location.hash.slice(1))}catch(
 function initialiseControls(){
 	  refreshAtlasFilters(true);
       $('global-search').addEventListener('click',focusSearch);
+      $('change-source')?.addEventListener('click',()=>setView('sources'));
       $('explorer-toggle').addEventListener('click',toggleExplorer);
       $('keyboard-help').addEventListener('click',showShortcuts);
       $('close-shortcuts').addEventListener('click',()=>$('shortcuts-dialog').close());
@@ -386,11 +387,15 @@ function focusResult(index){
   options[index]?.focus();
 }
 
+function isEmptyWorkspace(){return state.bundle?.snapshot?.metadata?.rkc_workspace==='empty'}
+
 function renderHeader(){
   const coverage=state.coverage,bundle=state.bundle;
   $('title').textContent=bundle.snapshot.root_name||'Repository atlas';
   document.title=(bundle.snapshot.root_name||'Repository')+' repository atlas';
-  $('snapshot').textContent='Snapshot '+short(bundle.snapshot.id);
+  $('snapshot').textContent=isEmptyWorkspace()?'Local workspace · choose a source to begin':'Snapshot '+short(bundle.snapshot.id);
+  document.body.classList.toggle('empty-workspace',isEmptyWorkspace());
+  if($('change-source'))$('change-source').hidden=!state.workbench?.enabled||isEmptyWorkspace();
   $('snapshot').title=bundle.snapshot.id;
   $('search-scope').textContent=state.api?'Live search includes indexed repository text.':'Offline search covers symbols, paths, and declared documentation.';
   const values=[['artifacts',coverage.artifacts_inventoried],['symbols',coverage.symbols_total],['edges',coverage.edges_total],['unresolved',coverage.unresolved_edges],['errors',coverage.diagnostics_by_severity?.error||0]];
@@ -398,7 +403,8 @@ function renderHeader(){
   $('runtime-status').textContent='Verified static snapshot';
   $('runtime-status').className='connection live';
   if(state.staticBootstrap)$('runtime-status').textContent='Verified static snapshot · fast overview';
-  if(state.api){$('runtime-status').textContent='Bounded local API · read only';$('runtime-status').className='connection live'}
+  if(isEmptyWorkspace())$('runtime-status').textContent='Connecting to your local workspace…';
+  if(state.api&&!isEmptyWorkspace()){$('runtime-status').textContent='Bounded local API · read only';$('runtime-status').className='connection live'}
 }
 
 function takeWorkbenchBootstrap(){
@@ -417,27 +423,35 @@ function storeWorkbenchToken(token){try{sessionStorage.setItem('rkc-workbench-to
 function clearWorkbenchToken(){try{sessionStorage.removeItem('rkc-workbench-token')}catch(_error){}}
 
 async function probeWorkbench(){
+  let rejectedToken=false;
   try{
     const bootstrap=takeWorkbenchBootstrap(),stored=storedWorkbenchToken(),headers={Accept:'application/json'};
     if(bootstrap)headers['X-RKC-Workbench-Bootstrap']=bootstrap;
     else if(stored)headers['X-RKC-Workbench-Token']=stored;
     const response=await fetch('/api/v1/workbench/session',{cache:'no-store',headers});
-    if(!response.ok)throw new Error('unavailable');
+    if(!response.ok){rejectedToken=response.status===401||response.status===403;throw new Error('unavailable')}
     const session=await response.json();
-    if(!session?.enabled||!session.token||!Array.isArray(session.commands))throw new Error('invalid workbench session');
+    if(!session?.enabled||!session.token||!Array.isArray(session.commands)){rejectedToken=true;throw new Error('invalid workbench session')}
 	storeWorkbenchToken(session.token);
 	state.workbench=session;
 	state.repositoryFolder=session.active_dataset?.repository_root||session.workspace||'';
-    $('runtime-status').textContent='Protected local workbench';
+    if($('change-source'))$('change-source').hidden=isEmptyWorkspace();
+    $('runtime-status').textContent=session.folder_compilation_only?'Local folder workspace':'Protected local workbench';
     $('runtime-status').className='connection enabled';
   }catch(_error){
-    clearWorkbenchToken();
+    if(rejectedToken)clearWorkbenchToken();
     state.workbench={enabled:false,commands:defaultCommands()};
+    if($('change-source'))$('change-source').hidden=true;
+    if(isEmptyWorkspace()){$('runtime-status').textContent='Local session unavailable';$('runtime-status').className='connection'}
   }
 }
 
 function prepareView(view){
   state.view=view;
+  state.directoryRevision++;
+  document.body.classList.toggle('source-view',view==='sources');
+  $('content').setAttribute('role',view==='sources'?'region':'tabpanel');
+  if(view==='sources')$('content').setAttribute('aria-labelledby','source-title');
   document.body.classList.toggle('command-view',view==='commands');
   document.body.classList.toggle('outputs-view',view==='outputs');
   for(const button of document.querySelectorAll('[role="tab"]')){
@@ -451,6 +465,7 @@ function prepareView(view){
 
 function setView(view,focusContent=true,navigationRevision=++state.navigationRevision){
   if(navigationRevision!==state.navigationRevision)return;
+  if(isEmptyWorkspace()&&view!=='commands')view='sources';
   prepareView(view);
   if(!state.api&&state.staticBootstrap&&['diagnostics','graph','symbol'].includes(view)){
     $('content').innerHTML='<div class="loading" role="status">Loading complete offline details…</div>';
@@ -459,7 +474,8 @@ function setView(view,focusContent=true,navigationRevision=++state.navigationRev
     });
     return;
   }
-  if(view==='overview')renderOverview();
+  if(view==='sources')renderSourceChooser();
+  else if(view==='overview')renderOverview();
   else if(view==='diagnostics')renderDiagnostics();
   else if(view==='coverage')renderCoverage();
   else if(view==='commands')renderCommands();
@@ -739,7 +755,8 @@ async function changeDiagnosticPage(direction){
 function renderCoverage(){const coverage=state.coverage,ratios={'Inventory accounting':coverage.inventory_accounting_ratio,'Syntactic parse':coverage.syntactic_parse_ratio,'Semantic parse':coverage.semantic_parse_ratio,'Symbol evidence':coverage.symbol_evidence_ratio,'Public documentation':coverage.public_documentation_ratio,'Edge resolution':coverage.edge_resolution_ratio,'Claim citation':coverage.claims_total?coverage.claim_citation_ratio:null};$('content').innerHTML='<div class="card"><h2>Coverage and completeness</h2><p>Each ratio is backed by explicit numerators and denominators in <code>coverage.json</code>.</p>'+Object.entries(ratios).map(([name,value])=>progress(name,value)).join('')+'</div><div class="grid coverage-grid"><div class="card"><h3>Artifacts</h3>'+tableObject('Artifact statuses',coverage.artifact_statuses)+'</div><div class="card"><h3>Node kinds</h3>'+tableObject('Node kinds',coverage.node_kinds)+'</div><div class="card"><h3>Edge kinds</h3>'+tableObject('Edge kinds',coverage.edge_kinds)+'</div><div class="card"><h3>Evidence kinds</h3>'+tableObject('Evidence kinds',coverage.evidence_kinds)+'</div></div><div class="card"><h3>Deterministic digest</h3><p class="mono">'+esc(coverage.deterministic_output_digest)+'</p></div>'}
 
 function focusSearch(){
-  if(state.view==='commands'||state.view==='outputs')setView('symbol',false);
+  if(isEmptyWorkspace()){setView('sources',false);$('repository-folder')?.focus();return}
+  if(['commands','outputs','sources'].includes(state.view))setView('symbol',false);
   document.body.classList.toggle('explorer-open',true);
   $('explorer-toggle').setAttribute('aria-expanded','true');
   $('explorer-toggle').textContent='Hide repository browser';
@@ -829,12 +846,12 @@ function defaultCommands(){return commandCatalog.map(command=>({...command,defau
 function renderCommands(){
   const session=state.workbench||{enabled:false,commands:defaultCommands()},commands=session.commands||defaultCommands();
   if(!commands.some(item=>item.name===state.commandName))state.commandName=commands[0]?.name||'help';
-  const enabled=Boolean(session.enabled);
+  const enabled=Boolean(session.enabled),portable=Boolean(session.folder_compilation_only);
   const selectedCommand=commands.find(item=>item.name===state.commandName),defaultExecutable=selectedCommand?.default_executable!==false;
   const restrictionNotice=enabled&&!defaultExecutable?'<p class="diagnostic warning"><b>Workbench boundary:</b> '+esc(selectedCommand.restriction||'This preset remains in its separately guarded command-line path.')+'</p>':'';
-  const workspace=enabled?session.workspace:'Start with rkc open --workbench on a supported Linux host.';
+  const workspace=enabled?session.workspace:'Start with rkc gui on this computer.';
   const folderPicker=enabled?'<div class="card repository-picker"><span class="eyebrow">Guided first run</span><h2>Analyze a folder</h2><p>Choose any folder available to your local account. RKC will compile it into a verified, searchable atlas using the portable deterministic profile; a model is not required.</p><div class="folder-controls"><div class="field"><label class="search-label" for="repository-folder">Repository or project folder</label><input id="repository-folder" type="text" maxlength="4096" autocomplete="off" spellcheck="false" value="'+esc(state.repositoryFolder||workspace)+'"></div><button type="button" class="secondary" id="browse-folder">Browse folders</button><button type="button" class="primary" id="analyze-folder">Analyze this folder</button></div><p id="folder-status" class="help-text" role="status" aria-live="polite">The chooser lists folders only and stays inside this protected browser session.</p><div id="folder-browser" class="folder-browser" hidden></div></div>':'';
-  $('content').innerHTML='<div class="section-intro"><span class="eyebrow">From folder to useful knowledge</span><h2>Your next step, made simpler.</h2><p>Analyze a folder, find the right workflow, and review exactly what will run.</p></div><div class="card"><details class="command-advanced"><summary>Safe CLI workflows · execution &amp; trusted-user boundaries</summary><p>Build, inspect, search, explain, validate, and maintain RKC from one responsive workspace. This catalogue exposes bounded workflows that are safe to preview here; the protected server executes only its explicit allowlist. Server lifecycle and helper-launching model, Python, remote acquisition, and live history operations stay in their guarded CLI paths. Commands are passed as exact argument arrays—never through a shell—and only one job runs at a time.</p><div class="grid">'+stat('Execution',enabled?'Enabled · token authenticated':'Read-only preview')+stat('Workspace',workspace)+stat('Resource policy',enabled?'1 CPU · 4.5 GiB hard ceiling · re-proved continuously':'No command execution')+stat('Output bound',enabled?number(session.maximum_output_bytes)+' bytes':'Not applicable')+'</div></details></div>'+folderPicker+'<div class="command-layout"><div class="card"><h3>Choose a workflow</h3><div class="command-search"><label class="sr-only" for="workflow-search">Find a workflow</label><input type="search" id="workflow-search" placeholder="Find a workflow…" value="'+esc(state.commandFilter)+'"><div class="workflow-groups" id="workflow-groups">'+workflowGroupButtons()+'</div><p class="workflow-count" id="workflow-count" role="status"></p></div><div class="command-palette" id="command-palette">'+commands.map(command=>'<button type="button" class="command-choice '+(command.name===state.commandName?'active':'')+'" data-command="'+esc(command.name)+'"><span class="command-mode">'+esc(command.mode)+(command.default_executable===false?' · CLI only':'')+'</span><strong>'+esc(command.name)+'</strong><span>'+esc(command.description)+'</span></button>').join('')+'</div></div><div class="card"><span class="kind">rkc '+esc(state.commandName)+'</span><h3>Configure this workflow</h3>'+guidedWorkflowFields()+'<h4>Command arguments</h4><label class="search-label" for="command-args">Enter the same options and values you would put after the command</label><textarea id="command-args" spellcheck="false" aria-describedby="command-guidance" placeholder="--help">'+esc(state.commandDrafts.get(state.commandName)??defaultCommandArgs(state.commandName))+'</textarea><p id="command-guidance" class="help-text">'+esc(commandGuidance(state.commandName))+'</p>'+restrictionNotice+'<pre id="command-preview">'+esc(commandPreview())+'</pre><div class="button-row"><button type="button" class="secondary" id="copy-command">Copy command</button><button type="button" class="primary" id="run-command" '+(enabled&&defaultExecutable?'':'disabled')+'>Run protected command</button><button type="button" class="danger" id="cancel-command" hidden>Cancel command</button><span id="command-status" class="muted" role="status" aria-live="polite">'+(enabled?(defaultExecutable?'Ready':'Use the copied command in its separately guarded CLI path.'):'Execution is disabled in a static or read-only server.')+'</span></div><div id="job-meta" class="job-meta" hidden aria-label="Current job details"></div><h3>Job output</h3><pre id="job-output" class="job-output" tabindex="0" aria-live="polite">No command has run in this session.</pre></div></div>';
+  $('content').innerHTML='<div class="section-intro"><span class="eyebrow">From folder to useful knowledge</span><h2>Your next step, made simpler.</h2><p>Analyze a folder, find the right workflow, and review exactly what will run.</p></div><div class="card"><details class="command-advanced"><summary>Safe CLI workflows · execution &amp; trusted-user boundaries</summary><p>Build, inspect, search, explain, validate, and maintain RKC from one responsive workspace. This catalogue exposes bounded workflows that are safe to preview here; the protected server executes only its explicit allowlist. Server lifecycle and helper-launching model, Python, remote acquisition, and live history operations stay in their guarded CLI paths. Commands are passed as exact argument arrays—never through a shell—and only one job runs at a time.</p><div class="grid">'+stat('Execution',enabled?'Enabled · token authenticated':'Read-only preview')+stat('Workspace',workspace)+stat('Resource policy',enabled?(portable?'Built-in folder compilation · no external commands':'1 CPU · 4.5 GiB hard ceiling · re-proved continuously'):'No command execution')+stat('Output bound',enabled?number(session.maximum_output_bytes)+' bytes':'Not applicable')+'</div></details></div>'+folderPicker+'<div class="command-layout"><div class="card"><h3>Choose a workflow</h3><div class="command-search"><label class="sr-only" for="workflow-search">Find a workflow</label><input type="search" id="workflow-search" placeholder="Find a workflow…" value="'+esc(state.commandFilter)+'"><div class="workflow-groups" id="workflow-groups">'+workflowGroupButtons()+'</div><p class="workflow-count" id="workflow-count" role="status"></p></div><div class="command-palette" id="command-palette">'+commands.map(command=>'<button type="button" class="command-choice '+(command.name===state.commandName?'active':'')+'" data-command="'+esc(command.name)+'"><span class="command-mode">'+esc(command.mode)+(command.default_executable===false?' · CLI only':'')+'</span><strong>'+esc(command.name)+'</strong><span>'+esc(command.description)+'</span></button>').join('')+'</div></div><div class="card"><span class="kind">rkc '+esc(state.commandName)+'</span><h3>Configure this workflow</h3>'+guidedWorkflowFields()+'<h4>Command arguments</h4><label class="search-label" for="command-args">Enter the same options and values you would put after the command</label><textarea id="command-args" spellcheck="false" aria-describedby="command-guidance" placeholder="--help">'+esc(state.commandDrafts.get(state.commandName)??defaultCommandArgs(state.commandName))+'</textarea><p id="command-guidance" class="help-text">'+esc(commandGuidance(state.commandName))+'</p>'+restrictionNotice+'<pre id="command-preview">'+esc(commandPreview())+'</pre><div class="button-row"><button type="button" class="secondary" id="copy-command">Copy command</button><button type="button" class="primary" id="run-command" '+(enabled&&defaultExecutable?'':'disabled')+'>Run protected command</button><button type="button" class="danger" id="cancel-command" hidden>Cancel command</button><button type="button" class="secondary" id="resume-job" hidden>Check status</button><span id="command-status" class="muted" role="status" aria-live="polite">'+(enabled?(defaultExecutable?'Ready':'Use the copied command in its separately guarded CLI path.'):'Execution is disabled in a static or read-only server.')+'</span></div><div id="job-meta" class="job-meta" hidden aria-label="Current job details"></div><h3>Job output</h3><pre id="job-output" class="job-output" tabindex="0" aria-live="polite">No command has run in this session.</pre></div></div>';
   const authority=enabled?(session.authority_notice||'Trusted-user launcher: commands have the invoking account’s filesystem authority; this workspace is not a security sandbox. Use a trusted browser profile because ephemeral origin allocation cannot prove legacy service-worker state is absent.'):'Execution is disabled. Static preview cannot modify the host.';
   const authorityNotice=document.createElement('p');authorityNotice.className='diagnostic warning';
   const authorityLabel=document.createElement('b');authorityLabel.textContent='Authority: ';authorityNotice.append(authorityLabel,document.createTextNode(authority));
@@ -845,19 +862,15 @@ function renderCommands(){
   for(const button of $('workflow-groups').querySelectorAll('[data-group]'))button.addEventListener('click',()=>{state.commandGroup=button.dataset.group;filterWorkflows()});
   filterWorkflows();
   $('apply-workflow-settings')?.addEventListener('click',applyWorkflowSettings);
-  $('command-args').addEventListener('input',()=>{state.commandDrafts.set(state.commandName,$('command-args').value);$('command-preview').textContent=commandPreview()});
+  $('command-args').addEventListener('input',()=>{state.commandDrafts.set(state.commandName,$('command-args').value);$('command-preview').textContent=commandPreview();updateWorkbenchJobUI()});
   $('copy-command').addEventListener('click',copyCommand);
   $('run-command').addEventListener('click',runWorkbenchCommand);
   if(state.lastJob){renderJobMeta(state.lastJob);$('job-output').textContent=jobOutputText(state.lastJob);$('command-status').textContent=workbenchStatusLabel(state.lastJob.status)+(state.jobCommand?' · '+state.jobCommand:'')}
   if(state.activeJob||state.submittingJob){$('run-command').disabled=true;$('cancel-command').hidden=!state.activeJob}
-  $('cancel-command').addEventListener('click',()=>{if(state.activeJob)cancelWorkbenchJob(state.activeJob,$('cancel-command'),$('command-status'))});
-  if(enabled){
-    const folder=$('repository-folder');
-    folder.addEventListener('input',()=>{state.repositoryFolder=folder.value});
-    folder.addEventListener('keydown',event=>{if(event.key==='Enter'){event.preventDefault();browseWorkbenchDirectory(folder.value)}});
-    $('browse-folder').addEventListener('click',()=>browseWorkbenchDirectory(folder.value));
-    $('analyze-folder').addEventListener('click',()=>analyzeRepositoryFolder(folder.value));
-  }
+  $('cancel-command').addEventListener('click',()=>cancelWorkbenchJob(state.activeJob));
+  $('resume-job').addEventListener('click',resumeWorkbenchJob);
+  if(enabled)wireFolderChooser();
+  updateWorkbenchJobUI();
 }
 
 function selectedRepositoryDefaults(name){
@@ -883,43 +896,68 @@ function defaultCommandArgs(name){
   return (selectedRepositoryDefaults(name)||command?.default_args||['--help']).map(shellQuote).join(' ');
 }
 
+// Source providers share the authenticated job/activation lifecycle. A future
+// provider can render its chooser here and submit its server-defined job payload.
+function renderSourceChooser(){
+  const enabled=Boolean(state.workbench?.enabled),empty=isEmptyWorkspace();
+  $('content').innerHTML='<div class="source-shell"><div class="source-heading">'+(!empty?'<button type="button" class="secondary" id="back-to-atlas">← Back to atlas</button>':'<span class="eyebrow">Your knowledge starts here</span>')+'<h2 id="source-title">'+(empty?'Make sense of your source.':'Choose your next source.')+'</h2><p>Turn a folder of code, documents, or both into a searchable map. Explore what connects, inspect the evidence, and create useful context for people and agents.</p></div><div class="card source-picker"><span class="source-icon" aria-hidden="true"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M3 7V5a1 1 0 0 1 1-1h5l2 3h9a1 1 0 0 1 1 1v11a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V7Z"/></svg></span><h3>Start with a local folder</h3><p>Choose a project, repository, or exported wiki on this computer. A model is not required.</p>'+(enabled?'<div class="source-folder-field"><label class="search-label" for="repository-folder">Folder on this computer</label><div class="source-folder-input"><input id="repository-folder" type="text" maxlength="4096" autocomplete="off" spellcheck="false" aria-describedby="folder-status" placeholder="Choose a folder or enter its full path" value="'+esc(state.sourceFolder)+'"><button type="button" class="secondary" id="browse-folder">Choose folder</button></div></div><p id="folder-status" class="help-text" role="status" aria-live="polite">Browse folders, or paste a path. Your files stay on this computer.</p><div id="folder-browser" class="folder-browser" hidden></div><div class="source-submit"><button type="button" class="primary" id="analyze-folder">Compile folder</button><p class="help-text">Creates an RKC atlas in the chosen folder. Source files are not rewritten.</p></div>':'<div class="diagnostic warning" role="status"><h4>Connect your local session</h4><p>This page needs the trusted browser session opened by RKC before it can choose or compile a folder.</p><p>Run <code>rkc gui</code> and use the browser page it opens. If your connection was interrupted, try reconnecting below.</p><button type="button" class="secondary" id="reconnect-workbench">Reconnect</button></div>')+'</div><div id="source-progress" class="card source-progress" hidden><div class="source-progress-heading"><span class="eyebrow">Folder → searchable knowledge</span><h3 id="source-job-status" role="status" aria-live="polite"></h3></div><p id="source-job-help" class="help-text"></p><p id="source-job-error" class="status-bad" role="status" hidden></p><div class="button-row"><button type="button" class="danger" id="source-cancel" hidden>Cancel scan</button><button type="button" class="secondary" id="source-resume" hidden>Check status</button></div><details><summary>Scan details</summary><pre id="source-job-output" class="job-output" tabindex="0"></pre></details></div><div class="source-benefits"><div><span class="eyebrow">01 · Compile</span><p>Index the source and record its evidence.</p></div><div><span class="eyebrow">02 · Explore</span><p>Search files, symbols, and relationships.</p></div><div><span class="eyebrow">03 · Use</span><p>Share cited context and portable outputs.</p></div></div></div>';
+  $('back-to-atlas')?.addEventListener('click',()=>setView('overview'));
+  $('reconnect-workbench')?.addEventListener('click',async()=>{const revision=state.navigationRevision,button=$('reconnect-workbench');button.disabled=true;button.textContent='Connecting…';await probeWorkbench();if(revision===state.navigationRevision)renderSourceChooser()});
+  if(enabled)wireFolderChooser(true);
+  $('source-cancel').addEventListener('click',()=>cancelWorkbenchJob(state.activeJob));
+  $('source-resume').addEventListener('click',resumeWorkbenchJob);
+  updateWorkbenchJobUI();
+}
+
+function wireFolderChooser(source=false){
+  const folder=$('repository-folder');
+  folder.addEventListener('input',()=>{state.directoryRevision++;state.directoryListing=null;$('folder-browser').hidden=true;if(source)state.sourceFolder=folder.value;else state.repositoryFolder=folder.value;updateWorkbenchJobUI()});
+  folder.addEventListener('keydown',event=>{if(event.key==='Enter'){event.preventDefault();browseWorkbenchDirectory(folder.value)}});
+  $('browse-folder').addEventListener('click',()=>browseWorkbenchDirectory(folder.value));
+  $('analyze-folder').addEventListener('click',()=>analyzeRepositoryFolder(folder.value));
+}
+
 async function browseWorkbenchDirectory(path){
-  const status=$('folder-status'),browser=$('folder-browser');if(!status||!browser)return;
-  status.textContent='Opening folder…';status.className='help-text';
+  const status=$('folder-status'),browser=$('folder-browser');if(!status||!browser||!state.workbench?.enabled)return;
+  const revision=++state.directoryRevision,navigationRevision=state.navigationRevision,atlasRevision=state.atlasRevision;
+  const current=()=>revision===state.directoryRevision&&navigationRevision===state.navigationRevision&&atlasRevision===state.atlasRevision;
+  status.textContent='Opening folder…';status.className='help-text';browser.hidden=true;
   try{
     const query=new URLSearchParams();if(String(path||'').trim())query.set('path',String(path).trim());
     const response=await fetch('/api/v1/workbench/directories?'+query.toString(),{cache:'no-store',headers:{Accept:'application/json','X-RKC-Workbench-Token':state.workbench.token}});
-    const listing=await response.json();if(!response.ok)throw new Error(listing.detail||listing.title||'Folder cannot be opened');
-    if(!listing.path||!Array.isArray(listing.directories))throw new Error('Folder response is invalid');
+    const listing=await response.json();if(!current())return;if(!response.ok)throw new Error(listing.detail||listing.title||'Folder cannot be opened');
+    if(typeof listing.path!=='string'||!listing.path||!Array.isArray(listing.directories)||listing.directories.some(item=>typeof item.path!=='string'||typeof item.name!=='string'))throw new Error('Folder response is invalid');
     state.directoryListing=listing;renderWorkbenchDirectory();
     status.textContent=listing.truncated?'Showing a bounded folder list. Enter a more specific path to narrow it.':'Choose this folder or open one of its subfolders.';
-  }catch(error){status.textContent=String(error?.message||error);status.className='status-bad';browser.hidden=true}
+  }catch(error){if(current()){status.textContent=String(error?.message||error)+'. Try Choose folder again or enter a different path.';status.className='status-bad';browser.hidden=true}}
 }
 
 function renderWorkbenchDirectory(){
   const listing=state.directoryListing,browser=$('folder-browser');if(!listing||!browser)return;
   const parent=listing.parent?'<button type="button" class="secondary" id="folder-parent">Up one folder</button>':'';
   const entries=listing.directories.length?listing.directories.map(item=>'<button type="button" class="folder-choice" data-folder="'+esc(item.path)+'">📁 '+esc(item.name)+'</button>').join(''):'<p class="muted">No subfolders here.</p>';
-  browser.hidden=false;browser.innerHTML='<div class="folder-browser-header">'+parent+'<button type="button" class="primary" id="choose-folder">Use this folder</button><strong class="folder-path mono">'+esc(listing.path)+'</strong></div><div class="folder-list" role="list" aria-label="Subfolders">'+entries+'</div>'+(listing.truncated?'<p class="help-text">This very large folder was truncated at the safety bound.</p>':'');
+  browser.hidden=false;browser.innerHTML='<div class="folder-browser-header">'+parent+'<button type="button" class="primary" id="choose-folder">Use this folder</button><strong class="folder-path mono">'+esc(listing.path)+'</strong></div><div class="folder-list" aria-label="Subfolders">'+entries+'</div>'+(listing.truncated?'<p class="help-text">This very large folder was truncated at the safety bound.</p>':'');
   if(listing.parent)$('folder-parent').addEventListener('click',()=>browseWorkbenchDirectory(listing.parent));
   $('choose-folder').addEventListener('click',()=>selectRepositoryFolder(listing.path));
   for(const button of browser.querySelectorAll('[data-folder]'))button.addEventListener('click',()=>browseWorkbenchDirectory(button.dataset.folder));
 }
 
 function selectRepositoryFolder(path){
-  state.repositoryFolder=path;state.directoryListing=null;
+  state.directoryRevision++;state.repositoryFolder=path;state.sourceFolder=path;state.directoryListing=null;
   if($('repository-folder'))$('repository-folder').value=path;
   if($('folder-browser'))$('folder-browser').hidden=true;
   const defaults=selectedRepositoryDefaults(state.commandName);
   if(defaults&&$('command-args')){$('command-args').value=defaults.map(shellQuote).join(' ');$('command-preview').textContent=commandPreview()}
   if($('folder-status')){$('folder-status').textContent='Selected '+path;$('folder-status').className='help-text status-good'}
+  updateWorkbenchJobUI();$('analyze-folder')?.focus();
 }
 
 function analyzeRepositoryFolder(path){
   const folder=String(path||'').trim();if(!folder){$('folder-status').textContent='Choose a folder first.';$('folder-status').className='status-bad';return}
-  state.repositoryFolder=folder;state.commandName='quickstart';renderCommands();
-  $('command-args').value=shellQuote(folder);$('command-preview').textContent=commandPreview();
-  runWorkbenchCommand();
+  state.repositoryFolder=folder;state.sourceFolder=folder;state.directoryRevision++;state.directoryListing=null;
+  if($('folder-browser'))$('folder-browser').hidden=true;
+  if(state.view!=='sources')setView('sources');
+  return submitWorkbenchJob({args:['quickstart',folder]});
 }
 
 function workflowGroup(name){
@@ -974,37 +1012,89 @@ function currentCommand(){return [state.commandName,...parseCommandArguments($('
 function commandPreview(){try{return 'rkc '+currentCommand().map(shellQuote).join(' ')}catch(error){return error.message}}
 async function copyCommand(){try{await navigator.clipboard.writeText(commandPreview());$('command-status').textContent='Command copied.'}catch(_error){$('command-status').textContent='Clipboard unavailable; select the preview to copy.'}}
 
+function canRunWorkbenchArguments(args){
+  if(!state.workbench?.enabled||!Array.isArray(args))return false;
+  if(state.workbench.folder_compilation_only)return args.length===2&&args[0]==='quickstart'&&typeof args[1]==='string'&&Boolean(args[1].trim())&&!args[1].startsWith('-');
+  return (state.workbench.commands||[]).some(command=>command.name===args[0]&&command.default_executable!==false);
+}
+function workbenchBusy(){return Boolean(state.activeJob||state.submittingJob||state.pendingActivation||state.activationLoading)}
+function terminalWorkbenchJob(job){return ['succeeded','failed','timed_out','canceled','cleanup_failed'].includes(job?.status)}
+
 async function runWorkbenchCommand(){
-  if(state.activeJob||state.submittingJob){notify('A command is already running. Wait for it to finish or cancel it.');return}
-  const run=$('run-command'),cancel=$('cancel-command'),status=$('command-status'),output=$('job-output');
-  let args;try{args=currentCommand()}catch(error){status.textContent=error.message;return}
-  state.submittingJob=true;state.jobCommand=args.map(shellQuote).join(' ');run.disabled=true;status.textContent='Submitting…';output.textContent='Queued '+args.map(shellQuote).join(' ')+'…';
-  try{
-    const response=await fetch('/api/v1/workbench/jobs',{method:'POST',headers:{'Content-Type':'application/json','Accept':'application/json','X-RKC-Workbench-Token':state.workbench.token},body:JSON.stringify({args})});
-    const job=await response.json();
-    if(!response.ok)throw new Error(job.detail||job.title||'Command request failed');
-	state.activeJob=job.id;state.lastJob=job;state.submittingJob=false;cancel.hidden=false;cancel.disabled=false;
-	try{
-	  const completed=await pollWorkbenchJob(job.id,status,output);
-	  if(completed.status==='succeeded'&&completed.activated_dataset)await loadActivatedWorkbenchDataset(completed.activated_dataset);
-	}finally{state.activeJob=null}
-	  }catch(error){status.textContent='Command or atlas activation failed';status.className='status-bad';output.textContent=String(error?.message||error)}
-	  finally{state.activeJob=null;state.submittingJob=false;const command=(state.workbench?.commands||[]).find(item=>item.name===state.commandName);run.disabled=!state.workbench?.enabled||command?.default_executable===false;cancel.hidden=true;cancel.disabled=false;if(state.view==='commands'){const activeRun=$('run-command');if(activeRun)activeRun.disabled=!state.workbench?.enabled||command?.default_executable===false;const activeCancel=$('cancel-command');if(activeCancel)activeCancel.hidden=true}}
+  let args;try{args=currentCommand()}catch(error){$('command-status').textContent=error.message;return}
+  return submitWorkbenchJob({args});
 }
 
-async function pollWorkbenchJob(id,status,output){
+async function submitWorkbenchJob(payload){
+  if(workbenchBusy()){notify('A job is already open. Wait for it to finish, check its status, or cancel it.');return}
+  if(!canRunWorkbenchArguments(payload?.args)){state.jobError='This workflow cannot run in this browser session. Use the copied command in a terminal.';updateWorkbenchJobUI();return}
+  state.submittingJob=true;state.lastJob=null;state.jobError='';state.jobCommand=payload.args.map(shellQuote).join(' ');updateWorkbenchJobUI();
+  if(state.view==='sources')$('source-job-status')?.scrollIntoView?.({block:'nearest'});
+  try{
+    const response=await fetch('/api/v1/workbench/jobs',{method:'POST',headers:{'Content-Type':'application/json','Accept':'application/json','X-RKC-Workbench-Token':state.workbench.token},body:JSON.stringify(payload)});
+    const job=await response.json();
+    if(!response.ok)throw new Error(job.detail||job.title||'Command request failed');
+    if(typeof job.id!=='string'||!job.id)throw new Error('The server returned an invalid job identity. Check the local server before retrying.');
+    state.activeJob=job.id;state.lastJob=job;state.submittingJob=false;
+    await monitorWorkbenchJob(job.id);
+  }catch(error){state.jobError=String(error?.message||error)}
+  finally{state.submittingJob=false;updateWorkbenchJobUI()}
+}
+
+async function monitorWorkbenchJob(id){
+  if(!id||state.jobPolling)return;
+  state.jobPolling=true;state.jobError='';updateWorkbenchJobUI();
+  try{
+    const completed=await pollWorkbenchJob(id);
+    state.activeJob=null;state.jobCanceling=false;
+    if(completed.status==='succeeded'&&completed.activated_dataset){state.pendingActivation=completed.activated_dataset;await openPendingWorkbenchAtlas()}
+  }catch(error){state.jobError=String(error?.message||error)}
+  finally{state.jobPolling=false;updateWorkbenchJobUI()}
+}
+
+async function pollWorkbenchJob(id){
   for(;;){
     const response=await fetch('/api/v1/workbench/jobs/'+encodeURIComponent(id),{cache:'no-store',headers:{Accept:'application/json','X-RKC-Workbench-Token':state.workbench.token}});
     const job=await response.json();
-    if(!response.ok)throw new Error(job.detail||'Cannot read workbench job');
-    state.lastJob=job;
-    if(state.view==='commands'){status=$('command-status')||status;output=$('job-output')||output}
-    status.textContent=workbenchStatusLabel(job.status)+(job.exit_code!==undefined&&job.exit_code!==null?' · exit '+job.exit_code:'');
-    status.className=job.status==='succeeded'?'status-good':(['failed','timed_out','cleanup_failed'].includes(job.status)?'status-bad':(job.status==='canceled'?'status-warn':'muted'));
-    renderJobMeta(job);
-    output.textContent=(job.output||'')+(job.truncated?'\n\n[output truncated at the 2 MiB safety bound]':'')+(job.error?'\n\n'+job.error:'');
-	if(['succeeded','failed','timed_out','canceled','cleanup_failed'].includes(job.status))return job;
-	await new Promise(resolve=>setTimeout(resolve,650));
+    if(!response.ok)throw new Error(job.detail||'Cannot read workbench job. Check status to reconnect.');
+    if(job.id!==id)throw new Error('Job status identity did not match. Check status to reconnect.');
+    state.lastJob=job;updateWorkbenchJobUI();
+    if(terminalWorkbenchJob(job))return job;
+    await new Promise(resolve=>setTimeout(resolve,650));
+  }
+}
+
+async function openPendingWorkbenchAtlas(){
+  if(!state.pendingActivation||state.activationLoading)return;
+  state.activationLoading=true;state.jobError='';updateWorkbenchJobUI();
+  try{await loadActivatedWorkbenchDataset(state.pendingActivation);state.pendingActivation=null}
+  catch(error){state.jobError='The scan completed, but its atlas could not be opened: '+String(error?.message||error);setView('sources',false)}
+  finally{state.activationLoading=false;updateWorkbenchJobUI()}
+}
+function resumeWorkbenchJob(){return state.pendingActivation?openPendingWorkbenchAtlas():monitorWorkbenchJob(state.activeJob)}
+
+function updateWorkbenchJobUI(){
+  const job=state.lastJob,busy=workbenchBusy(),terminal=terminalWorkbenchJob(job);
+  const message=state.activationLoading?'Opening your atlas…':state.pendingActivation?'Atlas ready to open':state.submittingJob?'Starting the scan…':state.activeJob&&!state.jobPolling?'Status connection interrupted':state.jobCanceling?'Canceling…':job?workbenchStatusLabel(job.status):state.jobError?'Could not start':'Ready';
+  const statusClass=state.jobError||['failed','timed_out','cleanup_failed'].includes(job?.status)?'status-bad':job?.status==='succeeded'?'status-good':job?.status==='canceled'?'status-warn':'muted';
+  if(state.view==='sources'){
+    const visible=Boolean(job||state.submittingJob||state.jobError||state.pendingActivation),progress=$('source-progress');if(progress)progress.hidden=!visible;
+    if($('source-job-status'))$('source-job-status').textContent=message;
+    if($('source-job-status'))$('source-job-status').className=statusClass;
+    if($('source-job-help'))$('source-job-help').textContent=state.activeJob&&!state.jobPolling?'The job may still be running. Check its status before starting another scan.':state.pendingActivation?'Retry opening the compiled atlas without running the scan again.':job?.status==='canceled'?'Scan canceled. Choose a folder and compile when you are ready.':['failed','timed_out','cleanup_failed'].includes(job?.status)?'Review the details below, then try compiling the folder again.':busy?'RKC is indexing source and validating its evidence. Large folders can take a while. You can cancel below.':'Choose a folder to compile another source.';
+    if($('source-job-error')){$('source-job-error').hidden=!state.jobError&&!job?.error;$('source-job-error').textContent=state.jobError||job?.error||''}
+    if($('source-job-output'))$('source-job-output').textContent=job?jobOutputText(job):state.jobError||'Waiting for the local workspace…';
+  }
+  for(const id of ['source-cancel','cancel-command']){const button=$(id);if(button){button.hidden=!state.activeJob||terminal;button.disabled=state.jobCanceling}}
+  for(const id of ['source-resume','resume-job']){const button=$(id);if(button){button.hidden=!(state.pendingActivation||state.activeJob&&!state.jobPolling);button.disabled=state.activationLoading;button.textContent=state.pendingActivation?'Open compiled atlas':'Check status'}}
+  for(const id of ['repository-folder','browse-folder','analyze-folder']){const element=$(id);if(element)element.disabled=busy||!state.workbench?.enabled||(id==='analyze-folder'&&!String($('repository-folder')?.value||'').trim())}
+  if($('analyze-folder'))$('analyze-folder').textContent=!busy&&(state.jobError||['failed','timed_out','canceled'].includes(job?.status))?'Try compiling again':'Compile folder';
+  if(state.view==='commands'){
+    let runnable=false;try{runnable=canRunWorkbenchArguments(currentCommand())}catch(_error){}
+    if($('run-command')){$('run-command').disabled=busy||!runnable;$('run-command').hidden=Boolean(state.workbench?.folder_compilation_only)&&!runnable;$('run-command').textContent=state.workbench?.folder_compilation_only?'Compile folder':'Run protected command'}
+    if($('command-status')){$('command-status').textContent=state.jobError||((job||busy)?message:!state.workbench?.enabled?'Execution is disabled in a static or read-only server.':runnable?'Ready':'Copy this command to run it in a terminal.');$('command-status').className=statusClass}
+    if($('job-output')&&(job||state.jobError))$('job-output').textContent=(job?jobOutputText(job):'')+(state.jobError?'\n\n'+state.jobError:'');
+    if(job)renderJobMeta(job);
   }
 }
 
@@ -1033,14 +1123,17 @@ async function loadActivatedWorkbenchDataset(identity){
 	  throw error;
 	}
 }
-async function cancelWorkbenchJob(id,button,status){
-  button.disabled=true;status.textContent='Canceling…';status.className='status-warn';
+async function cancelWorkbenchJob(id){
+  if(!id||id!==state.activeJob||state.jobCanceling)return;
+  state.jobCanceling=true;state.jobError='';updateWorkbenchJobUI();
   try{
     const response=await fetch('/api/v1/workbench/jobs/'+encodeURIComponent(id),{method:'DELETE',headers:{Accept:'application/json','X-RKC-Workbench-Token':state.workbench.token}});
     const job=await response.json();
     if(!response.ok)throw new Error(job.detail||job.title||'Cancellation failed');
-    status.textContent=workbenchStatusLabel(job.status);
-  }catch(error){status.textContent='Cancellation could not be proven';status.className='status-bad';$('job-output').textContent+='\n\n'+String(error?.message||error)}
+    if(job.id!==id)throw new Error('Cancellation response did not match this job');
+    if(!state.jobPolling)await monitorWorkbenchJob(id);
+  }catch(error){state.jobError='Cancellation could not be proven: '+String(error?.message||error);state.jobCanceling=false}
+  finally{updateWorkbenchJobUI()}
 }
 function renderJobMeta(job){
   const container=$('job-meta');if(!container||state.view!=='commands')return;

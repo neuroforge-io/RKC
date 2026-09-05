@@ -58,19 +58,25 @@ type WorkbenchConfig struct {
 	Executable     string
 	Timeout        time.Duration
 	CommandContext commandcatalog.Context
+	// CompileFolder supplies the portable built-in scan path. When set, this
+	// workbench accepts only quickstart plus one local folder and starts no
+	// command process. The callback must honor cancellation and never execute
+	// repository code, plugins, indexers, or model runtimes.
+	CompileFolder func(context.Context, string) error
 }
 
 // Workbench runs exact RKC argv vectors without a shell. It is deliberately
 // loopback-only, single-job, bounded, and token authenticated.
 type Workbench struct {
-	workspace   string
-	executable  string
-	timeout     time.Duration
-	token       string
-	bootstrap   string
-	slot        chan struct{}
-	environment []string
-	commands    []workbenchCommand
+	workspace     string
+	executable    string
+	timeout       time.Duration
+	token         string
+	bootstrap     string
+	slot          chan struct{}
+	environment   []string
+	commands      []workbenchCommand
+	compileFolder func(context.Context, string) error
 
 	mu   sync.RWMutex
 	jobs map[string]*workbenchJob
@@ -160,7 +166,7 @@ func NewWorkbench(config WorkbenchConfig) (*Workbench, error) {
 		return nil, fmt.Errorf("resolve workbench executable links: %w", err)
 	}
 	info, err = os.Stat(executable)
-	if err != nil || !info.Mode().IsRegular() || info.Mode()&0o111 == 0 {
+	if err != nil || !info.Mode().IsRegular() || (config.CompileFolder == nil && info.Mode()&0o111 == 0) {
 		return nil, errors.New("workbench executable must be an executable regular file")
 	}
 	if config.Timeout <= 0 || config.Timeout > 60*time.Minute {
@@ -181,8 +187,9 @@ func NewWorkbench(config WorkbenchConfig) (*Workbench, error) {
 	return &Workbench{
 		workspace: workspace, executable: executable, timeout: config.Timeout,
 		token: token, bootstrap: bootstrap, slot: make(chan struct{}, 1), environment: environment,
-		commands: workbenchCommandViews(commandcatalog.Commands(config.CommandContext)),
-		jobs:     make(map[string]*workbenchJob),
+		commands:      workbenchCommandViews(commandcatalog.Commands(config.CommandContext)),
+		jobs:          make(map[string]*workbenchJob),
+		compileFolder: config.CompileFolder,
 	}, nil
 }
 
@@ -359,16 +366,25 @@ func (workbench *Workbench) handleSession(w http.ResponseWriter, request *http.R
 	}
 	workbench.mu.RLock()
 	commands := append([]workbenchCommand(nil), workbench.commands...)
+	if workbench.compileFolder != nil {
+		for i := range commands {
+			commands[i].DefaultExecutable = commands[i].Name == "quickstart"
+			if !commands[i].DefaultExecutable {
+				commands[i].Restriction = "Use the command line for this workflow; this portable workspace runs built-in folder compilation."
+			}
+		}
+	}
 	activeDataset := workbenchDatasetIdentityFor(workbench.activeDataset)
 	workbench.mu.RUnlock()
 	w.Header().Set("Cache-Control", "no-store")
 	writeJSON(w, http.StatusOK, map[string]any{
 		"enabled": true, "token": workbench.token, "workspace": workbench.workspace,
-		"maximum_output_bytes": workbenchMaximumOutputBytes,
-		"timeout_seconds":      int(workbench.timeout.Seconds()),
-		"authority_notice":     "Trusted-user launcher: commands have the invoking OS user's filesystem authority; the workspace sets command defaults and is not a security sandbox. Use a trusted browser profile: ephemeral origin allocation reduces, but cannot prove the absence of, legacy service-worker state.",
-		"commands":             commands,
-		"active_dataset":       activeDataset,
+		"folder_compilation_only": workbench.compileFolder != nil,
+		"maximum_output_bytes":    workbenchMaximumOutputBytes,
+		"timeout_seconds":         int(workbench.timeout.Seconds()),
+		"authority_notice":        "Trusted-user launcher: commands have the invoking OS user's filesystem authority; the workspace sets command defaults and is not a security sandbox. Use a trusted browser profile: ephemeral origin allocation reduces, but cannot prove the absence of, legacy service-worker state.",
+		"commands":                commands,
+		"active_dataset":          activeDataset,
 	})
 }
 
@@ -432,6 +448,12 @@ func (workbench *Workbench) handleJobs(w http.ResponseWriter, request *http.Requ
 	if err := validateWorkbenchExecution(payload.Args); err != nil {
 		writeProblem(w, http.StatusBadRequest, "Command rejected", err.Error())
 		return
+	}
+	if workbench.compileFolder != nil {
+		if _, err := portableCompileFolder(workbench.workspace, payload.Args); err != nil {
+			writeProblem(w, http.StatusBadRequest, "Folder compilation rejected", err.Error())
+			return
+		}
 	}
 	job, err := workbench.createJob(payload.Args)
 	if err != nil {
@@ -711,6 +733,11 @@ func validateWorkbenchArgs(args []string) error {
 }
 
 func (workbench *Workbench) createJob(args []string) (*workbenchJob, error) {
+	if workbench.compileFolder != nil {
+		if _, err := portableCompileFolder(workbench.workspace, args); err != nil {
+			return nil, err
+		}
+	}
 	id, err := randomWorkbenchValue(12)
 	if err != nil {
 		return nil, err
@@ -733,6 +760,10 @@ func (workbench *Workbench) createJob(args []string) (*workbenchJob, error) {
 		ID: id, Args: append([]string(nil), args...), Status: "queued",
 		CreatedAt: created, DeadlineAt: deadline, context: ctx, cancel: cancel, done: make(chan struct{}),
 		CleanupScope: workbenchCleanupScope(), mayLaunchManagedUnits: workbenchMayLaunchManagedUnits(args),
+	}
+	if workbench.compileFolder != nil {
+		job.CleanupScope = "in_process"
+		job.mayLaunchManagedUnits = false
 	}
 	workbench.jobs[id] = job
 	return copyWorkbenchJob(job), nil
@@ -781,6 +812,10 @@ func (workbench *Workbench) runJob(id string) {
 	args := append([]string(nil), job.Args...)
 	workbench.mu.Unlock()
 
+	if workbench.compileFolder != nil {
+		workbench.runFolderJob(ctx, id, args, releaseSlot)
+		return
+	}
 	command := exec.Command(workbench.executable, args...)
 	command.Dir = workbench.workspace
 	command.Env = append([]string(nil), workbench.environment...)

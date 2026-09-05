@@ -28,6 +28,7 @@ func runQuickstartContext(ctx context.Context, args []string) error {
 	config := fs.String("config", "", "optional RKC JSON configuration")
 	output := fs.String("out", "", "atlas directory (default <repository>/.rkc)")
 	state := fs.String("state-dir", "", "snapshot directory (default <repository>/.rkc-state)")
+	noGitMetadata := fs.Bool("no-git-metadata", false, "skip the Git metadata helper and record Git provenance as unavailable")
 	enablePython := fs.Bool("python", false, "request the Python adapter (disabled for direct quickstart until aggregate ceilings are proved)")
 	clean := fs.Bool("clean", false, "disable incremental stage-cache reuse")
 	force := fs.Bool("force", true, "replace an existing RKC-owned atlas")
@@ -84,6 +85,9 @@ func runQuickstartContext(ctx context.Context, args []string) error {
 	}
 	if *config != "" {
 		scanArguments = append(scanArguments, "--config", *config)
+	}
+	if *noGitMetadata {
+		scanArguments = append(scanArguments, "--no-git-metadata")
 	}
 	if !*enablePython {
 		scanArguments = append(scanArguments, "--no-python")

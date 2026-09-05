@@ -291,7 +291,11 @@ paths:
   /api/v1/workbench/session:
     get:
       operationId: getWorkbenchSession
-      description: Available only for an explicitly enabled loopback workbench.
+      description: >-
+        Available only for an explicitly enabled loopback workbench. The
+        folder_compilation_only flag identifies portable sessions that accept
+        only quickstart plus one local folder through the built-in compiler.
+        rkc gui initially serves an empty workspace until a source job succeeds.
       responses:
         '200':
           description: Ephemeral same-origin token, command catalogue, and bounds.
@@ -328,7 +332,11 @@ paths:
   /api/v1/workbench/jobs:
     post:
       operationId: createWorkbenchJob
-      description: Runs one allow-listed RKC argument vector without a shell.
+      description: >-
+        Runs one allow-listed RKC argument vector without a shell. Portable
+        folder-only sessions accept exactly [quickstart, local-folder] and
+        return 400 for other argument vectors. All sessions activate graphical
+        folder jobs only after the resulting atlas passes integrity checks.
       parameters:
         - $ref: '#/components/parameters/WorkbenchToken'
       requestBody:

@@ -317,7 +317,7 @@ func guardedDirectEnvironment(command string) []string {
 var scanAdmissionBooleanFlags = map[string]struct{}{
 	"allow-file-url": {}, "fail-on-errors": {}, "force": {}, "include-sources": {},
 	"json": {}, "keep-materialized": {}, "no-cache": {}, "no-env-keys": {},
-	"no-frameworks": {}, "no-go": {}, "no-integrations": {}, "no-json-schema": {},
+	"no-frameworks": {}, "no-go": {}, "no-git-metadata": {}, "no-integrations": {}, "no-json-schema": {},
 	"no-jsonl-graph": {}, "no-manifests": {}, "no-markdown": {}, "no-openapi": {},
 	"no-plugins": {}, "no-python": {}, "no-search-index": {}, "no-secret-scan": {},
 	"no-static-site": {}, "no-typescript": {}, "submodules": {},
@@ -341,7 +341,7 @@ var scanAdmissionValueFlags = map[string]struct{}{
 }
 
 var quickstartAdmissionBooleanFlags = map[string]struct{}{
-	"clean": {}, "force": {}, "python": {}, "scip-no-pin-check": {},
+	"clean": {}, "force": {}, "python": {}, "scip-no-pin-check": {}, "no-git-metadata": {},
 }
 
 var quickstartAdmissionValueFlags = map[string]struct{}{

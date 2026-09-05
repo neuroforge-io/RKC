@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"syscall"
 	"time"
@@ -52,6 +53,7 @@ const (
 func runServeWithSafety(ctx context.Context, args []string, safety serveSafetyChecks) (resultErr error) {
 	fs := flag.NewFlagSet("serve", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
+	welcome := fs.Bool("welcome", false, "start a protected empty workspace without scanning a repository")
 	dir := fs.String("dir", ".rkc", "generated RKC output directory")
 	database := fs.String("database", "", "durable SQLite store (mutually exclusive with --dir)")
 	snapshotID := fs.String("snapshot", "", "SQLite snapshot ID")
@@ -74,6 +76,7 @@ func runServeWithSafety(ctx context.Context, args []string, safety serveSafetyCh
 	if err := validateServeHTTPTimeouts(*readTimeout, *writeTimeout); err != nil {
 		return err
 	}
+	portableWorkbench := *workbenchEnabled && runtime.GOOS != "linux"
 	// Workbench pages carry local command authority. Never deterministically
 	// reuse the static server's browser origin: an OS-selected port avoids the
 	// predictable origin where persisted service-worker state could remain.
@@ -83,14 +86,17 @@ func runServeWithSafety(ctx context.Context, args []string, safety serveSafetyCh
 	if err := validateServeAddress(*addr, *allowRemote, *workbenchEnabled); err != nil {
 		return err
 	}
-	if *workbenchEnabled && *openBrowser {
+	if *workbenchEnabled && *openBrowser && !portableWorkbench {
 		return errors.New("direct serve --workbench cannot launch a browser inside the guarded service; use rkc open --workbench")
 	}
-	if *workbenchEnabled && *readyFile == "" {
+	if *workbenchEnabled && *readyFile == "" && !(portableWorkbench && *openBrowser) {
 		return errors.New("workbench requires an owner-private --ready-file for its out-of-band browser capability; use rkc open --workbench for automatic setup")
 	}
+	if *welcome && (!*workbenchEnabled || *database != "" || *snapshotID != "" || *repositoryID != "") {
+		return errors.New("--welcome requires a workbench without a selected database or snapshot")
+	}
 	var executable string
-	if *workbenchEnabled {
+	if *workbenchEnabled && !portableWorkbench {
 		if safety.requireLowPriority == nil || safety.reproveLowPriority == nil || safety.checkHigherPriority == nil ||
 			safety.checkHostMemory == nil || safety.priorityCheckInterval <= 0 {
 			return errors.New("workbench safety checks are unavailable")
@@ -110,7 +116,20 @@ func runServeWithSafety(ctx context.Context, args []string, safety serveSafetyCh
 			return fmt.Errorf("resolve RKC executable: %w", err)
 		}
 	}
-	dataset, err := loadSelectedDataset(ctx, *dir, *database, *snapshotID, *repositoryID, flagWasSet(fs, "dir"))
+	if portableWorkbench {
+		var err error
+		executable, err = os.Executable()
+		if err != nil {
+			return err
+		}
+	}
+	var dataset *server.Dataset
+	var err error
+	if *welcome {
+		dataset, err = server.NewWorkspaceDataset()
+	} else {
+		dataset, err = loadSelectedDataset(ctx, *dir, *database, *snapshotID, *repositoryID, flagWasSet(fs, "dir"))
+	}
 	if err != nil {
 		return err
 	}
@@ -124,14 +143,23 @@ func runServeWithSafety(ctx context.Context, args []string, safety serveSafetyCh
 		// higher-priority work to start after initial admission. Recheck before
 		// any listener or bootstrap capability is published; the outer `rkc open`
 		// guard also monitors and can terminate this child throughout the load.
-		if err := recheckWorkbenchSafety(safety.reproveLowPriority, safety.checkHigherPriority, safety.checkHostMemory); err != nil {
-			return fmt.Errorf("workbench safety changed during dataset preparation: %w", err)
+		if !portableWorkbench {
+			if err := recheckWorkbenchSafety(safety.reproveLowPriority, safety.checkHigherPriority, safety.checkHostMemory); err != nil {
+				return fmt.Errorf("workbench safety changed during dataset preparation: %w", err)
+			}
 		}
 		commandContext := servedWorkbenchCommandContext(dataset.Root, dataset.Manifest.ID, *database)
-		workbench, err = server.NewWorkbench(server.WorkbenchConfig{
-			Workspace: *workspace, Executable: executable, Timeout: *workbenchTimeout,
-			CommandContext: commandContext,
-		})
+		config := server.WorkbenchConfig{
+			Workspace: *workspace, Executable: executable, Timeout: *workbenchTimeout, CommandContext: commandContext,
+		}
+		if portableWorkbench {
+			config.CompileFolder = func(ctx context.Context, folder string) error {
+				// No custom configuration, adapters, Git subprocesses, generated
+				// indexers, or model commands enter this portable GUI path.
+				return runQuickstartContext(ctx, []string{"--no-git-metadata", folder})
+			}
+		}
+		workbench, err = server.NewWorkbench(config)
 		if err != nil {
 			return err
 		}
@@ -169,7 +197,7 @@ func runServeWithSafety(ctx context.Context, args []string, safety serveSafetyCh
 	serveDone := make(chan error, 1)
 	go func() { serveDone <- httpServer.Serve(listener) }()
 	var safetyDone <-chan error
-	if workbench != nil {
+	if workbench != nil && !portableWorkbench {
 		monitorContext, stopMonitor := context.WithCancel(ctx)
 		priorityTicker := time.NewTicker(safety.priorityCheckInterval)
 		monitorDone := make(chan error, 1)
@@ -187,7 +215,7 @@ func runServeWithSafety(ctx context.Context, args []string, safety serveSafetyCh
 	if *openBrowser {
 		if !loopbackListenAddress(*addr) {
 			fmt.Fprintln(os.Stderr, "rkc: --open was requested, but the listen address is not loopback; use an explicit localhost address")
-		} else if err := launchBrowser(ready.URL); err != nil {
+		} else if err := launchServeBrowser(ready, workbench != nil); err != nil {
 			// Browser launch is a convenience only. The server remains usable in
 			// headless environments and the URL is already printed above.
 			fmt.Fprintf(os.Stderr, "rkc: could not open the browser: %v\n", err)
@@ -390,4 +418,11 @@ func publishServeReadyFile(path string, receipt serveReadyReceipt) error {
 		return fmt.Errorf("publish readiness file without replacement: %w", err)
 	}
 	return nil
+}
+
+func launchServeBrowser(ready serveReadyReceipt, protected bool) error {
+	if protected {
+		return launchBrowserPrivately(ready.BrowserURL)
+	}
+	return launchBrowser(ready.URL)
 }

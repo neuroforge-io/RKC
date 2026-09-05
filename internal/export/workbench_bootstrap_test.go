@@ -373,7 +373,7 @@ func TestBrowserResourceAndCancellationClaimsAreStateBound(t *testing.T) {
 	}
 	application := string(assets["app.js"])
 	for _, marker := range []string{
-		"enabled?'1 CPU · 4.5 GiB hard ceiling · re-proved continuously':'No command execution'",
+		"portable?'Built-in folder compilation · no external commands':'1 CPU · 4.5 GiB hard ceiling · re-proved continuously'",
 		"enabled?number(session.maximum_output_bytes)+' bytes':'Not applicable'",
 		"canceled:'Canceled'",
 		"cleanup_failed:'Cleanup unproven'",

@@ -43,6 +43,9 @@ import (
 // lifecycle observation. Disable flags remove only their named analyzers; core
 // inventory, normalization, validation, and coverage always remain live.
 type Options struct {
+	// SkipGitInspection avoids launching Git for metadata in a built-in-only
+	// scan. Provenance explicitly records Git as unavailable.
+	SkipGitInspection  bool
 	Root               string
 	MaxFileBytes       int64
 	MaxTextBytes       int64
@@ -154,7 +157,7 @@ func scanSequential(ctx context.Context, opts Options) (rkcmodel.Bundle, rkcmode
 		return rkcmodel.Bundle{}, rkcmodel.Coverage{}, err
 	}
 	opts.Origin = suppliedOrigin
-	gitInfo, err := inspectGit(ctx, root)
+	gitInfo, err := inspectGitForScan(ctx, root, opts.SkipGitInspection)
 	if err != nil {
 		return rkcmodel.Bundle{}, rkcmodel.Coverage{}, err
 	}
@@ -1129,4 +1132,11 @@ func gitOutputRaw(ctx context.Context, root string, args ...string) ([]byte, err
 	)
 	output, err := cmd.Output()
 	return output, err
+}
+
+func inspectGitForScan(ctx context.Context, root string, skip bool) (rkcmodel.GitInfo, error) {
+	if skip {
+		return rkcmodel.GitInfo{Unavailable: true}, ctx.Err()
+	}
+	return inspectGit(ctx, root)
 }

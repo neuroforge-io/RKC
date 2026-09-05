@@ -64,6 +64,7 @@ func runScanContext(ctx context.Context, args []string) (resultErr error) {
 	pluginTimeout := fs.Duration("plugin-timeout", cfg.PluginTimeout(), "per-plugin wall-clock timeout")
 	pluginOutput := fs.Int64("plugin-output-bytes", cfg.Plugins.MaximumOutputBytes, "maximum plugin stdout bytes")
 	noPlugins := fs.Bool("no-plugins", !cfg.Plugins.Enabled, "disable all language adapters; direct scan requires this or --no-python")
+	noGitMetadata := fs.Bool("no-git-metadata", false, "skip the Git metadata helper and record Git provenance as unavailable")
 	noPython := fs.Bool("no-python", !cfg.Plugins.PythonAST.Enabled, "disable the Python syntax adapter; direct scan requires this or --no-plugins")
 	noGo := fs.Bool("no-go", !cfg.Plugins.GoAST.Enabled, "disable the Go syntax adapter")
 	noTypeScript := fs.Bool("no-typescript", !cfg.Plugins.TypeScriptSyntax.Enabled, "disable the JavaScript and TypeScript syntax adapter")
@@ -388,7 +389,8 @@ func runScanContext(ctx context.Context, args []string) (resultErr error) {
 	}()
 	runJournalPath := runJournal.Path()
 	bundle, coverage, scanErr := pipeline.Scan(ctx, pipeline.Options{
-		Root: rootAbs, MaxFileBytes: *maxFile, MaxTextBytes: *maxText, MaxRepositoryBytes: *maxRepository, MaxFiles: *maxFiles,
+		SkipGitInspection: *noGitMetadata,
+		Root:              rootAbs, MaxFileBytes: *maxFile, MaxTextBytes: *maxText, MaxRepositoryBytes: *maxRepository, MaxFiles: *maxFiles,
 		Excludes: excludes, SCIPIndexes: append([]string(nil), scipIndexes...),
 		TracePaths:        append([]string(nil), tracePaths...),
 		HistoryPath:       *historyPath,
