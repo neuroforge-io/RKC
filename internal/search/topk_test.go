@@ -200,6 +200,9 @@ func exhaustiveSearchReference(index *Index, query Query) Response {
 		if hits[i].Score == hits[j].Score {
 			left := hits[i].Document.QualifiedName + "\x00" + hits[i].Document.ID
 			right := hits[j].Document.QualifiedName + "\x00" + hits[j].Document.ID
+			if left == right {
+				return hits[i].Document.ID < hits[j].Document.ID
+			}
 			return left < right
 		}
 		return hits[i].Score > hits[j].Score

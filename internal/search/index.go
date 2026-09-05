@@ -140,6 +140,25 @@ type Response struct {
 	IndexVersion string `json:"index_version"`
 }
 
+// Position identifies the last emitted lexical hit by its rounded score,
+// QualifiedName + "\x00" + ID ordering key, and ID as a final tie-breaker when
+// embedded separators cause ordering-key collisions. It is an in-process
+// continuation position, not an authenticated cursor. Callers must bind it to
+// the same immutable index, query, and filters before resuming.
+type Position struct {
+	Score float64
+	Key   string
+	ID    string
+}
+
+// LexicalPage adds the complete matched-document count to one lexical search
+// response. Total includes hits before the continuation position, whereas
+// Truncated reports whether matching hits remain after this page.
+type LexicalPage struct {
+	Response
+	Total int `json:"total"`
+}
+
 type builderDoc struct {
 	document Document
 	terms    map[string]termFields
@@ -762,6 +781,14 @@ func buildDocument(document Document) builderDoc {
 // BM25 multiplied by fixed field boosts, plus deterministic exact and prefix
 // bonuses; ties use QualifiedName then ID.
 func (index *Index) Search(query Query) Response {
+	return index.SearchPage(query, nil).Response
+}
+
+// SearchPage returns the best bounded lexical hits strictly after a position.
+// A nil position starts at the highest-ranked hit. Callers may change Limit
+// between pages, but must preserve the index, query, and filters. Selection
+// retains at most Limit candidates while scoring the complete matching corpus.
+func (index *Index) SearchPage(query Query, after *Position) LexicalPage {
 	text, parsed := parseQuery(query.Text)
 	query = applyParsedFilters(query, parsed)
 	terms := tokenize(text)
@@ -803,10 +830,16 @@ func (index *Index) Search(query Query) Response {
 
 	normalizedText := normalize(text)
 	best := make(searchCandidateHeap, 0, min(query.Limit, len(scores)))
+	remaining := 0
 	for id, score := range scores {
 		document := index.Documents[id]
 		score = applySearchBonuses(document, normalizedText, score, nil)
 		candidate := searchCandidate{document: document, score: roundScore(score), key: document.QualifiedName + "\x00" + document.ID}
+		if after != nil && !(candidate.score < after.Score || candidate.score == after.Score &&
+			(candidate.key > after.Key || candidate.key == after.Key && candidate.document.ID > after.ID)) {
+			continue
+		}
+		remaining++
 		if len(best) < query.Limit {
 			heap.Push(&best, candidate)
 		} else if candidate.betterThan(best[0]) {
@@ -842,7 +875,7 @@ func (index *Index) Search(query Query) Response {
 	for i := range hits {
 		hits[i].Reasons, hits[i].Terms = keys(reasons[i]), keys(matched[i])
 	}
-	truncated := len(scores) > query.Limit
+	truncated := remaining > query.Limit
 	for position := range hits {
 		document := hits[position].Document
 		if len(document.Body) <= MaximumResultBodyBytes {
@@ -859,7 +892,10 @@ func (index *Index) Search(query Query) Response {
 		hits[position].Reasons = unique(append(hits[position].Reasons, "body:excerpt", "body:truncated"))
 		sort.Strings(hits[position].Reasons)
 	}
-	return Response{Query: query.Text, Hits: hits, Truncated: truncated, Mode: "embedded-bm25-lexical", IndexVersion: index.Version}
+	return LexicalPage{
+		Response: Response{Query: query.Text, Hits: hits, Truncated: truncated, Mode: "embedded-bm25-lexical", IndexVersion: index.Version},
+		Total:    len(scores),
+	}
 }
 
 // searchCandidate stores one ranked result without allocating its explanation.
@@ -871,6 +907,9 @@ type searchCandidate struct {
 
 func (candidate searchCandidate) betterThan(other searchCandidate) bool {
 	if candidate.score == other.score {
+		if candidate.key == other.key {
+			return candidate.document.ID < other.document.ID
+		}
 		return candidate.key < other.key
 	}
 	return candidate.score > other.score
