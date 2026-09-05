@@ -1,6 +1,6 @@
 'use strict';
 const commandCatalog=__RKC_COMMAND_CATALOG__;
-const state={bundle:null,coverage:null,nodes:new Map(),artifacts:new Map(),evidence:new Map(),outgoing:new Map(),incoming:new Map(),selected:null,selectedArtifact:null,selectedArtifactContext:null,view:'overview',navigationRevision:0,listPaging:null,staticPaging:null,staticPageIndex:0,staticResultCount:0,browseNodeIDs:new Set(),hydratedNodeIDs:new Set(),results:[],apiSearchResults:null,workbench:null,commandName:'quickstart',repositoryFolder:'',directoryListing:null,activationNotice:null,api:false,facets:null,listTruncated:false,diagnosticsTruncated:false,searchTimer:null,searchRevision:0,atlasRevision:0,staticBootstrap:false,staticLoad:null,staticSearchRecords:null,staticSearchByID:new Map(),staticSearchLoad:null,capabilities:null,contextQuery:'',contextPacket:null,contextRevision:0,contextLoading:false,contextError:'',commandFilter:'',commandGroup:'all',commandDrafts:new Map(),activeJob:null,lastJob:null,jobCommand:'',submittingJob:false,toastTimer:null};
+const state={bundle:null,coverage:null,nodes:new Map(),artifacts:new Map(),evidence:new Map(),outgoing:new Map(),incoming:new Map(),selected:null,selectedArtifact:null,selectedArtifactContext:null,view:'overview',navigationRevision:0,listPaging:null,staticPaging:null,staticPageIndex:0,staticResultCount:0,browseNodeIDs:new Set(),hydratedNodeIDs:new Set(),results:[],apiSearchResults:null,workbench:null,commandName:'quickstart',repositoryFolder:'',directoryListing:null,activationNotice:null,api:false,facets:null,listTruncated:false,diagnosticsTruncated:false,diagnosticPaging:null,diagnosticRequest:null,diagnosticRevision:0,diagnosticPageIndex:0,diagnosticResultCount:0,diagnosticFilters:{severity:'',code:''},diagnosticDraft:{severity:'',code:''},searchTimer:null,searchRevision:0,atlasRevision:0,staticBootstrap:false,staticLoad:null,staticSearchRecords:null,staticSearchByID:new Map(),staticSearchLoad:null,capabilities:null,contextQuery:'',contextPacket:null,contextRevision:0,contextLoading:false,contextError:'',commandFilter:'',commandGroup:'all',commandDrafts:new Map(),activeJob:null,lastJob:null,jobCommand:'',submittingJob:false,toastTimer:null};
 const maximumGraphNeighbors=32,maximumGraphNodesShown=16;
 const maximumListRows=200;
 const snapshotGenerationHeader='X-RKC-Snapshot-ID',snapshotGenerationErrorCode='RKC_SNAPSHOT_GENERATION_CHANGED',maximumSnapshotLoadAttempts=3;
@@ -74,7 +74,7 @@ async function loadAPISnapshotGeneration(){
     throw snapshotGenerationError('Snapshot generation changed while the atlas was loading. Reload to obtain one consistent snapshot.');
   }
   const nodes=nodesResult.data,diagnostics=diagnosticsResult.data,facets=facetsResult.data;
-  return {bundle:{snapshot:manifest,nodes:nodes.items||[],artifacts:[],edges:[],evidence:[],diagnostics:diagnostics.items||[]},coverage,facets,list_truncated:Boolean(nodes.truncated),diagnostics_truncated:Boolean(diagnostics.truncated),list_page:{next_cursor:nodes.next_cursor,total:nodes.total,snapshot_id:nodes.snapshot_id}};
+  return {bundle:{snapshot:manifest,nodes:nodes.items||[],artifacts:[],edges:[],evidence:[],diagnostics:diagnostics.items||[]},coverage,facets,list_truncated:Boolean(nodes.truncated),diagnostics_truncated:Boolean(diagnostics.truncated),list_page:{next_cursor:nodes.next_cursor,total:nodes.total,snapshot_id:nodes.snapshot_id},diagnostic_page:{next_cursor:diagnostics.next_cursor,total:diagnostics.total,snapshot_id:diagnostics.snapshot_id}};
 }
 
 function applyAtlasData(data,atlasRevision){
@@ -88,7 +88,10 @@ function applyAtlasData(data,atlasRevision){
   for(const artifact of state.bundle.artifacts||[])state.artifacts.set(artifact.id,artifact);
   for(const evidence of state.bundle.evidence||[])state.evidence.set(evidence.id,evidence);
   for(const edge of state.bundle.edges||[]){push(state.outgoing,edge.from,edge);push(state.incoming,edge.to,edge)}
-  if(state.api)installFirstListPage({...data.list_page,truncated:state.listTruncated},state.bundle.nodes,'/api/v1/nodes',new URLSearchParams({limit:'120'}),'');
+  if(state.api){
+    installFirstListPage({...data.list_page,truncated:state.listTruncated},state.bundle.nodes,'/api/v1/nodes',new URLSearchParams({limit:'120'}),'');
+    installFirstDiagnosticPage({...data.diagnostic_page,truncated:state.diagnosticsTruncated},state.bundle.diagnostics||[],{severity:'',code:''});
+  }
 }
 
 async function ensureFullStaticData(){
@@ -147,7 +150,7 @@ async function fetchSnapshotJSON(path){
 
 function snapshotGenerationError(message){const error=new Error(message);error.code=snapshotGenerationErrorCode;return error}
 function isSnapshotGenerationError(error){return error?.code===snapshotGenerationErrorCode}
-function advanceAtlasGeneration(){state.atlasRevision++;state.navigationRevision++;state.searchRevision++;state.listPaging=null;state.staticPaging=null;state.staticPageIndex=0;clearTimeout(state.searchTimer);return state.atlasRevision}
+function advanceAtlasGeneration(){state.atlasRevision++;state.navigationRevision++;state.searchRevision++;state.listPaging=null;state.staticPaging=null;state.staticPageIndex=0;resetDiagnosticPaging();clearTimeout(state.searchTimer);return state.atlasRevision}
 
 function push(map,key,value){if(!map.has(key))map.set(key,[]);map.get(key).push(value)}
 function safeHash(){try{return decodeURIComponent(location.hash.slice(1))}catch(_error){return''}}
@@ -650,7 +653,89 @@ function renderGraphFromState(seedID){
   }
 }
 
-function renderDiagnostics(){const diagnostics=state.bundle.diagnostics||[],counts=state.facets?.diagnostics||countBy(diagnostics,item=>item.severity),bounded=state.diagnosticsTruncated?'<p class="muted">Showing the first bounded result window. Use the API or command center for filtered diagnostics.</p>':'';$('content').innerHTML='<div class="card"><h2>Diagnostics</h2>'+bounded+bars(counts)+'</div><div class="card" role="list" aria-label="Repository diagnostics">'+(diagnostics.length?diagnostics.map(item=>'<div role="listitem" class="diagnostic '+esc(item.severity)+'"><div><b>'+esc(item.severity.toUpperCase())+' '+esc(item.code)+'</b> · '+esc(item.stage||'unspecified stage')+'</div><div>'+esc(item.message)+'</div>'+(item.source?'<div class="muted mono">'+esc(item.source.path+':'+(item.source.start_line||'?'))+'</div>':'')+'</div>').join(''):'<p class="muted">No diagnostics were emitted.</p>')+'</div>'}
+function resetDiagnosticPaging(){
+  state.diagnosticRevision++;state.diagnosticPaging=null;state.diagnosticRequest=null;state.diagnosticPageIndex=0;state.diagnosticResultCount=0;
+  state.diagnosticFilters={severity:'',code:''};state.diagnosticDraft={severity:'',code:''};
+}
+
+function installFirstDiagnosticPage(response,values,filters){
+  const entry={cursor:'',limit:maximumListRows,start:0,count:values?.length||0},metadata=listPageMetadata(response,values,entry);
+  const parameters=new URLSearchParams();if(filters.severity)parameters.set('severity',filters.severity);if(filters.code)parameters.set('code',filters.code);
+  state.diagnosticPaging={parameters:parameters.toString(),history:[entry],index:0,...metadata};
+  state.bundle.diagnostics=values;state.diagnosticsTruncated=metadata.truncated;state.diagnosticFilters={...filters};state.diagnosticDraft={...filters};
+}
+
+function renderDiagnostics(){
+  const all=state.bundle.diagnostics||[],counts=state.facets?.diagnostics||state.coverage.diagnostics_by_severity||countBy(all,item=>item.severity),filters=state.diagnosticFilters,paging=state.api?state.diagnosticPaging:null;
+  const matching=state.api?all:all.filter(item=>(!filters.severity||item.severity===filters.severity)&&(!filters.code||item.code===filters.code));
+  state.diagnosticResultCount=matching.length;
+  if(!state.api)state.diagnosticPageIndex=Math.min(state.diagnosticPageIndex,Math.max(0,Math.ceil(matching.length/maximumListRows)-1));
+  const index=state.api?(paging?.index||0):state.diagnosticPageIndex,start=state.api?(paging?.history[index].start||0):index*maximumListRows,diagnostics=state.api?matching:matching.slice(start,start+maximumListRows),total=state.api?paging?.total:matching.length;
+  const summary=diagnostics.length?'Showing '+number(start+1)+'–'+number(start+diagnostics.length)+(Number.isSafeInteger(total)?' of '+number(total):' loaded')+' diagnostics':'No matching diagnostics';
+  const severities=[...new Set(['fatal','error','warning','info','note',...Object.keys(counts)])];
+  const rows=diagnostics.map(item=>'<div role="listitem" class="diagnostic '+esc(item.severity)+'"><div><b>'+esc(String(item.severity||'unknown').toUpperCase())+' '+esc(item.code)+'</b> · '+esc(item.stage||'unspecified stage')+'</div><div>'+esc(item.message)+'</div>'+(item.source?'<div class="muted mono">'+esc(item.source.path+':'+(item.source.start_line||'?'))+'</div>':'')+'</div>').join('');
+  $('content').innerHTML='<div class="card"><h2>Diagnostics</h2><p class="muted">Severity counts describe the whole snapshot. Filter the records below to focus your review.</p>'+bars(counts)+'<form id="diagnostic-filter-form" class="diagnostic-filters"><div class="field"><label for="diagnostic-severity">Severity</label><select id="diagnostic-severity"><option value="">All severities</option>'+severities.map(value=>'<option value="'+esc(value)+'" '+(state.diagnosticDraft.severity===value?'selected':'')+'>'+esc(value)+'</option>').join('')+'</select></div><div class="field"><label for="diagnostic-code">Exact diagnostic code</label><input id="diagnostic-code" maxlength="256" placeholder="For example: PARSE_ERROR" value="'+esc(state.diagnosticDraft.code)+'" spellcheck="false"></div><div class="button-row"><button type="submit" class="primary">Apply filters</button><button id="diagnostic-clear" type="button" class="secondary">Clear filters</button></div></form></div><div class="card"><p id="diagnostic-summary" role="status" aria-live="polite">'+esc(summary)+'</p><nav class="diagnostic-pagination" aria-label="Diagnostic pages"><div class="button-row"><button id="diagnostic-previous" type="button" class="secondary" aria-controls="diagnostic-list">Previous page</button><button id="diagnostic-next" type="button" class="secondary" aria-controls="diagnostic-list">Load more</button></div><p id="diagnostic-page-status" class="help-text" role="status" aria-live="polite"></p><p class="help-text">Load more opens the next page. Earlier pages remain available.</p></nav><div id="diagnostic-list" role="list" tabindex="-1" aria-label="Repository diagnostics" aria-describedby="diagnostic-summary">'+(rows||'<p class="muted">'+(filters.severity||filters.code?'No diagnostics match these filters.':'No diagnostics were recorded in this snapshot.')+'</p>')+'</div></div>';
+  $('diagnostic-filter-form').addEventListener('submit',event=>{event.preventDefault();applyDiagnosticFilters()});
+  $('diagnostic-severity').addEventListener('change',()=>{state.diagnosticDraft.severity=$('diagnostic-severity').value});
+  $('diagnostic-code').addEventListener('input',()=>{state.diagnosticDraft.code=$('diagnostic-code').value});
+  $('diagnostic-clear').addEventListener('click',()=>{$('diagnostic-severity').value='';$('diagnostic-code').value='';applyDiagnosticFilters()});
+  $('diagnostic-previous').addEventListener('click',()=>changeDiagnosticPage(-1));$('diagnostic-next').addEventListener('click',()=>changeDiagnosticPage(1));
+  updateDiagnosticRequest();
+}
+
+function updateDiagnosticRequest(){
+  if(state.view!=='diagnostics'||!$('diagnostic-page-status'))return;
+  const paging=state.api?state.diagnosticPaging:null,index=state.api?(paging?.index||0):state.diagnosticPageIndex,request=state.diagnosticRequest;
+  const more=state.api?Boolean(paging&&(index+1<paging.history.length||paging.nextCursor)):(index+1)*maximumListRows<state.diagnosticResultCount;
+  $('diagnostic-previous').disabled=index===0||Boolean(request?.loading);$('diagnostic-next').disabled=!more||Boolean(request?.loading);
+  $('diagnostic-next').textContent=paging&&index+1===paging.history.length?'Load more':'Next page';
+  $('diagnostic-list').setAttribute('aria-busy',String(Boolean(request?.loading)));
+  $('diagnostic-page-status').textContent=request?.loading?'Opening diagnostics… Current results remain visible.':request?.error||('Page '+number(index+1)+(paging?.truncated&&!paging.nextCursor&&index+1===paging.history.length?' · The server did not provide a continuation cursor. Refresh or update the server to reach more diagnostics.':''));
+}
+
+async function applyDiagnosticFilters(){
+  const filters={severity:$('diagnostic-severity').value,code:$('diagnostic-code').value.trim()};state.diagnosticDraft={...filters};
+  if(!state.api){state.diagnosticRevision++;state.diagnosticRequest=null;state.diagnosticFilters=filters;state.diagnosticPageIndex=0;renderDiagnostics();$('diagnostic-list').focus();return}
+  const parameters=new URLSearchParams({limit:String(maximumListRows)});if(filters.severity)parameters.set('severity',filters.severity);if(filters.code)parameters.set('code',filters.code);
+  if(state.diagnosticRequest?.loading&&state.diagnosticRequest.kind==='filter'&&state.diagnosticRequest.key===parameters.toString())return;
+  const revision=++state.diagnosticRevision,atlasRevision=state.atlasRevision,navigationRevision=state.navigationRevision;
+  const request={loading:true,error:'',kind:'filter',key:parameters.toString()};state.diagnosticRequest=request;updateDiagnosticRequest();
+  try{
+    const response=await fetchJSON('/api/v1/diagnostics?'+parameters);
+    if(revision!==state.diagnosticRevision||atlasRevision!==state.atlasRevision)return;
+    installFirstDiagnosticPage(response,response.items,filters);
+    if(state.view==='diagnostics'){renderDiagnostics();if(navigationRevision===state.navigationRevision)$('diagnostic-list').focus()}
+  }catch(error){
+    if(revision===state.diagnosticRevision&&atlasRevision===state.atlasRevision)request.error='Diagnostic filters could not be applied: '+String(error?.message||error)+'. Current results are unchanged; use Apply filters to retry.';
+  }finally{if(revision===state.diagnosticRevision&&atlasRevision===state.atlasRevision){request.loading=false;updateDiagnosticRequest()}}
+}
+
+async function changeDiagnosticPage(direction){
+  if(direction!==-1&&direction!==1||state.diagnosticRequest?.loading)return;
+  if(!state.api){
+    const target=state.diagnosticPageIndex+direction;if(target<0||target*maximumListRows>=state.diagnosticResultCount)return;
+    state.diagnosticPageIndex=target;renderDiagnostics();$('diagnostic-list').focus();return;
+  }
+  const paging=state.diagnosticPaging;if(!paging)return;
+  const target=paging.index+direction;if(target<0||target>paging.history.length||target===paging.history.length&&!paging.nextCursor)return;
+  const current=paging.history[paging.index],known=paging.history[target],entry=known||{cursor:paging.nextCursor,limit:maximumListRows,start:current.start+current.count};
+  const parameters=new URLSearchParams(paging.parameters);parameters.set('limit',String(entry.limit));if(entry.cursor)parameters.set('cursor',entry.cursor);
+  const revision=++state.diagnosticRevision,atlasRevision=state.atlasRevision,navigationRevision=state.navigationRevision,request={loading:true,error:'',kind:'page'};
+  state.diagnosticRequest=request;updateDiagnosticRequest();
+  try{
+    const response=await fetchJSON('/api/v1/diagnostics?'+parameters);
+    if(revision!==state.diagnosticRevision||atlasRevision!==state.atlasRevision||state.diagnosticPaging!==paging)return;
+    const values=response.items,metadata=listPageMetadata(response,values,entry);
+    if(metadata.nextCursor&&paging.history.some((page,index)=>page.cursor===metadata.nextCursor&&index!==target+1))throw new Error('Diagnostic continuation repeated an earlier page');
+    if(known&&values.length!==known.count||paging.total!==undefined&&metadata.total!==undefined&&paging.total!==metadata.total)throw snapshotGenerationError('Diagnostic page boundaries changed within the active snapshot');
+    if(!known)paging.history.push({...entry,count:values.length});
+    paging.index=target;paging.nextCursor=metadata.nextCursor;paging.total=metadata.total??paging.total;paging.truncated=metadata.truncated;
+    state.bundle.diagnostics=values;state.diagnosticsTruncated=metadata.truncated;
+    if(state.view==='diagnostics'){renderDiagnostics();if(navigationRevision===state.navigationRevision)$('diagnostic-list').focus()}
+  }catch(error){
+    if(revision===state.diagnosticRevision&&atlasRevision===state.atlasRevision&&state.diagnosticPaging===paging)request.error='Diagnostic page could not be opened: '+String(error?.message||error)+'. Current results are unchanged; try the page button again.';
+  }finally{if(revision===state.diagnosticRevision&&atlasRevision===state.atlasRevision){request.loading=false;updateDiagnosticRequest()}}
+}
 function renderCoverage(){const coverage=state.coverage,ratios={'Inventory accounting':coverage.inventory_accounting_ratio,'Syntactic parse':coverage.syntactic_parse_ratio,'Semantic parse':coverage.semantic_parse_ratio,'Symbol evidence':coverage.symbol_evidence_ratio,'Public documentation':coverage.public_documentation_ratio,'Edge resolution':coverage.edge_resolution_ratio,'Claim citation':coverage.claims_total?coverage.claim_citation_ratio:null};$('content').innerHTML='<div class="card"><h2>Coverage and completeness</h2><p>Each ratio is backed by explicit numerators and denominators in <code>coverage.json</code>.</p>'+Object.entries(ratios).map(([name,value])=>progress(name,value)).join('')+'</div><div class="grid coverage-grid"><div class="card"><h3>Artifacts</h3>'+tableObject('Artifact statuses',coverage.artifact_statuses)+'</div><div class="card"><h3>Node kinds</h3>'+tableObject('Node kinds',coverage.node_kinds)+'</div><div class="card"><h3>Edge kinds</h3>'+tableObject('Edge kinds',coverage.edge_kinds)+'</div><div class="card"><h3>Evidence kinds</h3>'+tableObject('Evidence kinds',coverage.evidence_kinds)+'</div></div><div class="card"><h3>Deterministic digest</h3><p class="mono">'+esc(coverage.deterministic_output_digest)+'</p></div>'}
 
 function focusSearch(){
