@@ -254,10 +254,20 @@ func documentsFromBundle(bundle rkcmodel.Bundle, secretRedactedBodies map[string
 		} else {
 			path = artifactPaths[node.ArtifactID]
 		}
+		signature := node.Signature
+		var metadata map[string]string
+		if len(signature) > maximumSearchIdentifierBytes {
+			end := maximumSearchIdentifierBytes
+			for end > 0 && !utf8.RuneStart(signature[end]) {
+				end--
+			}
+			signature = signature[:end]
+			metadata = map[string]string{"signature_truncated": "true", "signature_original_bytes": strconv.Itoa(len(node.Signature))}
+		}
 		documents = append(documents, Document{
 			ID: node.ID, ObjectType: "node", Kind: node.Kind, Language: node.Language,
-			Title: node.Name, QualifiedName: node.QualifiedName, Signature: node.Signature,
-			Path: path, Body: redactSearchText(strings.Join(bodyParts, "\n")),
+			Title: node.Name, QualifiedName: node.QualifiedName, Signature: signature,
+			Path: path, Body: redactSearchText(strings.Join(bodyParts, "\n")), Metadata: metadata,
 		})
 	}
 	for _, artifact := range bundle.Artifacts {
