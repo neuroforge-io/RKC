@@ -5,6 +5,8 @@
 [![CI](https://github.com/neuroforge-io/RKC/actions/workflows/ci.yml/badge.svg)](https://github.com/neuroforge-io/RKC/actions/workflows/ci.yml)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 
+[Product page](https://neuroforge.io/rkc/) · [Downloads](https://github.com/neuroforge-io/RKC/releases/latest) · [Quickstart](docs/QUICKSTART.md)
+
 RKC compiles code, documentation, and exported wiki folders into an **atlas**:
 a portable snapshot of files, symbols, relationships, evidence, and coverage.
 Explore it in a local browser, create cited context for an agent, or use its
