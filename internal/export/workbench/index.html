@@ -52,6 +52,11 @@
     </div>
     <div id="list" class="entity-list" role="listbox" tabindex="0" aria-label="Repository entities" aria-describedby="result-summary search-help"></div>
     <div id="list-empty" class="empty compact" role="status" hidden></div>
+    <nav id="list-pagination" class="list-pagination" aria-label="Repository result pages" hidden>
+      <div class="button-row"><button id="list-previous" type="button" class="secondary" aria-controls="list">Previous page</button><button id="list-next" type="button" class="secondary" aria-controls="list">Load more</button></div>
+      <p id="list-page-status" class="help-text" role="status" aria-live="polite"></p>
+      <p id="list-page-help" class="help-text">Load more opens the next page.</p>
+    </nav>
   </aside>
   <section id="content" role="tabpanel" aria-labelledby="tab-overview" aria-busy="true" tabindex="-1">
     <div class="loading" role="status" aria-live="polite">Loading repository data…</div>

@@ -840,7 +840,7 @@ func TestBrowserStaticSearchLoadIsRetryableAndStaleSafe(t *testing.T) {
 		"const revision=++state.searchRevision",
 		"ensureStaticSearchData()",
 		"revision!==state.searchRevision",
-		"!state.staticBootstrap||!filtersActive()",
+		"!state.staticBootstrap",
 	} {
 		if !strings.Contains(schedule, marker) {
 			t.Errorf("browser search scheduling flow is missing %q", marker)

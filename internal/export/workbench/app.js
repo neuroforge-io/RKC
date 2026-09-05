@@ -1,7 +1,8 @@
 'use strict';
 const commandCatalog=__RKC_COMMAND_CATALOG__;
-const state={bundle:null,coverage:null,nodes:new Map(),artifacts:new Map(),evidence:new Map(),outgoing:new Map(),incoming:new Map(),selected:null,selectedArtifact:null,selectedArtifactContext:null,view:'overview',navigationRevision:0,results:[],apiSearchResults:null,workbench:null,commandName:'quickstart',repositoryFolder:'',directoryListing:null,activationNotice:null,api:false,facets:null,listTruncated:false,diagnosticsTruncated:false,searchTimer:null,searchRevision:0,atlasRevision:0,staticBootstrap:false,staticLoad:null,staticSearchRecords:null,staticSearchByID:new Map(),staticSearchLoad:null,capabilities:null,contextQuery:'',contextPacket:null,contextRevision:0,contextLoading:false,contextError:'',commandFilter:'',commandGroup:'all',commandDrafts:new Map(),activeJob:null,lastJob:null,jobCommand:'',submittingJob:false,toastTimer:null};
+const state={bundle:null,coverage:null,nodes:new Map(),artifacts:new Map(),evidence:new Map(),outgoing:new Map(),incoming:new Map(),selected:null,selectedArtifact:null,selectedArtifactContext:null,view:'overview',navigationRevision:0,listPaging:null,staticPaging:null,staticPageIndex:0,staticResultCount:0,browseNodeIDs:new Set(),hydratedNodeIDs:new Set(),results:[],apiSearchResults:null,workbench:null,commandName:'quickstart',repositoryFolder:'',directoryListing:null,activationNotice:null,api:false,facets:null,listTruncated:false,diagnosticsTruncated:false,searchTimer:null,searchRevision:0,atlasRevision:0,staticBootstrap:false,staticLoad:null,staticSearchRecords:null,staticSearchByID:new Map(),staticSearchLoad:null,capabilities:null,contextQuery:'',contextPacket:null,contextRevision:0,contextLoading:false,contextError:'',commandFilter:'',commandGroup:'all',commandDrafts:new Map(),activeJob:null,lastJob:null,jobCommand:'',submittingJob:false,toastTimer:null};
 const maximumGraphNeighbors=32,maximumGraphNodesShown=16;
+const maximumListRows=200;
 const snapshotGenerationHeader='X-RKC-Snapshot-ID',snapshotGenerationErrorCode='RKC_SNAPSHOT_GENERATION_CHANGED',maximumSnapshotLoadAttempts=3;
 const $=id=>document.getElementById(id);
 const esc=value=>String(value??'').replace(/[&<>"']/g,ch=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch]));
@@ -73,7 +74,7 @@ async function loadAPISnapshotGeneration(){
     throw snapshotGenerationError('Snapshot generation changed while the atlas was loading. Reload to obtain one consistent snapshot.');
   }
   const nodes=nodesResult.data,diagnostics=diagnosticsResult.data,facets=facetsResult.data;
-  return {bundle:{snapshot:manifest,nodes:nodes.items||[],artifacts:[],edges:[],evidence:[],diagnostics:diagnostics.items||[]},coverage,facets,list_truncated:Boolean(nodes.truncated),diagnostics_truncated:Boolean(diagnostics.truncated)};
+  return {bundle:{snapshot:manifest,nodes:nodes.items||[],artifacts:[],edges:[],evidence:[],diagnostics:diagnostics.items||[]},coverage,facets,list_truncated:Boolean(nodes.truncated),diagnostics_truncated:Boolean(diagnostics.truncated),list_page:{next_cursor:nodes.next_cursor,total:nodes.total,snapshot_id:nodes.snapshot_id}};
 }
 
 function applyAtlasData(data,atlasRevision){
@@ -82,11 +83,12 @@ function applyAtlasData(data,atlasRevision){
   if(state.bundle?.snapshot?.id!==data.bundle.snapshot.id){state.capabilities=null;state.commandDrafts.clear();state.contextPacket=null;state.contextError='';state.contextLoading=false;state.contextRevision++}
   state.bundle=data.bundle;state.coverage=data.coverage;state.facets=data.facets||null;
   state.staticBootstrap=Boolean(data.static_bootstrap);state.listTruncated=Boolean(data.list_truncated);state.diagnosticsTruncated=Boolean(data.diagnostics_truncated);
-  state.nodes.clear();state.artifacts.clear();state.evidence.clear();state.outgoing.clear();state.incoming.clear();
+  state.nodes.clear();state.artifacts.clear();state.evidence.clear();state.outgoing.clear();state.incoming.clear();state.browseNodeIDs.clear();state.hydratedNodeIDs.clear();
   for(const node of state.bundle.nodes)state.nodes.set(node.id,node);
   for(const artifact of state.bundle.artifacts||[])state.artifacts.set(artifact.id,artifact);
   for(const evidence of state.bundle.evidence||[])state.evidence.set(evidence.id,evidence);
   for(const edge of state.bundle.edges||[]){push(state.outgoing,edge.from,edge);push(state.incoming,edge.to,edge)}
+  if(state.api)installFirstListPage({...data.list_page,truncated:state.listTruncated},state.bundle.nodes,'/api/v1/nodes',new URLSearchParams({limit:'120'}),'');
 }
 
 async function ensureFullStaticData(){
@@ -145,7 +147,7 @@ async function fetchSnapshotJSON(path){
 
 function snapshotGenerationError(message){const error=new Error(message);error.code=snapshotGenerationErrorCode;return error}
 function isSnapshotGenerationError(error){return error?.code===snapshotGenerationErrorCode}
-function advanceAtlasGeneration(){state.atlasRevision++;state.navigationRevision++;state.searchRevision++;clearTimeout(state.searchTimer);return state.atlasRevision}
+function advanceAtlasGeneration(){state.atlasRevision++;state.navigationRevision++;state.searchRevision++;state.listPaging=null;state.staticPaging=null;state.staticPageIndex=0;clearTimeout(state.searchTimer);return state.atlasRevision}
 
 function push(map,key,value){if(!map.has(key))map.set(key,[]);map.get(key).push(value)}
 function safeHash(){try{return decodeURIComponent(location.hash.slice(1))}catch(_error){return''}}
@@ -161,6 +163,8 @@ function initialiseControls(){
 	  $('kind').addEventListener('change',scheduleListRefresh);
 	  $('language').addEventListener('change',scheduleListRefresh);
 	  $('clear-filters').addEventListener('click',clearFilters);
+      $('list-previous').addEventListener('click',()=>changeListPage(-1));
+      $('list-next').addEventListener('click',()=>changeListPage(1));
 	  $('list').addEventListener('keydown',handleListKeys);
 	  const tabs=[...document.querySelectorAll('[role="tab"]')];
 	  for(const [index,button] of tabs.entries()){
@@ -197,15 +201,16 @@ function clearFilters(){$('search').value='';$('kind').value='';$('language').va
 
 function scheduleListRefresh(){
   const revision=++state.searchRevision;
+  state.listPaging=null;state.staticPaging=null;state.staticPageIndex=0;renderListPagination();
   clearTimeout(state.searchTimer);
   if(!state.api){
-    if(state.staticBootstrap&&filtersActive()){
+    if(state.staticBootstrap&&(filtersActive()||state.staticSearchLoad)){
       $('result-summary').textContent='Loading the compact offline search index…';
       $('list').setAttribute('aria-busy','true');
       state.searchTimer=setTimeout(()=>ensureStaticSearchData().then(()=>{
         if(revision!==state.searchRevision)return;
         $('list').setAttribute('aria-busy','false');
-        if(!state.staticBootstrap||!filtersActive())return;
+        if(!state.staticBootstrap)return;
         renderList();
       }).catch(error=>{
         if(revision!==state.searchRevision)return;
@@ -231,16 +236,112 @@ async function refreshAPIList(revision){
       const response=await fetchJSON('/api/v1/search?'+parameters);
       if(revision!==state.searchRevision)return;
       if(!Array.isArray(response.hits))throw new Error('Search response is invalid');
-      state.apiSearchResults=response.hits.map(hit=>normaliseAPISearchHit(hit,query));state.listTruncated=Boolean(response.truncated);
+      installFirstListPage(response,response.hits.map(hit=>normaliseAPISearchHit(hit,query)),'/api/v1/search',parameters,query);
       renderList();return;
     }
     const response=await fetchJSON('/api/v1/nodes?'+parameters);
     if(revision!==state.searchRevision)return;
-    state.apiSearchResults=null;
-    state.bundle.nodes=response.items||[];state.listTruncated=Boolean(response.truncated);
-    for(const node of state.bundle.nodes)state.nodes.set(node.id,node);
+    installFirstListPage(response,response.items,'/api/v1/nodes',parameters,'');
     renderList();
   }catch(error){if(revision===state.searchRevision)$('result-summary').textContent='Search failed: '+String(error?.message||error)}
+}
+
+function listPageMetadata(response,values,entry){
+  if(!Array.isArray(values)||values.length>entry.limit||values.length>maximumListRows)throw new Error('Repository page exceeds the requested row window');
+  if(response.snapshot_id!==undefined&&response.snapshot_id!==state.bundle.snapshot.id)throw snapshotGenerationError('Repository page does not match the active snapshot');
+  if(response.next_cursor!==undefined&&typeof response.next_cursor!=='string')throw new Error('Repository continuation cursor is invalid');
+  const nextCursor=response.next_cursor||'',total=response.total;
+  if(nextCursor.length>4096||new TextEncoder().encode(nextCursor).length>4096)throw new Error('Repository continuation cursor exceeds 4096 bytes');
+  if(total!==undefined&&(!Number.isSafeInteger(total)||total<entry.start+values.length))throw new Error('Repository page total is invalid');
+  if(nextCursor&&(!values.length||nextCursor===entry.cursor))throw new Error('Repository continuation did not advance');
+  if(nextCursor&&!response.truncated)throw new Error('Repository continuation contradicts its completion status');
+  if(response.snapshot_id!==undefined&&total!==undefined){
+    const remaining=entry.start+values.length<total;
+    if(remaining!==Boolean(response.truncated)||remaining&&!nextCursor)throw new Error('Repository page omitted a valid continuation for its remaining results');
+  }
+  return {nextCursor,total,truncated:Boolean(response.truncated)};
+}
+
+function replaceListValues(values,search){
+  // Browse rows are a window, not a growing node cache. Explicitly loaded
+  // details and graph nodes remain available to the active content workflow.
+  for(const id of state.browseNodeIDs)if(id!==state.selected&&!state.hydratedNodeIDs.has(id))state.nodes.delete(id);
+  state.browseNodeIDs.clear();
+  state.apiSearchResults=search?values:null;
+  state.bundle.nodes=search?[]:values;
+  if(!search)for(const node of values){state.nodes.set(node.id,node);state.browseNodeIDs.add(node.id)}
+}
+
+function installFirstListPage(response,values,endpoint,parameters,query){
+  const entry={cursor:'',limit:Number(parameters.get('limit')),start:0,count:values?.length||0};
+  const metadata=listPageMetadata(response,values,entry),filters=new URLSearchParams(parameters);
+  filters.delete('limit');filters.delete('cursor');
+  state.listPaging={endpoint,parameters:filters.toString(),query,history:[entry],index:0,...metadata,loading:false,error:''};
+  state.listTruncated=metadata.truncated;
+  replaceListValues(values,Boolean(query));
+}
+
+function needsStaticListIndex(){return !state.api&&state.staticBootstrap&&!Array.isArray(state.staticSearchRecords)&&(state.listTruncated||state.coverage.nodes_total>state.bundle.nodes.length)}
+
+function renderListPagination(){
+  const container=$('list-pagination');if(!container)return;
+  const paging=state.api?state.listPaging:null,index=state.api?(paging?.index||0):state.staticPageIndex;
+  const needsIndex=needsStaticListIndex(),offline=state.api?null:state.staticPaging,loading=Boolean(paging?.loading||offline?.loading);
+  const more=state.api?Boolean(paging&&(index+1<paging.history.length||paging.nextCursor)):needsIndex||(index+1)*maximumListRows<state.staticResultCount;
+  container.hidden=state.api?!paging||(!index&&!more&&!paging.error&&!paging.truncated):!index&&!more;
+  $('list-previous').disabled=index===0||loading;
+  $('list-next').disabled=!more||loading;
+  $('list-next').textContent=needsIndex?'Load full list':paging&&index+1===paging.history.length?'Load more':'Next page';
+  $('list').setAttribute('aria-busy',String(loading));
+  $('list-page-help').textContent=needsIndex?'Load the compact index to browse every entity.':'Load more opens the next page.';
+  $('list-page-status').textContent=loading?(needsIndex?'Loading the compact offline index…':'Opening the requested page…'):paging?.error||offline?.error||offline?.notice||('Page '+number(index+1)+(paging?.truncated&&!paging.nextCursor&&index+1===paging.history.length?' · The server did not provide a continuation cursor. Refresh or update the server to reach more results.':''));
+}
+
+async function changeListPage(direction){
+  if(direction!==-1&&direction!==1)return;
+  if(!state.api){
+    if(state.staticPaging?.loading)return;
+    if(direction===1&&needsStaticListIndex()){
+      const request={loading:true,error:'',notice:''},atlasRevision=state.atlasRevision,searchRevision=state.searchRevision,navigationRevision=state.navigationRevision;
+      state.staticPaging=request;renderListPagination();
+      try{
+        await ensureStaticSearchData();
+        if(state.staticPaging!==request||atlasRevision!==state.atlasRevision||searchRevision!==state.searchRevision)return;
+        state.staticPageIndex=0;request.notice='Complete offline index loaded. Showing its first page.';renderList();if(navigationRevision===state.navigationRevision)focusResult(0);
+      }catch(error){
+        if(state.staticPaging===request&&atlasRevision===state.atlasRevision&&searchRevision===state.searchRevision)request.error='Offline list could not be opened: '+String(error?.message||error)+'. Current results are unchanged; try Load full list again.';
+      }finally{
+        if(state.staticPaging===request&&atlasRevision===state.atlasRevision&&searchRevision===state.searchRevision){request.loading=false;renderListPagination()}
+      }
+      return;
+    }
+    const target=state.staticPageIndex+direction;
+    if(target<0||target*maximumListRows>=state.staticResultCount)return;
+    state.staticPageIndex=target;state.staticPaging=null;renderList();focusResult(0);return;
+  }
+  const paging=state.listPaging;if(!paging||paging.loading)return;
+  const target=paging.index+direction;
+  if(target<0||target>paging.history.length||target===paging.history.length&&!paging.nextCursor)return;
+  const current=paging.history[paging.index],known=paging.history[target];
+  const entry=known||{cursor:paging.nextCursor,limit:paging.query?50:maximumListRows,start:current.start+current.count};
+  const atlasRevision=state.atlasRevision,searchRevision=state.searchRevision,navigationRevision=state.navigationRevision,parameters=new URLSearchParams(paging.parameters);
+  parameters.set('limit',String(entry.limit));if(entry.cursor)parameters.set('cursor',entry.cursor);
+  paging.loading=true;paging.error='';renderListPagination();
+  try{
+    const response=await fetchJSON(paging.endpoint+'?'+parameters);
+    if(state.listPaging!==paging||atlasRevision!==state.atlasRevision||searchRevision!==state.searchRevision)return;
+    const values=paging.query?(Array.isArray(response.hits)?response.hits.map(hit=>normaliseAPISearchHit(hit,paging.query)):null):response.items;
+    const metadata=listPageMetadata(response,values,entry);
+    if(metadata.nextCursor&&paging.history.some((page,index)=>page.cursor===metadata.nextCursor&&index!==target+1))throw new Error('Repository continuation repeated an earlier page');
+    if(known&&values.length!==known.count||paging.total!==undefined&&metadata.total!==undefined&&paging.total!==metadata.total)throw snapshotGenerationError('Repository page boundaries changed within the active snapshot');
+    if(!known)paging.history.push({...entry,count:values.length});
+    paging.index=target;paging.nextCursor=metadata.nextCursor;paging.total=metadata.total??paging.total;paging.truncated=metadata.truncated;
+    state.listTruncated=metadata.truncated;replaceListValues(values,Boolean(paging.query));renderList();if(navigationRevision===state.navigationRevision)focusResult(0);
+  }catch(error){
+    if(state.listPaging===paging&&atlasRevision===state.atlasRevision&&searchRevision===state.searchRevision)paging.error='Page could not be opened: '+String(error?.message||error)+'. Current results are unchanged; try the page button again.';
+  }finally{
+    if(state.listPaging===paging&&atlasRevision===state.atlasRevision&&searchRevision===state.searchRevision){paging.loading=false;renderListPagination()}
+  }
 }
 
 function normaliseAPISearchHit(hit,query){
@@ -400,7 +501,7 @@ async function loadAPINode(id){
   const atlasRevision=state.atlasRevision;
   const detail=await fetchJSON('/api/v1/nodes/'+encodeURIComponent(id));
   if(atlasRevision!==state.atlasRevision)throw snapshotGenerationError('Node detail completed after the active atlas generation changed.');
-  state.nodes.set(detail.node.id,detail.node);
+  state.nodes.set(detail.node.id,detail.node);state.hydratedNodeIDs.add(detail.node.id);
   state.evidence=new Map([...state.evidence,...(detail.evidence||[]).map(item=>[item.id,item])]);
   state.outgoing.set(id,detail.outgoing_edges||[]);
   state.incoming.set(id,detail.incoming_edges||[]);
@@ -424,7 +525,7 @@ async function selectArtifactSearchResult(result,focusContent=true){
     if(navigationRevision!==state.navigationRevision)return;
     if(!detail?.artifact||detail.artifact.id!==result.id||!Array.isArray(detail.nodes))throw new Error('Artifact detail response is invalid');
     state.artifacts.set(detail.artifact.id,detail.artifact);
-    const nodeIDs=[];for(const node of detail.nodes){if(node?.id){state.nodes.set(node.id,node);nodeIDs.push(node.id)}}
+    const nodeIDs=[];for(const node of detail.nodes){if(node?.id){state.nodes.set(node.id,node);state.hydratedNodeIDs.add(node.id);nodeIDs.push(node.id)}}
     state.selected=null;state.selectedArtifact=result.id;state.selectedArtifactContext={...result,node_ids:nodeIDs};
     history.replaceState(null,'',location.pathname+location.search);renderList();setView('symbol',focusContent,navigationRevision);
   }catch(error){
@@ -436,7 +537,7 @@ async function selectArtifactSearchResult(result,focusContent=true){
 function renderList(){
   if(!state.bundle)return;
   const query=$('search').value.trim().toLowerCase(),kind=$('kind').value,language=$('language').value;
-  const terms=query.split(/\s+/).filter(Boolean),candidates=[],usingAPISearch=state.api&&Array.isArray(state.apiSearchResults),usingStaticSearch=!state.api&&state.staticBootstrap&&filtersActive()&&Array.isArray(state.staticSearchRecords),sourceNodes=usingStaticSearch?state.staticSearchRecords:state.bundle.nodes;
+  const terms=query.split(/\s+/).filter(Boolean),candidates=[],usingAPISearch=state.api&&Array.isArray(state.apiSearchResults),usingStaticSearch=!state.api&&state.staticBootstrap&&Array.isArray(state.staticSearchRecords),sourceNodes=usingStaticSearch?state.staticSearchRecords:state.bundle.nodes;
   if(usingAPISearch){
     for(const result of state.apiSearchResults)candidates.push({objectType:result.object_type,id:result.id,value:result});
   }else if(state.api){
@@ -461,8 +562,13 @@ function renderList(){
     }
     candidates.sort((a,b)=>b.score-a.score||label(a.value).localeCompare(label(b.value)));
   }
-  state.results=candidates.slice(0,1000);
-  $('result-summary').textContent=number(candidates.length)+' loaded matching '+(usingAPISearch?'repository results':'entities')+((state.listTruncated&&!usingStaticSearch)||candidates.length>state.results.length?' · bounded result window':'');
+  state.staticResultCount=candidates.length;
+  const start=state.api?0:state.staticPageIndex*maximumListRows;
+  if(!state.api&&start>=candidates.length)state.staticPageIndex=Math.max(0,Math.ceil(candidates.length/maximumListRows)-1);
+  state.results=state.api?candidates:candidates.slice(state.staticPageIndex*maximumListRows,(state.staticPageIndex+1)*maximumListRows);
+  const page=state.listPaging?.history[state.listPaging.index],offset=state.api?(page?.start||0):state.staticPageIndex*maximumListRows,total=state.api?state.listPaging?.total:(needsStaticListIndex()?state.coverage.nodes_total:candidates.length);
+  $('result-summary').textContent=state.results.length?'Showing '+number(offset+1)+'–'+number(offset+state.results.length)+(Number.isSafeInteger(total)?' of '+number(total):' loaded')+' '+(usingAPISearch?'repository results':'entities'):'No matching repository results';
+  renderListPagination();
   $('clear-filters').hidden=!filtersActive();
   $('list').hidden=!state.results.length;
   $('list-empty').hidden=Boolean(state.results.length);
@@ -520,7 +626,7 @@ async function renderGraph(seedID){
       if(atlasRevision!==state.atlasRevision)return;
       if(navigationRevision!==state.navigationRevision)return;
       if(state.view!=='graph'||state.selected!==seedID)return;
-      for(const node of neighborhood.nodes||[])state.nodes.set(node.id,node);
+      for(const node of neighborhood.nodes||[]){state.nodes.set(node.id,node);state.hydratedNodeIDs.add(node.id)}
       for(const edge of neighborhood.edges||[]){pushUnique(state.outgoing,edge.from,edge);pushUnique(state.incoming,edge.to,edge)}
     }catch(error){if(atlasRevision!==state.atlasRevision||navigationRevision!==state.navigationRevision||state.view!=='graph'||state.selected!==seedID)return;$('content').innerHTML='<div class="card empty-state" role="alert"><h2>Graph query failed</h2><p>'+esc(error?.message||error)+'</p></div>';return}
   }

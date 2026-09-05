@@ -72,6 +72,9 @@ kbd { padding: 1px 5px; color: var(--text); background: var(--panel2); border: 1
 .result-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-height: 34px; }
 .secondary { min-height: 32px; padding: 4px 8px; color: var(--accent); background: transparent; border: 1px solid var(--line); border-radius: 7px; cursor: pointer; }
 .entity-list { margin-top: 9px; border-radius: 10px; }
+.list-pagination { position: sticky; bottom: -24px; padding: 12px 0 24px; border-top: 1px solid var(--line); background: var(--panel); }
+.list-pagination .button-row { gap: 6px; flex-wrap: wrap; }
+.list-pagination button { flex: 1 1 auto; }
 .entity { display: block; width: 100%; min-height: 58px; margin: 0 0 6px; padding: 10px 11px; text-align: left; border: 1px solid transparent; border-radius: 9px; color: var(--text); background: transparent; cursor: pointer; }
 .entity:hover, .entity.focused { border-color: var(--accent); background: var(--panel2); }
 .entity.active, .entity[aria-selected="true"] { border-color: var(--accent2); background: var(--panel); box-shadow: inset 3px 0 0 var(--accent2); }
