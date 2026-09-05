@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"net/http/httptest"
 	"reflect"
 	"strings"
@@ -14,6 +15,62 @@ import (
 	"github.com/neuroforge-io/RKC/pkg/rkcapi"
 	"github.com/neuroforge-io/RKC/pkg/rkcmodel"
 )
+
+func BenchmarkBuildContextFullBudget(b *testing.B) {
+	documents := make([]search.Document, 50)
+	for i := range documents {
+		documents[i] = search.Document{
+			ID: fmt.Sprintf("context-%03d", i), ObjectType: "artifact", Title: "Shared guide",
+			Path: fmt.Sprintf("docs/%03d.md", i), Body: strings.Repeat("shared evidence <text> & Unicode 界\n", 70),
+		}
+	}
+	dataset := testDataset()
+	dataset.Search = search.Build(documents)
+	b.ReportAllocs()
+	for b.Loop() {
+		packet, err := dataset.BuildContext(context.Background(), "shared", 50, 262144)
+		if err != nil || len(packet.Items) != 50 {
+			b.Fatalf("unexpected packet: %d items, %v", len(packet.Items), err)
+		}
+	}
+}
+
+func TestContextLinearAccountingMatchesEncodedArrayAdmission(t *testing.T) {
+	documents := make([]search.Document, 10)
+	for i := range documents {
+		documents[i] = search.Document{
+			ID: fmt.Sprintf("budget-%02d", i), ObjectType: "artifact", Title: "Shared <guide>",
+			Body: strings.Repeat("shared evidence 界 & <text>\n", 1+i*i*6),
+		}
+	}
+	dataset := testDataset()
+	dataset.Search = search.Build(documents)
+	full, err := dataset.BuildContext(context.Background(), "shared", 50, 262144)
+	if err != nil || len(full.Items) != len(documents) || full.Truncated {
+		t.Fatalf("invalid reference corpus: %d items, %v", len(full.Items), err)
+	}
+	for _, budget := range []int{1024, 2048, 8192, 32768, 262144} {
+		want := []rkcapi.ContextItem{}
+		omitted := false
+		for _, item := range full.Items {
+			candidate := append(want, item)
+			encoded, err := json.Marshal(candidate)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(encoded) > budget {
+				omitted = true
+				continue
+			}
+			want = candidate
+		}
+		got, err := dataset.BuildContext(context.Background(), "shared", 50, budget)
+		encoded, _ := json.Marshal(want)
+		if err != nil || !reflect.DeepEqual(got.Items, want) || got.Bytes != len(encoded) || got.Truncated != omitted {
+			t.Fatalf("budget %d changed exact encoded-array admission: %+v, %v", budget, got, err)
+		}
+	}
+}
 
 func TestContextEvidenceIdentityBudgetAndNoMutation(t *testing.T) {
 	d := testDataset()

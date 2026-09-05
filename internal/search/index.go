@@ -5,6 +5,7 @@
 package search
 
 import (
+	"container/heap"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -771,13 +772,12 @@ func (index *Index) Search(query Query) Response {
 		query.Limit = 1000
 	}
 
-	type accumulator struct {
-		score   float64
-		reasons map[string]struct{}
-		terms   map[string]struct{}
-	}
-	accumulators := map[string]*accumulator{}
-	for _, term := range unique(terms) {
+	// Keep only scores for the matching corpus. Explanations and full result
+	// records are assembled after selection, so a broad query cannot allocate
+	// per-term/per-field maps for hundreds of thousands of discarded hits.
+	scores := map[string]float64{}
+	uniqueTerms := unique(terms)
+	for _, term := range uniqueTerms {
 		postings := index.Postings[term]
 		if len(postings) == 0 {
 			continue
@@ -797,55 +797,52 @@ func (index *Index) Search(query Query) Response {
 			const k1 = 1.2
 			const b = 0.75
 			bm25 := idf * (tf * (k1 + 1)) / (tf + k1*(1-b+b*length/average))
-			score := bm25 * posting.FieldBoost
-			current := accumulators[posting.DocumentID]
-			if current == nil {
-				current = &accumulator{reasons: map[string]struct{}{}, terms: map[string]struct{}{}}
-				accumulators[posting.DocumentID] = current
-			}
-			current.score += score
-			current.terms[term] = struct{}{}
-			for _, field := range posting.Fields {
-				current.reasons[field+":"+term] = struct{}{}
-			}
+			scores[posting.DocumentID] += bm25 * posting.FieldBoost
 		}
 	}
 
-	// Exact normalized name/path matches receive deterministic bonuses.
 	normalizedText := normalize(text)
-	for id, current := range accumulators {
+	best := make(searchCandidateHeap, 0, min(query.Limit, len(scores)))
+	for id, score := range scores {
 		document := index.Documents[id]
-		for field, value := range map[string]string{"title": document.Title, "qualified_name": document.QualifiedName, "signature": document.Signature, "path": document.Path, "id": document.ID} {
-			normalizedValue := normalize(value)
-			if normalizedValue == normalizedText && normalizedText != "" {
-				current.score += 100
-				current.reasons["exact_"+field] = struct{}{}
-			} else if strings.HasPrefix(normalizedValue, normalizedText) && normalizedText != "" {
-				current.score += 12
-				current.reasons["prefix_"+field] = struct{}{}
+		score = applySearchBonuses(document, normalizedText, score, nil)
+		candidate := searchCandidate{document: document, score: roundScore(score), key: document.QualifiedName + "\x00" + document.ID}
+		if len(best) < query.Limit {
+			heap.Push(&best, candidate)
+		} else if candidate.betterThan(best[0]) {
+			best[0] = candidate
+			heap.Fix(&best, 0)
+		}
+	}
+	// Sorting at most Limit entries retains exactly the old score/name/ID
+	// ordering, including score rounding before tie comparison.
+	sort.Slice(best, func(i, j int) bool { return best[i].betterThan(best[j]) })
+	hits := make([]Hit, len(best))
+	selected := make(map[string]int, len(best))
+	reasons := make([]map[string]struct{}, len(best))
+	matched := make([]map[string]struct{}, len(best))
+	for i, candidate := range best {
+		hits[i] = Hit{Document: candidate.document, Score: candidate.score}
+		selected[candidate.document.ID] = i
+		reasons[i], matched[i] = map[string]struct{}{}, map[string]struct{}{}
+		applySearchBonuses(candidate.document, normalizedText, 0, reasons[i])
+	}
+	// Revisit postings to explain only selected hits. This remains linear in
+	// postings and does not assume callers supplied sorted posting slices.
+	for _, term := range uniqueTerms {
+		for _, posting := range index.Postings[term] {
+			if i, ok := selected[posting.DocumentID]; ok {
+				matched[i][term] = struct{}{}
+				for _, field := range posting.Fields {
+					reasons[i][field+":"+term] = struct{}{}
+				}
 			}
 		}
 	}
-
-	hits := make([]Hit, 0, len(accumulators))
-	for id, current := range accumulators {
-		document := index.Documents[id]
-		reasons := keys(current.reasons)
-		matchedTerms := keys(current.terms)
-		hits = append(hits, Hit{Document: document, Score: roundScore(current.score), Reasons: reasons, Terms: matchedTerms})
+	for i := range hits {
+		hits[i].Reasons, hits[i].Terms = keys(reasons[i]), keys(matched[i])
 	}
-	sort.Slice(hits, func(i, j int) bool {
-		if hits[i].Score == hits[j].Score {
-			left := hits[i].Document.QualifiedName + "\x00" + hits[i].Document.ID
-			right := hits[j].Document.QualifiedName + "\x00" + hits[j].Document.ID
-			return left < right
-		}
-		return hits[i].Score > hits[j].Score
-	})
-	truncated := len(hits) > query.Limit
-	if truncated {
-		hits = hits[:query.Limit]
-	}
+	truncated := len(scores) > query.Limit
 	for position := range hits {
 		document := hits[position].Document
 		if len(document.Body) <= MaximumResultBodyBytes {
@@ -863,6 +860,64 @@ func (index *Index) Search(query Query) Response {
 		sort.Strings(hits[position].Reasons)
 	}
 	return Response{Query: query.Text, Hits: hits, Truncated: truncated, Mode: "embedded-bm25-lexical", IndexVersion: index.Version}
+}
+
+// searchCandidate stores one ranked result without allocating its explanation.
+type searchCandidate struct {
+	document Document
+	score    float64
+	key      string
+}
+
+func (candidate searchCandidate) betterThan(other searchCandidate) bool {
+	if candidate.score == other.score {
+		return candidate.key < other.key
+	}
+	return candidate.score > other.score
+}
+
+// searchCandidateHeap keeps the worst retained candidate at the root, allowing
+// replacement without sorting or retaining the complete matching corpus.
+type searchCandidateHeap []searchCandidate
+
+func (values searchCandidateHeap) Len() int           { return len(values) }
+func (values searchCandidateHeap) Less(i, j int) bool { return values[j].betterThan(values[i]) }
+func (values searchCandidateHeap) Swap(i, j int)      { values[i], values[j] = values[j], values[i] }
+func (values *searchCandidateHeap) Push(value any) {
+	*values = append(*values, value.(searchCandidate))
+}
+func (values *searchCandidateHeap) Pop() any {
+	last := len(*values) - 1
+	value := (*values)[last]
+	(*values)[last] = searchCandidate{}
+	*values = (*values)[:last]
+	return value
+}
+
+func applySearchBonuses(document Document, normalizedText string, score float64, reasons map[string]struct{}) float64 {
+	if normalizedText == "" {
+		return score
+	}
+	// Stable addition order avoids map-iteration-dependent score rounding at
+	// half-micro boundaries. Public score precision remains six decimal places.
+	for _, field := range [...]struct{ name, value string }{
+		{"title", document.Title}, {"qualified_name", document.QualifiedName},
+		{"signature", document.Signature}, {"path", document.Path}, {"id", document.ID},
+	} {
+		normalizedValue := normalize(field.value)
+		reason := ""
+		if normalizedValue == normalizedText {
+			score += 100
+			reason = "exact_" + field.name
+		} else if strings.HasPrefix(normalizedValue, normalizedText) {
+			score += 12
+			reason = "prefix_" + field.name
+		}
+		if reasons != nil && reason != "" {
+			reasons[reason] = struct{}{}
+		}
+	}
+	return score
 }
 
 func boundedMatchExcerpt(value string, terms []string, maximum int) (string, int, int) {

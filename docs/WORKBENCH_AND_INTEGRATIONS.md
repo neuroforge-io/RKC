@@ -85,6 +85,30 @@ See [the HTTP contract](../api/openapi.yaml),
 [context schema](../schemas/context.schema.json), and
 [public Go types](../pkg/rkcapi/discovery.go).
 
+## Retrieval efficiency
+
+Embedded lexical retrieval scores matching records but retains at most the
+requested number of full candidates. It builds explanations only for selected
+hits. The score map still grows with matching-record count; this is not a claim
+that all query memory is independent of repository size. Ranking keeps the same
+rounded score and name/ID tie order. Name bonuses use a fixed field order to
+remove rare map-iteration differences at rounding boundaries.
+
+Context assembly encodes each candidate once and counts the array brackets and
+commas directly. It preserves exact byte admission, JSON escaping, omitted-item
+warnings, and packet digests without repeatedly serializing earlier excerpts.
+
+Maintained benchmarks compare the ranker with the exhaustive reference on
+20,000 matching records and exercise a 50-excerpt context packet:
+
+```sh
+go test ./internal/search -run '^$' -bench BenchmarkSearchBroadTopK -benchmem
+go test ./internal/server -run '^$' -bench BenchmarkBuildContextFullBudget -benchmem
+```
+
+These are repeatable synthetic workloads, not a repository-independent latency
+guarantee. Compare allocation counts as well as timings on the target host.
+
 ## MCP and Go
 
 Run `rkc-mcp --dir .rkc` as a stdio server from your agent client. Discover its
