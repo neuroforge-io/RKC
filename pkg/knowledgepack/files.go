@@ -16,6 +16,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"unicode/utf8"
 
 	"github.com/neuroforge-io/RKC/internal/safeoutput"
@@ -391,11 +392,12 @@ func decodeStrict(data []byte, target any) error {
 	if !utf8.Valid(data) {
 		return errors.New("invalid UTF-8 JSON")
 	}
-	// Go's ordinary decoder accepts duplicate keys and replaces earlier values.
-	// Reject that ambiguity before consumers in other languages see the data.
+	// Go's ordinary decoder accepts duplicate keys and case-insensitive aliases
+	// for struct fields. Require the exact wire names before typed decoding so
+	// every consumer hashes and interprets the same values. Map keys remain data.
 	tokens := json.NewDecoder(bytes.NewReader(data))
 	tokens.UseNumber()
-	if err := uniqueJSONValue(tokens, 0); err != nil {
+	if err := uniqueJSONValue(tokens, 0, reflect.TypeOf(target)); err != nil {
 		return err
 	}
 	decoder := json.NewDecoder(bytes.NewReader(data))
@@ -409,9 +411,12 @@ func decodeStrict(data []byte, target any) error {
 	return nil
 }
 
-func uniqueJSONValue(decoder *json.Decoder, depth int) error {
+func uniqueJSONValue(decoder *json.Decoder, depth int, valueType reflect.Type) error {
 	if depth > 64 {
 		return errors.New("knowledge JSON nesting exceeds 64")
+	}
+	for valueType != nil && valueType.Kind() == reflect.Pointer {
+		valueType = valueType.Elem()
 	}
 	token, err := decoder.Token()
 	if err != nil {
@@ -424,6 +429,16 @@ func uniqueJSONValue(decoder *json.Decoder, depth int) error {
 	switch delimiter {
 	case '{':
 		seen := map[string]bool{}
+		var fields map[string]reflect.Type
+		var elementType reflect.Type
+		if valueType != nil {
+			switch valueType.Kind() {
+			case reflect.Struct:
+				fields = exactJSONFields(valueType)
+			case reflect.Map:
+				elementType = valueType.Elem()
+			}
+		}
 		for decoder.More() {
 			keyToken, err := decoder.Token()
 			if err != nil {
@@ -437,13 +452,25 @@ func uniqueJSONValue(decoder *json.Decoder, depth int) error {
 				return errors.New("duplicate JSON key")
 			}
 			seen[key] = true
-			if err := uniqueJSONValue(decoder, depth+1); err != nil {
+			fieldType := elementType
+			if fields != nil {
+				var known bool
+				fieldType, known = fields[key]
+				if !known {
+					return fmt.Errorf("unknown JSON field %q; field names are case-sensitive", key)
+				}
+			}
+			if err := uniqueJSONValue(decoder, depth+1, fieldType); err != nil {
 				return err
 			}
 		}
 	case '[':
+		var elementType reflect.Type
+		if valueType != nil && (valueType.Kind() == reflect.Slice || valueType.Kind() == reflect.Array) {
+			elementType = valueType.Elem()
+		}
 		for decoder.More() {
-			if err := uniqueJSONValue(decoder, depth+1); err != nil {
+			if err := uniqueJSONValue(decoder, depth+1, elementType); err != nil {
 				return err
 			}
 		}
@@ -452,6 +479,32 @@ func uniqueJSONValue(decoder *json.Decoder, depth int) error {
 	}
 	_, err = decoder.Token()
 	return err
+}
+
+// Wire structs use explicit JSON tags. Cache their field types once rather
+// than rebuilding the same schema for every unit and nested citation in JSONL.
+// The immutable maps are private to the decoder; arbitrary map keys are never
+// folded, cached, or interpreted as struct field names.
+var exactJSONFieldCache sync.Map
+
+func exactJSONFields(valueType reflect.Type) map[string]reflect.Type {
+	if cached, ok := exactJSONFieldCache.Load(valueType); ok {
+		return cached.(map[string]reflect.Type)
+	}
+	fields := make(map[string]reflect.Type, valueType.NumField())
+	for index := 0; index < valueType.NumField(); index++ {
+		field := valueType.Field(index)
+		name, _, _ := strings.Cut(field.Tag.Get("json"), ",")
+		if field.PkgPath != "" || name == "-" {
+			continue
+		}
+		if name == "" {
+			name = field.Name
+		}
+		fields[name] = field.Type
+	}
+	stored, _ := exactJSONFieldCache.LoadOrStore(valueType, fields)
+	return stored.(map[string]reflect.Type)
 }
 
 func openRegular(root *os.Root, name string, maximum int64) (*os.File, os.FileInfo, error) {
