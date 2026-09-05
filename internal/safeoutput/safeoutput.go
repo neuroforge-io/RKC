@@ -116,7 +116,7 @@ func Begin(target, protectedRoot string, force bool, kind string) (*Transaction,
 	if err != nil {
 		return nil, fmt.Errorf("create output staging directory: %w", err)
 	}
-	identity, err := os.Lstat(staging)
+	identity, err := privatepath.Lstat(staging)
 	if err != nil {
 		_ = os.Remove(staging)
 		return nil, fmt.Errorf("inspect output staging directory: %w", err)
@@ -126,7 +126,7 @@ func Begin(target, protectedRoot string, force bool, kind string) (*Transaction,
 		// A directory without a valid marker must never be recursively removed.
 		// The freshly-created directory is expected to be empty after writeMarker
 		// rolls its temporary file back, so a non-recursive removal is sufficient.
-		if current, statErr := os.Lstat(staging); statErr == nil && current.IsDir() && os.SameFile(identity, current) {
+		if current, statErr := privatepath.Lstat(staging); statErr == nil && current.IsDir() && os.SameFile(identity, current) {
 			_ = os.Remove(staging)
 		}
 		return nil, err
@@ -149,7 +149,7 @@ func ResolveTarget(target, protectedRoot string) (string, error) {
 	if filepath.Dir(abs) == abs {
 		return "", fmt.Errorf("%w: filesystem root cannot be an output", ErrUnsafeTarget)
 	}
-	if info, statErr := os.Lstat(abs); statErr == nil && info.Mode()&os.ModeSymlink != 0 {
+	if info, statErr := privatepath.Lstat(abs); statErr == nil && info.Mode()&os.ModeSymlink != 0 {
 		return "", fmt.Errorf("%w: output target cannot be a symlink", ErrUnsafeTarget)
 	} else if statErr != nil && !os.IsNotExist(statErr) {
 		return "", fmt.Errorf("inspect output target: %w", statErr)
@@ -173,7 +173,7 @@ func ResolveTarget(target, protectedRoot string) (string, error) {
 			return "", fmt.Errorf("%w: resolve protected root symlinks: %v", ErrUnsafeTarget, evalErr)
 		}
 		protected = filepath.Clean(evaluated)
-		protectedInfo, statErr := os.Lstat(protected)
+		protectedInfo, statErr := privatepath.Lstat(protected)
 		if statErr != nil || !protectedInfo.IsDir() || protectedInfo.Mode()&os.ModeSymlink != 0 {
 			return "", fmt.Errorf("%w: protected root is not a resolved directory", ErrUnsafeTarget)
 		}
@@ -188,8 +188,11 @@ func resolveExistingParent(path string) (string, error) {
 	current := filepath.Clean(path)
 	var missing []string
 	for {
-		_, err := os.Lstat(current)
+		info, err := privatepath.Lstat(current)
 		if err == nil {
+			if !info.IsDir() && info.Mode()&os.ModeSymlink == 0 {
+				return "", errors.New("output parent is not a directory")
+			}
 			resolved, err := filepath.EvalSymlinks(current)
 			if err != nil {
 				return "", fmt.Errorf("resolve output parent: %w", err)
@@ -214,7 +217,7 @@ func resolveExistingParent(path string) (string, error) {
 // ReadMarker validates and returns an RKC ownership marker.
 func ReadMarker(root string) (Marker, error) {
 	markerPath := filepath.Join(root, MarkerName)
-	info, err := os.Lstat(markerPath)
+	info, err := privatepath.Lstat(markerPath)
 	if err != nil {
 		return Marker{}, err
 	}
@@ -330,7 +333,7 @@ func (transaction *Transaction) commitNewTarget(snapshotID string) error {
 	if err := validatePublishedOutput(transaction.Target, transaction.kind, transaction.identity, snapshotID); err != nil {
 		// Move only the exact staged inode back. If its pathname was replaced,
 		// retain everything and fail closed rather than touching the replacement.
-		if current, statErr := os.Lstat(transaction.Target); statErr == nil && os.SameFile(transaction.identity, current) {
+		if current, statErr := privatepath.Lstat(transaction.Target); statErr == nil && os.SameFile(transaction.identity, current) {
 			_ = renameNoReplaceOperation(transaction.Target, transaction.Staging)
 		}
 		return fmt.Errorf("%w: published staging identity or manifest changed: %v", ErrInvalidStaging, err)
@@ -411,7 +414,7 @@ func (transaction *Transaction) finishReplacement(priorIdentity os.FileInfo, sna
 	}
 	payload := filepath.Join(journal.root, "payload")
 	if priorPath != payload {
-		if _, err := os.Lstat(payload); err == nil {
+		if _, err := privatepath.Lstat(payload); err == nil {
 			return fmt.Errorf("quarantine payload unexpectedly exists at %s", payload)
 		} else if !os.IsNotExist(err) {
 			return fmt.Errorf("inspect quarantine payload: %w", err)
@@ -456,7 +459,7 @@ func validatePublishedOutput(path, kind string, identity os.FileInfo, snapshotID
 }
 
 func sameDirectoryIdentity(path string, identity os.FileInfo) (bool, error) {
-	info, err := os.Lstat(path)
+	info, err := privatepath.Lstat(path)
 	if err != nil {
 		return false, err
 	}
@@ -482,7 +485,7 @@ func (transaction *Transaction) validateStaging(kinds ...string) error {
 	if transaction == nil || transaction.Staging == "" || transaction.identity == nil {
 		return ErrInvalidStaging
 	}
-	info, err := os.Lstat(transaction.Staging)
+	info, err := privatepath.Lstat(transaction.Staging)
 	if err != nil || !info.IsDir() || !os.SameFile(transaction.identity, info) {
 		return fmt.Errorf("%w: staging directory identity changed", ErrInvalidStaging)
 	}
@@ -504,7 +507,7 @@ func checkExisting(target string, force bool, kind string) error {
 }
 
 func inspectExisting(target string, force bool, kind string) (os.FileInfo, error) {
-	info, err := os.Lstat(target)
+	info, err := privatepath.Lstat(target)
 	if os.IsNotExist(err) {
 		return nil, nil
 	}
@@ -570,7 +573,7 @@ type ownershipManifestFile struct {
 // valid with no unmanifested payload files.
 func validateOwnedOutput(target, kind string, identity os.FileInfo) error {
 	markerPath := filepath.Join(target, MarkerName)
-	markerIdentity, err := os.Lstat(markerPath)
+	markerIdentity, err := privatepath.Lstat(markerPath)
 	if err != nil || !markerIdentity.Mode().IsRegular() {
 		return errors.New("ownership marker identity is unavailable")
 	}
@@ -591,7 +594,7 @@ func validateOwnedOutput(target, kind string, identity os.FileInfo) error {
 		return fmt.Errorf("unsupported force-replacement kind %q", kind)
 	}
 	manifestPath := filepath.Join(target, manifestName)
-	manifestIdentity, err := os.Lstat(manifestPath)
+	manifestIdentity, err := privatepath.Lstat(manifestPath)
 	if err != nil || !manifestIdentity.Mode().IsRegular() {
 		return errors.New("ownership manifest identity is unavailable")
 	}
@@ -658,7 +661,7 @@ func validateOwnedOutput(target, kind string, identity os.FileInfo) error {
 		}
 		relative = filepath.ToSlash(relative)
 		if entry.IsDir() {
-			info, err := os.Lstat(path)
+			info, err := privatepath.Lstat(path)
 			if err != nil || !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
 				return fmt.Errorf("output directory %q identity is invalid", relative)
 			}
@@ -666,7 +669,7 @@ func validateOwnedOutput(target, kind string, identity os.FileInfo) error {
 			return nil
 		}
 		if relative == MarkerName || relative == manifestName {
-			info, err := os.Lstat(path)
+			info, err := privatepath.Lstat(path)
 			if err != nil || !info.Mode().IsRegular() {
 				return fmt.Errorf("ownership metadata %q identity is invalid", relative)
 			}
@@ -677,7 +680,7 @@ func validateOwnedOutput(target, kind string, identity os.FileInfo) error {
 		if !present {
 			return fmt.Errorf("unmanifested output file %q", relative)
 		}
-		info, err := entry.Info()
+		info, err := privatepath.Lstat(path)
 		if err != nil || !info.Mode().IsRegular() {
 			return fmt.Errorf("output path %q is not a regular file", relative)
 		}
@@ -702,10 +705,10 @@ func validateOwnedOutput(target, kind string, identity os.FileInfo) error {
 	if len(seen) != len(expected) {
 		return errors.New("ownership manifest references missing output files")
 	}
-	if current, statErr := os.Lstat(markerPath); statErr != nil || !os.SameFile(markerIdentity, current) {
+	if current, statErr := privatepath.Lstat(markerPath); statErr != nil || !os.SameFile(markerIdentity, current) {
 		return errors.New("ownership marker pathname identity changed")
 	}
-	if current, statErr := os.Lstat(manifestPath); statErr != nil || !os.SameFile(manifestIdentity, current) {
+	if current, statErr := privatepath.Lstat(manifestPath); statErr != nil || !os.SameFile(manifestIdentity, current) {
 		return errors.New("ownership manifest pathname identity changed")
 	}
 	secondManifest, err := readBoundedRegular(manifestPath, ownershipManifestMaxSize)
@@ -718,7 +721,7 @@ func validateOwnedOutput(target, kind string, identity os.FileInfo) error {
 	}
 	for relative, earlier := range pathIdentities {
 		path := filepath.Join(target, filepath.FromSlash(relative))
-		current, err := os.Lstat(path)
+		current, err := privatepath.Lstat(path)
 		if err != nil || !os.SameFile(earlier, current) {
 			return fmt.Errorf("output pathname identity changed for %q", relative)
 		}
@@ -729,7 +732,7 @@ func validateOwnedOutput(target, kind string, identity os.FileInfo) error {
 			}
 		}
 	}
-	final, err := os.Lstat(target)
+	final, err := privatepath.Lstat(target)
 	if err != nil || !final.IsDir() || !os.SameFile(identity, final) {
 		return errors.New("output directory changed during ownership validation")
 	}
@@ -751,12 +754,12 @@ func manifestFileSize(kind string, file ownershipManifestFile) (int64, error) {
 }
 
 func canonicalManifestPath(path string) bool {
-	if path == "" || strings.IndexByte(path, 0) >= 0 {
+	if path == "" || strings.IndexByte(path, 0) >= 0 || strings.HasPrefix(path, "/") || strings.Contains(path, "\\") {
 		return false
 	}
 	native := filepath.FromSlash(path)
 	clean := filepath.Clean(native)
-	return clean != "." && !filepath.IsAbs(clean) && filepath.ToSlash(clean) == path &&
+	return clean != "." && !filepath.IsAbs(clean) && filepath.VolumeName(clean) == "" && filepath.ToSlash(clean) == path &&
 		clean != ".." && !strings.HasPrefix(clean, ".."+string(filepath.Separator))
 }
 
@@ -783,7 +786,7 @@ func hashRegularFile(path string, identity os.FileInfo, maximum int64) (string, 
 }
 
 func readBoundedRegular(path string, maximum int64) ([]byte, error) {
-	before, err := os.Lstat(path)
+	before, err := privatepath.Lstat(path)
 	if err != nil {
 		return nil, err
 	}
@@ -817,7 +820,7 @@ func validateOwnedDirectory(path string, identity os.FileInfo, sentinel error, k
 	if identity == nil {
 		return fmt.Errorf("%w: missing directory identity", sentinel)
 	}
-	info, err := os.Lstat(path)
+	info, err := privatepath.Lstat(path)
 	if err != nil || !info.IsDir() || !os.SameFile(identity, info) {
 		return fmt.Errorf("%w: directory identity changed", sentinel)
 	}
@@ -899,7 +902,7 @@ func createReplacementJournal(transaction *Transaction, priorIdentity os.FileInf
 	if err != nil {
 		return nil, err
 	}
-	rootIdentity, err := os.Lstat(root)
+	rootIdentity, err := privatepath.Lstat(root)
 	if err != nil || !rootIdentity.IsDir() || privatepath.CheckDir(root, rootIdentity) != nil {
 		_ = os.Remove(root)
 		return nil, errors.New("replacement journal root is not an owner-only directory")
@@ -977,7 +980,7 @@ func (journal *replacementJournal) persist() error {
 	if journal == nil || journal.rootIdentity == nil {
 		return errors.New("missing replacement journal")
 	}
-	root, err := os.Lstat(journal.root)
+	root, err := privatepath.Lstat(journal.root)
 	if err != nil || !root.IsDir() || !os.SameFile(journal.rootIdentity, root) || privatepath.CheckDir(journal.root, root) != nil {
 		return errors.New("replacement journal root identity changed")
 	}
@@ -1014,7 +1017,7 @@ func (journal *replacementJournal) persist() error {
 		return err
 	}
 	committed = true
-	journal.journalIdentity, err = os.Lstat(journal.path)
+	journal.journalIdentity, err = privatepath.Lstat(journal.path)
 	if err != nil || !journal.journalIdentity.Mode().IsRegular() {
 		return errors.New("replacement journal identity unavailable after publication")
 	}
@@ -1026,7 +1029,7 @@ func (journal *replacementJournal) discard() error {
 		return nil
 	}
 	if journal.journalIdentity != nil {
-		current, err := os.Lstat(journal.path)
+		current, err := privatepath.Lstat(journal.path)
 		if err != nil || !os.SameFile(journal.journalIdentity, current) {
 			return errors.New("replacement journal identity changed before cleanup")
 		}
@@ -1034,7 +1037,7 @@ func (journal *replacementJournal) discard() error {
 			return err
 		}
 	}
-	root, err := os.Lstat(journal.root)
+	root, err := privatepath.Lstat(journal.root)
 	if err != nil || !os.SameFile(journal.rootIdentity, root) {
 		return errors.New("replacement journal root changed before cleanup")
 	}
@@ -1118,7 +1121,7 @@ func recoverInterruptedReplacements(parent, targetName string) error {
 }
 
 func loadReplacementJournal(root string) (*replacementJournal, error) {
-	rootIdentity, err := os.Lstat(root)
+	rootIdentity, err := privatepath.Lstat(root)
 	if err != nil {
 		return nil, err
 	}
@@ -1126,7 +1129,7 @@ func loadReplacementJournal(root string) (*replacementJournal, error) {
 		return nil, errors.New("replacement journal root is not an owner-only directory")
 	}
 	path := filepath.Join(root, journalName)
-	journalIdentity, err := os.Lstat(path)
+	journalIdentity, err := privatepath.Lstat(path)
 	if err != nil {
 		return nil, err
 	}
@@ -1163,11 +1166,11 @@ func loadReplacementJournal(root string) (*replacementJournal, error) {
 	default:
 		return nil, errors.New("invalid replacement journal phase")
 	}
-	finalJournal, err := os.Lstat(path)
+	finalJournal, err := privatepath.Lstat(path)
 	if err != nil || !finalJournal.Mode().IsRegular() || !os.SameFile(journalIdentity, finalJournal) {
 		return nil, errors.New("replacement journal identity changed while loading")
 	}
-	finalRoot, err := os.Lstat(root)
+	finalRoot, err := privatepath.Lstat(root)
 	if err != nil || !finalRoot.IsDir() || !os.SameFile(rootIdentity, finalRoot) {
 		return nil, errors.New("replacement journal root changed while loading")
 	}
@@ -1182,9 +1185,18 @@ func recoverReplacement(parent string, journal *replacementJournal) error {
 	target := filepath.Join(parent, journal.record.TargetName)
 	staging := filepath.Join(parent, journal.record.StagingName)
 	payload := filepath.Join(journal.root, "payload")
-	targetInfo, targetToken := inspectIdentityToken(target)
-	stagingInfo, stagingToken := inspectIdentityToken(staging)
-	payloadInfo, payloadToken := inspectIdentityToken(payload)
+	targetInfo, targetToken, err := inspectIdentityToken(target)
+	if err != nil {
+		return fmt.Errorf("inspect recovery target: %w", err)
+	}
+	stagingInfo, stagingToken, err := inspectIdentityToken(staging)
+	if err != nil {
+		return fmt.Errorf("inspect recovery staging: %w", err)
+	}
+	payloadInfo, payloadToken, err := inspectIdentityToken(payload)
+	if err != nil {
+		return fmt.Errorf("inspect recovery payload: %w", err)
+	}
 
 	if targetToken == journal.record.NewIdentity {
 		if err := validateJournalBoundOutput(target, journal.record.Kind, targetInfo, journal.record.NewSnapshot, journal.record.NewMarkerSHA256, journal.record.NewManifestSHA256); err != nil {
@@ -1256,16 +1268,22 @@ func recoverReplacement(parent string, journal *replacementJournal) error {
 	return fmt.Errorf("interrupted publication identities are ambiguous; journal retained at %s", journal.root)
 }
 
-func inspectIdentityToken(path string) (os.FileInfo, string) {
-	info, err := os.Lstat(path)
-	if err != nil || !info.IsDir() {
-		return nil, ""
+func inspectIdentityToken(path string) (os.FileInfo, string, error) {
+	info, err := privatepath.Lstat(path)
+	if os.IsNotExist(err) {
+		return nil, "", nil
+	}
+	if err != nil {
+		return nil, "", err
+	}
+	if !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
+		return info, "", errors.New("recovery path is not a real directory")
 	}
 	token, err := persistentPathIdentityToken(path, info)
 	if err != nil {
-		return info, ""
+		return info, "", err
 	}
-	return info, token
+	return info, token, nil
 }
 
 // quarantinedDirectory binds recursive removal to the exact directory inode
@@ -1288,7 +1306,7 @@ func quarantineOwnedDirectory(path string, identity os.FileInfo, sentinel error,
 	if err != nil {
 		return nil, fmt.Errorf("%w: create private quarantine: %v", sentinel, err)
 	}
-	rootIdentity, err := os.Lstat(root)
+	rootIdentity, err := privatepath.Lstat(root)
 	if err != nil || !rootIdentity.IsDir() || privatepath.CheckDir(root, rootIdentity) != nil {
 		_ = os.Remove(root)
 		return nil, fmt.Errorf("%w: quarantine is not an owner-only directory", sentinel)
@@ -1314,7 +1332,7 @@ func (quarantine *quarantinedDirectory) validate(sentinel error, kinds ...string
 	if quarantine == nil || quarantine.rootIdentity == nil || quarantine.identity == nil {
 		return fmt.Errorf("%w: missing quarantine identity", sentinel)
 	}
-	root, err := os.Lstat(quarantine.root)
+	root, err := privatepath.Lstat(quarantine.root)
 	if err != nil || !root.IsDir() || privatepath.CheckDir(quarantine.root, root) != nil || !os.SameFile(quarantine.rootIdentity, root) {
 		return fmt.Errorf("%w: quarantine identity changed", sentinel)
 	}
@@ -1325,15 +1343,15 @@ func (quarantine *quarantinedDirectory) restore(target string) error {
 	if quarantine == nil || quarantine.rootIdentity == nil || quarantine.identity == nil {
 		return errors.New("missing quarantine")
 	}
-	root, err := os.Lstat(quarantine.root)
+	root, err := privatepath.Lstat(quarantine.root)
 	if err != nil || !root.IsDir() || !os.SameFile(quarantine.rootIdentity, root) {
 		return errors.New("quarantine identity changed before restore")
 	}
-	payload, err := os.Lstat(quarantine.payload)
+	payload, err := privatepath.Lstat(quarantine.payload)
 	if err != nil || !payload.IsDir() || !os.SameFile(quarantine.identity, payload) {
 		return errors.New("quarantined directory identity changed before restore")
 	}
-	if _, err := os.Lstat(target); err == nil {
+	if _, err := privatepath.Lstat(target); err == nil {
 		return fmt.Errorf("restore target already exists: %s", target)
 	} else if !os.IsNotExist(err) {
 		return fmt.Errorf("inspect restore target: %w", err)
@@ -1341,7 +1359,7 @@ func (quarantine *quarantinedDirectory) restore(target string) error {
 	if err := renameNoReplaceOperation(quarantine.payload, target); err != nil {
 		return err
 	}
-	restored, err := os.Lstat(target)
+	restored, err := privatepath.Lstat(target)
 	if err != nil || !os.SameFile(quarantine.identity, restored) {
 		return errors.New("restored directory identity changed")
 	}
@@ -1359,13 +1377,13 @@ func (quarantine *quarantinedDirectory) remove(sentinel error, kinds ...string) 
 }
 
 func removeEmptyQuarantine(quarantine *quarantinedDirectory) error {
-	root, err := os.Lstat(quarantine.root)
+	root, err := privatepath.Lstat(quarantine.root)
 	if err != nil || !root.IsDir() || !os.SameFile(quarantine.rootIdentity, root) {
 		return errors.New("quarantine identity changed before final removal")
 	}
 	if quarantine.journalIdentity != nil {
 		journalPath := filepath.Join(quarantine.root, journalName)
-		journal, err := os.Lstat(journalPath)
+		journal, err := privatepath.Lstat(journalPath)
 		if err != nil || !journal.Mode().IsRegular() || !os.SameFile(quarantine.journalIdentity, journal) {
 			return errors.New("quarantine journal identity changed before final removal")
 		}

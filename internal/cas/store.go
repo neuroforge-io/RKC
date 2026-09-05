@@ -61,6 +61,19 @@ type ObjectInfo struct {
 // temporary directories. It returns an error if any existing path component is
 // indirect or the bound layout cannot be validated.
 func Open(root string) (*Store, error) {
+	if !filepath.IsAbs(root) {
+		working, err := os.Getwd()
+		if err != nil {
+			return nil, fmt.Errorf("resolve CAS root: %w", err)
+		}
+		info, err := privatepath.Lstat(working)
+		if err != nil {
+			return nil, fmt.Errorf("resolve CAS root: working directory no longer exists: %w", err)
+		}
+		if !info.IsDir() {
+			return nil, errors.New("resolve CAS root: working directory is not a directory")
+		}
+	}
 	absolute, err := filepath.Abs(root)
 	if err != nil {
 		return nil, fmt.Errorf("resolve CAS root: %w", err)
@@ -126,7 +139,7 @@ func (store *Store) Path(digest string) (string, error) {
 		return "", err
 	}
 	shardPath := filepath.Join(store.shaRoot, digest[:2])
-	if info, err := os.Lstat(shardPath); err == nil {
+	if info, err := privatepath.Lstat(shardPath); err == nil {
 		if info.Mode()&os.ModeSymlink != 0 || !info.IsDir() {
 			return "", fmt.Errorf("%w: digest shard is not a regular directory", ErrStoreChanged)
 		}
@@ -218,7 +231,7 @@ func (store *Store) Put(reader io.Reader) (ObjectInfo, error) {
 		return ObjectInfo{}, err
 	}
 	finalPath := filepath.Join(shardPath, digest[2:])
-	if _, err := os.Lstat(finalPath); err == nil {
+	if _, err := privatepath.Lstat(finalPath); err == nil {
 		return store.verifyExistingInShard(digest, size, shardPath, shardIdentity)
 	} else if !errors.Is(err, fs.ErrNotExist) {
 		return ObjectInfo{}, fmt.Errorf("inspect existing CAS object: %w", err)
@@ -236,7 +249,7 @@ func (store *Store) Put(reader io.Reader) (ObjectInfo, error) {
 			return ObjectInfo{}, fmt.Errorf("install CAS object: %w", errors.Join(err, verifyErr))
 		}
 	}
-	linkedIdentity, err := os.Lstat(finalPath)
+	linkedIdentity, err := privatepath.Lstat(finalPath)
 	if err != nil || !linkedIdentity.Mode().IsRegular() || !os.SameFile(temporaryIdentity, linkedIdentity) {
 		if err == nil {
 			err = ErrUnsafeObject
@@ -392,7 +405,7 @@ func (store *Store) Walk(fn func(ObjectInfo) error) error {
 			if strings.Contains(filepath.ToSlash(relative), "/") || !validShardName(entry.Name()) {
 				return filepath.SkipDir
 			}
-			info, err := os.Lstat(path)
+			info, err := privatepath.Lstat(path)
 			if err != nil || info.Mode()&os.ModeSymlink != 0 || !info.IsDir() {
 				return fmt.Errorf("%w: invalid shard %s", ErrStoreChanged, relative)
 			}
@@ -402,7 +415,7 @@ func (store *Store) Walk(fn func(ObjectInfo) error) error {
 		if _, err := NormalizeDigest(digest); err != nil {
 			return nil
 		}
-		info, err := os.Lstat(path)
+		info, err := privatepath.Lstat(path)
 		if err != nil {
 			return err
 		}
@@ -427,7 +440,7 @@ func (store *Store) verifyExisting(digest string, expectedSize int64) (ObjectInf
 		return ObjectInfo{}, err
 	}
 	shardPath := filepath.Join(store.shaRoot, digest[:2])
-	shardInfo, err := os.Lstat(shardPath)
+	shardInfo, err := privatepath.Lstat(shardPath)
 	if err != nil {
 		return ObjectInfo{}, err
 	}
@@ -476,7 +489,7 @@ func (store *Store) openObject(digest string) (*os.File, string, os.FileInfo, sh
 		return nil, "", nil, shardIdentity{}, err
 	}
 	shardPath := filepath.Join(store.shaRoot, digest[:2])
-	shardInfo, err := os.Lstat(shardPath)
+	shardInfo, err := privatepath.Lstat(shardPath)
 	if err != nil {
 		return nil, "", nil, shardIdentity{}, err
 	}
@@ -503,7 +516,7 @@ func (store *Store) validateRead(path string, file *os.File, before os.FileInfo,
 	if err != nil || !after.Mode().IsRegular() || !os.SameFile(before, after) || after.Size() != bytesRead {
 		return fmt.Errorf("%w: object changed while reading", ErrUnsafeObject)
 	}
-	current, err := os.Lstat(path)
+	current, err := privatepath.Lstat(path)
 	if err != nil || !current.Mode().IsRegular() || !os.SameFile(before, current) {
 		return fmt.Errorf("%w: object pathname changed while reading", ErrUnsafeObject)
 	}
@@ -518,12 +531,12 @@ func (store *Store) ensureShard(name string) (string, os.FileInfo, error) {
 		return "", nil, err
 	}
 	path := filepath.Join(store.shaRoot, name)
-	info, err := os.Lstat(path)
+	info, err := privatepath.Lstat(path)
 	if errors.Is(err, fs.ErrNotExist) {
 		if err := os.Mkdir(path, 0o755); err != nil && !errors.Is(err, fs.ErrExist) {
 			return "", nil, fmt.Errorf("create CAS shard: %w", err)
 		}
-		info, err = os.Lstat(path)
+		info, err = privatepath.Lstat(path)
 	}
 	if err != nil {
 		return "", nil, fmt.Errorf("inspect CAS shard: %w", err)
@@ -545,7 +558,7 @@ func (store *Store) validateLayout() error {
 		path string
 		info os.FileInfo
 	}{{store.root, store.rootIdentity}, {store.shaRoot, store.shaIdentity}, {store.temporaryRoot, store.tempIdentity}} {
-		current, err := os.Lstat(item.path)
+		current, err := privatepath.Lstat(item.path)
 		if err != nil || current.Mode()&os.ModeSymlink != 0 || !current.IsDir() || !os.SameFile(item.info, current) {
 			return fmt.Errorf("%w: %s", ErrStoreChanged, item.path)
 		}
@@ -560,7 +573,7 @@ func (store *Store) validateShard(path string, identity os.FileInfo) error {
 	if identity == nil {
 		return fmt.Errorf("%w: missing shard identity", ErrStoreChanged)
 	}
-	current, err := os.Lstat(path)
+	current, err := privatepath.Lstat(path)
 	if err != nil || current.Mode()&os.ModeSymlink != 0 || !current.IsDir() || !os.SameFile(identity, current) {
 		return fmt.Errorf("%w: digest shard identity changed", ErrStoreChanged)
 	}
@@ -571,7 +584,7 @@ func (store *Store) validateTemporaryFile(path string, identity os.FileInfo) err
 	if err := store.validateLayout(); err != nil {
 		return err
 	}
-	current, err := os.Lstat(path)
+	current, err := privatepath.Lstat(path)
 	if err != nil || !current.Mode().IsRegular() || !os.SameFile(identity, current) {
 		return fmt.Errorf("%w: temporary object identity changed", ErrUnsafeObject)
 	}
@@ -582,12 +595,12 @@ func ensureDirectory(path string, mode fs.FileMode) (os.FileInfo, error) {
 	if err := rejectSymlinkComponents(path); err != nil {
 		return nil, err
 	}
-	info, err := os.Lstat(path)
+	info, err := privatepath.Lstat(path)
 	if errors.Is(err, fs.ErrNotExist) {
 		if err := os.MkdirAll(path, mode); err != nil {
 			return nil, err
 		}
-		info, err = os.Lstat(path)
+		info, err = privatepath.Lstat(path)
 	}
 	if err != nil {
 		return nil, err
@@ -615,7 +628,7 @@ func rejectSymlinkComponents(path string) error {
 			continue
 		}
 		current = filepath.Join(current, component)
-		info, err := os.Lstat(current)
+		info, err := privatepath.Lstat(current)
 		if errors.Is(err, fs.ErrNotExist) {
 			return nil
 		}
@@ -630,7 +643,7 @@ func rejectSymlinkComponents(path string) error {
 }
 
 func openStableRegular(path string) (*os.File, os.FileInfo, error) {
-	before, err := os.Lstat(path)
+	before, err := privatepath.Lstat(path)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -653,7 +666,7 @@ func removeExactRegularFile(path string, identity os.FileInfo) error {
 	if identity == nil {
 		return errors.New("missing file identity")
 	}
-	current, err := os.Lstat(path)
+	current, err := privatepath.Lstat(path)
 	if errors.Is(err, fs.ErrNotExist) {
 		return nil
 	}
@@ -687,7 +700,7 @@ func syncDirectoryStable(path string, identity os.FileInfo) error {
 	if err := privatepath.SyncDirectoryStable(path, identity); err != nil {
 		return err
 	}
-	current, err := os.Lstat(path)
+	current, err := privatepath.Lstat(path)
 	if err != nil || !current.IsDir() || !os.SameFile(identity, current) {
 		return ErrStoreChanged
 	}

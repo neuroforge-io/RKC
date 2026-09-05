@@ -7,6 +7,9 @@ import (
 	"os"
 )
 
+// Lstat returns no-follow file metadata with its identity captured immediately.
+func Lstat(path string) (os.FileInfo, error) { return os.Lstat(path) }
+
 // MkdirTemp creates a new owner-only directory, using os.MkdirTemp patterns.
 func MkdirTemp(parent, pattern string) (string, error) { return os.MkdirTemp(parent, pattern) }
 
@@ -17,7 +20,7 @@ func checkPrivate(path string, identity os.FileInfo, directory bool) error {
 	if err := checkIdentity(path, identity, directory); err != nil {
 		return err
 	}
-	current, err := os.Lstat(path)
+	current, err := Lstat(path)
 	if err != nil {
 		return err
 	}

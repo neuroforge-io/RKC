@@ -17,6 +17,8 @@ import (
 	"time"
 	"unicode"
 	"unicode/utf8"
+
+	"github.com/neuroforge-io/RKC/internal/privatepath"
 )
 
 // Materialize resolves the selected default branch once, then downloads its
@@ -115,7 +117,7 @@ func openDestination(directory string) (*os.Root, string, error) {
 	if err != nil {
 		return nil, "", errors.New("resolve GitHub destination")
 	}
-	info, err := os.Lstat(absolute)
+	info, err := privatepath.Lstat(absolute)
 	if err != nil || !info.IsDir() || info.Mode()&os.ModeSymlink != 0 || !ownedByCurrentUser(absolute, info) {
 		return nil, "", errors.New("GitHub destination must be an existing owner directory")
 	}

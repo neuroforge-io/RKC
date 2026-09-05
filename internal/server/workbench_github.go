@@ -245,7 +245,7 @@ func (workbench *Workbench) runGitHubJob(ctx context.Context, id, repository str
 		workbench.finishJob(id, "failed", 1, "", false, "private source directory cannot be created")
 		return
 	}
-	identity, err := os.Lstat(directory)
+	identity, err := privatepath.Lstat(directory)
 	if err != nil {
 		releaseSlot()
 		workbench.finishJob(id, "failed", 1, "", false, "private source directory cannot be inspected")

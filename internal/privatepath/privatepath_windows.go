@@ -15,6 +15,26 @@ import (
 	"golang.org/x/sys/windows"
 )
 
+// Lstat captures no-follow metadata and file identity from one live handle.
+// Go's Windows os.Lstat defers file-ID acquisition until os.SameFile is first
+// called; after a pathname swap that can bind an old FileInfo to the replacement.
+// Closing this handle preserves the eager identity without blocking renames.
+func Lstat(path string) (os.FileInfo, error) {
+	encoded, err := windows.UTF16PtrFromString(path)
+	if err != nil {
+		return nil, err
+	}
+	handle, err := windows.CreateFile(encoded, 0,
+		windows.FILE_SHARE_READ|windows.FILE_SHARE_WRITE|windows.FILE_SHARE_DELETE, nil,
+		windows.OPEN_EXISTING, windows.FILE_FLAG_BACKUP_SEMANTICS|windows.FILE_FLAG_OPEN_REPARSE_POINT, 0)
+	if err != nil {
+		return nil, &os.PathError{Op: "lstat", Path: path, Err: err}
+	}
+	file := os.NewFile(uintptr(handle), path)
+	defer file.Close()
+	return file.Stat()
+}
+
 // MkdirTemp creates a directory with a protected current-user DACL at creation;
 // there is no interval in which inherited permissions expose its contents.
 func MkdirTemp(parent, pattern string) (string, error) {
@@ -86,7 +106,7 @@ func createTemp(parent, pattern string, directory bool) (string, *os.File, error
 		// Filesystems may ignore SECURITY_ATTRIBUTES when they lack persistent
 		// ACLs. Verify privacy before returning a handle on which a caller could
 		// write secrets; never treat successful creation alone as permission proof.
-		identity, statErr := os.Lstat(path)
+		identity, statErr := Lstat(path)
 		if file != nil {
 			identity, statErr = file.Stat()
 		}
@@ -97,7 +117,7 @@ func createTemp(parent, pattern string, directory bool) (string, *os.File, error
 			if file != nil {
 				_ = file.Close()
 			}
-			if current, err := os.Lstat(path); err == nil && identity != nil && os.SameFile(identity, current) {
+			if current, err := Lstat(path); err == nil && identity != nil && os.SameFile(identity, current) {
 				_ = os.Remove(path)
 			}
 			return "", nil, fmt.Errorf("new temporary path is not private: %w", statErr)

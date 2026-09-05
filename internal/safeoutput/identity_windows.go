@@ -9,6 +9,8 @@ import (
 	"unsafe"
 
 	"golang.org/x/sys/windows"
+
+	"github.com/neuroforge-io/RKC/internal/privatepath"
 )
 
 func persistentPathIdentityToken(path string, identity os.FileInfo) (string, error) {
@@ -46,7 +48,7 @@ func persistentPathIdentityToken(path string, identity os.FileInfo) (string, err
 	if id.FileID == [16]byte{} {
 		return "", errors.New("Windows filesystem returned an empty file identity")
 	}
-	current, err := os.Lstat(path)
+	current, err := privatepath.Lstat(path)
 	if err != nil || !current.IsDir() || !os.SameFile(identity, current) {
 		return "", errors.New("directory identity changed while capturing persistent identity")
 	}

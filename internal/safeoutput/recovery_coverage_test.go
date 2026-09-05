@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/neuroforge-io/RKC/internal/privatepath"
 )
 
 func TestRecoveryRejectsTamperedJournalBoundOutputs(t *testing.T) {
@@ -288,7 +290,7 @@ func TestRecoveryCompletesOrRetainsFailClosedState(t *testing.T) {
 func TestOwnershipIdentityChecksFailClosed(t *testing.T) {
 	t.Run("unmarked exact directory", func(t *testing.T) {
 		root := t.TempDir()
-		identity, err := os.Lstat(root)
+		identity, err := privatepath.Lstat(root)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -302,7 +304,7 @@ func TestOwnershipIdentityChecksFailClosed(t *testing.T) {
 		if err := writeMarker(root, Marker{SchemaVersion: markerVersion, Producer: producer, Kind: "atlas", SnapshotID: "snapshot"}); err != nil {
 			t.Fatal(err)
 		}
-		identity, err := os.Lstat(root)
+		identity, err := privatepath.Lstat(root)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -321,7 +323,7 @@ func TestOwnershipIdentityChecksFailClosed(t *testing.T) {
 			t.Fatal(err)
 		}
 		finalizeOwnedAtlasFixture(t, root, "snapshot")
-		identity, err := os.Lstat(root)
+		identity, err := privatepath.Lstat(root)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -339,7 +341,7 @@ func TestOwnershipIdentityChecksFailClosed(t *testing.T) {
 		if err := writeMarker(owned, Marker{SchemaVersion: markerVersion, Producer: producer, Kind: "staging"}); err != nil {
 			t.Fatal(err)
 		}
-		identity, err := os.Lstat(owned)
+		identity, err := privatepath.Lstat(owned)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -369,7 +371,7 @@ func TestOwnershipIdentityChecksFailClosed(t *testing.T) {
 		if err := writeMarker(owned, Marker{SchemaVersion: markerVersion, Producer: producer, Kind: "staging"}); err != nil {
 			t.Fatal(err)
 		}
-		identity, err := os.Lstat(owned)
+		identity, err := privatepath.Lstat(owned)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -426,14 +428,14 @@ func replaceJournalRootIdentity(t *testing.T, journal *replacementJournal) strin
 
 func assertPathExists(t *testing.T, path string) {
 	t.Helper()
-	if _, err := os.Lstat(path); err != nil {
+	if _, err := privatepath.Lstat(path); err != nil {
 		t.Fatalf("expected %s to exist: %v", path, err)
 	}
 }
 
 func assertPathMissing(t *testing.T, path string) {
 	t.Helper()
-	if _, err := os.Lstat(path); !errors.Is(err, os.ErrNotExist) {
+	if _, err := privatepath.Lstat(path); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("expected %s to be absent: %v", path, err)
 	}
 }

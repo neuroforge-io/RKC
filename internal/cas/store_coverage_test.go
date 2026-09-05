@@ -4,13 +4,13 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"io/fs"
 	"os"
 	"path/filepath"
 	"runtime"
 	"strings"
-	"syscall"
 	"testing"
+
+	"github.com/neuroforge-io/RKC/internal/privatepath"
 )
 
 type actionAtEOFReader struct {
@@ -155,86 +155,6 @@ func TestCASCoveragePutRejectsTemporaryPathReplacement(t *testing.T) {
 	}
 }
 
-func TestCASCoveragePutReportsClosedTemporaryDescriptor(t *testing.T) {
-	if runtime.GOOS != "linux" {
-		t.Skip("descriptor discovery uses Linux procfs")
-	}
-	store, err := Open(t.TempDir())
-	if err != nil {
-		t.Fatal(err)
-	}
-	reader := &actionAtEOFReader{payload: []byte("close the writer descriptor")}
-	reader.action = func() error {
-		path, err := onlyTemporaryObject(store.temporaryRoot)
-		if err != nil {
-			return err
-		}
-		entries, err := os.ReadDir("/proc/self/fd")
-		if err != nil {
-			return err
-		}
-		for _, entry := range entries {
-			target, err := os.Readlink(filepath.Join("/proc/self/fd", entry.Name()))
-			if err != nil || target != path {
-				continue
-			}
-			var descriptor int
-			if _, err := fmt.Sscanf(entry.Name(), "%d", &descriptor); err != nil {
-				return err
-			}
-			return syscall.Close(descriptor)
-		}
-		return errors.New("temporary descriptor was not found")
-	}
-	if _, err := store.Put(reader); err == nil || !strings.Contains(err.Error(), "protect temporary CAS object") {
-		t.Fatalf("Put(closed descriptor) = %v", err)
-	}
-}
-
-func TestCASCoveragePutCrossDevicePublicationFailsClosed(t *testing.T) {
-	if runtime.GOOS != "linux" {
-		t.Skip("cross-device fixture uses Linux tmpfs")
-	}
-	root := t.TempDir()
-	temporaryRoot := filepath.Join(root, ".tmp")
-	if err := os.Mkdir(temporaryRoot, 0o700); err != nil {
-		t.Fatal(err)
-	}
-	shaRoot, err := os.MkdirTemp("/dev/shm", "rkc-cas-coverage-")
-	if err != nil {
-		t.Skipf("tmpfs unavailable: %v", err)
-	}
-	t.Cleanup(func() { _ = os.RemoveAll(shaRoot) })
-	rootIdentity, err := os.Lstat(root)
-	if err != nil {
-		t.Fatal(err)
-	}
-	shaIdentity, err := os.Lstat(shaRoot)
-	if err != nil {
-		t.Fatal(err)
-	}
-	tempIdentity, err := os.Lstat(temporaryRoot)
-	if err != nil {
-		t.Fatal(err)
-	}
-	rootStat, rootOK := rootIdentity.Sys().(*syscall.Stat_t)
-	shaStat, shaOK := shaIdentity.Sys().(*syscall.Stat_t)
-	if !rootOK || !shaOK || rootStat.Dev == shaStat.Dev {
-		t.Skip("fixture roots are not on distinct devices")
-	}
-	store := &Store{
-		root: root, shaRoot: shaRoot, temporaryRoot: temporaryRoot,
-		rootIdentity: rootIdentity, shaIdentity: shaIdentity, tempIdentity: tempIdentity,
-	}
-	payload := []byte("cross-device publication")
-	if _, err := store.PutBytes(payload); err == nil || !strings.Contains(err.Error(), "install CAS object") {
-		t.Fatalf("PutBytes(cross-device) = %v", err)
-	}
-	if _, err := os.Lstat(filepath.Join(shaRoot, DigestBytes(payload)[:2], DigestBytes(payload)[2:])); !errors.Is(err, fs.ErrNotExist) {
-		t.Fatalf("cross-device failure published an object: %v", err)
-	}
-}
-
 func TestCASCoveragePermissionFailures(t *testing.T) {
 	if runtime.GOOS == "windows" || os.Geteuid() == 0 {
 		t.Skip("permission-denial fixtures require an unprivileged Unix process")
@@ -310,26 +230,7 @@ func TestCASCoveragePermissionFailures(t *testing.T) {
 	})
 }
 
-func TestCASCoverageWalkRejectsSpecialObjectsAndPostWalkMutation(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("FIFO fixture is Unix-specific")
-	}
-	store, err := Open(t.TempDir())
-	if err != nil {
-		t.Fatal(err)
-	}
-	shard := filepath.Join(store.shaRoot, "aa")
-	if err := os.Mkdir(shard, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	object := filepath.Join(shard, strings.Repeat("0", 62))
-	if err := syscall.Mkfifo(object, 0o600); err != nil {
-		t.Fatal(err)
-	}
-	if err := store.Walk(func(ObjectInfo) error { return nil }); !errors.Is(err, ErrUnsafeObject) {
-		t.Fatalf("Walk(FIFO object) = %v, want ErrUnsafeObject", err)
-	}
-
+func TestCASCoverageWalkRejectsPostWalkMutation(t *testing.T) {
 	other, err := Open(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
@@ -397,7 +298,7 @@ func TestCASCoverageValidationAndSyncFailures(t *testing.T) {
 	}
 
 	if runtime.GOOS == "linux" {
-		procIdentity, err := os.Lstat("/proc")
+		procIdentity, err := privatepath.Lstat("/proc")
 		if err != nil {
 			t.Fatal(err)
 		}

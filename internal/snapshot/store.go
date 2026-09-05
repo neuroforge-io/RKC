@@ -186,7 +186,7 @@ func (store *Store) Begin(snapshotID string, metadata map[string]string) (*Trans
 	if err := store.validateSnapshotsRoot(); err != nil {
 		return nil, err
 	}
-	if _, err := os.Lstat(filepath.Join(store.root, "snapshots", snapshotDirectoryName(snapshotID))); err == nil {
+	if _, err := privatepath.Lstat(filepath.Join(store.root, "snapshots", snapshotDirectoryName(snapshotID))); err == nil {
 		return nil, fmt.Errorf("%w: %s", ErrSnapshotExists, snapshotID)
 	} else if !errors.Is(err, fs.ErrNotExist) {
 		return nil, err
@@ -199,7 +199,7 @@ func (store *Store) Begin(snapshotID string, metadata map[string]string) (*Trans
 	if err != nil {
 		return nil, fmt.Errorf("begin snapshot: %w", err)
 	}
-	identity, err := os.Lstat(temp)
+	identity, err := privatepath.Lstat(temp)
 	if err != nil || !identity.IsDir() || identity.Mode()&os.ModeSymlink != 0 {
 		if err == nil {
 			err = errors.New("created transaction path is not a regular directory")
@@ -222,7 +222,7 @@ func (store *Store) Begin(snapshotID string, metadata map[string]string) (*Trans
 		// and bounded building record have been written and verified.
 		_ = lease.Close()
 		_ = removeExactRegularFile(leasePath, lease.identity)
-		if current, statErr := os.Lstat(temp); statErr == nil && current.IsDir() && os.SameFile(identity, current) {
+		if current, statErr := privatepath.Lstat(temp); statErr == nil && current.IsDir() && os.SameFile(identity, current) {
 			_ = os.Remove(temp)
 		}
 		return nil, fmt.Errorf("mark snapshot transaction: %w", err)
@@ -383,7 +383,7 @@ func (transaction *Transaction) Commit() error {
 	// committed-record check immediately after rename fails closed against a
 	// source replacement. A same-UID process able to mutate the store remains a
 	// residual trust boundary until every supported OS has rename-no-replace.
-	if _, err := os.Lstat(finalPath); err == nil {
+	if _, err := privatepath.Lstat(finalPath); err == nil {
 		return fmt.Errorf("publish snapshot: destination already exists: %s", finalPath)
 	} else if !errors.Is(err, fs.ErrNotExist) {
 		return fmt.Errorf("inspect snapshot destination: %w", err)
@@ -566,7 +566,7 @@ func (store *Store) Load(snapshotID string) (rkcmodel.Bundle, rkcmodel.Coverage,
 		return rkcmodel.Bundle{}, rkcmodel.Coverage{}, Record{}, err
 	}
 	snapshotRoot := filepath.Join(store.root, "snapshots", snapshotDirectoryName(snapshotID))
-	snapshotInfo, err := os.Lstat(snapshotRoot)
+	snapshotInfo, err := privatepath.Lstat(snapshotRoot)
 	if err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
 			return rkcmodel.Bundle{}, rkcmodel.Coverage{}, Record{}, ErrSnapshotNotFound
@@ -584,7 +584,7 @@ func (store *Store) Load(snapshotID string) (rkcmodel.Bundle, rkcmodel.Coverage,
 	if err := validateCommittedRecord(record, snapshotID); err != nil {
 		return rkcmodel.Bundle{}, rkcmodel.Coverage{}, Record{}, err
 	}
-	if current, err := os.Lstat(snapshotRoot); err != nil || !current.IsDir() || !os.SameFile(snapshotInfo, current) {
+	if current, err := privatepath.Lstat(snapshotRoot); err != nil || !current.IsDir() || !os.SameFile(snapshotInfo, current) {
 		return rkcmodel.Bundle{}, rkcmodel.Coverage{}, Record{}, errors.New("snapshot directory changed while loading")
 	}
 	bundleBytes, err := store.cas.ReadBytesBounded(record.BundleObject, true, maximumBundleSize)
@@ -629,7 +629,7 @@ func (store *Store) Load(snapshotID string) (rkcmodel.Bundle, rkcmodel.Coverage,
 			return rkcmodel.Bundle{}, rkcmodel.Coverage{}, Record{}, errors.New("stored coverage does not match the canonical bundle")
 		}
 	}
-	if current, err := os.Lstat(snapshotRoot); err != nil || !current.IsDir() || !os.SameFile(snapshotInfo, current) {
+	if current, err := privatepath.Lstat(snapshotRoot); err != nil || !current.IsDir() || !os.SameFile(snapshotInfo, current) {
 		return rkcmodel.Bundle{}, rkcmodel.Coverage{}, Record{}, errors.New("snapshot directory changed while loading")
 	}
 	return bundle, coverage, record, nil
@@ -652,7 +652,7 @@ func (store *Store) List() ([]Record, error) {
 			continue
 		}
 		snapshotPath := filepath.Join(store.root, "snapshots", entry.Name())
-		snapshotInfo, err := os.Lstat(snapshotPath)
+		snapshotInfo, err := privatepath.Lstat(snapshotPath)
 		if err != nil || snapshotInfo.Mode()&os.ModeSymlink != 0 || !snapshotInfo.IsDir() {
 			return nil, errors.New("snapshot list entry is not a stable regular directory")
 		}
@@ -666,7 +666,7 @@ func (store *Store) List() ([]Record, error) {
 		if err := validateCommittedRecord(record, record.SnapshotID); err != nil {
 			return nil, fmt.Errorf("snapshot list contains an invalid committed record: %w", err)
 		}
-		if current, err := os.Lstat(snapshotPath); err != nil || !current.IsDir() || !os.SameFile(snapshotInfo, current) {
+		if current, err := privatepath.Lstat(snapshotPath); err != nil || !current.IsDir() || !os.SameFile(snapshotInfo, current) {
 			return nil, errors.New("snapshot list entry changed while reading")
 		}
 		records = append(records, record)
@@ -702,7 +702,7 @@ func (store *Store) Recover(maxAge time.Duration) ([]string, error) {
 	var removed []string
 	for _, entry := range entries {
 		path := filepath.Join(root, entry.Name())
-		info, err := os.Lstat(path)
+		info, err := privatepath.Lstat(path)
 		if err != nil {
 			return removed, err
 		}
@@ -746,7 +746,7 @@ func (store *Store) Recover(maxAge time.Duration) ([]string, error) {
 }
 
 func openOwnedStoreRoot(root string) (os.FileInfo, ownershipMarker, error) {
-	info, err := os.Lstat(root)
+	info, err := privatepath.Lstat(root)
 	if errors.Is(err, fs.ErrNotExist) {
 		if err := os.MkdirAll(filepath.Dir(root), 0o755); err != nil {
 			return nil, ownershipMarker{}, fmt.Errorf("create snapshot store parent: %w", err)
@@ -754,7 +754,7 @@ func openOwnedStoreRoot(root string) (os.FileInfo, ownershipMarker, error) {
 		if err := os.Mkdir(root, 0o755); err != nil && !errors.Is(err, fs.ErrExist) {
 			return nil, ownershipMarker{}, fmt.Errorf("create snapshot store: %w", err)
 		}
-		info, err = os.Lstat(root)
+		info, err = privatepath.Lstat(root)
 	}
 	if err != nil {
 		return nil, ownershipMarker{}, fmt.Errorf("inspect snapshot store: %w", err)
@@ -805,12 +805,12 @@ func ensureOwnedLayoutDirectory(root string, rootIdentity os.FileInfo, marker ow
 		return nil, err
 	}
 	path := filepath.Join(root, name)
-	info, err := os.Lstat(path)
+	info, err := privatepath.Lstat(path)
 	if errors.Is(err, fs.ErrNotExist) {
 		if err := os.Mkdir(path, 0o755); err != nil {
 			return nil, fmt.Errorf("create snapshot store directory %s: %w", name, err)
 		}
-		info, err = os.Lstat(path)
+		info, err = privatepath.Lstat(path)
 	}
 	if err != nil {
 		return nil, fmt.Errorf("inspect snapshot store directory %s: %w", name, err)
@@ -849,7 +849,7 @@ func validateLayoutIdentity(path string, identity os.FileInfo) error {
 	if identity == nil {
 		return fmt.Errorf("%w: missing layout identity for %s", ErrStoreUnowned, path)
 	}
-	current, err := os.Lstat(path)
+	current, err := privatepath.Lstat(path)
 	if err != nil || current.Mode()&os.ModeSymlink != 0 || !current.IsDir() || !os.SameFile(identity, current) {
 		return fmt.Errorf("%w: layout directory identity changed for %s", ErrStoreUnowned, path)
 	}
@@ -860,7 +860,7 @@ func validateOwnedStoreDirectory(path string, identity os.FileInfo, expected own
 	if identity == nil {
 		return fmt.Errorf("%w: missing directory identity", ErrStoreUnowned)
 	}
-	current, err := os.Lstat(path)
+	current, err := privatepath.Lstat(path)
 	if err != nil || current.Mode()&os.ModeSymlink != 0 || !current.IsDir() || !os.SameFile(identity, current) {
 		return fmt.Errorf("%w: store directory identity changed", ErrStoreUnowned)
 	}
@@ -868,7 +868,7 @@ func validateOwnedStoreDirectory(path string, identity os.FileInfo, expected own
 	if err != nil || marker != expected {
 		return fmt.Errorf("%w: store ownership marker changed", ErrStoreUnowned)
 	}
-	final, err := os.Lstat(path)
+	final, err := privatepath.Lstat(path)
 	if err != nil || !final.IsDir() || !os.SameFile(identity, final) {
 		return fmt.Errorf("%w: store directory changed during validation", ErrStoreUnowned)
 	}
@@ -879,7 +879,7 @@ func (transaction *Transaction) validateBuildingMarker() error {
 	if transaction == nil || transaction.identity == nil || transaction.dir == "" {
 		return fmt.Errorf("%w: missing transaction identity", ErrBuildingUnowned)
 	}
-	current, err := os.Lstat(transaction.dir)
+	current, err := privatepath.Lstat(transaction.dir)
 	if err != nil || current.Mode()&os.ModeSymlink != 0 || !current.IsDir() || !os.SameFile(transaction.identity, current) {
 		return fmt.Errorf("%w: transaction directory identity changed", ErrBuildingUnowned)
 	}
@@ -905,7 +905,7 @@ func validateBuildingDirectory(path string, identity os.FileInfo, expected owner
 	}) || strings.TrimSpace(expected.SnapshotID) == "" {
 		return Record{}, fmt.Errorf("%w: invalid expected transaction marker", ErrBuildingUnowned)
 	}
-	current, err := os.Lstat(path)
+	current, err := privatepath.Lstat(path)
 	if err != nil || current.Mode()&os.ModeSymlink != 0 || !current.IsDir() || !os.SameFile(identity, current) {
 		return Record{}, fmt.Errorf("%w: transaction directory identity changed", ErrBuildingUnowned)
 	}
@@ -929,7 +929,7 @@ func validateBuildingDirectory(path string, identity os.FileInfo, expected owner
 	if bindingErr != nil {
 		return Record{}, fmt.Errorf("%w: invalid building record object binding: %v", ErrBuildingUnowned, bindingErr)
 	}
-	final, err := os.Lstat(path)
+	final, err := privatepath.Lstat(path)
 	if err != nil || !final.IsDir() || !os.SameFile(identity, final) {
 		return Record{}, fmt.Errorf("%w: transaction directory changed during validation", ErrBuildingUnowned)
 	}
@@ -947,7 +947,7 @@ func removeBuildingDirectory(path string, identity os.FileInfo, marker ownership
 	if err != nil {
 		return fmt.Errorf("create private snapshot delete quarantine: %w", err)
 	}
-	rootIdentity, err := os.Lstat(quarantineRoot)
+	rootIdentity, err := privatepath.Lstat(quarantineRoot)
 	if err != nil || !rootIdentity.IsDir() || privatepath.CheckDir(quarantineRoot, rootIdentity) != nil {
 		_ = os.Remove(quarantineRoot)
 		return fmt.Errorf("%w: snapshot delete quarantine is not owner-only", ErrBuildingUnowned)
@@ -976,7 +976,7 @@ func removeBuildingDirectory(path string, identity os.FileInfo, marker ownership
 	if err := os.RemoveAll(payload); err != nil {
 		return fmt.Errorf("remove quarantined snapshot transaction: %w; retained at %s", err, payload)
 	}
-	currentRoot, err := os.Lstat(quarantineRoot)
+	currentRoot, err := privatepath.Lstat(quarantineRoot)
 	if err != nil || !currentRoot.IsDir() || !os.SameFile(rootIdentity, currentRoot) {
 		return fmt.Errorf("%w: delete quarantine identity changed", ErrBuildingUnowned)
 	}
@@ -990,7 +990,7 @@ func validatePublishedDirectory(path string, identity os.FileInfo, expected owne
 	if identity == nil || expected.Kind != buildingMarkerKind || expected.SnapshotID != snapshotID {
 		return errors.New("invalid expected published snapshot identity")
 	}
-	current, err := os.Lstat(path)
+	current, err := privatepath.Lstat(path)
 	if err != nil || current.Mode()&os.ModeSymlink != 0 || !current.IsDir() || !os.SameFile(identity, current) {
 		return errors.New("published snapshot directory identity changed")
 	}
@@ -1005,7 +1005,7 @@ func validatePublishedDirectory(path string, identity os.FileInfo, expected owne
 	if err := validateCommittedRecord(record, snapshotID); err != nil {
 		return fmt.Errorf("validate published snapshot record: %w", err)
 	}
-	final, err := os.Lstat(path)
+	final, err := privatepath.Lstat(path)
 	if err != nil || !final.IsDir() || !os.SameFile(identity, final) {
 		return errors.New("published snapshot directory changed during validation")
 	}
@@ -1109,7 +1109,7 @@ func readBoundedRegular(path string, maximum int64) ([]byte, error) {
 	if maximum <= 0 {
 		return nil, errors.New("file safety limit must be positive")
 	}
-	before, err := os.Lstat(path)
+	before, err := privatepath.Lstat(path)
 	if err != nil {
 		return nil, err
 	}
@@ -1190,7 +1190,7 @@ func removeExactRegularFile(path string, identity os.FileInfo) error {
 	if identity == nil {
 		return errors.New("missing file identity")
 	}
-	current, err := os.Lstat(path)
+	current, err := privatepath.Lstat(path)
 	if err != nil || !current.Mode().IsRegular() || !os.SameFile(identity, current) {
 		return errors.New("refusing to remove changed file identity")
 	}

@@ -11,6 +11,8 @@ import (
 	"sort"
 	"strings"
 	"testing"
+
+	"github.com/neuroforge-io/RKC/internal/privatepath"
 )
 
 func TestResolveTargetRejectsRootsRepositoryAncestorsAndEmpty(t *testing.T) {
@@ -845,7 +847,7 @@ func TestStagingIdentityAndMarkerTamperingAreRejected(t *testing.T) {
 	if err := os.WriteFile(file, []byte("x"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	identity, err := os.Lstat(file)
+	identity, err := privatepath.Lstat(file)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -863,7 +865,7 @@ func TestRecursiveRemovalRejectsDirectoryAndMarkerReplacement(t *testing.T) {
 	if err := writeMarker(original, Marker{SchemaVersion: markerVersion, Producer: producer, Kind: "staging"}); err != nil {
 		t.Fatal(err)
 	}
-	identity, err := os.Lstat(original)
+	identity, err := privatepath.Lstat(original)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -897,7 +899,7 @@ func TestRecursiveRemovalRejectsDirectoryAndMarkerReplacement(t *testing.T) {
 	if err := writeMarker(markerChanged, Marker{SchemaVersion: markerVersion, Producer: producer, Kind: "atlas"}); err != nil {
 		t.Fatal(err)
 	}
-	markerIdentity, err := os.Lstat(markerChanged)
+	markerIdentity, err := privatepath.Lstat(markerChanged)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -927,7 +929,7 @@ func TestQuarantineBindsRemovalToMovedIdentity(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(owned, "generated"), []byte("remove"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	identity, err := os.Lstat(owned)
+	identity, err := privatepath.Lstat(owned)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -958,7 +960,7 @@ func TestQuarantineBindsRemovalToMovedIdentity(t *testing.T) {
 	if err := writeMarker(restorable, Marker{SchemaVersion: markerVersion, Producer: producer, Kind: "staging"}); err != nil {
 		t.Fatal(err)
 	}
-	restorableIdentity, err := os.Lstat(restorable)
+	restorableIdentity, err := privatepath.Lstat(restorable)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -969,7 +971,7 @@ func TestQuarantineBindsRemovalToMovedIdentity(t *testing.T) {
 	if err := restoredQuarantine.restore(restorable); err != nil {
 		t.Fatal(err)
 	}
-	restoredIdentity, err := os.Lstat(restorable)
+	restoredIdentity, err := privatepath.Lstat(restorable)
 	if err != nil || !os.SameFile(restorableIdentity, restoredIdentity) {
 		t.Fatalf("restored directory identity changed: %v", err)
 	}

@@ -12,6 +12,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/neuroforge-io/RKC/internal/privatepath"
 )
 
 type syntheticOutputFileInfo struct{ system any }
@@ -68,7 +70,7 @@ func TestLowLevelFileAndManifestSafetyHelpers(t *testing.T) {
 	if err := os.WriteFile(path, []byte("payload"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	identity, err := os.Lstat(path)
+	identity, err := privatepath.Lstat(path)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -78,7 +80,7 @@ func TestLowLevelFileAndManifestSafetyHelpers(t *testing.T) {
 	if _, err := hashRegularFile(path, identity, 6); err == nil {
 		t.Fatal("hashRegularFile(too small limit) succeeded")
 	}
-	rootIdentity, err := os.Lstat(root)
+	rootIdentity, err := privatepath.Lstat(root)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -139,7 +141,7 @@ func TestOwnershipMetadataAndDirectoryFailureBoundaries(t *testing.T) {
 		t.Fatal(err)
 	}
 	finalizeOwnedAtlasFixture(t, root, "snapshot")
-	identity, err := os.Lstat(root)
+	identity, err := privatepath.Lstat(root)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -187,7 +189,7 @@ func TestOwnershipManifestRejectsAmbiguousPayloads(t *testing.T) {
 		if err := writeMarker(root, Marker{SchemaVersion: markerVersion, Producer: producer, Kind: "atlas", SnapshotID: "snapshot"}); err != nil {
 			t.Fatal(err)
 		}
-		identity, err := os.Lstat(root)
+		identity, err := privatepath.Lstat(root)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -296,10 +298,8 @@ func TestReplacementJournalPersistenceLoadAndValidation(t *testing.T) {
 		t.Fatalf("nil journal discard = %v", err)
 	}
 	root := filepath.Join(t.TempDir(), ".rkc-quarantine-valid")
-	if err := os.Mkdir(root, 0o700); err != nil {
-		t.Fatal(err)
-	}
-	rootIdentity, err := os.Lstat(root)
+	privateDirectoryFixture(t, root)
+	rootIdentity, err := privatepath.Lstat(root)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -323,7 +323,7 @@ func TestReplacementJournalPersistenceLoadAndValidation(t *testing.T) {
 	if err := loaded.discard(); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := os.Lstat(root); !errors.Is(err, os.ErrNotExist) {
+	if _, err := privatepath.Lstat(root); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("discard retained root: %v", err)
 	}
 
@@ -386,7 +386,7 @@ func replacementJournalJSON(t *testing.T, record replacementJournalRecord) strin
 	if err := os.Mkdir(root, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	identity, err := os.Lstat(root)
+	identity, err := privatepath.Lstat(root)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -417,23 +417,21 @@ func TestIdentityTokensRecoveryScanAndQuarantineFailures(t *testing.T) {
 	if _, ok := numericIdentityField(reflect.ValueOf("not numeric")); ok {
 		t.Fatal("numericIdentityField(string) succeeded")
 	}
-	if info, token := inspectIdentityToken(filepath.Join(t.TempDir(), "missing")); info != nil || token != "" {
-		t.Fatalf("inspectIdentityToken(missing) = %v, %q", info, token)
+	if info, token, err := inspectIdentityToken(filepath.Join(t.TempDir(), "missing")); info != nil || token != "" || err != nil {
+		t.Fatalf("inspectIdentityToken(missing) = %v, %q, %v", info, token, err)
 	}
 	file := filepath.Join(t.TempDir(), "file")
 	if err := os.WriteFile(file, nil, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if info, token := inspectIdentityToken(file); info != nil || token != "" {
-		t.Fatalf("inspectIdentityToken(file) = %v, %q", info, token)
+	if info, token, err := inspectIdentityToken(file); info == nil || token != "" || err == nil {
+		t.Fatalf("inspectIdentityToken(file) = %v, %q, %v", info, token, err)
 	}
 
 	parent := t.TempDir()
 	for index := 0; index <= journalScanLimit; index++ {
 		path := filepath.Join(parent, fmt.Sprintf(".rkc-quarantine-%03d", index))
-		if err := os.Mkdir(path, 0o700); err != nil {
-			t.Fatal(err)
-		}
+		privateDirectoryFixture(t, path)
 	}
 	if err := recoverInterruptedReplacements(parent, "atlas"); err == nil || !strings.Contains(err.Error(), "scan limit") {
 		t.Fatalf("recoverInterruptedReplacements(scan limit) = %v", err)
@@ -503,7 +501,7 @@ func TestNewPortableRollbackAndPreExchangePublicationPaths(t *testing.T) {
 		if calls != 2 {
 			t.Fatalf("rename calls = %d, want publish plus exact rollback", calls)
 		}
-		if _, err := os.Lstat(target); !errors.Is(err, os.ErrNotExist) {
+		if _, err := privatepath.Lstat(target); !errors.Is(err, os.ErrNotExist) {
 			t.Fatalf("tampered target remained published: %v", err)
 		}
 		if err := transaction.Abort(); err != nil {
@@ -522,7 +520,7 @@ func TestNewPortableRollbackAndPreExchangePublicationPaths(t *testing.T) {
 		if data, err := os.ReadFile(filepath.Join(transaction.Target, "new.txt")); err != nil || string(data) != "new" {
 			t.Fatalf("portable target = %q, %v", data, err)
 		}
-		if _, err := os.Lstat(journal.root); !errors.Is(err, os.ErrNotExist) {
+		if _, err := privatepath.Lstat(journal.root); !errors.Is(err, os.ErrNotExist) {
 			t.Fatalf("portable replacement retained journal: %v", err)
 		}
 	})
@@ -588,7 +586,7 @@ func TestNewPortableRollbackAndPreExchangePublicationPaths(t *testing.T) {
 		if data, err := os.ReadFile(filepath.Join(transaction.Target, "old.txt")); err != nil || string(data) != "old" {
 			t.Fatalf("rolled-back target = %q, %v", data, err)
 		}
-		if _, err := os.Lstat(journal.root); !errors.Is(err, os.ErrNotExist) {
+		if _, err := privatepath.Lstat(journal.root); !errors.Is(err, os.ErrNotExist) {
 			t.Fatalf("rollback retained journal: %v", err)
 		}
 		if err := transaction.Abort(); err != nil {
@@ -611,7 +609,7 @@ func TestNewPortableRollbackAndPreExchangePublicationPaths(t *testing.T) {
 		if err := transaction.rollbackExchange(priorIdentity, journal, cause); err == nil || !strings.Contains(err.Error(), "injected rollback refusal") {
 			t.Fatalf("rollbackExchange(refusal) = %v", err)
 		}
-		if _, err := os.Lstat(journal.root); err != nil {
+		if _, err := privatepath.Lstat(journal.root); err != nil {
 			t.Fatalf("failed rollback lost recovery journal: %v", err)
 		}
 	})
@@ -624,10 +622,10 @@ func TestNewPortableRollbackAndPreExchangePublicationPaths(t *testing.T) {
 		if data, err := os.ReadFile(filepath.Join(transaction.Target, "old.txt")); err != nil || string(data) != "old" {
 			t.Fatalf("pre-exchange recovery target = %q, %v", data, err)
 		}
-		if _, err := os.Lstat(transaction.Staging); !errors.Is(err, os.ErrNotExist) {
+		if _, err := privatepath.Lstat(transaction.Staging); !errors.Is(err, os.ErrNotExist) {
 			t.Fatalf("pre-exchange recovery retained staging: %v", err)
 		}
-		if _, err := os.Lstat(journal.root); !errors.Is(err, os.ErrNotExist) {
+		if _, err := privatepath.Lstat(journal.root); !errors.Is(err, os.ErrNotExist) {
 			t.Fatalf("pre-exchange recovery retained journal: %v", err)
 		}
 	})
@@ -647,10 +645,10 @@ func TestNewPortableRollbackAndPreExchangePublicationPaths(t *testing.T) {
 		if data, err := os.ReadFile(filepath.Join(transaction.Target, "old.txt")); err != nil || string(data) != "old" {
 			t.Fatalf("portable recovery target = %q, %v", data, err)
 		}
-		if _, err := os.Lstat(transaction.Staging); !errors.Is(err, os.ErrNotExist) {
+		if _, err := privatepath.Lstat(transaction.Staging); !errors.Is(err, os.ErrNotExist) {
 			t.Fatalf("portable recovery retained staging: %v", err)
 		}
-		if _, err := os.Lstat(journal.root); !errors.Is(err, os.ErrNotExist) {
+		if _, err := privatepath.Lstat(journal.root); !errors.Is(err, os.ErrNotExist) {
 			t.Fatalf("portable recovery retained journal: %v", err)
 		}
 	})
@@ -687,4 +685,15 @@ func newReplacementFixture(t *testing.T) (*Transaction, os.FileInfo, *replacemen
 		t.Fatal(err)
 	}
 	return transaction, priorIdentity, journal
+}
+
+func privateDirectoryFixture(t *testing.T, path string) {
+	t.Helper()
+	created, err := privatepath.MkdirTemp(filepath.Dir(path), ".rkc-fixture-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := privatepath.Rename(created, path); err != nil {
+		t.Fatal(err)
+	}
 }

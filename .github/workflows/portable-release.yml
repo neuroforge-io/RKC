@@ -116,6 +116,11 @@ jobs:
         shell: bash
         env:
           GOMAXPROCS: '1'
+          # Keep adversarial fixtures beneath the runner's real work directory,
+          # avoiding macOS /var and Windows short-user-name temp aliases.
+          TMPDIR: ${{ runner.temp }}
+          TMP: ${{ runner.temp }}
+          TEMP: ${{ runner.temp }}
         run: go test ./internal/privatepath ./internal/safeoutput ./internal/cas ./internal/snapshot
 
   native:

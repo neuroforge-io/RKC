@@ -232,7 +232,7 @@ func requireOpenReadyAbsent(path string) error {
 }
 
 func readOpenReadyReceipt(path string) (serveReadyReceipt, error) {
-	info, err := os.Lstat(path)
+	info, err := privatepath.Lstat(path)
 	if err != nil {
 		return serveReadyReceipt{}, err
 	}

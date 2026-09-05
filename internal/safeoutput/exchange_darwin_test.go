@@ -6,6 +6,8 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/neuroforge-io/RKC/internal/privatepath"
 )
 
 func TestDarwinPublicationPrimitivesPreserveDirectories(t *testing.T) {
@@ -19,17 +21,17 @@ func TestDarwinPublicationPrimitivesPreserveDirectories(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	firstIdentity, err := os.Lstat(first)
+	firstIdentity, err := privatepath.Lstat(first)
 	if err != nil {
 		t.Fatal(err)
 	}
-	secondIdentity, err := os.Lstat(second)
+	secondIdentity, err := privatepath.Lstat(second)
 	if err != nil {
 		t.Fatal(err)
 	}
 	assertDirectory := func(path, content string, identity os.FileInfo) {
 		t.Helper()
-		info, err := os.Lstat(path)
+		info, err := privatepath.Lstat(path)
 		if err != nil || !os.SameFile(identity, info) {
 			t.Fatalf("directory identity at %s changed: %v", path, err)
 		}
@@ -53,7 +55,7 @@ func TestDarwinPublicationPrimitivesPreserveDirectories(t *testing.T) {
 		t.Fatal(err)
 	}
 	assertDirectory(third, "second", secondIdentity)
-	if _, err := os.Lstat(first); !os.IsNotExist(err) {
+	if _, err := privatepath.Lstat(first); !os.IsNotExist(err) {
 		t.Fatalf("old name still exists after move: %v", err)
 	}
 	if err := exchangePaths(first, second); !os.IsNotExist(err) {

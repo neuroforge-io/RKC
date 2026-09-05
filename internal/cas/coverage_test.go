@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/neuroforge-io/RKC/internal/privatepath"
 )
 
 func TestStorePrimitiveSafetyFailures(t *testing.T) {
@@ -130,7 +132,7 @@ func TestFilesystemHelpersRejectIdentitySubstitution(t *testing.T) {
 	if err := syncDirectoryStable(filepath.Join(base, "missing"), identity); !errors.Is(err, fs.ErrNotExist) {
 		t.Fatalf("syncDirectoryStable(missing) = %v", err)
 	}
-	other, err := os.Lstat(base)
+	other, err := privatepath.Lstat(base)
 	if err != nil {
 		t.Fatal(err)
 	}

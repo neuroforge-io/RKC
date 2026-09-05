@@ -124,3 +124,37 @@ func TestRenameReplacesOnlyAuthorizedFile(t *testing.T) {
 		t.Fatalf("replacement = %q, %v", data, err)
 	}
 }
+
+func TestLstatBindsIdentityBeforeAnyComparisonOrRename(t *testing.T) {
+	parent := t.TempDir()
+	root, err := MkdirTemp(parent, "bound-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	identity, err := Lstat(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	retained := root + "-retained"
+	// No SameFile call is allowed before this adversarial rename: the original
+	// Windows lazy metadata bug was masked whenever a previous check loaded IDs.
+	if err := Rename(root, retained); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(root, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	replacement, err := Lstat(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if os.SameFile(identity, replacement) {
+		t.Fatal("captured identity silently rebound to a replacement pathname")
+	}
+	if err := CheckDir(root, identity); err == nil {
+		t.Fatal("replacement accepted as original directory")
+	}
+	if err := CheckDir(retained, identity); err != nil {
+		t.Fatalf("retained original identity lost: %v", err)
+	}
+}

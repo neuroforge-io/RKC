@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/neuroforge-io/RKC/internal/cas"
+	"github.com/neuroforge-io/RKC/internal/privatepath"
 	"github.com/neuroforge-io/RKC/pkg/rkcmodel"
 )
 
@@ -67,7 +68,7 @@ func TestTransactionLeaseProvesLivenessAndIdentity(t *testing.T) {
 	if err := os.WriteFile(replacement, nil, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	replacementInfo, err := os.Lstat(replacement)
+	replacementInfo, err := privatepath.Lstat(replacement)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -294,7 +295,7 @@ func TestExactFileRemovalAndCurrentValidation(t *testing.T) {
 	if err := os.WriteFile(path, []byte("x"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	identity, err := os.Lstat(path)
+	identity, err := privatepath.Lstat(path)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -686,7 +687,7 @@ func TestTransactionStoragePublicationAndLeaseErrorsFailClosed(t *testing.T) {
 		if err := transaction.Abort("must retain without lease"); !errors.Is(err, ErrBuildingUnowned) {
 			t.Fatalf("Abort(closed lease) = %v", err)
 		}
-		if _, err := os.Lstat(transaction.dir); err != nil {
+		if _, err := privatepath.Lstat(transaction.dir); err != nil {
 			t.Fatalf("Abort(closed lease) removed unproven transaction: %v", err)
 		}
 	})
@@ -807,7 +808,7 @@ func TestRecoverDefersFreshAbandonedTransaction(t *testing.T) {
 	if len(removed) != 0 {
 		t.Fatalf("Recover(maxAge) removed fresh abandoned transaction: %v", removed)
 	}
-	if _, err := os.Lstat(transaction.dir); err != nil {
+	if _, err := privatepath.Lstat(transaction.dir); err != nil {
 		t.Fatalf("Recover(maxAge) changed fresh transaction: %v", err)
 	}
 
@@ -878,7 +879,7 @@ func TestMarkerAndAtomicWriteSafetyLimits(t *testing.T) {
 	if _, err := writeOwnershipMarker(root, "oversized-marker", marker); err == nil || !strings.Contains(err.Error(), "safety limit") {
 		t.Fatalf("writeOwnershipMarker(oversized) = %v", err)
 	}
-	if _, err := os.Lstat(filepath.Join(root, "oversized-marker")); !errors.Is(err, os.ErrNotExist) {
+	if _, err := privatepath.Lstat(filepath.Join(root, "oversized-marker")); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("oversized ownership marker was published: %v", err)
 	}
 

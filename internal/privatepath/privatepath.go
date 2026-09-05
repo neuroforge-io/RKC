@@ -20,7 +20,7 @@ func CheckFile(path string, identity os.FileInfo) error {
 }
 
 func checkIdentity(path string, identity os.FileInfo, directory bool) error {
-	current, err := os.Lstat(path)
+	current, err := Lstat(path)
 	if err != nil {
 		return err
 	}
@@ -38,7 +38,7 @@ func checkIdentity(path string, identity os.FileInfo, directory bool) error {
 // only, while Rename requests write-through moves and callers flush file data.
 // Windows callers must not claim Unix directory-entry power-loss guarantees.
 func SyncDirectory(path string) error {
-	identity, err := os.Lstat(path)
+	identity, err := Lstat(path)
 	if err != nil {
 		return err
 	}

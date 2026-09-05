@@ -7,15 +7,15 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+
+	"github.com/neuroforge-io/RKC/internal/privatepath"
 )
 
 func TestGapSafeOutputSetupAndRecoveryFailuresPreserveInputs(t *testing.T) {
 	t.Run("malformed recovery journal blocks begin", func(t *testing.T) {
 		parent := t.TempDir()
 		journalRoot := filepath.Join(parent, ".rkc-quarantine-malformed")
-		if err := os.Mkdir(journalRoot, 0o700); err != nil {
-			t.Fatal(err)
-		}
+		privateDirectoryFixture(t, journalRoot)
 		journalPath := filepath.Join(journalRoot, journalName)
 		if err := os.WriteFile(journalPath, []byte("{"), 0o600); err != nil {
 			t.Fatal(err)
@@ -28,7 +28,7 @@ func TestGapSafeOutputSetupAndRecoveryFailuresPreserveInputs(t *testing.T) {
 		if data, err := os.ReadFile(journalPath); err != nil || string(data) != "{" {
 			t.Fatalf("malformed recovery journal changed: %q, %v", data, err)
 		}
-		if _, err := os.Lstat(target); !errors.Is(err, os.ErrNotExist) {
+		if _, err := privatepath.Lstat(target); !errors.Is(err, os.ErrNotExist) {
 			t.Fatalf("blocked Begin created target: %v", err)
 		}
 	})
@@ -108,7 +108,7 @@ func TestGapReplacementJournalCreationRejectsIncompleteOwnershipProofs(t *testin
 		if err := os.Mkdir(staging, 0o700); err != nil {
 			t.Fatal(err)
 		}
-		stagingIdentity, err := os.Lstat(staging)
+		stagingIdentity, err := privatepath.Lstat(staging)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -128,7 +128,7 @@ func TestGapReplacementJournalCreationRejectsIncompleteOwnershipProofs(t *testin
 		}); err != nil {
 			t.Fatal(err)
 		}
-		priorIdentity, err := os.Lstat(prior)
+		priorIdentity, err := privatepath.Lstat(prior)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -138,7 +138,7 @@ func TestGapReplacementJournalCreationRejectsIncompleteOwnershipProofs(t *testin
 		}
 	})
 
-	otherIdentity, err := os.Lstat(t.TempDir())
+	otherIdentity, err := privatepath.Lstat(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -155,7 +155,7 @@ func TestGapReplacementJournalRecoveryAndCleanupFailClosed(t *testing.T) {
 		if err := recoverInterruptedReplacements(parent, "different-target"); err != nil {
 			t.Fatal(err)
 		}
-		if _, err := os.Lstat(journal.root); err != nil {
+		if _, err := privatepath.Lstat(journal.root); err != nil {
 			t.Fatalf("unrelated journal was removed: %v", err)
 		}
 	})
@@ -167,7 +167,7 @@ func TestGapReplacementJournalRecoveryAndCleanupFailClosed(t *testing.T) {
 			!strings.Contains(err.Error(), "identities are ambiguous") {
 			t.Fatalf("recoverInterruptedReplacements(ambiguous identities) = %v", err)
 		}
-		if _, err := os.Lstat(journal.root); err != nil {
+		if _, err := privatepath.Lstat(journal.root); err != nil {
 			t.Fatalf("ambiguous journal was removed: %v", err)
 		}
 	})
@@ -175,9 +175,7 @@ func TestGapReplacementJournalRecoveryAndCleanupFailClosed(t *testing.T) {
 	t.Run("journal must be a regular bounded file", func(t *testing.T) {
 		parent := t.TempDir()
 		directoryJournal := filepath.Join(parent, ".rkc-quarantine-directory")
-		if err := os.Mkdir(directoryJournal, 0o700); err != nil {
-			t.Fatal(err)
-		}
+		privateDirectoryFixture(t, directoryJournal)
 		if err := os.Mkdir(filepath.Join(directoryJournal, journalName), 0o700); err != nil {
 			t.Fatal(err)
 		}
@@ -187,9 +185,7 @@ func TestGapReplacementJournalRecoveryAndCleanupFailClosed(t *testing.T) {
 		}
 
 		oversizedRoot := filepath.Join(parent, ".rkc-quarantine-oversized")
-		if err := os.Mkdir(oversizedRoot, 0o700); err != nil {
-			t.Fatal(err)
-		}
+		privateDirectoryFixture(t, oversizedRoot)
 		if err := os.WriteFile(
 			filepath.Join(oversizedRoot, journalName),
 			[]byte(strings.Repeat("x", journalMaxSize+1)),
@@ -217,7 +213,7 @@ func TestGapReplacementJournalRecoveryAndCleanupFailClosed(t *testing.T) {
 			t.Fatalf("discard(replaced journal) = %v", err)
 		}
 		for _, path := range []string{journal.path, retained} {
-			if _, err := os.Lstat(path); err != nil {
+			if _, err := privatepath.Lstat(path); err != nil {
 				t.Fatalf("discard removed %s: %v", path, err)
 			}
 		}
@@ -231,7 +227,7 @@ func TestGapReplacementJournalRecoveryAndCleanupFailClosed(t *testing.T) {
 		if err := journal.discard(); err == nil || !strings.Contains(err.Error(), "root changed") {
 			t.Fatalf("discard(replaced root) = %v", err)
 		}
-		if _, err := os.Lstat(retained); err != nil {
+		if _, err := privatepath.Lstat(retained); err != nil {
 			t.Fatalf("discard removed retained root: %v", err)
 		}
 	})
@@ -245,10 +241,10 @@ func TestGapPortableAndExchangeFailuresRetainRecoveryState(t *testing.T) {
 		if err == nil || !strings.Contains(err.Error(), "persist quarantine state") {
 			t.Fatalf("commitPortable(replaced journal root) = %v", err)
 		}
-		if _, err := os.Lstat(filepath.Join(journal.root, "payload")); err != nil {
+		if _, err := privatepath.Lstat(filepath.Join(journal.root, "payload")); err != nil {
 			t.Fatalf("prior output was not retained in quarantine: %v", err)
 		}
-		if _, err := os.Lstat(retained); err != nil {
+		if _, err := privatepath.Lstat(retained); err != nil {
 			t.Fatalf("durable journal was not retained: %v", err)
 		}
 	})
@@ -263,10 +259,10 @@ func TestGapPortableAndExchangeFailuresRetainRecoveryState(t *testing.T) {
 		if !errors.Is(err, refusal) || !strings.Contains(err.Error(), "restore failed") {
 			t.Fatalf("commitPortable(double refusal) = %v", err)
 		}
-		if _, err := os.Lstat(filepath.Join(journal.root, "payload")); err != nil {
+		if _, err := privatepath.Lstat(filepath.Join(journal.root, "payload")); err != nil {
 			t.Fatalf("prior payload was not retained: %v", err)
 		}
-		if _, err := os.Lstat(transaction.Staging); err != nil {
+		if _, err := privatepath.Lstat(transaction.Staging); err != nil {
 			t.Fatalf("new staging was not retained: %v", err)
 		}
 	})
@@ -289,7 +285,7 @@ func TestGapPortableAndExchangeFailuresRetainRecoveryState(t *testing.T) {
 			!strings.Contains(err.Error(), "rolled-back prior output failed validation") {
 			t.Fatalf("commitExchange(tampered prior) = %v", err)
 		}
-		if _, err := os.Lstat(journal.root); err != nil {
+		if _, err := privatepath.Lstat(journal.root); err != nil {
 			t.Fatalf("tampered exchange lost recovery journal: %v", err)
 		}
 	})
@@ -319,7 +315,7 @@ func TestGapPortableAndExchangeFailuresRetainRecoveryState(t *testing.T) {
 		if retained == "" {
 			t.Fatal("exchange did not retain the durable journal root")
 		}
-		if _, err := os.Lstat(retained); err != nil {
+		if _, err := privatepath.Lstat(retained); err != nil {
 			t.Fatalf("durable exchange journal was not retained: %v", err)
 		}
 	})
@@ -350,7 +346,7 @@ func TestGapPortableAndExchangeFailuresRetainRecoveryState(t *testing.T) {
 			t.Fatalf("rollbackExchange(replaced journal) = %v", err)
 		}
 		for _, path := range []string{journal.path, retainedJournal} {
-			if _, err := os.Lstat(path); err != nil {
+			if _, err := privatepath.Lstat(path); err != nil {
 				t.Fatalf("rollback removed %s: %v", path, err)
 			}
 		}
@@ -367,7 +363,7 @@ func TestGapQuarantineRestoreAndCleanupNeverTouchReplacements(t *testing.T) {
 		if err := quarantine.restore(target); !errors.Is(err, refusal) {
 			t.Fatalf("quarantine.restore(refusal) = %v", err)
 		}
-		if _, err := os.Lstat(quarantine.payload); err != nil {
+		if _, err := privatepath.Lstat(quarantine.payload); err != nil {
 			t.Fatalf("restore refusal removed payload: %v", err)
 		}
 	})
@@ -395,7 +391,7 @@ func TestGapQuarantineRestoreAndCleanupNeverTouchReplacements(t *testing.T) {
 		if data, err := os.ReadFile(filepath.Join(target, "user-data")); err != nil || string(data) != "preserve" {
 			t.Fatalf("restore changed replacement target: %q, %v", data, err)
 		}
-		if _, err := os.Lstat(retained); err != nil {
+		if _, err := privatepath.Lstat(retained); err != nil {
 			t.Fatalf("restored owned inode was not retained: %v", err)
 		}
 	})
@@ -421,7 +417,7 @@ func TestGapQuarantineRestoreAndCleanupNeverTouchReplacements(t *testing.T) {
 			t.Fatalf("removeEmptyQuarantine(replaced journal) = %v", err)
 		}
 		for _, path := range []string{journal.path, retained} {
-			if _, err := os.Lstat(path); err != nil {
+			if _, err := privatepath.Lstat(path); err != nil {
 				t.Fatalf("final removal changed %s: %v", path, err)
 			}
 		}
@@ -429,7 +425,7 @@ func TestGapQuarantineRestoreAndCleanupNeverTouchReplacements(t *testing.T) {
 
 	t.Run("nonempty quarantine root is retained", func(t *testing.T) {
 		root := t.TempDir()
-		identity, err := os.Lstat(root)
+		identity, err := privatepath.Lstat(root)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -450,14 +446,12 @@ func TestGapQuarantineRestoreAndCleanupNeverTouchReplacements(t *testing.T) {
 func newGapOwnedAtlas(t *testing.T, parent, name, snapshotID string) (string, os.FileInfo) {
 	t.Helper()
 	root := filepath.Join(parent, name)
-	if err := os.Mkdir(root, 0o700); err != nil {
-		t.Fatal(err)
-	}
+	privateDirectoryFixture(t, root)
 	if err := os.WriteFile(filepath.Join(root, "payload.txt"), []byte("payload"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	finalizeOwnedAtlasFixture(t, root, snapshotID)
-	identity, err := os.Lstat(root)
+	identity, err := privatepath.Lstat(root)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -467,10 +461,8 @@ func newGapOwnedAtlas(t *testing.T, parent, name, snapshotID string) (string, os
 func newGapPersistedJournal(t *testing.T, parent, name string) *replacementJournal {
 	t.Helper()
 	root := filepath.Join(parent, name)
-	if err := os.Mkdir(root, 0o700); err != nil {
-		t.Fatal(err)
-	}
-	identity, err := os.Lstat(root)
+	privateDirectoryFixture(t, root)
+	identity, err := privatepath.Lstat(root)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -494,7 +486,7 @@ func newGapStagingQuarantine(t *testing.T) (*quarantinedDirectory, string) {
 	if err := writeMarker(target, Marker{SchemaVersion: markerVersion, Producer: producer, Kind: "staging"}); err != nil {
 		t.Fatal(err)
 	}
-	identity, err := os.Lstat(target)
+	identity, err := privatepath.Lstat(target)
 	if err != nil {
 		t.Fatal(err)
 	}

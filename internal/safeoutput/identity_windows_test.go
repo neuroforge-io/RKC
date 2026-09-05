@@ -15,7 +15,7 @@ func TestWindowsPersistentIdentitySurvivesRenameAndRejectsSubstitution(t *testin
 	if err != nil {
 		t.Fatal(err)
 	}
-	identity, err := os.Lstat(root)
+	identity, err := privatepath.Lstat(root)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -71,7 +71,7 @@ func TestWindowsCompletePublicationReplacementAndAbort(t *testing.T) {
 	if err := transaction.Abort(); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := os.Lstat(transaction.Staging); !os.IsNotExist(err) {
+	if _, err := privatepath.Lstat(transaction.Staging); !os.IsNotExist(err) {
 		t.Fatalf("aborted staging remains: %v", err)
 	}
 	if data, err := os.ReadFile(filepath.Join(target, "content")); err != nil || string(data) != "replacement" {

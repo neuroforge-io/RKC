@@ -6,12 +6,14 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"sort"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/neuroforge-io/RKC/internal/cas"
+	"github.com/neuroforge-io/RKC/internal/privatepath"
 	"github.com/neuroforge-io/RKC/pkg/rkcmodel"
 )
 
@@ -50,7 +52,7 @@ func TestOpenCreatesLayoutAndRejectsFileRoot(t *testing.T) {
 	if err != nil || marker.Kind != storeMarkerKind {
 		t.Fatalf("store ownership marker = %+v, %v", marker, err)
 	}
-	if info, err := os.Lstat(filepath.Join(store.Root(), storeMarkerName)); err != nil || info.Size() > ownershipMarkerMax {
+	if info, err := privatepath.Lstat(filepath.Join(store.Root(), storeMarkerName)); err != nil || info.Size() > ownershipMarkerMax {
 		t.Fatalf("bounded store marker: info=%v err=%v", info, err)
 	}
 	for _, directory := range []string{"building", "snapshots", "objects", filepath.Join("objects", "sha256")} {
@@ -778,7 +780,7 @@ func TestRecoverRejectsNegativeAgeWithoutRemovingAbandonedBuild(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "must not be negative") {
 		t.Fatalf("Recover(negative age) = %v, %v; want rejection", removed, err)
 	}
-	if _, err := os.Lstat(transaction.dir); err != nil {
+	if _, err := privatepath.Lstat(transaction.dir); err != nil {
 		t.Fatalf("negative-age recovery changed abandoned build: %v", err)
 	}
 
@@ -967,8 +969,11 @@ func TestAtomicWriteReplaceAndRollback(t *testing.T) {
 		t.Fatalf("atomic replacement = %q, %v", data, err)
 	}
 	info, err := os.Stat(path)
-	if err != nil || info.Mode().Perm() != 0o600 {
+	if err != nil || runtime.GOOS != "windows" && info.Mode().Perm() != 0o600 {
 		t.Fatalf("atomic replacement mode = %v, %v", info.Mode(), err)
+	}
+	if err := privatepath.CheckFile(path, info); err != nil {
+		t.Fatalf("atomic replacement is not private: %v", err)
 	}
 
 	targetDirectory := filepath.Join(directory, "cannot-replace")
