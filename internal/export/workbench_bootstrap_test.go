@@ -95,7 +95,7 @@ func TestBrowserBindsRepositoryReadsToOneActiveAtlasRevision(t *testing.T) {
 	application := string(assets["app.js"])
 	for _, marker := range []string{
 		"atlasRevision:0",
-		"function advanceAtlasGeneration(){state.atlasRevision++;state.searchRevision++;clearTimeout(state.searchTimer);return state.atlasRevision}",
+		"function advanceAtlasGeneration(){state.atlasRevision++;state.navigationRevision++;state.searchRevision++;clearTimeout(state.searchTimer);return state.atlasRevision}",
 		"const atlasRevision=state.atlasRevision,expectedSnapshot=state.bundle?.snapshot?.id",
 		"response.headers?.get(snapshotGenerationHeader)",
 		"responseSnapshot!==expectedSnapshot",

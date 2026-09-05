@@ -1,6 +1,6 @@
 'use strict';
 const commandCatalog=__RKC_COMMAND_CATALOG__;
-const state={bundle:null,coverage:null,nodes:new Map(),artifacts:new Map(),evidence:new Map(),outgoing:new Map(),incoming:new Map(),selected:null,selectedArtifact:null,selectedArtifactContext:null,view:'overview',results:[],apiSearchResults:null,workbench:null,commandName:'quickstart',repositoryFolder:'',directoryListing:null,activationNotice:null,api:false,facets:null,listTruncated:false,diagnosticsTruncated:false,searchTimer:null,searchRevision:0,atlasRevision:0,staticBootstrap:false,staticLoad:null,staticSearchRecords:null,staticSearchByID:new Map(),staticSearchLoad:null,capabilities:null,contextQuery:'',contextPacket:null,contextRevision:0,contextLoading:false,contextError:'',commandFilter:'',commandGroup:'all',commandDrafts:new Map(),activeJob:null,lastJob:null,jobCommand:'',submittingJob:false,toastTimer:null};
+const state={bundle:null,coverage:null,nodes:new Map(),artifacts:new Map(),evidence:new Map(),outgoing:new Map(),incoming:new Map(),selected:null,selectedArtifact:null,selectedArtifactContext:null,view:'overview',navigationRevision:0,results:[],apiSearchResults:null,workbench:null,commandName:'quickstart',repositoryFolder:'',directoryListing:null,activationNotice:null,api:false,facets:null,listTruncated:false,diagnosticsTruncated:false,searchTimer:null,searchRevision:0,atlasRevision:0,staticBootstrap:false,staticLoad:null,staticSearchRecords:null,staticSearchByID:new Map(),staticSearchLoad:null,capabilities:null,contextQuery:'',contextPacket:null,contextRevision:0,contextLoading:false,contextError:'',commandFilter:'',commandGroup:'all',commandDrafts:new Map(),activeJob:null,lastJob:null,jobCommand:'',submittingJob:false,toastTimer:null};
 const maximumGraphNeighbors=32,maximumGraphNodesShown=16;
 const snapshotGenerationHeader='X-RKC-Snapshot-ID',snapshotGenerationErrorCode='RKC_SNAPSHOT_GENERATION_CHANGED',maximumSnapshotLoadAttempts=3;
 const $=id=>document.getElementById(id);
@@ -17,11 +17,14 @@ async function boot(){
     initialiseControls();
     renderHeader();
     renderList();
+    const navigationRevision=state.navigationRevision;
     await probeWorkbench();
+    if(navigationRevision!==state.navigationRevision){$('content').setAttribute('aria-busy','false');return}
     const hash=safeHash();
-    if(hash&&state.staticBootstrap)await ensureFullStaticData();
-    if(hash&&state.api&&!state.nodes.has(hash))await loadAPINode(hash);
-    if(hash&&state.nodes.has(hash))await selectNode(hash,'symbol',false);else setView('overview',false);
+    if(hash&&(state.api||state.staticBootstrap||state.nodes.has(hash))){
+      const selection=selectNode(hash,'symbol',false),selectionRevision=state.navigationRevision;
+      try{await selection}catch(error){if(selectionRevision===state.navigationRevision)throw error}
+    }else setView('overview',false);
     $('content').setAttribute('aria-busy','false');
   }catch(error){
     $('content').setAttribute('aria-busy','false');
@@ -142,7 +145,7 @@ async function fetchSnapshotJSON(path){
 
 function snapshotGenerationError(message){const error=new Error(message);error.code=snapshotGenerationErrorCode;return error}
 function isSnapshotGenerationError(error){return error?.code===snapshotGenerationErrorCode}
-function advanceAtlasGeneration(){state.atlasRevision++;state.searchRevision++;clearTimeout(state.searchTimer);return state.atlasRevision}
+function advanceAtlasGeneration(){state.atlasRevision++;state.navigationRevision++;state.searchRevision++;clearTimeout(state.searchTimer);return state.atlasRevision}
 
 function push(map,key,value){if(!map.has(key))map.set(key,[]);map.get(key).push(value)}
 function safeHash(){try{return decodeURIComponent(location.hash.slice(1))}catch(_error){return''}}
@@ -329,12 +332,7 @@ async function probeWorkbench(){
   }
 }
 
-function setView(view,focusContent=true){
-  if(!state.api&&state.staticBootstrap&&['diagnostics','graph','symbol'].includes(view)){
-    $('content').innerHTML='<div class="loading" role="status">Loading complete offline details…</div>';
-    ensureFullStaticData().then(()=>setView(view,focusContent)).catch(error=>{$('content').innerHTML='<div class="card empty-state" role="alert"><h2>Details failed to load</h2><p>'+esc(error?.message||error)+'</p></div>'});
-    return;
-  }
+function prepareView(view){
   state.view=view;
   document.body.classList.toggle('command-view',view==='commands');
   document.body.classList.toggle('outputs-view',view==='outputs');
@@ -344,6 +342,18 @@ function setView(view,focusContent=true){
     button.setAttribute('aria-selected',String(active));
     button.tabIndex=active?0:-1;
     if(active)$('content').setAttribute('aria-labelledby',button.id);
+  }
+}
+
+function setView(view,focusContent=true,navigationRevision=++state.navigationRevision){
+  if(navigationRevision!==state.navigationRevision)return;
+  prepareView(view);
+  if(!state.api&&state.staticBootstrap&&['diagnostics','graph','symbol'].includes(view)){
+    $('content').innerHTML='<div class="loading" role="status">Loading complete offline details…</div>';
+    ensureFullStaticData().then(()=>setView(view,focusContent,navigationRevision)).catch(error=>{
+      if(navigationRevision===state.navigationRevision)renderSelectionLoadError(error);
+    });
+    return;
   }
   if(view==='overview')renderOverview();
   else if(view==='diagnostics')renderDiagnostics();
@@ -363,17 +373,28 @@ function renderSelectionPrompt(view){
   $('focus-search').addEventListener('click',focusSearch);
 }
 
-function selectNode(id,view='symbol',focusContent=true){
-  if(!state.api&&state.staticBootstrap)return ensureFullStaticData().then(()=>selectNode(id,view,focusContent));
-  if(state.api&&!state.nodes.has(id))return loadAPINode(id).then(()=>selectNode(id,view,focusContent));
-  if(!state.nodes.has(id))return;
+async function selectNode(id,view='symbol',focusContent=true){
+  const navigationRevision=++state.navigationRevision,atlasRevision=state.atlasRevision;
   state.selected=id;state.selectedArtifact=null;state.selectedArtifactContext=null;
-  const encoded=encodeURIComponent(id);
-  if(location.hash.slice(1)!==encoded)location.hash=encoded;
   renderList();
-  if(state.api)return loadAPINode(id).then(()=>setView(view,focusContent));
-  setView(view,focusContent);
+  prepareView(view);
+  $('content').innerHTML='<div class="loading" role="status">Loading repository entity…</div>';
+  try{
+    if(!state.api&&state.staticBootstrap)await ensureFullStaticData();
+    if(state.api)await loadAPINode(id);
+    if(navigationRevision!==state.navigationRevision||atlasRevision!==state.atlasRevision)return;
+    if(state.nodes.has(id)){
+      const encoded=encodeURIComponent(id);
+      if(location.hash.slice(1)!==encoded)location.hash=encoded;
+    }
+    renderList();setView(view,focusContent,navigationRevision);
+  }catch(error){
+    if(navigationRevision===state.navigationRevision&&atlasRevision===state.atlasRevision)renderSelectionLoadError(error);
+    throw error;
+  }
 }
+
+function renderSelectionLoadError(error){$('content').innerHTML='<div class="card empty-state" role="alert"><h2>Details failed to load</h2><p>'+esc(error?.message||error)+'</p><p>Choose the entity or view again to retry.</p></div>'}
 
 async function loadAPINode(id){
   const atlasRevision=state.atlasRevision;
@@ -393,13 +414,23 @@ function selectSearchResult(objectType,id,focusContent=true){
 }
 
 async function selectArtifactSearchResult(result,focusContent=true){
-  const atlasRevision=state.atlasRevision,detail=await fetchJSON('/api/v1/artifacts/'+encodeURIComponent(result.id));
-  if(atlasRevision!==state.atlasRevision)throw snapshotGenerationError('Artifact detail completed after the active atlas generation changed.');
-  if(!detail?.artifact||detail.artifact.id!==result.id||!Array.isArray(detail.nodes))throw new Error('Artifact detail response is invalid');
-  state.artifacts.set(detail.artifact.id,detail.artifact);
-  const nodeIDs=[];for(const node of detail.nodes){if(node?.id){state.nodes.set(node.id,node);nodeIDs.push(node.id)}}
-  state.selected=null;state.selectedArtifact=result.id;state.selectedArtifactContext={...result,node_ids:nodeIDs};
-  history.replaceState(null,'',location.pathname+location.search);renderList();setView('symbol',focusContent);
+  const navigationRevision=++state.navigationRevision;
+  state.selected=null;state.selectedArtifact=result.id;state.selectedArtifactContext=null;
+  renderList();prepareView('symbol');
+  $('content').innerHTML='<div class="loading" role="status">Loading repository file…</div>';
+  try{
+    const atlasRevision=state.atlasRevision,detail=await fetchJSON('/api/v1/artifacts/'+encodeURIComponent(result.id));
+    if(atlasRevision!==state.atlasRevision)throw snapshotGenerationError('Artifact detail completed after the active atlas generation changed.');
+    if(navigationRevision!==state.navigationRevision)return;
+    if(!detail?.artifact||detail.artifact.id!==result.id||!Array.isArray(detail.nodes))throw new Error('Artifact detail response is invalid');
+    state.artifacts.set(detail.artifact.id,detail.artifact);
+    const nodeIDs=[];for(const node of detail.nodes){if(node?.id){state.nodes.set(node.id,node);nodeIDs.push(node.id)}}
+    state.selected=null;state.selectedArtifact=result.id;state.selectedArtifactContext={...result,node_ids:nodeIDs};
+    history.replaceState(null,'',location.pathname+location.search);renderList();setView('symbol',focusContent,navigationRevision);
+  }catch(error){
+    if(navigationRevision===state.navigationRevision)renderSelectionLoadError(error);
+    throw error;
+  }
 }
 
 function renderList(){
@@ -482,15 +513,16 @@ function wireNodeButtons(view){for(const button of $('content').querySelectorAll
 
 async function renderGraph(seedID){
   if(state.api){
-    const atlasRevision=state.atlasRevision;
+    const atlasRevision=state.atlasRevision,navigationRevision=state.navigationRevision;
     $('content').innerHTML='<div class="loading" role="status">Loading bounded graph neighbourhood…</div>';
     try{
       const neighborhood=await fetchJSON('/api/v1/graph/neighborhood?node_id='+encodeURIComponent(seedID)+'&max_depth=1&max_nodes='+(maximumGraphNeighbors+1)+'&include_unresolved=true');
       if(atlasRevision!==state.atlasRevision)return;
+      if(navigationRevision!==state.navigationRevision)return;
       if(state.view!=='graph'||state.selected!==seedID)return;
       for(const node of neighborhood.nodes||[])state.nodes.set(node.id,node);
       for(const edge of neighborhood.edges||[]){pushUnique(state.outgoing,edge.from,edge);pushUnique(state.incoming,edge.to,edge)}
-    }catch(error){if(atlasRevision!==state.atlasRevision||state.view!=='graph'||state.selected!==seedID)return;$('content').innerHTML='<div class="card empty-state" role="alert"><h2>Graph query failed</h2><p>'+esc(error?.message||error)+'</p></div>';return}
+    }catch(error){if(atlasRevision!==state.atlasRevision||navigationRevision!==state.navigationRevision||state.view!=='graph'||state.selected!==seedID)return;$('content').innerHTML='<div class="card empty-state" role="alert"><h2>Graph query failed</h2><p>'+esc(error?.message||error)+'</p></div>';return}
   }
   renderGraphFromState(seedID);
 }
@@ -526,7 +558,7 @@ function closeExplorer(){document.body.classList.toggle('explorer-open',false);$
 function toggleExplorer(){if($('explorer-toggle').getAttribute('aria-expanded')==='true')closeExplorer();else focusSearch()}
 function showShortcuts(){const dialog=$('shortcuts-dialog');if(!dialog.open)dialog.showModal()}
 function notify(message){const toast=$('toast');clearTimeout(state.toastTimer);toast.textContent=message;toast.hidden=false;state.toastTimer=setTimeout(()=>{toast.hidden=true},5000)}
-async function runUIAction(action){try{await action()}catch(error){notify('Could not complete that action: '+String(error?.message||error))}}
+async function runUIAction(action){let navigationRevision=state.navigationRevision;try{const pending=action();navigationRevision=state.navigationRevision;await pending}catch(error){if(navigationRevision===state.navigationRevision)notify('Could not complete that action: '+String(error?.message||error))}}
 async function copyText(text){try{await navigator.clipboard.writeText(text);notify('Copied to clipboard.')}catch(_error){notify('Clipboard unavailable. Use Download, or select the visible text to copy.')}}
 function downloadText(filename,text,type='application/json'){
   const url=URL.createObjectURL(new Blob([text],{type:type+';charset=utf-8'})),link=document.createElement('a');
@@ -835,5 +867,5 @@ function percent(value){return Number.isFinite(value)?(value*100).toFixed(1)+'%'
 function short(value){const text=String(value||'');return text.length>24?text.slice(0,12)+'…'+text.slice(-8):text||'n/a'}
 function truncate(value,length){const text=String(value||'');return text.length>length?text.slice(0,length-1)+'…':text}
 
-window.addEventListener('hashchange',()=>{const id=safeHash();if(id&&id!==state.selected&&state.nodes.has(id))selectNode(id,state.view==='graph'?'graph':'symbol',false)});
+window.addEventListener('hashchange',()=>{const id=safeHash();if(id&&id!==state.selected&&state.nodes.has(id))runUIAction(()=>selectNode(id,state.view==='graph'?'graph':'symbol',false))});
 boot();
