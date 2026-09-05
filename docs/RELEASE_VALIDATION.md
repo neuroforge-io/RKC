@@ -202,6 +202,23 @@ It does not include source caches, model weights, Python, or a database server.
 The full Linux complete-package gate above remains required for the same source
 commit.
 
+Every tag-ref build, including a manual dispatch on a tag, mechanically checks
+the latest `ci.yml` push run on `main` for the exact checked-out commit. The
+latest run is the one with the highest workflow run number; its current attempt
+is fetched again before qualification. It must be completed and successful.
+An older successful run cannot hide a newer failed or pending run or a failed
+rerun. Missing proof, inconsistent repository/workflow/source identity, and API
+errors stop the build. The checkout must also match the event's commit SHA.
+
+The accepted run ID, attempt, URL and source commit are recorded first in
+`main-ci-start-proof.json`. The workflow writes the receipt outside the source
+tree, attaches it after packaging, and adds its hash to `SHA256SUMS.txt`. After
+native qualification, it repeats the live CI check immediately before final
+checksum verification and upload, writing `main-ci-proof.json`. A pending or
+failed rerun at that point blocks the release artifact. Both receipts are
+retained and checksummed; they record GitHub API results, not independent
+publisher signatures.
+
 Before a maintainer publishes portable assets, the workflow must:
 
 1. Bind `VERSION`, the clean Git commit and tree, the exact Go toolchain, and
@@ -229,11 +246,27 @@ additional tested operating-system versions. The GUI check is a real local
 server and installed-binary check; browser layout and accessibility checks have
 their own evidence.
 
-Publishing remains a separate maintainer action after this workflow and main
-CI both pass for the identical source commit. Verify the downloaded release
+Manual branch dispatches may run before main CI finishes. Their final artifacts
+are named `rkc-portable-diagnostic-<SHA>` and are not release qualifications.
+Tagged qualifications retain `rkc-portable-release-<SHA>` and include the main
+CI proof. No workflow publishes assets automatically.
+
+Publishing remains a separate maintainer action after tagged qualification and
+main CI both pass for the identical source commit. Verify the downloaded release
 assets against the checksums after publication. Archive hashes and build
 receipts identify the payload; they are not independent cryptographic publisher
 signatures or external build attestations.
+
+### Historical DCO status
+
+Contribution CI checks branch-push and pull-request introduction ranges using
+the unchanged sign-off validator. It does not claim a passing full-history DCO
+audit. Eight earlier commits lack author-matching trailers:
+`2db2f67`, `1e35d73`, `dc77790`, `3a1227d`, `4fbe52a`, `795dd52`, `de71b54`,
+and `0954d89`. Those commits remain unrewritten. No historical exemption has
+been added: a zero-base full-history invocation of `scripts/validate-dco.sh`
+still reports them. Tag qualification reuses the exact source's main CI result;
+it does not retroactively certify those contributions.
 
 ## Fresh extraction gate
 

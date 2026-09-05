@@ -7,6 +7,7 @@ on:
 
 permissions:
   contents: read
+  actions: read
 
 concurrency:
   group: portable-release-${{ github.ref }}
@@ -26,10 +27,20 @@ jobs:
           RKC_REF_NAME: ${{ github.ref_name }}
         run: |
           set -eu
+          test "$(git rev-parse 'HEAD^{commit}')" = "$GITHUB_SHA"
           if [ "$RKC_REF_TYPE" = tag ]; then
             test "$RKC_REF_NAME" = "v$(cat VERSION)"
           fi
           python3 scripts/git_source_guard.py --root "$PWD" --operation 'portable release workflow'
+      - name: Require the latest exact-source main CI success for every tag ref
+        if: github.ref_type == 'tag'
+        env:
+          RKC_GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          python3 scripts/verify_main_ci.py \
+            --repository "$GITHUB_REPOSITORY" \
+            --commit "$(git rev-parse 'HEAD^{commit}')" \
+            --output "$RUNNER_TEMP/rkc-main-ci-proof.json"
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version: '1.26.5'
@@ -62,13 +73,18 @@ jobs:
           RKC_REQUIRE_IO_CONTROLLER: '1'
         run: |
           sh scripts/verify-resource-guard.sh
-          sh scripts/with-rkc-limits.sh python3 -m unittest scripts.test_portable_release
+          sh scripts/with-rkc-limits.sh python3 -m unittest scripts.test_portable_release scripts.test_verify_main_ci
       - name: Build and verify six portable asset sets
         env:
           RKC_RESOURCE_GUARD_MODE: service
         run: |
           sh scripts/with-rkc-limits.sh sh scripts/build-release-binaries.sh --portable
           sh scripts/with-rkc-limits.sh python3 scripts/package-portable.py
+      - name: Attach the main CI proof after source-bound packaging
+        if: github.ref_type == 'tag'
+        run: |
+          cp "$RUNNER_TEMP/rkc-main-ci-proof.json" dist/portable-release/main-ci-start-proof.json
+          (cd dist/portable-release && sha256sum main-ci-start-proof.json >> SHA256SUMS.txt)
       - name: Exercise the native Linux installer
         env:
           RKC_RESOURCE_GUARD_MODE: service
@@ -277,6 +293,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: rkc-portable-build-${{ github.sha }}
@@ -288,10 +305,18 @@ jobs:
           path: release
       - name: Verify all six exact native qualifications and checksums
         working-directory: release
+        env:
+          RKC_REF_TYPE: ${{ github.ref_type }}
         run: |
           sha256sum --check SHA256SUMS.txt
           python3 - <<'PYREPORT'
           import hashlib, json, os, pathlib
+          if os.environ['RKC_REF_TYPE'] == 'tag':
+              proof = json.loads(pathlib.Path('main-ci-start-proof.json').read_text())
+              assert proof['schema_version'] == 'rkc-main-ci-proof/v1'
+              assert proof['repository'] == os.environ['GITHUB_REPOSITORY'] and proof['source_commit'] == os.environ['GITHUB_SHA']
+              assert proof['workflow_path'] == '.github/workflows/ci.yml' and proof['event'] == 'push' and proof['head_branch'] == 'main'
+              assert proof['status'] == 'completed' and proof['conclusion'] == 'success'
           platforms = ['linux-amd64', 'linux-arm64', 'darwin-amd64', 'darwin-arm64', 'windows-amd64', 'windows-arm64']
           for platform in platforms:
               report_path = pathlib.Path('native-smoke-' + platform + '.json')
@@ -305,11 +330,25 @@ jobs:
               for report_path in sorted(pathlib.Path('.').glob('native-smoke-*.json')):
                   receipt.write(hashlib.sha256(report_path.read_bytes()).hexdigest() + '  ' + report_path.name + '\n')
           PYREPORT
+      - name: Refresh tagged main CI qualification immediately before final upload
+        if: github.ref_type == 'tag'
+        env:
+          RKC_GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          test "$(git rev-parse 'HEAD^{commit}')" = "$GITHUB_SHA"
+          python3 scripts/verify_main_ci.py \
+            --repository "$GITHUB_REPOSITORY" \
+            --commit "$(git rev-parse 'HEAD^{commit}')" \
+            --output "$RUNNER_TEMP/rkc-main-ci-final-proof.json"
+          cp "$RUNNER_TEMP/rkc-main-ci-final-proof.json" release/main-ci-proof.json
+          (cd release && sha256sum main-ci-proof.json >> SHA256SUMS.txt && sha256sum --check SHA256SUMS.txt)
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: rkc-portable-release-${{ github.sha }}
+          name: rkc-portable-${{ github.ref_type == 'tag' && 'release' || 'diagnostic' }}-${{ github.sha }}
           path: release
           if-no-files-found: error
-      # Publishing is a separate maintainer action after this workflow and the
-      # full Linux CI both pass for the identical source commit. Build emits
+      # Branch dispatches are diagnostic. Tagged builds additionally carry
+      # starting and final CI receipts; main-ci-proof.json is refreshed after
+      # native checks, immediately before final checksum verification/upload.
+      # Publishing remains a separate maintainer action. Build emits
       # linux-amd64 proof; native jobs qualify the other five portable assets.

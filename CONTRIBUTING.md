@@ -57,6 +57,17 @@ match the commit author. Merge commits are excluded from this per-contribution
 check. A lookalike line in the message body or a different identity does not
 satisfy the gate.
 
+CI applies this unchanged check to commits introduced by branch pushes and pull
+requests. A new branch with a zero comparison base still receives the complete
+post-import audit. Tags do not introduce another contribution range; tagged
+portable builds instead require the latest full main-branch CI run for their
+exact source commit to complete successfully, followed by native qualification.
+
+This incremental check is not a claim that the entire history passes DCO.
+Eight earlier commits still lack matching trailers and remain unrewritten;
+the full-history validator continues to flag them. See the
+[historical DCO status](docs/RELEASE_VALIDATION.md#historical-dco-status).
+
 ## Adapter contributions
 
 An official language or framework adapter must include:
