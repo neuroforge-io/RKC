@@ -104,6 +104,34 @@ Matching directories are pruned and recorded as one explicit inventory exclusion
 Unmatched reports and documents remain admitted. RKC does not trust repository
 ignore files or silently increase limits after a failure.
 
+## Review a synthetic secret finding
+
+An unreviewed high-confidence secret finding blocks publication. A synthetic
+test key or documented placeholder can be reviewed explicitly without removing
+the finding or disabling redaction. Store the review in a private JSON file
+outside the source. Each record requires the repository-relative `path`, the
+complete original file's `sha256`, the finding's `fingerprint`, and a `reason`
+of `test_fixture`, `documented_placeholder`, or `source_reference`.
+
+```sh
+rkc workspace review --workspace /absolute/private/workspace --id application \
+  --secret-reviews /absolute/private/reviews.json
+rkc workspace sync --workspace /absolute/private/workspace application
+```
+
+Review the actual value and its use before accepting a false positive. This is
+not an exception for real credentials. On Unix, the review file must be owned by
+the current user with no group or other access. Windows requires an equivalent
+owner-private ACL. A review matches one finding in one exact file version; any
+byte change invalidates it. Files inside a repository cannot authorize themselves.
+The maximum is 512 reviews per source. An empty JSON array clears the policy.
+
+Changing reviews preserves source settings and the last verified atlas, and marks
+the source for refresh. `add --secret-reviews` can set the initial policy. Coverage
+continues to report every finding; the workspace's `reviewed_secret_findings`
+count records how many high-confidence findings were reviewed in the active
+snapshot. Review paths, fingerprints and policies stay in the private registry.
+
 ## Track a remote source separately
 
 Remote acquisition is an explicit opt-in and currently requires protected Linux

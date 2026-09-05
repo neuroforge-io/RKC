@@ -2,6 +2,9 @@ package main
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -11,6 +14,7 @@ import (
 
 	"github.com/neuroforge-io/RKC/internal/inventory"
 	"github.com/neuroforge-io/RKC/internal/search"
+	"github.com/neuroforge-io/RKC/internal/security/secrets"
 	"github.com/neuroforge-io/RKC/internal/server"
 	"github.com/neuroforge-io/RKC/internal/workspace"
 )
@@ -99,6 +103,76 @@ func TestWorkspaceCLICompilesRefreshesAndRetainsLastGood(t *testing.T) {
 	output, err = captureStdout(t, func() error { return runWorkspaceList([]string{"--workspace", root, "--json"}) })
 	if err != nil || !strings.Contains(output, `"schema_version":"rkc-workspace/v1"`) {
 		t.Fatal(output, err)
+	}
+}
+
+func TestWorkspaceCLIReviewedFixtureExpiresOnSourceEdit(t *testing.T) {
+	parent := workspaceTestTempDir(t)
+	root, sourcePath := filepath.Join(parent, "workspace"), filepath.Join(parent, "source")
+	fixture := filepath.Join(sourcePath, "fixture.txt")
+	contents := []byte("api_key = \"" + strings.Repeat("synthetic", 4) + "\"\n")
+	writeTestFile(t, fixture, string(contents))
+	_, err := captureStdout(t, func() error {
+		return runWorkspaceAdd([]string{"--workspace", root, "--id", "sample", "--max-file-bytes", "4096", "--max-text-bytes", "4096", sourcePath})
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	syncSource := func() error {
+		_, err := captureStdout(t, func() error { return runWorkspaceSyncContext(t.Context(), []string{"sync", "--workspace", root}) })
+		return err
+	}
+	if syncSource() == nil {
+		t.Fatal("unreviewed finding was published")
+	}
+	findings := secrets.Scan(contents)
+	if len(findings) != 1 || findings[0].Confidence < 0.9 {
+		t.Fatal(findings)
+	}
+	digest := sha256.Sum256(contents)
+	reviews, err := json.Marshal([]workspace.SecretReview{{Path: "fixture.txt", SHA256: hex.EncodeToString(digest[:]), Fingerprint: findings[0].Fingerprint, Reason: "test_fixture"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	reviewFile := filepath.Join(parent, "reviews.json")
+	if err := os.WriteFile(reviewFile, reviews, 0600); err != nil {
+		t.Fatal(err)
+	}
+	_, err = captureStdout(t, func() error {
+		return runWorkspace([]string{"review", "--workspace", root, "--id", "sample", "--secret-reviews", reviewFile})
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := syncSource(); err != nil {
+		t.Fatal(err)
+	}
+	first, err := workspace.Load(filepath.Join(root, "registry.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	active := first.Sources[0].Active
+	if active == nil || active.ReviewedSecretFindings != 1 || first.Sources[0].Limits.MaxFileBytes != 4096 {
+		t.Fatal("review did not preserve bounds or publish the reviewed snapshot")
+	}
+	dataset, err := server.Load(active.AtlasPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if dataset.Coverage.HighConfidenceSecretFindings != 1 {
+		t.Fatal("review suppressed canonical findings")
+	}
+	// Keep offsets identical: only the source hash can detect this replacement.
+	writeTestFile(t, fixture, strings.ReplaceAll(string(contents), "synthetic", "different"))
+	if syncSource() == nil {
+		t.Fatal("review survived changed source bytes")
+	}
+	last, err := workspace.Load(filepath.Join(root, "registry.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if last.Sources[0].Active.Generation != active.Generation || last.Sources[0].Freshness.ErrorCode != "quality_failed" {
+		t.Fatal("expired review replaced the last verified atlas")
 	}
 }
 

@@ -16,18 +16,19 @@ type Registry struct {
 
 // Source is an explicitly registered local folder or remote Git source.
 type Source struct {
-	ID              string    `json:"id"`
-	Label           string    `json:"label"`
-	Kind            string    `json:"kind"`
-	LocalPath       string    `json:"local_path,omitempty"`
-	RemoteURL       string    `json:"remote_url,omitempty"`
-	Ref             string    `json:"ref,omitempty"`
-	Excludes        []string  `json:"excludes"`
-	ExcludePatterns []string  `json:"exclude_patterns,omitempty"`
-	Limits          Limits    `json:"limits"`
-	Active          *Active   `json:"active,omitempty"`
-	Previous        *Active   `json:"previous,omitempty"`
-	Freshness       Freshness `json:"freshness"`
+	ID              string         `json:"id"`
+	Label           string         `json:"label"`
+	Kind            string         `json:"kind"`
+	LocalPath       string         `json:"local_path,omitempty"`
+	RemoteURL       string         `json:"remote_url,omitempty"`
+	Ref             string         `json:"ref,omitempty"`
+	Excludes        []string       `json:"excludes"`
+	ExcludePatterns []string       `json:"exclude_patterns,omitempty"`
+	SecretReviews   []SecretReview `json:"secret_reviews,omitempty"`
+	Limits          Limits         `json:"limits"`
+	Active          *Active        `json:"active,omitempty"`
+	Previous        *Active        `json:"previous,omitempty"`
+	Freshness       Freshness      `json:"freshness"`
 }
 
 // Limits bound every inventory and compilation; zero never disables a cap.
@@ -44,13 +45,14 @@ func DefaultLimits() Limits {
 
 // Active binds an immutable private atlas to its exact export manifest.
 type Active struct {
-	AtlasPath       string `json:"atlas_path"`
-	SnapshotID      string `json:"snapshot_id"`
-	Generation      string `json:"generation"`
-	ManifestSHA256  string `json:"manifest_sha256"`
-	Fingerprint     string `json:"fingerprint"`
-	CompilerVersion string `json:"compiler_version"`
-	SourceAdvanced  bool   `json:"source_advanced,omitempty"`
+	AtlasPath              string `json:"atlas_path"`
+	SnapshotID             string `json:"snapshot_id"`
+	Generation             string `json:"generation"`
+	ManifestSHA256         string `json:"manifest_sha256"`
+	Fingerprint            string `json:"fingerprint"`
+	CompilerVersion        string `json:"compiler_version"`
+	SourceAdvanced         bool   `json:"source_advanced,omitempty"`
+	ReviewedSecretFindings int    `json:"reviewed_secret_findings,omitempty"`
 }
 
 // Freshness is safe for public machine descriptors: errors are fixed codes,

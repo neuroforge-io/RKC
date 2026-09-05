@@ -165,6 +165,28 @@ func (store *Store) Add(source Source) error {
 	return store.save()
 }
 
+// SetSecretReviews installs an explicit operator policy while retaining source
+// limits and the last verified atlas. Changed policy requires another refresh.
+func (store *Store) SetSecretReviews(id string, reviews []SecretReview) error {
+	if err := validateSecretReviews(reviews); err != nil {
+		return err
+	}
+	for i := range store.Registry.Sources {
+		source := &store.Registry.Sources[i]
+		if source.ID != id {
+			continue
+		}
+		source.SecretReviews = append([]SecretReview(nil), reviews...)
+		source.Freshness.Status = "stale"
+		if source.Active == nil {
+			source.Freshness.Status = "pending"
+		}
+		source.Freshness.ErrorCode = ""
+		return store.save()
+	}
+	return errors.New("workspace source alias is not registered")
+}
+
 // Refresh calls one bounded, admitted producer. A nil result means its active
 // generation still matches. The producer may only return a fully verified
 // generation; failure leaves Active and Previous untouched.

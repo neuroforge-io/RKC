@@ -48,18 +48,20 @@ func NewWorkspace(registryPath, version string) (*Server, error) {
 }
 
 type repositoryDescriptor struct {
-	ID               string              `json:"id"`
-	Label            string              `json:"label"`
-	Kind             string              `json:"kind"`
-	ActiveSnapshotID string              `json:"active_snapshot_id,omitempty"`
-	ActiveGeneration string              `json:"active_generation,omitempty"`
-	Freshness        workspace.Freshness `json:"freshness"`
+	ID                     string              `json:"id"`
+	Label                  string              `json:"label"`
+	Kind                   string              `json:"kind"`
+	ActiveSnapshotID       string              `json:"active_snapshot_id,omitempty"`
+	ActiveGeneration       string              `json:"active_generation,omitempty"`
+	Freshness              workspace.Freshness `json:"freshness"`
+	ReviewedSecretFindings int                 `json:"reviewed_secret_findings,omitempty"`
 }
 
 func describeRepository(source workspace.Source) repositoryDescriptor {
 	result := repositoryDescriptor{ID: source.ID, Label: source.Label, Kind: source.Kind, Freshness: source.Freshness}
 	if source.Active != nil {
 		result.ActiveSnapshotID, result.ActiveGeneration = source.Active.SnapshotID, source.Active.Generation
+		result.ReviewedSecretFindings = source.Active.ReviewedSecretFindings
 	}
 	return result
 }

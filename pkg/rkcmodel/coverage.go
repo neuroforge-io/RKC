@@ -138,7 +138,7 @@ func BuildCoverage(bundle Bundle) Coverage {
 		}
 		if node.Kind == "secret" {
 			coverage.SecretFindings++
-			if attributeFloat(node.Attributes, "confidence") >= 0.90 || attributeString(node.Attributes, "confidence_class") == "high" {
+			if IsHighConfidenceSecret(node) {
 				coverage.HighConfidenceSecretFindings++
 			}
 		}
@@ -189,6 +189,13 @@ func BuildCoverage(bundle Bundle) Coverage {
 	coverage.ClaimCitationRatio = ratio(coverage.ClaimsWithEvidence, coverage.ClaimsTotal)
 	coverage.DeterministicOutputDigest = CanonicalDigest(bundle)
 	return coverage
+}
+
+// IsHighConfidenceSecret applies the same finding classification used by
+// coverage. Review consumers must not subtract lower-confidence findings from
+// the high-confidence total.
+func IsHighConfidenceSecret(node Node) bool {
+	return node.Kind == "secret" && (attributeFloat(node.Attributes, "confidence") >= 0.90 || attributeString(node.Attributes, "confidence_class") == "high")
 }
 
 func ratio(numerator, denominator int) float64 {

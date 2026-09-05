@@ -32,6 +32,10 @@ generation when available, and freshness. Local paths, remote URLs, reference
 names and exclusion rules are not included. The same list is available as the
 resource `rkc://workspace/repositories`.
 
+When applicable, `reviewed_secret_findings` counts explicitly reviewed false
+positives in that active snapshot. Canonical coverage and redaction retain the
+original findings. See the [source-bound review policy](WORKSPACES.md) for details.
+
 Pass the returned repository ID to a tool call:
 
 ```json

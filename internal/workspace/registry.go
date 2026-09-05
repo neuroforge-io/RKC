@@ -162,6 +162,9 @@ func validate(registry Registry, root string) error {
 			if active == nil {
 				continue
 			}
+			if active.ReviewedSecretFindings < 0 || active.ReviewedSecretFindings > 512 {
+				return errors.New("invalid reviewed finding count")
+			}
 			if !generationPattern.MatchString(active.Generation) || !strings.HasPrefix(active.Generation, source.ID+"-") ||
 				active.AtlasPath != filepath.Join(root, "generations", active.Generation, "atlas") ||
 				!safeText(active.SnapshotID, 256) || !digestPattern.MatchString(active.ManifestSHA256) || !digestPattern.MatchString(active.Fingerprint) || !safeText(active.CompilerVersion, 128) {
@@ -186,6 +189,9 @@ func validate(registry Registry, root string) error {
 }
 
 func validateSource(source Source) error {
+	if err := validateSecretReviews(source.SecretReviews); err != nil {
+		return err
+	}
 	if !aliasPattern.MatchString(source.ID) || !safeText(source.Label, 160) {
 		return errors.New("workspace alias must be lowercase path-safe text and label must be bounded text")
 	}

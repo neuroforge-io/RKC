@@ -28,7 +28,7 @@ import (
 
 func runWorkspace(args []string) error {
 	if len(args) == 0 || args[0] == "--help" || args[0] == "-h" {
-		fmt.Println("Usage: rkc workspace <add|list|sync|watch> --workspace <private-directory> [options]\n\nRegister a local folder with add --id <alias> <folder>, then sync and watch.\nRemote acquisition requires add --remote --id <alias> <https-or-ssh-url>.\nWatch polls admitted content; it never pulls or writes to local sources.")
+		fmt.Println("Usage: rkc workspace <add|list|review|sync|watch> --workspace <private-directory> [options]\n\nRegister a local folder with add --id <alias> <folder>, then sync and watch.\nRemote acquisition requires add --remote --id <alias> <https-or-ssh-url>.\nWatch polls admitted content; it never pulls or writes to local sources.")
 		return nil
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -38,12 +38,14 @@ func runWorkspace(args []string) error {
 		return runWorkspaceAdd(args[1:])
 	case "list":
 		return runWorkspaceList(args[1:])
+	case "review":
+		return runWorkspaceReview(args[1:])
 	case "sync":
 		return runDirectCommandWithAdmission(ctx, "workspace", args, runWorkspaceSyncContext)
 	case "watch":
 		return runWorkspaceWatch(ctx, args[1:])
 	default:
-		return errors.New("workspace expects add, list, sync, or watch")
+		return errors.New("workspace expects add, list, review, sync, or watch")
 	}
 }
 
@@ -99,6 +101,7 @@ func runWorkspaceAdd(args []string) error {
 	fs.Var(&excludes, "exclude", "additional exact repository-relative path and descendants to exclude; repeatable")
 	patterns := stringList{}
 	fs.Var(&patterns, "exclude-pattern", "additional slash glob with whole-segment **; matched paths are explicitly inventoried as exclusions; repeatable")
+	reviewFile := fs.String("secret-reviews", "", "explicit private JSON file of source-hash-bound false-positive reviews")
 	limits := workspace.DefaultLimits()
 	fs.IntVar(&limits.MaxFiles, "max-files", limits.MaxFiles, "maximum encountered paths (at most 500000)")
 	fs.Int64Var(&limits.MaxRepositoryBytes, "max-repository-bytes", limits.MaxRepositoryBytes, "maximum encountered regular-file bytes (at most 20 GiB)")
@@ -118,6 +121,12 @@ func runWorkspaceAdd(args []string) error {
 		*label = *id
 	}
 	source := workspace.Source{ID: *id, Label: *label, Kind: "local", Limits: limits, ExcludePatterns: patterns}
+	if *reviewFile != "" {
+		source.SecretReviews, err = workspace.LoadSecretReviews(*reviewFile)
+		if err != nil {
+			return err
+		}
+	}
 	if *remote {
 		source.Kind, source.RemoteURL, source.Ref = "git", fs.Arg(0), *ref
 	} else {
@@ -192,6 +201,36 @@ func runWorkspaceList(args []string) error {
 		}
 		fmt.Printf("%s\t%s\tchecked=%s\t%s\t%s\n", source.ID, source.Freshness.Status, checked, snapshotID, source.Freshness.ErrorCode)
 	}
+	return nil
+}
+
+func runWorkspaceReview(args []string) error {
+	fs, root := workspaceFlags("review")
+	id := fs.String("id", "", "registered source alias")
+	reviewFile := fs.String("secret-reviews", "", "private JSON file of reviewed false positives; an empty array clears reviews")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if fs.NArg() != 0 || *id == "" || *reviewFile == "" {
+		return errors.New("workspace review requires --id and --secret-reviews")
+	}
+	reviews, err := workspace.LoadSecretReviews(*reviewFile)
+	if err != nil {
+		return err
+	}
+	path, err := workspaceRegistryPath(*root)
+	if err != nil {
+		return err
+	}
+	store, err := workspace.Open(path)
+	if err != nil {
+		return err
+	}
+	defer store.Close()
+	if err := store.SetSecretReviews(*id, reviews); err != nil {
+		return err
+	}
+	fmt.Printf("Recorded %d source-bound false-positive reviews for %s; refresh is required.\n", len(reviews), *id)
 	return nil
 }
 
@@ -401,8 +440,9 @@ func compileWorkspaceSourceUsing(ctx context.Context, source workspace.Source, g
 		return nil, err
 	}
 	coverage := dataset.Coverage
-	if dataset.Integrity != server.IntegrityVerified || coverage.DiagnosticsBySeverity["error"] > 0 || coverage.HighConfidenceSecretFindings > 0 || coverage.InventoryAccountingRatio < 1 || coverage.SymbolEvidenceRatio < 1 || coverage.ClaimCitationRatio < 1 {
-		return nil, &workspace.RefreshError{Code: "quality_failed", Cause: fmt.Errorf("new atlas failed workspace quality gates: integrity=%s errors=%d high_confidence_secrets=%d inventory_accounting=%.6f symbol_evidence=%.6f claim_citations=%.6f", dataset.Integrity, coverage.DiagnosticsBySeverity["error"], coverage.HighConfidenceSecretFindings, coverage.InventoryAccountingRatio, coverage.SymbolEvidenceRatio, coverage.ClaimCitationRatio)}
+	reviewed := workspace.CountReviewedSecrets(dataset.Bundle, source.SecretReviews)
+	if dataset.Integrity != server.IntegrityVerified || coverage.DiagnosticsBySeverity["error"] > 0 || coverage.HighConfidenceSecretFindings-reviewed > 0 || coverage.InventoryAccountingRatio < 1 || coverage.SymbolEvidenceRatio < 1 || coverage.ClaimCitationRatio < 1 {
+		return nil, &workspace.RefreshError{Code: "quality_failed", Cause: fmt.Errorf("new atlas failed workspace quality gates: integrity=%s errors=%d high_confidence_secrets=%d reviewed_false_positives=%d inventory_accounting=%.6f symbol_evidence=%.6f claim_citations=%.6f", dataset.Integrity, coverage.DiagnosticsBySeverity["error"], coverage.HighConfidenceSecretFindings, reviewed, coverage.InventoryAccountingRatio, coverage.SymbolEvidenceRatio, coverage.ClaimCitationRatio)}
 	}
 	_, after, err := workspaceFingerprint(ctx, source, root)
 	afterIdentity, statErr := os.Stat(root)
@@ -421,7 +461,7 @@ func compileWorkspaceSourceUsing(ctx context.Context, source workspace.Source, g
 		return nil, err
 	}
 	keep = true
-	return &workspace.Active{AtlasPath: atlas, SnapshotID: dataset.Manifest.ID, Generation: filepath.Base(generation), ManifestSHA256: manifestDigest, Fingerprint: fingerprint, CompilerVersion: version, SourceAdvanced: sourceAdvanced}, nil
+	return &workspace.Active{AtlasPath: atlas, SnapshotID: dataset.Manifest.ID, Generation: filepath.Base(generation), ManifestSHA256: manifestDigest, Fingerprint: fingerprint, CompilerVersion: version, SourceAdvanced: sourceAdvanced, ReviewedSecretFindings: reviewed}, nil
 }
 
 func workspaceFingerprint(ctx context.Context, source workspace.Source, root string) (inventory.Result, string, error) {
@@ -453,7 +493,8 @@ func workspaceObservation(ctx context.Context, source workspace.Source, root str
 		Limits    workspace.Limits
 		Excludes  []string
 		Patterns  []string
-	}{result.Artifacts, source.Limits, source.Excludes, source.ExcludePatterns})
+		Reviews   []workspace.SecretReview
+	}{result.Artifacts, source.Limits, source.Excludes, source.ExcludePatterns, source.SecretReviews})
 	return result, fingerprint, excludes, ctx.Err()
 }
 
