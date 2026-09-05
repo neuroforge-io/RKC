@@ -18,6 +18,7 @@ import (
 	"github.com/neuroforge-io/RKC/internal/flow"
 	"github.com/neuroforge-io/RKC/internal/framework/envkeys"
 	"github.com/neuroforge-io/RKC/internal/framework/manifest"
+	"github.com/neuroforge-io/RKC/internal/framework/secretpack"
 	"github.com/neuroforge-io/RKC/internal/history"
 	"github.com/neuroforge-io/RKC/internal/inventory"
 	"github.com/neuroforge-io/RKC/internal/runtime"
@@ -240,10 +241,11 @@ func TestConfigEnvironmentFactsAreMergedAndCanBeDisabled(t *testing.T) {
 
 func TestAnalyzerStageConfigurationsBindProducerVersions(t *testing.T) {
 	expected := map[string][2]string{
-		"env-keys":   {envkeys.PluginID, envkeys.PluginVersion},
-		"manifests":  {manifest.PluginID, manifest.PluginVersion},
-		"value-flow": {flow.PluginID, flow.PluginVersion},
-		"config-env": {configenv.PluginID, configenv.PluginVersion},
+		"env-keys":    {envkeys.PluginID, envkeys.PluginVersion},
+		"manifests":   {manifest.PluginID, manifest.PluginVersion},
+		"value-flow":  {flow.PluginID, flow.PluginVersion},
+		"config-env":  {configenv.PluginID, configenv.PluginVersion},
+		"secret-scan": {secretpack.PluginID, secretpack.PluginVersion},
 	}
 	stages := (&stagedScanState{opts: Options{}}).stages()
 	for stageID, producer := range expected {

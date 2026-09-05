@@ -246,8 +246,10 @@ func (state *stagedScanState) stages() []scheduler.Stage {
 			"version":      scipindex.PluginVersion,
 		}, nil, state.runSCIPSemantic),
 		state.analysisStage("secret-scan", []string{"normalize"}, map[string]any{
-			"enabled":       !state.opts.DisableSecretScan,
-			"policy_digest": state.opts.PolicyDigest,
+			"enabled":        !state.opts.DisableSecretScan,
+			"policy_digest":  state.opts.PolicyDigest,
+			"plugin_id":      secretpack.PluginID,
+			"plugin_version": secretpack.PluginVersion,
 		}, nil, state.runSecretScan),
 		state.analysisStage("typescript-syntax", []string{"normalize"}, map[string]any{
 			"enabled":            !state.opts.DisablePlugins && !state.opts.DisableTypeScript,
