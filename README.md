@@ -108,8 +108,9 @@ rkc-mcp --dir ./my-project/.rkc
 
 For several repositories with automatic refresh, use a private
 [tracked workspace](docs/WORKSPACES.md) and connect its
-[MCP server](docs/MCP.md). Workspace tracking is available in the current source
-checkout; the v0.4.0 download serves individual atlases.
+[MCP server](docs/MCP.md). Tracked workspaces are included in the
+[0.4.1 release](https://github.com/neuroforge-io/RKC/releases/tag/v0.4.1)
+and newer downloads.
 
 Combine compiled atlas folders without a model:
 

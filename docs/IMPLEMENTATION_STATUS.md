@@ -5,10 +5,11 @@ This RKC status evidence is published by **NeuroForgeIO** under
 contributors; percentages below are evidence signals, not claims of unmeasured
 semantic completeness.
 
-Version: `0.4.1` (release preparation; portable publication pending). See the
-[release history](../CHANGELOG.md) for changes and the
-[release page](https://github.com/neuroforge-io/RKC/releases) for published
-assets and their exact native qualification receipts.
+Version: `0.4.1`. The
+[published release](https://github.com/neuroforge-io/RKC/releases/tag/v0.4.1)
+binds source commit `3ca9bf5962a9f152224a17273e605be8d6b45c76` and includes
+matching native qualification receipts for all six downloads. See the
+[release history](../CHANGELOG.md) for changes and exact-source CI evidence.
 
 The labels below mean:
 

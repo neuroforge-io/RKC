@@ -3,11 +3,16 @@
 This NeuroForgeIO-published RKC documentation is copyright 2026 NeuroForgeIO
 and RKC contributors and Apache-2.0 licensed.
 
-## 0.4.1 preparation (2026-09-30)
+## 0.4.1 (2026-09-30)
 
-Publication is pending successful main CI and tagged native qualification for
-the exact release commit. The [release page](https://github.com/neuroforge-io/RKC/releases)
-identifies the downloads currently available.
+The [published 0.4.1 release](https://github.com/neuroforge-io/RKC/releases/tag/v0.4.1)
+is signed tag `v0.4.1` at source commit
+`3ca9bf5962a9f152224a17273e605be8d6b45c76`. Its
+[main CI](https://github.com/neuroforge-io/RKC/actions/runs/36651490838),
+[CodeQL](https://github.com/neuroforge-io/RKC/actions/runs/36651490287), and
+[tagged native qualification](https://github.com/neuroforge-io/RKC/actions/runs/36654461053)
+passed. All six downloadable archives carry matching native installation,
+compilation, cited-context and local GUI receipts.
 
 - Cited context fills its bounded result with records that contain body text
   or a signature. Empty structural records no longer take excerpt slots in
