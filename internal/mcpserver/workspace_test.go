@@ -293,6 +293,22 @@ func TestWorkspaceQueriesInterleaveAndBoundAcrossSources(t *testing.T) {
 	}
 }
 
+func TestWorkspaceContextRanksOnlyTextBearingResults(t *testing.T) {
+	s, _, datasets, _ := workspaceFixture(t, "alpha")
+	for _, dataset := range datasets {
+		dataset.Bundle.Nodes[2].Signature = ""
+		dataset.Search = search.BuildFromBundle(dataset.Bundle)
+	}
+	result := workspaceQuery(t, s, "rkc.context", map[string]any{"query": "Same", "limit": 2})
+	if result.Total != 1 || len(result.Items) != 1 || result.Truncated {
+		t.Fatalf("empty records distorted context accounting: %+v", result)
+	}
+	var item workspaceQueryItem
+	if err := json.Unmarshal(result.Items[0], &item); err != nil || item.Rank != 1 || !bytes.Contains(item.Value, []byte(`"text":"func Same()"`)) {
+		t.Fatalf("context rank or excerpt was lost: %+v, %v", item, err)
+	}
+}
+
 func TestWorkspaceOversizedSearchHitsDoNotCrowdOutSmallSources(t *testing.T) {
 	s, _, datasets, _ := workspaceFixture(t, "alpha", "beta")
 	for path, dataset := range datasets {

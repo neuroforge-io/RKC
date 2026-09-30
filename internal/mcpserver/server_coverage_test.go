@@ -500,10 +500,10 @@ func TestMCPTransportToolAndDecoderResidualBoundaries(t *testing.T) {
 
 func mcpDataset() *server.Dataset {
 	evidence := rkcmodel.Evidence{ID: "evidence-a", Kind: "syntax_derived", Method: "test", Confidence: 1}
-	a := rkcmodel.Node{ID: "a", LogicalID: "logical-a", Kind: "function", Name: "Alpha", QualifiedName: "pkg.Alpha", Language: "go", EvidenceIDs: []string{evidence.ID}}
-	b := rkcmodel.Node{ID: "b", LogicalID: "logical-b", Kind: "function", Name: "Beta", QualifiedName: "pkg.Beta", Language: "go"}
-	c := rkcmodel.Node{ID: "c", LogicalID: "logical-c", Kind: "function", Name: "Same", QualifiedName: "pkg.One.Same", Language: "go"}
-	d := rkcmodel.Node{ID: "d", LogicalID: "logical-d", Kind: "function", Name: "Same", QualifiedName: "pkg.Two.Same", Language: "go"}
+	a := rkcmodel.Node{ID: "a", LogicalID: "logical-a", Kind: "function", Name: "Alpha", QualifiedName: "pkg.Alpha", Signature: "func Alpha()", Language: "go", EvidenceIDs: []string{evidence.ID}}
+	b := rkcmodel.Node{ID: "b", LogicalID: "logical-b", Kind: "function", Name: "Beta", QualifiedName: "pkg.Beta", Signature: "func Beta()", Language: "go"}
+	c := rkcmodel.Node{ID: "c", LogicalID: "logical-c", Kind: "function", Name: "Same", QualifiedName: "pkg.One.Same", Signature: "func Same()", Language: "go"}
+	d := rkcmodel.Node{ID: "d", LogicalID: "logical-d", Kind: "function", Name: "Same", QualifiedName: "pkg.Two.Same", Signature: "func Same()", Language: "go"}
 	edge := rkcmodel.Edge{ID: "edge-ab", Kind: "calls", From: a.ID, To: b.ID, Resolution: "declared", Confidence: 1}
 	diagnostic := rkcmodel.Diagnostic{ID: "diagnostic-mcp", Severity: "warning", Code: "TEST", Message: "fixture"}
 	bundle := rkcmodel.Bundle{Snapshot: rkcmodel.Snapshot{ID: "snapshot-mcp", SchemaVersion: rkcmodel.SchemaVersion}, Nodes: []rkcmodel.Node{a, b, c, d}, Edges: []rkcmodel.Edge{edge}, Evidence: []rkcmodel.Evidence{evidence}, Diagnostics: []rkcmodel.Diagnostic{diagnostic}}

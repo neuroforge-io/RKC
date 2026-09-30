@@ -409,7 +409,7 @@ func (w *workspaceServer) query(ctx context.Context, registry workspace.Registry
 			result.Sources = append(result.Sources, status)
 			continue
 		}
-		page := dataset.Search.SearchPage(search.Query{Text: text, Kinds: setArg(arguments, "kinds"), Languages: setArg(arguments, "languages"), Limit: limit}, nil)
+		page := dataset.Search.SearchPage(search.Query{Text: text, Kinds: setArg(arguments, "kinds"), Languages: setArg(arguments, "languages"), RequireExcerpt: tool == "rkc.context", Limit: limit}, nil)
 		status.Total, status.Truncated = page.Total, page.Truncated
 		result.Total += page.Total
 		if page.Total > 0 {
@@ -445,8 +445,8 @@ func (w *workspaceServer) query(ctx context.Context, registry workspace.Registry
 				return workspaceQueryResult{}, err
 			}
 			status.Truncated = status.Truncated || packet.Truncated
-			// Preserve the original lexical rank even if the context builder
-			// omitted an oversized hit before returning its admitted excerpts.
+			// Preserve the excerpt-qualified lexical rank even if the context
+			// builder omitted an oversized hit before returning admitted excerpts.
 			ranks := map[string]int{}
 			for rank, hit := range page.Hits {
 				ranks[hit.Document.ObjectType+"\x00"+hit.Document.ID] = rank + 1

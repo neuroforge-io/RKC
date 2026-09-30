@@ -108,7 +108,7 @@ func (dataset *Dataset) BuildContext(ctx context.Context, query string, limit, m
 	if dataset.Integrity != IntegrityVerified && dataset.Integrity != IntegrityVerifiedLegacyUnmarked {
 		packet.Warnings = append(packet.Warnings, "This atlas lacks verified modern export integrity.")
 	}
-	response := dataset.Search.Search(search.Query{Text: query, Limit: limit})
+	response := dataset.Search.Search(search.Query{Text: query, Limit: limit, RequireExcerpt: true})
 	packet.Truncated = response.Truncated
 	for _, hit := range response.Hits {
 		if err := ctx.Err(); err != nil {

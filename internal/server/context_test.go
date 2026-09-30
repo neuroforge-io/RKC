@@ -75,6 +75,9 @@ func TestContextLinearAccountingMatchesEncodedArrayAdmission(t *testing.T) {
 func TestContextEvidenceIdentityBudgetAndNoMutation(t *testing.T) {
 	d := testDataset()
 	d.Integrity = IntegrityVerified
+	doc := d.Search.Documents["a"]
+	doc.Body = "login evidence"
+	d.Search.Documents["a"] = doc
 	n := d.NodeByID["a"]
 	n.Source = &rkcmodel.SourceRange{ArtifactID: "artifact", Path: "auth.go", StartLine: 4, EndLine: 9}
 	n.EvidenceIDs = []string{"z", "missing", "a"}
@@ -109,6 +112,33 @@ func TestContextEvidenceIdentityBudgetAndNoMutation(t *testing.T) {
 	}
 }
 
+func TestContextSkipsEmptyStructuralRecordsAndBackfillsExcerpts(t *testing.T) {
+	documents := make([]search.Document, 0, 24)
+	for i := range 20 {
+		documents = append(documents, search.Document{
+			ID: fmt.Sprintf("block-%02d", i), ObjectType: "node", Kind: "cfg_block",
+			Title: "Login#block", QualifiedName: fmt.Sprintf("auth.Service.Login#block%02d", i),
+			Path: "auth.go",
+		})
+	}
+	documents = append(documents,
+		search.Document{ID: "method", ObjectType: "node", Kind: "method", Title: "Login", QualifiedName: "auth.Service.Login", Path: "auth.go", Body: "Login validates credentials."},
+		search.Document{ID: "file", ObjectType: "artifact", Kind: "file", Title: "auth.go", Path: "auth.go", Body: "The Login method checks username and password."},
+		search.Document{ID: "signature", ObjectType: "node", Kind: "method", Title: "LoginFallback", Signature: "func LoginFallback() error"},
+	)
+	dataset := testDataset()
+	dataset.Search = search.Build(documents)
+	packet, err := dataset.BuildContext(context.Background(), "Login", 2, 32768)
+	if err != nil || len(packet.Items) != 2 || !packet.Truncated {
+		t.Fatalf("did not backfill useful excerpts: %+v, %v", packet, err)
+	}
+	for _, item := range packet.Items {
+		if strings.TrimSpace(item.Text) == "" || strings.HasPrefix(item.ObjectID, "block-") {
+			t.Fatalf("empty structural record took an excerpt slot: %+v", item)
+		}
+	}
+}
+
 func TestContextHTTPValidationAndFormats(t *testing.T) {
 	d := testDataset()
 	for _, query := range []string{"", "q=", "q=a&q=b", "q=login&limit=0", "q=login&limit=51", "q=login&limit=no", "q=login&max_bytes=1023", "q=login&max_bytes=262145", "q=login&max_bytes=no", "q=login&format=html", "q=login&unknown=true", "q=%zz", "q=%ff", "q=" + strings.Repeat("a", 4097)} {
@@ -139,6 +169,7 @@ func TestContextBoundsCompleteEncodedMetadataAndCancellation(t *testing.T) {
 	d := testDataset()
 	doc := d.Search.Documents["a"]
 	doc.Title = strings.Repeat("界\n", 1200)
+	doc.Body = "login evidence"
 	d.Search.Documents["a"] = doc
 	packet, err := d.BuildContext(context.Background(), "login", 12, 1024)
 	if err != nil || len(packet.Items) != 0 || !packet.Truncated || packet.Bytes != 2 {

@@ -12,7 +12,7 @@ import (
 )
 
 func TestContextAndDiscoveryAgainstRealServer(t *testing.T) {
-	bundle := rkcmodel.Bundle{Snapshot: rkcmodel.Snapshot{ID: "snapshot-client"}, Nodes: []rkcmodel.Node{{ID: "node", Name: "Authenticate", Kind: "function"}}}
+	bundle := rkcmodel.Bundle{Snapshot: rkcmodel.Snapshot{ID: "snapshot-client"}, Nodes: []rkcmodel.Node{{ID: "node", Name: "Authenticate", Kind: "function", Signature: "func Authenticate()"}}}
 	dataset := &server.Dataset{Manifest: bundle.Snapshot, Bundle: bundle, Search: search.BuildFromBundle(bundle)}
 	host := httptest.NewServer(dataset.Handler())
 	defer host.Close()

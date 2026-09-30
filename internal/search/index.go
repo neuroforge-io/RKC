@@ -108,16 +108,19 @@ type Index struct {
 }
 
 // Query combines lexical text with exact kind, language, object-type, and path
-// prefix filters. Inline kind:, lang:/language:, type:, and path: filters fill
-// only absent explicit filters. A nonpositive Limit defaults to 50 and values
-// above 1000 are capped at 1000.
+// prefix filters. RequireExcerpt excludes records with neither body text nor a
+// signature, so context retrieval can fill its bounded result with usable text.
+// Inline kind:, lang:/language:, type:, and path: filters fill only absent
+// explicit filters. A nonpositive Limit defaults to 50 and values above 1000
+// are capped at 1000.
 type Query struct {
-	Text        string
-	Kinds       map[string]struct{}
-	Languages   map[string]struct{}
-	ObjectTypes map[string]struct{}
-	PathPrefix  string
-	Limit       int
+	Text           string
+	Kinds          map[string]struct{}
+	Languages      map[string]struct{}
+	ObjectTypes    map[string]struct{}
+	PathPrefix     string
+	RequireExcerpt bool
+	Limit          int
 }
 
 // Hit records one deterministically ranked document, its score rounded to six
@@ -1202,6 +1205,9 @@ func parseQuery(input string) (string, parsedQuery) {
 }
 
 func matchesFilters(document Document, query Query) bool {
+	if query.RequireExcerpt && strings.TrimSpace(document.Body) == "" && strings.TrimSpace(document.Signature) == "" {
+		return false
+	}
 	if len(query.Kinds) > 0 {
 		if _, ok := query.Kinds[document.Kind]; !ok {
 			return false
