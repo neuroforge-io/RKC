@@ -25,6 +25,8 @@ type qualifiedGenerationRequest struct {
 	Endpoint            string
 	HTTPModelName       string
 	HTTPProfile         string
+	APIKeyEnv           string
+	AllowRemote         bool
 	ModelPath           string
 	LlamaCLI            string
 	ModelLock           string

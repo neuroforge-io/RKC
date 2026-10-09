@@ -46,6 +46,8 @@ func dispatch(args []string) error {
 		return runContext(args[1:])
 	case "capabilities":
 		return runCapabilities(args[1:])
+	case "providers":
+		return runProviders(args[1:])
 	case "knowledge":
 		return runKnowledge(args[1:])
 	case "wizard", "tui":
@@ -157,6 +159,7 @@ Explore and explain:
   query        Search the compiled repository atlas (alias: search)
   answer       Produce a citation-checked answer (alias: ask)
   synthesize   Build evidence packets or run a qualified local model
+  providers    Set up portable local/API connections and supported client sign-in
   path         Find a bounded graph path between two nodes
   impact       Traverse bounded impact relationships from one node
   components   List strongly connected graph components

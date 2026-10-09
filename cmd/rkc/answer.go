@@ -112,9 +112,18 @@ func runAnswerContext(ctx context.Context, args []string, dependencies answerDep
 	if err != nil {
 		return err
 	}
+	providerConfigPath := discoverFlagValue(args, "provider-config")
+	var providerProfile modelruntime.ProviderProfile
+	if providerConfigPath != "" {
+		providerProfile, err = loadProviderProfile(providerConfigPath)
+		if err != nil {
+			return err
+		}
+	}
 	fs := flag.NewFlagSet("answer", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
 	_ = fs.String("config", configPath, "JSON configuration file")
+	_ = fs.String("provider-config", providerConfigPath, "portable model connection JSON; explicit connection flags override it")
 	dir := fs.String("dir", ".rkc", "generated RKC output directory")
 	database := fs.String("database", "", "durable SQLite store (mutually exclusive with --dir)")
 	snapshotID := fs.String("snapshot", "", "SQLite snapshot ID")
@@ -135,10 +144,12 @@ func runAnswerContext(ctx context.Context, args []string, dependencies answerDep
 	embeddingAsset := fs.String("embedding-asset", "", "qualified embedding asset ID; defaults to the lock default")
 	embeddingRuntimeReceipt := fs.String("embedding-runtime-receipt", "", "llama.cpp embedding runtime build receipt")
 	taskValue := fs.String("task", string(modelruntime.TaskModuleSummary), "module_summary, execution_explanation, symbol_summary, or documentation_gap_analysis")
-	providerType := fs.String("provider", cfg.Model.Provider, "model provider: llama.cpp or openai-compatible (credential-free loopback only)")
-	endpoint := fs.String("endpoint", "", "exact credential-free loopback chat/completions URL for openai-compatible")
-	httpModelName := fs.String("model-name", "", "server model ID for openai-compatible; no local weights are verified")
+	providerType := fs.String("provider", cfg.Model.Provider, "model provider: llama.cpp, openai-compatible, openai, anthropic, or gemini")
+	endpoint := fs.String("endpoint", "", "exact generation URL; remote endpoints require explicit consent and HTTPS")
+	httpModelName := fs.String("model-name", "", "explicit server/API model ID; no remote weights are verified")
 	httpProfile := fs.String("endpoint-profile", "structured-claims", "HTTP capability profile: structured-claims or neuroforge-native-extractive")
+	apiKeyEnv := fs.String("api-key-env", "", "credential environment variable name; native providers use their documented default")
+	allowRemote := fs.Bool("allow-remote", false, "consent to sending selected bounded evidence to the configured remote HTTPS API")
 	modelPath := fs.String("model", cfg.Model.ModelPath, "qualified GGUF generation model file")
 	llamaCLI := fs.String("llama-cli", "llama-cli", "pinned llama.cpp CLI executable")
 	modelLock := fs.String("model-lock", defaultSynthesisModelLockPath(), "trusted RKC model supply-chain lock")
@@ -161,16 +172,22 @@ func runAnswerContext(ctx context.Context, args []string, dependencies answerDep
 	maximumUnresolved := fs.Int("max-unresolved", 8, "maximum untrusted unresolved questions retained for audit")
 	repairPasses := fs.Int("repair-passes", 2, "bounded validator repair passes, 1 or 2")
 	jsonOutput := fs.Bool("json", false, "print the complete machine-readable answer envelope")
+	if providerConfigPath != "" {
+		*providerType, *endpoint, *httpModelName = providerProfile.Provider, providerProfile.Endpoint, providerProfile.Model
+		*httpProfile, *apiKeyEnv, *allowRemote = providerProfile.Profile, providerProfile.APIKeyEnv, providerProfile.AllowRemote
+		*contextTokens, *maxOutputTokens = providerProfile.ContextTokens, providerProfile.MaxOutputTokens
+		*timeout, *modelPath = time.Duration(providerProfile.TimeoutSeconds)*time.Second, ""
+	}
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
 	if fs.NArg() == 0 {
 		return errors.New("question text is required")
 	}
-	if *providerType != "openai-compatible" && (*endpoint != "" || *httpModelName != "" || flagWasSet(fs, "endpoint-profile")) {
-		return errors.New("endpoint, model-name and endpoint-profile require --provider openai-compatible")
+	if !isHTTPAnswerProvider(*providerType) && (*endpoint != "" || *httpModelName != "" || flagWasSet(fs, "endpoint-profile") || *apiKeyEnv != "" || flagWasSet(fs, "allow-remote") || providerConfigPath != "") {
+		return errors.New("endpoint, model-name, endpoint-profile, api-key-env, allow-remote and provider-config require --provider openai-compatible, openai, anthropic, or gemini")
 	}
-	if *providerType == "openai-compatible" && (*modelPath != "" || flagWasSet(fs, "llama-cli") || flagWasSet(fs, "model-lock") || flagWasSet(fs, "model-asset") || flagWasSet(fs, "runtime-receipt") || flagWasSet(fs, "max-rss-mib") || flagWasSet(fs, "threads") || flagWasSet(fs, "batch-size")) {
+	if isHTTPAnswerProvider(*providerType) && (*modelPath != "" || flagWasSet(fs, "llama-cli") || flagWasSet(fs, "model-lock") || flagWasSet(fs, "model-asset") || flagWasSet(fs, "runtime-receipt") || flagWasSet(fs, "max-rss-mib") || flagWasSet(fs, "threads") || flagWasSet(fs, "batch-size")) {
 		return errors.New("GGUF, runtime qualification and process resource options require --provider llama.cpp")
 	}
 	mode, err := parseQueryRetrievalMode(*modeValue)
@@ -276,7 +293,8 @@ func runAnswerContext(ctx context.Context, args []string, dependencies answerDep
 	generation, err := dependencies.openProvider(qualifiedGenerationRequest{
 		Provider: *providerType, Endpoint: *endpoint, HTTPModelName: *httpModelName,
 		HTTPProfile: *httpProfile,
-		ModelPath:   *modelPath, LlamaCLI: *llamaCLI,
+		APIKeyEnv:   *apiKeyEnv, AllowRemote: *allowRemote,
+		ModelPath: *modelPath, LlamaCLI: *llamaCLI,
 		ModelLock: *modelLock, ModelAsset: *modelAsset, RuntimeReceipt: *runtimeReceipt,
 		ContextTokens: *contextTokens, MaximumOutputTokens: *maxOutputTokens,
 		MaximumRSSMiB: *maxRSSMiB, Threads: *threads, BatchSize: *batchSize,

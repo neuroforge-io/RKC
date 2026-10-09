@@ -15,6 +15,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/neuroforge-io/RKC/internal/discovery"
+	"github.com/neuroforge-io/RKC/internal/docparse"
 	"github.com/neuroforge-io/RKC/internal/search"
 	"github.com/neuroforge-io/RKC/pkg/rkcapi"
 	"github.com/neuroforge-io/RKC/pkg/rkcmodel"
@@ -110,6 +111,7 @@ func (dataset *Dataset) BuildContext(ctx context.Context, query string, limit, m
 	}
 	response := dataset.Search.Search(search.Query{Text: query, Limit: limit, RequireExcerpt: true})
 	packet.Truncated = response.Truncated
+	projectionIncomplete := false
 	documentHits := make(map[string]struct{})
 	for _, hit := range response.Hits {
 		if hit.Document.ObjectType == "document" {
@@ -178,12 +180,20 @@ func (dataset *Dataset) BuildContext(ctx context.Context, query string, limit, m
 		}
 		packet.Items = append(packet.Items, item)
 		packet.Bytes = candidateBytes
+		if document, ok := documents[doc.ID]; ok && doc.ObjectType == "document" &&
+			document.Generator == docparse.SourcePluginID && item.Source != nil && document.Attributes["complete"] == false {
+			projectionIncomplete = true
+		}
 	}
 	if len(packet.Items) == 0 {
 		packet.Warnings = append(packet.Warnings, "No excerpts fit this query and budget. Try a source name, a broader query, or a larger budget.")
 	}
 	if packet.Truncated {
 		packet.Warnings = append(packet.Warnings, "Results were omitted by the item or byte budget; this packet is not exhaustive.")
+	}
+	if projectionIncomplete {
+		packet.Truncated = true
+		packet.Warnings = append(packet.Warnings, "An admitted source document has an incomplete projection; original record ranges may include text omitted during ingestion.")
 	}
 	encoded, err := json.Marshal(packet)
 	if err != nil {

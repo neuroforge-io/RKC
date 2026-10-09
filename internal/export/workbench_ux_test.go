@@ -20,7 +20,7 @@ func TestBrowserContextPacketsRemainSnapshotBoundAndQuoteUntrustedText(t *testin
 	if err != nil {
 		t.Fatal(err)
 	}
-	app := strings.TrimSuffix(string(assets["app.js"]), "boot();")
+	app := browserTestApplication(t, assets["app.js"])
 	const prelude = `
 const elements=new Map();
 function element(id){if(!elements.has(id))elements.set(id,{value:'',textContent:'',innerHTML:'',hidden:false,disabled:false,focus(){},setAttribute(){},addEventListener(){},classList:{toggle(){}},querySelectorAll(){return[]}});return elements.get(id)}
@@ -51,7 +51,7 @@ global.window={addEventListener(){}};global.location={hash:'',pathname:'/',searc
  console.log('context-ux-ok');
 })().catch(error=>{console.error(error);process.exitCode=1});
 `
-	command := exec.Command(node, "-")
+	command := browserTestCommand(t, node, "-")
 	command.Stdin = strings.NewReader(prelude + app + harness)
 	output, err := command.CombinedOutput()
 	if err != nil {

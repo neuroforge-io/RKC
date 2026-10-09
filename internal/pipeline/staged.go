@@ -44,6 +44,7 @@ var analysisStageIDs = []string{
 	"python-syntax",
 	"scip-semantic",
 	"secret-scan",
+	"source-documents",
 	"typescript-syntax",
 }
 
@@ -53,6 +54,7 @@ var fragmentMergeOrder = []string{
 	"typescript-syntax",
 	"scip-semantic",
 	"markdown",
+	"source-documents",
 	"openapi",
 	"json-schema",
 	"manifests",
@@ -164,9 +166,9 @@ func Scan(ctx context.Context, opts Options) (rkcmodel.Bundle, rkcmodel.Coverage
 	if err != nil {
 		return rkcmodel.Bundle{}, rkcmodel.Coverage{}, fmt.Errorf("execute scan DAG: %w", err)
 	}
-	if len(report.Results) != 20 {
+	if len(report.Results) != 21 {
 		return rkcmodel.Bundle{}, rkcmodel.Coverage{}, fmt.Errorf(
-			"execute scan DAG: completed %d stages, want 20", len(report.Results),
+			"execute scan DAG: completed %d stages, want 21", len(report.Results),
 		)
 	}
 	if state.bundle.Snapshot.ID == "" || state.coverage.SnapshotID != state.bundle.Snapshot.ID {
@@ -216,6 +218,11 @@ func (state *stagedScanState) stages() []scheduler.Stage {
 		state.analysisStage("markdown", []string{"normalize"}, map[string]any{
 			"enabled": !state.opts.DisableFrameworks && !state.opts.DisableMarkdown,
 		}, nil, state.runMarkdown),
+		state.analysisStage("source-documents", []string{"normalize"}, map[string]any{
+			"enabled":        !state.opts.DisableFrameworks,
+			"plugin_id":      docparse.SourcePluginID,
+			"plugin_version": docparse.SourcePluginVersion,
+		}, docparse.IsSourceCandidate, state.runSourceDocuments),
 		state.analysisStage("openapi", []string{"normalize"}, map[string]any{
 			"enabled":        !state.opts.DisableFrameworks && !state.opts.DisableOpenAPI,
 			"plugin_id":      openapi.PluginID,
@@ -308,7 +315,7 @@ func (state *stagedScanState) stageResources(stageID string) scheduler.ResourceR
 		return scheduler.ResourceRequest{
 			MemoryMiB: 256, CPU: 1, OpenFiles: 128, IOClass: "bulk",
 		}
-	case "normalize", "secret-scan":
+	case "normalize", "secret-scan", "source-documents":
 		return scheduler.ResourceRequest{
 			MemoryMiB: 256, CPU: 1, OpenFiles: 64, IOClass: "bulk",
 		}
@@ -678,6 +685,21 @@ func (state *stagedScanState) runMarkdown(context.Context) (scheduler.Result, er
 		Files: files, Artifacts: state.artifactByPath,
 	})
 	return state.handleFragmentResult("markdown", files, fragment, err, "RKC-DOC-2001", docparse.PluginID, true)
+}
+
+func (state *stagedScanState) runSourceDocuments(ctx context.Context) (scheduler.Result, error) {
+	if state.opts.DisableFrameworks {
+		return state.disabledResult("source-documents"), nil
+	}
+	files := filterFiles(state.files, docparse.IsSourceCandidate)
+	fragment, err := docparse.ExtractSources(ctx, docparse.Options{
+		Root: state.root, SnapshotID: state.bundle.Snapshot.ID, Files: files,
+	})
+	if err != nil && ctx.Err() != nil {
+		return scheduler.Result{}, ctx.Err()
+	}
+	// This is a document projection, not a code-syntax precision claim.
+	return state.handleFragmentResult("source-documents", files, fragment, err, "RKC-DATA-2001", docparse.SourcePluginID, false)
 }
 
 func (state *stagedScanState) runOpenAPI(context.Context) (scheduler.Result, error) {

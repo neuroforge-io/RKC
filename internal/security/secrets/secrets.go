@@ -4,8 +4,11 @@
 package secrets
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
+	"errors"
 	"regexp"
 	"sort"
 	"strconv"
@@ -48,6 +51,11 @@ var detectors = []detector{
 
 var assignmentPattern = regexp.MustCompile(`(?im)\b(password|passwd|secret|api[_-]?key|access[_-]?token|auth[_-]?token|private[_-]?key|client[_-]?secret)\b\s*[:=]\s*["']?([^\s"'#,;]{8,512})`)
 
+// Quoted JSON keys need their own recognizer: the closing key quote prevents
+// the ordinary assignment recognizer from matching. Preserve raw byte ranges,
+// including escaped string bytes, so every export shares source citations.
+var jsonStringFieldPattern = regexp.MustCompile(`"((?:[^"\\]|\\.)*)"\s*:\s*"((?:[^"\\]|\\.)*)"`)
+
 var sourceReferencePattern = regexp.MustCompile(`^(?:config|cfg|settings|env|self|this|process\.env)(?:\.[A-Za-z_][A-Za-z0-9_]*)+$`)
 
 var placeholderValues = map[string]struct{}{
@@ -61,10 +69,45 @@ var placeholderValues = map[string]struct{}{
 // review evidence, not proof that a credential is live, and an empty result is
 // not proof that input contains no secret.
 func Scan(data []byte) []Finding {
+	findings, _ := ScanContext(context.Background(), data)
+	return findings
+}
+
+// ScanContext provides cancellable scanning between detectors and findings.
+// Regex evaluation itself is linear in the bounded input and is not interruptible.
+// Line coordinates use one shared index instead of rescanning a large export
+// from the beginning for every credential finding.
+func ScanContext(ctx context.Context, data []byte) ([]Finding, error) {
+	if ctx == nil {
+		return nil, errors.New("secret scan context is required")
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	var findings []Finding
+	var lineOffsets []int
+	makeIndexedFinding := func(start, end int, kind string, confidence float64, key string) Finding {
+		if lineOffsets == nil {
+			lineOffsets = []int{0}
+			for index, value := range data {
+				if value == '\n' {
+					lineOffsets = append(lineOffsets, index+1)
+				}
+			}
+		}
+		startLine := sort.Search(len(lineOffsets), func(index int) bool { return lineOffsets[index] > start })
+		endLine := sort.Search(len(lineOffsets), func(index int) bool { return lineOffsets[index] > end })
+		return findingAt(start, end, startLine, start-lineOffsets[startLine-1], endLine, end-lineOffsets[endLine-1], kind, confidence, key)
+	}
 	for _, detector := range detectors {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		matches := detector.pattern.FindAllSubmatchIndex(data, -1)
 		for _, match := range matches {
+			if err := ctx.Err(); err != nil {
+				return nil, err
+			}
 			start, end := match[0], match[1]
 			if detector.group > 0 {
 				position := detector.group * 2
@@ -77,10 +120,13 @@ func Scan(data []byte) []Finding {
 			if isPlaceholder(string(value)) {
 				continue
 			}
-			findings = append(findings, makeFinding(data, start, end, detector.kind, detector.confidence, ""))
+			findings = append(findings, makeIndexedFinding(start, end, detector.kind, detector.confidence, ""))
 		}
 	}
 	for _, match := range assignmentPattern.FindAllSubmatchIndex(data, -1) {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		if len(match) < 6 || match[4] < 0 {
 			continue
 		}
@@ -97,9 +143,24 @@ func Scan(data []byte) []Finding {
 		if len(value) >= 20 {
 			confidence = 0.92
 		}
-		findings = append(findings, makeFinding(data, start, end, "secret_assignment", confidence, key))
+		findings = append(findings, makeIndexedFinding(start, end, "secret_assignment", confidence, key))
 	}
-	return mergeFindings(findings)
+	for _, match := range jsonStringFieldPattern.FindAllSubmatchIndex(data, -1) {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		var key, value string
+		if json.Unmarshal(data[match[2]-1:match[3]+1], &key) != nil || !IsSecretName(key) ||
+			json.Unmarshal(data[match[4]-1:match[5]+1], &value) != nil ||
+			value == "" || isPlaceholder(value) || looksLikeReference(value) {
+			continue
+		}
+		findings = append(findings, makeIndexedFinding(match[4], match[5], "json_secret_field", .9, key))
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	return mergeFindings(findings), nil
 }
 
 // Known configuration objects in source expressions refer to a value held
@@ -224,8 +285,23 @@ func IsPlaceholder(value string) bool { return isPlaceholder(value) }
 // replaced by asterisks except for CR, LF, and tab bytes, which preserve source
 // layout. It merges overlaps, clamps out-of-range offsets, and never mutates data.
 func Redact(data []byte, findings []Finding) []byte {
+	output, _ := RedactContext(context.Background(), data, findings)
+	return output
+}
+
+// RedactContext returns no partially redacted output when cancelled.
+func RedactContext(ctx context.Context, data []byte, findings []Finding) ([]byte, error) {
+	if ctx == nil {
+		return nil, errors.New("secret redaction context is required")
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	output := append([]byte(nil), data...)
 	for _, finding := range mergeFindings(append([]Finding(nil), findings...)) {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		start, end := finding.StartByte, finding.EndByte
 		if start < 0 {
 			start = 0
@@ -237,6 +313,9 @@ func Redact(data []byte, findings []Finding) []byte {
 			continue
 		}
 		for index := start; index < end; index++ {
+			if index%65536 == 0 && ctx.Err() != nil {
+				return nil, ctx.Err()
+			}
 			switch output[index] {
 			case '\n', '\r', '\t':
 				// Preserve exact line and byte layout for provenance.
@@ -245,12 +324,16 @@ func Redact(data []byte, findings []Finding) []byte {
 			}
 		}
 	}
-	return output
+	return output, ctx.Err()
 }
 
 func makeFinding(data []byte, start, end int, kind string, confidence float64, key string) Finding {
 	startLine, startColumn := lineColumn(data, start)
 	endLine, endColumn := lineColumn(data, end)
+	return findingAt(start, end, startLine, startColumn, endLine, endColumn, kind, confidence, key)
+}
+
+func findingAt(start, end, startLine, startColumn, endLine, endColumn int, kind string, confidence float64, key string) Finding {
 	// Fingerprints identify a finding location; they deliberately do not hash
 	// the credential value, which would permit offline confirmation of
 	// low-entropy passwords from public output.

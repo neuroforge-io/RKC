@@ -7,8 +7,8 @@ import (
 
 func TestCommandsAreUniqueValidAndIndependentlyOwned(t *testing.T) {
 	commands := Commands(Context{})
-	if len(commands) != 28 {
-		t.Fatalf("command count = %d, want 28", len(commands))
+	if len(commands) != 29 {
+		t.Fatalf("command count = %d, want 29", len(commands))
 	}
 	seen := make(map[string]bool, len(commands))
 	for _, command := range commands {
@@ -31,6 +31,7 @@ func TestCommandsAreUniqueValidAndIndependentlyOwned(t *testing.T) {
 	}
 	for name, want := range map[string][]string{
 		"wizard":     {"--help"},
+		"providers":  {"list"},
 		"plan":       {"."},
 		"scan":       {"--no-python", "--out", ".rkc", "--state-dir", ".rkc-state", "."},
 		"check":      {"--coverage", ".rkc/coverage.json"},

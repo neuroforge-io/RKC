@@ -390,3 +390,46 @@ body.source-view #content { max-width: 920px; padding-block: 48px; }
  .source-providers button { padding-inline: 4px; font-size: 12px; }
  .github-repository-choice .github-repository-title { flex-wrap: wrap; }
 }
+
+/* Small, focused workflows share the same portable visual language. */
+.header-tools { flex-wrap: wrap; }
+.search-tips { padding: 4px 10px; margin: 12px 0; background: transparent; font-size: 12px; }
+.search-tips summary { min-height: 34px; }
+.search-examples, .task-presets, .output-navigation { display: flex; flex-wrap: wrap; gap: 7px; }
+.search-examples { padding-block: 10px 4px; }
+.search-examples button { font-size: 11px; }
+.output-navigation { margin-top: 18px; }
+.output-navigation button { min-height: 38px; }
+.starter-results { margin-top: 28px; padding-top: 16px; border-top: 1px solid var(--line); text-align: left; }
+.starter-result { width: 100%; display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 10px; margin-top: 7px; color: var(--text); background: var(--panel2); border: 1px solid var(--line); border-radius: 8px; text-align: left; cursor: pointer; }
+.starter-result > span:first-child { min-width: 0; overflow-wrap: anywhere; }
+.starter-result:hover { border-color: var(--accent); }
+.guide-steps { counter-reset: guide; list-style: none; padding: 0; margin: 24px 0; }
+.guide-steps li { position: relative; padding: 0 0 16px 42px; }
+.guide-steps li::before { counter-increment: guide; content: counter(guide); position: absolute; top: 0; left: 0; width: 27px; height: 27px; display: grid; place-items: center; color: var(--accent); background: var(--panel2); border: 1px solid var(--line); border-radius: 8px; font-size: 12px; font-weight: 700; }
+.guide-steps p { margin: 5px 0 0; color: var(--muted); font-size: 12px; }
+.analysis-depth p { color: var(--muted); max-width: 94ch; }
+.analysis-depth .grid { margin: 18px 0; }
+.analysis-depth .stat strong { font-size: 16px; }
+.handoff-task { padding-top: 18px; margin-top: 18px; border-top: 1px solid var(--line); }
+.handoff-task textarea { margin-top: 10px; font-family: inherit; font-size: 13px; }
+.task-presets button { min-height: 34px; font-size: 12px; }
+.connection-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; }
+.connection-card { display: flex; flex-direction: column; min-width: 0; }
+.connection-card > h3 { margin: 9px 0 0; }
+.connection-card > p { color: var(--muted); font-size: 13px; }
+.connection-card > button { align-self: flex-start; margin-top: auto; }
+.connection-card .integration-code pre { padding: 52px 12px 12px; font-size: 11px; }
+.connection-card .integration-code button { top: 10px; }
+#context-workflow, #model-connections, #portable-outputs { scroll-margin-top: 76px; }
+#handoff-prompt { max-height: 350px; font-size: 12px; }
+@media (max-width: 1100px) {
+  .connection-grid { grid-template-columns: 1fr; }
+  .connection-card > button { margin-top: 10px; }
+}
+@media (max-width: 560px) {
+  .header-tools #getting-started { padding: 3px 6px; font-size: 11px; margin-top: 6px; min-height: 30px; }
+  .header-actions { max-width: 140px; }
+  .output-navigation button { flex: 1 1 auto; font-size: 12px; }
+  .connection-card .integration-code pre { font-size: 12px; }
+}

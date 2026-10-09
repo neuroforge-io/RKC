@@ -17,6 +17,9 @@ import (
 // All required bindings must agree before a full-document excerpt gains refs;
 // incomplete or inconsistent provenance retains the legacy unreferenced row.
 func (dataset *Dataset) contextDocumentReferences(ctx context.Context, document rkcmodel.Document) (*rkcmodel.SourceRange, []string) {
+	if document.Generator == docparse.SourcePluginID {
+		return docparse.SourceDocumentReferences(ctx, document, dataset.ArtifactByID, dataset.NodeByID, dataset.EvidenceByID)
+	}
 	empty := []string{}
 	if document.Kind != "source_document" || document.Generator != docparse.PluginID ||
 		document.Status != "validated" || len(document.SubjectIDs) != 1 || len(document.Sections) == 0 {

@@ -172,7 +172,8 @@ func (service *Service) verifyAndCompile(
 			kind = "repair"
 		}
 		audit = append(audit, groundedanswer.VerificationPass{
-			Pass: pass, Kind: kind, RepairQueries: append([]string(nil), incomingQueries...),
+			ReportedModelID: result.Provenance.ReportedModelID,
+			Pass:            pass, Kind: kind, RepairQueries: append([]string(nil), incomingQueries...),
 			RequestID: result.RequestID, Status: result.Status,
 			AcceptedClaims: len(result.Claims), RejectedClaims: len(result.Audit.RejectedClaims),
 			UnresolvedQuestions: len(result.Audit.UntrustedUnresolvedQuestions),

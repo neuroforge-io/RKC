@@ -18,7 +18,7 @@ func TestBrowserDiagnosticPagesFiltersAndFailuresStayBounded(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	application := strings.TrimSuffix(string(assets["app.js"]), "boot();")
+	application := browserTestApplication(t, assets["app.js"])
 	const prelude = `
 const elements=new Map();let focused=0;
 function element(id){if(!elements.has(id))elements.set(id,{value:'',innerHTML:'',textContent:'',hidden:false,disabled:false,attributes:{},setAttribute(name,value){this.attributes[name]=value},getAttribute(name){return this.attributes[name]},addEventListener(){},focus(){focused++},select(){},scrollIntoView(){},querySelectorAll(){return[]},querySelector(){return null},classList:{toggle(){},add(){},remove(){}}});return elements.get(id)}
@@ -97,7 +97,7 @@ function assert(condition,message){if(!condition)throw new Error(message)}
   console.log('diagnostic-paging-ok');
 })().catch(error=>{console.error(error.stack);process.exitCode=1});
 `
-	command := exec.Command(node, "-")
+	command := browserTestCommand(t, node, "-")
 	command.Stdin = strings.NewReader(prelude + application + harness)
 	output, err := command.CombinedOutput()
 	if err != nil {

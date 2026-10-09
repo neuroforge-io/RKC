@@ -22,7 +22,7 @@
   </div>
   <div class="header-actions">
     <div class="connection" id="runtime-status" role="status" aria-live="polite">Opening snapshot…</div>
-    <div class="header-tools"><button type="button" class="secondary" id="change-source" hidden>Change source</button><button type="button" class="secondary" id="global-search">Search <kbd>/</kbd></button><button type="button" class="secondary" id="keyboard-help" aria-haspopup="dialog">Shortcuts <kbd>?</kbd></button></div>
+    <div class="header-tools"><button type="button" class="secondary" id="change-source" hidden>Change source</button><button type="button" class="secondary" id="global-search">Search <kbd>/</kbd></button><button type="button" class="secondary" id="getting-started" aria-haspopup="dialog">Quick guide</button><button type="button" class="secondary" id="keyboard-help" aria-haspopup="dialog">Shortcuts <kbd>?</kbd></button></div>
   </div>
 </header>
 <nav class="tabs" role="tablist" aria-label="Atlas views" aria-orientation="horizontal">
@@ -40,6 +40,7 @@
     <label class="search-label" for="search">Find something useful</label>
     <input id="search" type="search" placeholder="Search symbols, files, and text…" autocomplete="off" aria-describedby="search-help result-summary">
     <p id="search-help" class="help-text">Press <kbd>/</kbd> to search. Use <kbd>Down Arrow</kbd> to enter the results.</p><p id="search-scope" class="help-text"></p>
+    <details class="search-tips"><summary>Search tips &amp; examples</summary><p class="help-text" id="search-mode-help">Start with a symbol, file name, or topic. Narrow the list with the filters below.</p><div class="search-examples" id="search-examples"></div></details>
     <div class="filters">
       <label class="sr-only" for="kind">Filter by node kind</label>
       <select id="kind" aria-label="Node kind"><option value="">All node kinds</option></select>
@@ -64,6 +65,7 @@
 </main>
 <footer><span id="snapshot"></span><span>Built with RKC · A NeuroForgeIO open source contribution · Apache-2.0</span></footer>
 <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
+<dialog id="guide-dialog" aria-labelledby="guide-title"><div class="dialog-heading"><div><span class="eyebrow">A useful first five minutes</span><h2 id="guide-title">Find. Understand. Take it with you.</h2></div><button type="button" class="secondary" id="close-guide" aria-label="Close quick guide">Close</button></div><p class="muted">RKC turns code, documents, configuration, notebooks, and exported source collections into one searchable atlas. You can start without a model.</p><ol class="guide-steps"><li><strong>Find the relevant source.</strong><p>Search for a name, path, or topic. Use language and kind filters to focus the results. Offline exports search symbols and declared documentation; the local API also searches indexed file text.</p></li><li><strong>Follow the evidence.</strong><p>Open a result to inspect its source, attributes, evidence, and relationships. Coverage and diagnostics explain where analysis is incomplete.</p></li><li><strong>Make a useful handoff.</strong><p>Outputs &amp; agents prepares cited context for any chat or agent, exports a portable packet, and shows connection templates for your own tools.</p></li></ol><div class="button-row"><button type="button" class="primary" data-guide-route="explore">Find something</button><button type="button" class="secondary" data-guide-route="outputs">Use with an assistant</button><button type="button" class="secondary" data-guide-route="commands">Build or update an atlas</button></div><p class="help-text">Your atlas is a snapshot. Recompile after changing source files to update its evidence.</p></dialog>
 <dialog id="shortcuts-dialog" aria-labelledby="shortcuts-title"><div class="dialog-heading"><h2 id="shortcuts-title">A little less clicking.</h2><button type="button" class="secondary" id="close-shortcuts" aria-label="Close keyboard shortcuts">Close</button></div><p class="muted">Keyboard shortcuts work outside text fields.</p><dl class="shortcut-list"><dt>Find symbols and files</dt><dd><kbd>/</kbd> or <kbd>Ctrl / ⌘ K</kbd></dd><dt>Move through search results</dt><dd><kbd>↑</kbd> <kbd>↓</kbd></dd><dt>Open a result</dt><dd><kbd>Enter</kbd></dd><dt>Move between workspace tabs</dt><dd><kbd>←</kbd> <kbd>→</kbd></dd><dt>Clear search filters / close a dialog</dt><dd><kbd>Esc</kbd></dd><dt>Show this guide</dt><dd><kbd>?</kbd></dd></dl></dialog>
 <noscript><div class="noscript">This atlas needs JavaScript to load its local snapshot data.</div></noscript>
 <script src="./app.js" defer></script>

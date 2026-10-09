@@ -302,6 +302,11 @@ func scanSequential(ctx context.Context, opts Options) (rkcmodel.Bundle, rkcmode
 				}
 			}
 		}
+		sourceFiles := filterFiles(files, docparse.IsSourceCandidate)
+		if len(sourceFiles) > 0 {
+			fragment, extractErr := docparse.ExtractSources(ctx, docparse.Options{Root: root, SnapshotID: snapshotID, Files: sourceFiles})
+			handleFragment(&bundle, fragment, extractErr, "RKC-DATA-2001", docparse.SourcePluginID)
+		}
 		jsonFiles := filterFiles(files, func(file pluginapi.FileRef) bool { return file.Language == "json" })
 		openAPIFiles := filterFiles(files, isOpenAPICacheInput)
 		if !opts.DisableOpenAPI && len(openAPIFiles) > 0 {

@@ -16,6 +16,7 @@ import (
 	"sort"
 	"strings"
 	"time"
+	"unicode"
 	"unicode/utf8"
 
 	"github.com/neuroforge-io/RKC/internal/docparse"
@@ -192,6 +193,7 @@ type Provenance struct {
 	ModelRequestID       string                             `json:"model_request_id,omitempty"`
 	ModelResponseID      string                             `json:"model_response_id,omitempty"`
 	ModelID              string                             `json:"model_id,omitempty"`
+	ReportedModelID      string                             `json:"reported_model_id,omitempty"`
 	Usage                modelruntime.Usage                 `json:"usage,omitempty"`
 }
 
@@ -242,6 +244,7 @@ type VerificationPass struct {
 	SelectedEvidence    int                `json:"selected_evidence"`
 	PromptBytes         int                `json:"prompt_bytes"`
 	Usage               modelruntime.Usage `json:"usage,omitempty"`
+	ReportedModelID     string             `json:"reported_model_id,omitempty"`
 }
 
 // Verification summarizes every independently validated attempt and aggregates
@@ -414,7 +417,7 @@ func (service *Service) Answer(ctx context.Context, request Request) (Result, er
 		return Result{}, fmt.Errorf("%w: %s", ErrUnsupportedModelTask, task)
 	}
 
-	prepared, err := prepareContext(question, task, request.Retrieval, request.Bundle, request.VerificationPass, service.options)
+	prepared, err := prepareContext(ctx, question, task, request.Retrieval, request.Bundle, request.VerificationPass, service.options)
 	if err != nil {
 		return Result{}, err
 	}
@@ -518,12 +521,19 @@ func (service *Service) Answer(ctx context.Context, request Request) (Result, er
 	if modelResponse.ModelID != service.descriptor.ID {
 		return Result{}, fmt.Errorf("%w: response model ID %q does not match bound provider %q", ErrModelProtocol, modelResponse.ModelID, service.descriptor.ID)
 	}
+	if modelResponse.ReportedModelID != "" {
+		if len(modelResponse.ReportedModelID) > 256 || validateIdentifier(modelResponse.ReportedModelID, "reported model ID") != nil ||
+			strings.IndexFunc(modelResponse.ReportedModelID, unicode.IsControl) >= 0 {
+			return Result{}, fmt.Errorf("%w: invalid provider-reported model ID", ErrModelProtocol)
+		}
+	}
 	if modelResponse.Usage.PromptTokens < 0 || modelResponse.Usage.OutputTokens < 0 || modelResponse.Usage.WallTimeMillis < 0 || modelResponse.Usage.PeakRSSBytes < 0 {
 		return Result{}, fmt.Errorf("%w: model usage counters must be non-negative", ErrModelProtocol)
 	}
 	result.Provenance.ModelRequestID = requestID
 	result.Provenance.ModelResponseID = modelResponse.RequestID
 	result.Provenance.ModelID = modelResponse.ModelID
+	result.Provenance.ReportedModelID = modelResponse.ReportedModelID
 	result.Provenance.Usage = modelResponse.Usage
 
 	generatorVersion := service.descriptor.Revision
@@ -591,11 +601,17 @@ type bundleCatalog struct {
 	artifactNodes map[string][]string
 }
 
-func prepareContext(question string, task modelruntime.Task, retrieval search.Response, bundle rkcmodel.Bundle, verificationPass int, options Options) (preparedContext, error) {
+func prepareContext(ctx context.Context, question string, task modelruntime.Task, retrieval search.Response, bundle rkcmodel.Bundle, verificationPass int, options Options) (preparedContext, error) {
+	if err := ctx.Err(); err != nil {
+		return preparedContext{}, err
+	}
 	if _, err := json.Marshal(bundle); err != nil {
 		return preparedContext{}, fmt.Errorf("%w: encode bundle: %v", ErrInvalidBundle, err)
 	}
 	canonical := rkcmodel.CanonicalBundle(bundle)
+	if err := ctx.Err(); err != nil {
+		return preparedContext{}, err
+	}
 	catalog, err := indexBundle(canonical)
 	if err != nil {
 		return preparedContext{}, err
@@ -723,7 +739,10 @@ func prepareContext(question string, task modelruntime.Task, retrieval search.Re
 		}
 		sort.Strings(ownership[id])
 	}
-	sourceExcerpts := canonicalSourceExcerpts(canonical, catalog, selectedNodes, includedEvidence, budget)
+	sourceExcerpts := canonicalSourceExcerpts(ctx, canonical, catalog, selectedNodes, includedEvidence, budget)
+	if err := ctx.Err(); err != nil {
+		return preparedContext{}, err
+	}
 	truncation.ContextText = budget.truncated
 	truncation.IncludedContextBytes = options.MaximumContextTextBytes - budget.remaining
 	truncation.IncludedNodes = len(relatedNodes)
@@ -870,7 +889,7 @@ func indexBundle(bundle rkcmodel.Bundle) (bundleCatalog, error) {
 				return bundleCatalog{}, fmt.Errorf("%w: document %q references missing subject %q", ErrInvalidBundle, document.ID, subjectID)
 			}
 		}
-		if document.Kind == "source_document" && document.Generator == docparse.PluginID {
+		if document.Kind == "source_document" && isDocumentProducer(document.Generator) {
 			sectionIDs := map[string]struct{}{}
 			for _, section := range document.Sections {
 				if _, duplicate := sectionIDs[section.ID]; duplicate {
@@ -920,7 +939,7 @@ func resolveHitNodes(id string, catalog bundleCatalog) []string {
 	}
 	if document, exists := catalog.documents[id]; exists {
 		result := sortedCopy(document.SubjectIDs)
-		if document.Kind == "source_document" && document.Generator == docparse.PluginID {
+		if document.Kind == "source_document" && isDocumentProducer(document.Generator) {
 			for _, section := range document.Sections {
 				if node, exists := catalog.nodes[section.ID]; exists && node.Kind == "document_section" &&
 					node.Source != nil && node.Source.Path == document.Path {
@@ -951,16 +970,35 @@ func isArtifactProjection(node rkcmodel.Node, artifact rkcmodel.Artifact) bool {
 		node.Source == nil && len(node.EvidenceIDs) == 0 && node.Signature == "" && node.SemanticHash == "" && node.Stability == "" && !node.PublicSurface
 }
 
-// canonicalSourceExcerpts uses only the Markdown producer's canonical section
-// records. Retrieved bodies and repository filesystem paths are never authority.
-func canonicalSourceExcerpts(bundle rkcmodel.Bundle, catalog bundleCatalog, selectedNodes, includedEvidence map[string]struct{}, budget *textBudget) []modelruntime.SourceExcerpt {
+func isDocumentProducer(generator string) bool {
+	return generator == docparse.PluginID || generator == docparse.SourcePluginID
+}
+
+// canonicalSourceExcerpts uses only admitted document producers' canonical
+// sections. Retrieved bodies and repository filesystem paths are never authority.
+func canonicalSourceExcerpts(ctx context.Context, bundle rkcmodel.Bundle, catalog bundleCatalog, selectedNodes, includedEvidence map[string]struct{}, budget *textBudget) []modelruntime.SourceExcerpt {
 	var excerpts []modelruntime.SourceExcerpt
 	seen := map[string]struct{}{}
 	for _, document := range bundle.Documents {
-		if document.Kind != "source_document" || document.Generator != docparse.PluginID || document.Status != "validated" {
+		if ctx.Err() != nil {
+			return nil
+		}
+		if document.Kind != "source_document" || !isDocumentProducer(document.Generator) || document.Status != "validated" {
 			continue
 		}
+		sourceProducer := document.Generator == docparse.SourcePluginID
+		if sourceProducer {
+			// Validate the whole producer roster once, including non-selected
+			// sections, before any source projection can become prompt evidence.
+			whole, _ := docparse.SourceDocumentReferences(ctx, document, catalog.artifacts, catalog.nodes, catalog.evidence)
+			if whole == nil {
+				continue
+			}
+		}
 		for _, section := range document.Sections {
+			if ctx.Err() != nil {
+				return nil
+			}
 			if _, selected := selectedNodes[section.ID]; !selected {
 				continue
 			}
@@ -973,7 +1011,7 @@ func canonicalSourceExcerpts(bundle rkcmodel.Bundle, catalog bundleCatalog, sele
 					continue
 				}
 				evidence := catalog.evidence[evidenceID]
-				if !isCanonicalMarkdownSection(document, section, node, evidence, catalog) {
+				if !sourceProducer && !isCanonicalMarkdownSection(document, section, node, evidence, catalog) {
 					continue
 				}
 				source := *evidence.Source
@@ -984,14 +1022,29 @@ func canonicalSourceExcerpts(bundle rkcmodel.Bundle, catalog bundleCatalog, sele
 				}
 				source.Path = budget.take(source.Path)
 				source.Anchor = budget.take(source.Anchor)
-				redacted := string(secrets.Redact([]byte(section.Markdown), secrets.Scan([]byte(section.Markdown))))
+				body := section.Markdown
+				projectionTruncated := false
+				if sourceProducer {
+					body = section.PlainText
+					projectionTruncated, _ = section.Attributes["projection_truncated"].(bool)
+				}
+				bodyBytes := []byte(body)
+				findings, err := secrets.ScanContext(ctx, bodyBytes)
+				if err != nil {
+					return nil
+				}
+				redactedBytes, err := secrets.RedactContext(ctx, bodyBytes, findings)
+				if err != nil {
+					return nil
+				}
+				redacted := string(redactedBytes)
 				text := budget.take(redacted)
 				if text == "" {
 					continue
 				}
 				seen[evidenceID] = struct{}{}
 				excerpts = append(excerpts, modelruntime.SourceExcerpt{
-					EvidenceID: evidenceID, Source: source, Text: text, Truncated: text != redacted,
+					EvidenceID: evidenceID, Source: source, Text: text, Truncated: text != redacted || projectionTruncated,
 				})
 			}
 		}

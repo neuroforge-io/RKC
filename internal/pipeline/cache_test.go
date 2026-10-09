@@ -52,7 +52,7 @@ func TestStageCacheWarmReuseSelectiveInvalidationAndCleanEquivalence(t *testing.
 	}
 	wantWarm := []string{
 		"config-env", "env-keys", "go-syntax", "json-schema", "manifests",
-		"markdown", "openapi", "secret-scan", "typescript-syntax",
+		"markdown", "openapi", "secret-scan", "source-documents", "typescript-syntax",
 	}
 	if got := cachedStages(warmEvents); !equalStrings(got, wantWarm) {
 		t.Fatalf("warm cached stages = %v, want %v", got, wantWarm)
@@ -83,7 +83,7 @@ func TestStageCacheWarmReuseSelectiveInvalidationAndCleanEquivalence(t *testing.
 		t.Fatal(err)
 	}
 	wantSelectiveHits := []string{
-		"env-keys", "go-syntax", "json-schema", "openapi", "typescript-syntax",
+		"env-keys", "go-syntax", "json-schema", "openapi", "source-documents", "typescript-syntax",
 	}
 	if got := cachedStages(incrementalEvents); !equalStrings(got, wantSelectiveHits) {
 		t.Fatalf("selective cached stages = %v, want %v", got, wantSelectiveHits)

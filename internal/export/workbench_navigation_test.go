@@ -18,7 +18,7 @@ func TestBrowserNavigationKeepsLatestUserIntent(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	application := strings.TrimSuffix(string(assets["app.js"]), "boot();")
+	application := browserTestApplication(t, assets["app.js"])
 	const prelude = `
 const elements=new Map();
 function element(id){
@@ -151,7 +151,7 @@ function assert(condition,message){if(!condition)throw new Error(message)}
   clearTimeout(state.toastTimer);console.log('navigation-intent-ok');
 })().catch(error=>{clearTimeout(state.toastTimer);console.error(error.stack);process.exitCode=1});
 `
-	command := exec.Command(node, "-")
+	command := browserTestCommand(t, node, "-")
 	command.Stdin = strings.NewReader(prelude + application + harness)
 	output, err := command.CombinedOutput()
 	if err != nil {

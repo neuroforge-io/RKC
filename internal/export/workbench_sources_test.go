@@ -18,7 +18,7 @@ func TestBrowserSourceWelcomeAndJobLifecycle(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	application := strings.TrimSuffix(string(assets["app.js"]), "boot();")
+	application := browserTestApplication(t, assets["app.js"])
 	const prelude = `
 const elements=new Map(),classes=new Map();
 function element(id){
@@ -130,7 +130,7 @@ function initialFetch(path){
  clearTimeout(state.toastTimer);console.log('source-welcome-job-lifecycle-ok');
 })().catch(error=>{clearTimeout(state.toastTimer);console.error(error.stack);process.exitCode=1});
 `
-	command := exec.Command(node, "-")
+	command := browserTestCommand(t, node, "-")
 	command.Stdin = strings.NewReader(prelude + application + harness)
 	output, err := command.CombinedOutput()
 	if err != nil {

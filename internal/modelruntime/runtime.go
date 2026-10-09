@@ -234,6 +234,7 @@ type Response struct {
 	Claims              []ClaimDraft `json:"claims,omitempty"`
 	UnresolvedQuestions []string     `json:"unresolved_questions,omitempty"`
 	ModelID             string       `json:"model_id"`
+	ReportedModelID     string       `json:"reported_model_id,omitempty"`
 	Usage               Usage        `json:"usage,omitempty"`
 }
 

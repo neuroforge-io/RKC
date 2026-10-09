@@ -10,7 +10,7 @@ type Context struct {
 }
 
 // Mode describes whether a workflow is read-only, writes local state, or can
-// invoke a separately qualified model runtime.
+// invoke a separately qualified local runtime or an explicitly selected API.
 type Mode string
 
 const (
@@ -18,7 +18,7 @@ const (
 	ModeRead Mode = "read"
 	// ModeWrites marks workflows that may publish local RKC state or artifacts.
 	ModeWrites Mode = "writes"
-	// ModeModel marks workflows that may invoke an explicitly qualified model.
+	// ModeModel marks workflows that may invoke an explicitly selected model.
 	ModeModel Mode = "model"
 )
 
@@ -61,7 +61,8 @@ func Commands(context Context) []Command {
 		{"scan", "Compile with optional compiler-grade SCIP semantics.", ModeWrites, []string{"--no-python", "--out", ".rkc", "--state-dir", ".rkc-state", "."}, semanticGuidance},
 		{"check", "Enforce coverage, integrity, and security gates.", ModeRead, check, generalGuidance},
 		{"query", "Search the selected compiled repository atlas.", ModeRead, withDataset("resource guard"), generalGuidance},
-		{"answer", "Produce a citation-checked answer with a qualified model.", ModeModel, withDataset("--repair-passes", "2", "How does this repository work?"), generalGuidance},
+		{"providers", "Set up local models, hosted APIs, and assistant handoffs.", ModeWrites, []string{"list"}, "Start with providers list, then create a profile with providers init --preset <name> --model <id> --out provider.json. Hosted APIs require explicit --allow-remote and a named credential environment variable. providers doctor is local; providers models explicitly requests metadata. Login stays in the supported assistant client. Use the terminal for credential-bearing API calls; browser jobs do not inherit API secrets. " + generalGuidance},
+		{"answer", "Produce a citation-checked answer with your chosen model.", ModeModel, withDataset("--repair-passes", "2", "How does this repository work?"), "Add --provider-config provider.json before the question to use your configured API or local endpoint. Qualified GGUF execution uses the existing local model policy. Model answers remain evidence-constrained and may abstain. " + generalGuidance},
 		{"synthesize", "Build bounded evidence packets or use a qualified model.", ModeModel, append([]string{"--packet-only=true"}, withDataset("--query", "How does this repository work?")...), generalGuidance},
 		{"path", "Find a bounded path between graph nodes.", ModeRead, []string{"--help"}, generalGuidance},
 		{"impact", "Traverse bounded impact relationships.", ModeRead, []string{"--help"}, generalGuidance},

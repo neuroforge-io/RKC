@@ -1,0 +1,5 @@
+Fictional planning notes — mixed prose exported from a research notebook.
+
+The Orchid trial compares onboarding friction across the local atlas workflow.
+Researchers need a reproducible source trail before interpreting participants.
+Open question: does clearer navigation reduce orientation time?

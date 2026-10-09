@@ -2,8 +2,10 @@
 
 Compilation, search and cited context work without a model. `rkc answer` can
 also send its bounded evidence packet to an explicitly selected,
-credential-free OpenAI-compatible server on this computer. This provider is
-opt-in and has no qualified default. It does not download weights, start a
+credential-free OpenAI-compatible server on this computer. Portable profiles
+also connect explicit HTTPS APIs; start with [Model providers](MODEL_PROVIDERS.md)
+for presets, native Claude/Gemini/OpenAI protocols and supported client sign-in.
+The model layer is opt-in and has no qualified default. It does not download weights, start a
 server or verify the server's model identity, resource use or answer quality.
 
 ## Choose a supported path
@@ -16,7 +18,8 @@ server or verify the server's model identity, resource use or answer quality.
 | Local MCP client | Existing `rkc-mcp --dir …` over stdio | Retrieval only; no model invocation or refresh |
 | Local Streamable HTTP MCP | `rkc-mcp --transport http --dir … --listen 127.0.0.1:0` | Stateless JSON transport with read-only evidence tools; tested locally, no public listener |
 | ChatGPT developer-mode MCP app | Local side implements a supported Streamable HTTP contract | Actual ChatGPT connection still needs separately reviewed reachable hosting, TLS, authentication and account setup |
-| OpenAI API or NeuroForge API | Remote model execution remains unsupported by this provider | No credentials are read and all remote URLs are rejected |
+| OpenAI, Claude or Gemini API | Explicit native API connection profile or answer flags | Remote HTTPS consent, named-environment API credential and bounded validated claims; tested with mocks |
+| Your API or NeuroForge API | Explicit compatible API connection profile | HTTPS remote consent; bearer environment credential or explicit anonymous deployment; see [Model providers](MODEL_PROVIDERS.md) |
 
 A ChatGPT subscription is not an OpenAI API credential. OpenAI's API has its
 own bearer authentication and project usage. Do not copy ChatGPT session
@@ -95,9 +98,11 @@ answers the question.
 The answer provenance records the selected capabilities, adapter protocol
 revision and hash/byte count of the actual transmitted prompt. It does not
 reuse the longer structured prompt's audit or claim a schema was enforced.
-Both profiles retain the same loopback-only endpoint and cancellation rules.
+The original direct local adapter retains its loopback-only endpoint rules.
+The separate portable API adapter adds explicit HTTPS consent and optional
+named-environment authentication, while retaining the profile limits.
 
-Endpoint rules are deliberately narrow:
+For the original credential-free local adapter, endpoint rules are deliberately narrow:
 
 - Use an IP-literal loopback address such as `127.0.0.1` or `[::1]`.
 - Hostnames, remote addresses, URL credentials, queries and fragments are rejected.
@@ -267,8 +272,9 @@ resources and pin artifacts before downloading or installing anything.
 
 ## Before any remote evaluation
 
-Remote calls require a separate reviewed implementation and authorization.
-The local adapter does not provide an egress override. Review the exact URL,
+The original local adapter does not provide an egress override. The separate
+portable API adapter now supports remote HTTPS only through explicit consent;
+see [Model providers](MODEL_PROVIDERS.md). Review the exact URL,
 synthetic-only body, authentication mechanism, selected model and verified
 cost before making a remote request. Neither credentials nor new access were
 created or inspected during this implementation.
@@ -291,9 +297,10 @@ A possible future **synthetic preflight body**, which was not sent, is:
 {"model":"erais-native-qwen3","messages":[{"role":"user","content":"Fictional Lantern library: lending period is 14 days. Repeat that fact only."}],"max_tokens":32,"stream":false,"n":1}
 ```
 
-The local extractive profile now adapts that restricted request subset and
-validates exact source quotations. It has been tested only against mocks; all
-remote URLs remain rejected. A separate task's metadata-only `/v1/models` GET
+The local extractive profile adapted that restricted request subset and
+validated exact source quotations. Its original receipt used mocks and rejected
+remote URLs; the later portable API adapter adds an explicit remote connection
+without extending those live-inference or quality receipts. A separate task's metadata-only `/v1/models` GET
 was authorized by the parent; this implementation did not duplicate it. No
 generation POST was authorized or sent by this RKC task. The parent forwarded that GET's live
 HTTP 200 JSON: `erais-native-qwen3`, text-only buffered output, a 128-token output

@@ -57,7 +57,7 @@ func TestBrowserWorkbenchApplicationHasValidJavaScriptWhenNodeIsAvailable(t *tes
 	if err != nil {
 		t.Fatal(err)
 	}
-	command := exec.Command(node, "--check", "-")
+	command := browserTestCommand(t, node, "--check", "-")
 	command.Stdin = bytes.NewReader(assets["app.js"])
 	if output, err := command.CombinedOutput(); err != nil {
 		t.Fatalf("generated workbench JavaScript is invalid: %v\n%s", err, output)
@@ -95,7 +95,7 @@ func TestBrowserBindsRepositoryReadsToOneActiveAtlasRevision(t *testing.T) {
 	application := string(assets["app.js"])
 	for _, marker := range []string{
 		"atlasRevision:0",
-		"function advanceAtlasGeneration(){resetGitHubResults();state.atlasRevision++;state.navigationRevision++;state.searchRevision++;state.listPaging=null;state.staticPaging=null;state.staticPageIndex=0;resetDiagnosticPaging();clearTimeout(state.searchTimer);return state.atlasRevision}",
+		"function advanceAtlasGeneration(){cancelContextRetrieval();state.contextPacket=null;resetGitHubResults();state.atlasRevision++;state.navigationRevision++;state.searchRevision++;state.listPaging=null;state.staticPaging=null;state.staticPageIndex=0;resetDiagnosticPaging();clearTimeout(state.searchTimer);return state.atlasRevision}",
 		"const atlasRevision=state.atlasRevision,expectedSnapshot=state.bundle?.snapshot?.id",
 		"response.headers?.get(snapshotGenerationHeader)",
 		"responseSnapshot!==expectedSnapshot",
@@ -203,11 +203,7 @@ func TestBrowserBodyOnlyArtifactSearchResultIsVisibleAndNavigable(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	application := string(assets["app.js"])
-	if !strings.HasSuffix(application, "boot();") {
-		t.Fatal("browser application boot suffix is missing")
-	}
-	application = strings.TrimSuffix(application, "boot();")
+	application := browserTestApplication(t, assets["app.js"])
 
 	const prelude = `
 const testElements=new Map();
@@ -251,7 +247,7 @@ function atlas(){return{snapshot:{id:'snapshot-body',root_name:'body-search'},no
   console.log('artifact-body-search-ok');
 })().catch(error=>{console.error(error?.stack||error);process.exitCode=1});
 `
-	command := exec.Command(node, "-")
+	command := browserTestCommand(t, node, "-")
 	command.Stdin = strings.NewReader(prelude + application + harness)
 	output, err := command.CombinedOutput()
 	if err != nil {
@@ -272,11 +268,7 @@ func TestBrowserStaleRepositoryResponsesCannotRepopulateActivatedAtlas(t *testin
 	if err != nil {
 		t.Fatal(err)
 	}
-	application := string(assets["app.js"])
-	if !strings.HasSuffix(application, "boot();") {
-		t.Fatal("browser application boot suffix is missing")
-	}
-	application = strings.TrimSuffix(application, "boot();")
+	application := browserTestApplication(t, assets["app.js"])
 
 	const prelude = `
 const testElements=new Map();
@@ -354,7 +346,7 @@ function atlas(snapshotID,nodes=[]){return{snapshot:{id:snapshotID,root_name:sna
   console.log('stale-read-guard-ok');
 })().catch(error=>{console.error(error?.stack||error);process.exitCode=1});
 `
-	command := exec.Command(node, "-")
+	command := browserTestCommand(t, node, "-")
 	command.Stdin = strings.NewReader(prelude + application + harness)
 	output, err := command.CombinedOutput()
 	if err != nil {

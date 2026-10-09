@@ -268,6 +268,8 @@ func stageEnabled(stageID string, opts Options) bool {
 		return !opts.DisablePlugins && !opts.DisableSCIP && len(opts.SCIPIndexes) > 0
 	case "markdown":
 		return !opts.DisableFrameworks && !opts.DisableMarkdown
+	case "source-documents":
+		return !opts.DisableFrameworks
 	case "openapi":
 		return !opts.DisableFrameworks && !opts.DisableOpenAPI
 	case "json-schema":

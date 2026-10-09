@@ -44,6 +44,82 @@ the original source folders: otherwise a later scan will correctly reject their
 generated-output marker unless explicitly excluded. Input source licenses and
 permissions remain attached to those sources.
 
+## Find evidence and make an assistant handoff
+
+The **Quick guide** in the header explains the three main steps: find relevant
+source, inspect its evidence, and take the result into a task. It is available
+on narrow screens as well as desktop. **Explore** and **Graph** show a few
+actual symbols from the current snapshot when no entity is selected, so you can
+start without knowing a symbol name.
+
+Expand **Search tips & examples** beside the search field for mode-specific
+shortcuts. The local API supports indexed repository text and query filters
+such as `path:docs/`, `kind:function`, and `lang:go`. Offline exports search
+symbol names, paths, signatures, and declared documentation with plain words;
+each word must match. The language and kind dropdowns work in both modes.
+Examples reset those dropdowns so an unrelated prior filter cannot hide results.
+
+Overview distinguishes recognized file languages from syntactic parsing and
+compiler-backed semantic analysis. Its analysis-depth panel links to coverage
+and the adapter workflows. A recognized extension does not establish complete
+language support. The normal protected GUI uses built-in Go AST and
+TypeScript/JavaScript syntax extraction; compiler-generated SCIP indexes and
+explicitly configured adapters can provide deeper analysis. A Python worker
+requires an admitted worker profile and is not enabled merely by recognition.
+
+In **Outputs & agents**, use the two-step handoff builder:
+
+1. Enter a topic, symbol, or path; choose excerpt and byte limits; build a cited
+   context packet and inspect the results.
+2. Choose **Explain**, **Plan a change**, or **Review risks**, then edit the task
+   to fit your goal. **Copy for assistant** combines that task, evidence rules,
+   and the packet. **Download handoff .md** creates an attachable file. The
+   separate context Markdown and JSON exports remain available.
+
+The handoff retains snapshot identity, integrity classification, citation and
+object identifiers, source ranges when available, evidence identifiers, byte
+accounting, warnings, truncation, and the packet digest. Repository Markdown is
+quoted and escaped. The task is your instruction; excerpts remain untrusted
+source data. Editing the retrieval query or limits clears the old packet and
+invalidates any older request, so a late response cannot appear under new search
+settings. RKC also cancels the browser request when the draft or atlas changes;
+these are read-only requests with no persistent model jobs to recover.
+Retrieval limits and the task are retained while navigating between
+views in this page; they are not saved in browser storage.
+
+The connection guide gives three practical routes: paste or attach a handoff
+in your existing assistant, configure a local MCP-capable client, or use an
+explicit model endpoint. ChatGPT, Claude, Gemini, and other chat sign-in happens
+in the provider's own app. RKC does not authenticate their subscription sessions.
+The MCP launcher is a template for clients that can start a local stdio server;
+client configuration layouts vary. Endpoint templates describe existing model
+services and do not start servers. The guide includes copyable profile workflows:
+
+```sh
+rkc providers list
+rkc providers init --preset ollama --model YOUR_MODEL_ID --out provider.json
+rkc providers doctor --file provider.json
+rkc answer --dir /path/to/.rkc --provider-config provider.json --json "Your question"
+```
+
+Hosted profiles use the `openai`, `anthropic`, or `gemini` preset and require
+explicit `--allow-remote` consent to send evidence to that service. Credentials
+come from the corresponding environment variable in your terminal. A profile
+records the credential variable name, not its value. Custom compatible APIs can
+set an exact endpoint and a credential environment variable name. The GUI
+offers templates and configuration guidance; protected browser jobs do not run
+models or receive provider credentials. `providers doctor` checks local
+configuration without networking. `providers login-guide --client codex`
+prints installed-client guidance; substitute `claude` or `gemini` as appropriate.
+
+See [provider profiles and model connections](MODEL_PROVIDERS.md),
+[the earlier local endpoint profile](MODEL_ENDPOINTS.md),
+and [the MCP contract](MCP.md) for the executable connection boundaries.
+
+An offline atlas still exposes this guide, connection templates, coverage, and
+portable exports. Its context builder gives the `rkc serve --dir …` template
+needed to enable local retrieval.
+
 ## Choose a GitHub source
 
 In `rkc gui`, choose **GitHub**, search for a repository, select it, then

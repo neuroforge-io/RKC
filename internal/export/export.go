@@ -18,6 +18,7 @@ import (
 	"strings"
 
 	"github.com/neuroforge-io/RKC/internal/commandcatalog"
+	"github.com/neuroforge-io/RKC/internal/docparse"
 	"github.com/neuroforge-io/RKC/internal/model"
 	"github.com/neuroforge-io/RKC/internal/safeoutput"
 	"github.com/neuroforge-io/RKC/internal/search"
@@ -206,7 +207,7 @@ func writeNormalizedSourcesWithBodies(bundle model.Bundle, opts Options, reposit
 			if err != nil {
 				return fmt.Errorf("read normalized source %q: %w", artifact.Path, err)
 			}
-			findings = secrets.Scan(data)
+			findings = docparse.SourceRedactions(data, artifact.Language)
 			if !opts.UnsafeIncludeSecrets {
 				data = secrets.Redact(data, findings)
 			}
@@ -309,7 +310,7 @@ func loadRepositoryTextBody(opts Options, artifact model.Artifact) (repositoryTe
 	if err != nil {
 		return repositoryTextBody{}, fmt.Errorf("read repository text %q: %w", artifact.Path, err)
 	}
-	findings := secrets.Scan(data)
+	findings := docparse.SourceRedactions(data, artifact.Language)
 	redacted := secrets.Redact(data, findings)
 	digest := sha256.Sum256(redacted)
 	return repositoryTextBody{

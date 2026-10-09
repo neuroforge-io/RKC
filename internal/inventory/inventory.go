@@ -417,7 +417,8 @@ var extensions = map[string]string{
 	".cs": "csharp", ".rb": "ruby", ".php": "php", ".swift": "swift", ".scala": "scala", ".sh": "shell", ".bash": "shell",
 	".ps1": "powershell", ".sql": "sql", ".graphql": "graphql", ".gql": "graphql", ".proto": "protobuf", ".tf": "hcl",
 	".yaml": "yaml", ".yml": "yaml", ".json": "json", ".jsonl": "jsonl", ".toml": "toml", ".xml": "xml", ".html": "html",
-	".css": "css", ".scss": "scss", ".md": "markdown", ".mdx": "mdx", ".rst": "rst", ".txt": "text", ".ipynb": "jupyter",
+	".css": "css", ".scss": "scss", ".md": "markdown", ".mdx": "mdx", ".rst": "rst", ".txt": "text", ".text": "text", ".ipynb": "jupyter",
+	".log": "log", ".csv": "csv", ".tsv": "tsv", ".ndjson": "jsonl",
 }
 
 func diagnostic(severity, code, message, path, stage string) model.Diagnostic {

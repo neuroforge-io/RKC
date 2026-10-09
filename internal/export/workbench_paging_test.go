@@ -23,7 +23,7 @@ func TestBrowserResultPagesRemainReachableBoundedAndSnapshotBound(t *testing.T) 
 			t.Fatalf("missing accessible page control %q", marker)
 		}
 	}
-	application := strings.TrimSuffix(string(assets["app.js"]), "boot();")
+	application := browserTestApplication(t, assets["app.js"])
 	const prelude = `
 const elements=new Map();let focused=0;
 function element(id){
@@ -159,7 +159,7 @@ function assert(condition,message){if(!condition)throw new Error(message)}
   clearTimeout(state.searchTimer);console.log('result-paging-ok');
 })().catch(error=>{clearTimeout(state.searchTimer);console.error(error.stack);process.exitCode=1});
 `
-	command := exec.Command(node, "-")
+	command := browserTestCommand(t, node, "-")
 	command.Stdin = strings.NewReader(prelude + application + harness)
 	output, err := command.CombinedOutput()
 	if err != nil {

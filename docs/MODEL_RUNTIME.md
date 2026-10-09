@@ -19,8 +19,9 @@ promotes a model or enables a default.
 For an explicitly selected, credential-free local HTTP server, `rkc answer`
 also offers an OpenAI-compatible endpoint adapter. It does not qualify the
 external model or measure its server resource use. See
-[Model endpoints and ChatGPT context](MODEL_ENDPOINTS.md) for its loopback-only
-contract, integration test and remote-provider boundaries. The qualified local
+[Model endpoints and ChatGPT context](MODEL_ENDPOINTS.md) for its original local
+contract and integration test, and [Model providers](MODEL_PROVIDERS.md) for
+portable profiles, explicit HTTPS APIs and supported client sign-in. The qualified local
 process described below retains its existing gates.
 
 ## Workflow

@@ -12,7 +12,7 @@ import (
 // descriptors report an external service; they never assert model qualification
 // or a measured server memory ceiling.
 func openAnswerGenerationProvider(request qualifiedGenerationRequest) (*qualifiedGenerationSession, error) {
-	if request.Provider != "openai-compatible" {
+	if !isHTTPAnswerProvider(request.Provider) {
 		return openQualifiedGenerationProvider(request)
 	}
 	if request.Temperature != 0 {
@@ -26,6 +26,9 @@ func openAnswerGenerationProvider(request qualifiedGenerationRequest) (*qualifie
 	}
 	if request.Timeout <= 0 || request.Timeout > time.Hour {
 		return nil, errors.New("timeout must be positive and no greater than 1h")
+	}
+	if request.Provider != "openai-compatible" || request.AllowRemote || request.APIKeyEnv != "" {
+		return openAPIAnswerProvider(request)
 	}
 	provider, err := modelruntime.NewOpenAICompatibleProvider(modelruntime.OpenAICompatibleConfig{
 		Endpoint: request.Endpoint, Model: request.HTTPModelName,
@@ -53,4 +56,45 @@ func openAnswerGenerationProvider(request qualifiedGenerationRequest) (*qualifie
 		},
 		ResponseSchemaSHA256: schemaDigest,
 	}, nil
+}
+
+func isHTTPAnswerProvider(provider string) bool {
+	return provider == "openai-compatible" || provider == "openai" || provider == "anthropic" || provider == "gemini"
+}
+
+func openAPIAnswerProvider(request qualifiedGenerationRequest) (*qualifiedGenerationSession, error) {
+	profile := modelruntime.ProviderProfile{SchemaVersion: modelruntime.ProviderProfileVersion,
+		Provider: request.Provider, Endpoint: request.Endpoint, Model: request.HTTPModelName,
+		Profile: request.HTTPProfile, APIKeyEnv: request.APIKeyEnv, AllowRemote: request.AllowRemote,
+		ContextTokens: request.ContextTokens, MaxOutputTokens: request.MaximumOutputTokens,
+		TimeoutSeconds: int(request.Timeout / time.Second)}
+	if profile.Profile == "" {
+		profile.Profile = "structured-claims"
+	}
+	if request.Provider != "openai-compatible" && (profile.Endpoint == "" || profile.APIKeyEnv == "") {
+		preset, err := modelruntime.NewProviderProfile(request.Provider, request.HTTPModelName, request.AllowRemote)
+		if err != nil {
+			return nil, err
+		}
+		if profile.Endpoint == "" {
+			profile.Endpoint = preset.Endpoint
+		}
+		if profile.APIKeyEnv == "" {
+			profile.APIKeyEnv = preset.APIKeyEnv
+		}
+	}
+	provider, err := modelruntime.NewAPIProvider(profile, qualifiedClaimResponseSchema)
+	if err != nil {
+		return nil, err
+	}
+	// Fail before retrieval-driven generation, without reading any client
+	// session state or emitting a credential value.
+	if err := modelruntime.CheckCredential(profile.APIKeyEnv); err != nil {
+		_ = provider.Close()
+		return nil, err
+	}
+	return &qualifiedGenerationSession{Provider: provider, ProviderName: profile.Provider + "-http",
+		Descriptor: provider.Descriptor(), ResponseSchemaSHA256: provider.ResponseSchemaSHA256(),
+		Inference: modelruntime.InferenceOptions{ContextTokens: request.ContextTokens,
+			MaxOutputTokens: request.MaximumOutputTokens, Parallel: 1}}, nil
 }

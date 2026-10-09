@@ -3,6 +3,24 @@
 This NeuroForgeIO-published RKC documentation is copyright 2026 NeuroForgeIO
 and RKC contributors and Apache-2.0 licensed.
 
+## Unreleased
+
+- Cleaner workbench onboarding, search examples, analysis-depth guidance, and
+  assistant handoffs that retain source citations and clear stale context when
+  retrieval settings change.
+- Portable model profiles and local readiness checks for existing local servers,
+  native OpenAI, Claude, Gemini, and explicitly selected compatible HTTPS APIs;
+  environment-based credentials, cancellable requests, bounded responses, and
+  separate requested/provider-reported model identities.
+- Evidence-bearing TXT, RST, log, CSV, TSV, JSONL, and NDJSON source documents,
+  including malformed-record diagnostics, byte/line provenance, bounded
+  projections, and structured secret redaction across documents and exports.
+- Local Streamable HTTP MCP, canonical document context bindings, and cited
+  endpoint answer protocols preserved from the previous development work.
+
+These changes are in development source. Portable release qualification and
+real hosted-model quality remain separate from local tests and protocol mocks.
+
 ## 0.4.1 (2026-09-30)
 
 The [published 0.4.1 release](https://github.com/neuroforge-io/RKC/releases/tag/v0.4.1)

@@ -119,9 +119,25 @@ rkc knowledge build --out ./knowledge-pack ./atlas-a ./atlas-b
 rkc knowledge verify --dir ./knowledge-pack --json
 ```
 
-[Model endpoints and ChatGPT context](docs/MODEL_ENDPOINTS.md) provides an
-opt-in loopback model connection, a fictional evaluation SOP and the current
-remote-integration boundaries.
+Connect your chosen model with a reusable profile:
+
+```sh
+rkc providers list
+rkc providers init --preset ollama --model YOUR_MODEL_ID --out provider.json
+rkc providers doctor --file provider.json
+rkc answer --provider-config provider.json --dir ./my-project/.rkc "Your question"
+```
+
+Profiles support existing local servers, your own OpenAI-compatible API, and
+native OpenAI, Claude, and Gemini APIs. Hosted connections require explicit
+remote consent and a credential environment variable; profiles store its name,
+never its value. Use `rkc providers login-guide` for supported assistant-client
+sign-in and cited handoff workflows. Subscription login remains managed by the
+assistant's own client.
+
+[Model connections](docs/MODEL_PROVIDERS.md) covers setup and troubleshooting;
+[endpoint evaluation](docs/MODEL_ENDPOINTS.md) retains the fictional integration
+SOP and exact model-qualification boundaries.
 
 [Workbench and integrations](docs/WORKBENCH_AND_INTEGRATIONS.md) covers the
 GUI, CLI, HTTP, and agent workflows. See the [HTTP contract](api/openapi.yaml),
@@ -148,6 +164,9 @@ snapshots under `<folder>/.rkc-state`:
 ```
 
 Available detail depends on the admitted source and analysis profile.
+[Analysis depth by language](docs/LANGUAGE_ANALYSIS.md) explains built-in syntax,
+compiler relationships, and unresolved behavior. [Messy data ingestion](docs/DATA_INGESTION.md)
+covers cited text, logs, tables, and JSONL exports with explicit parsing limits.
 [SCIP imports](docs/SCIP_SEMANTIC_ADAPTERS.md) add compiler-produced semantics
 across languages. Source text remains untrusted data, even when cited.
 Knowledge packs preserve source provenance and rights information; they do
