@@ -468,7 +468,7 @@ func collectSensitiveLiteralsAndIdentity(root string, files []pluginapi.FileRef)
 	for _, file := range files {
 		data, info, err := readInventoriedSource(root, file)
 		if err != nil {
-			return nil, nil, fmt.Errorf("read source for canonical redaction %s: source changed after inventory or is unsafe: %w", file.Path, err)
+			return nil, nil, fmt.Errorf("read source for canonical redaction: source changed after inventory or is unsafe for artifact %s", rkcmodel.StableID("artifact", file.Path))
 		}
 		identities[sourceIdentityKey(file)] = sourceFileIdentity{info: info}
 		for _, literal := range secrets.SensitiveLiterals(data, secrets.Scan(data)) {
@@ -492,14 +492,14 @@ func reverifyInventoriedSources(root string, files []pluginapi.FileRef, identiti
 	for _, file := range files {
 		baseline, exists := identities[sourceIdentityKey(file)]
 		if !exists || baseline.info == nil {
-			return fmt.Errorf("source changed after adapters: missing baseline identity for %s", file.Path)
+			return fmt.Errorf("source changed after adapters: missing baseline identity for artifact %s", rkcmodel.StableID("artifact", file.Path))
 		}
 		_, current, err := readInventoriedSource(root, file)
 		if err != nil {
-			return fmt.Errorf("source changed after adapters: %s: %w", file.Path, err)
+			return fmt.Errorf("source changed after adapters: inventoried source verification failed for artifact %s", rkcmodel.StableID("artifact", file.Path))
 		}
 		if !os.SameFile(baseline.info, current) {
-			return fmt.Errorf("source changed after adapters: identity replaced for %s", file.Path)
+			return fmt.Errorf("source changed after adapters: identity replaced for artifact %s", rkcmodel.StableID("artifact", file.Path))
 		}
 	}
 	return nil
