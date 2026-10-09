@@ -8,6 +8,8 @@
 # RKC_MEMORY_SWAP_MAX_MIB, and RKC_GO_MEMORY_LIMIT_MIB. An optional
 # RKC_HOST_AVAILABLE_MEMORY_MIN_MIB reserve makes direct RKC work yield when
 # host-wide Linux MemAvailable falls below the selected floor.
+# RKC_CPU_QUOTA_PERCENT may lower the CPU ceiling to 1..100 percent of one
+# core. It cannot raise the default ceiling, and applies in both launch modes.
 #
 # Processes matching the bounded RKC_HIGHER_PRIORITY_MARKERS classes are
 # treated as explicitly more important. The generic default is
@@ -37,6 +39,20 @@ CARGO_BUILD_JOBS=1
 GOFLAGS="${GOFLAGS:+$GOFLAGS }-p=1"
 export GOMAXPROCS OMP_NUM_THREADS OPENBLAS_NUM_THREADS MKL_NUM_THREADS
 export NUMEXPR_NUM_THREADS CMAKE_BUILD_PARALLEL_LEVEL CARGO_BUILD_JOBS GOFLAGS
+
+guard_cpu_quota_percent=${RKC_CPU_QUOTA_PERCENT:-100}
+case "$guard_cpu_quota_percent" in
+    ''|*[!0123456789]*|0?*)
+        echo "rkc resource guard: CPU quota must be an integer between 1 and 100 percent of one core" >&2
+        exit 2
+        ;;
+esac
+if [ "${#guard_cpu_quota_percent}" -gt 3 ] || [ "$guard_cpu_quota_percent" -lt 1 ] || [ "$guard_cpu_quota_percent" -gt 100 ]; then
+    echo "rkc resource guard: CPU quota must be an integer between 1 and 100 percent of one core" >&2
+    exit 2
+fi
+RKC_CPU_QUOTA_PERCENT=$guard_cpu_quota_percent
+export RKC_CPU_QUOTA_PERCENT
 
 # Transient services start with the user manager's clean environment rather
 # than the caller's environment. Preserve only the caller-controlled build and
@@ -248,7 +264,7 @@ case "$mode" in
             --setenv="RKC_HOST_AVAILABLE_MEMORY_MIN_MIB=$guard_host_available_memory_min_mib" \
             --property CPUWeight=1 \
             --property IOWeight=1 \
-            --property CPUQuota=100% \
+            --property "CPUQuota=${guard_cpu_quota_percent}%" \
             --property "MemoryHigh=${guard_memory_high_mib}M" \
             --property "MemoryMax=${guard_memory_max_mib}M" \
             --property "MemorySwapMax=${guard_memory_swap_max_mib}M" \
@@ -286,6 +302,7 @@ case "$mode" in
             --setenv="GOMEMLIMIT=$GOMEMLIMIT" \
             --setenv="CGO_ENABLED=$guard_cgo_enabled" \
             --setenv="RKC_REQUIRE_IO_CONTROLLER=$guard_require_io_controller" \
+            --setenv="RKC_CPU_QUOTA_PERCENT=$guard_cpu_quota_percent" \
             --setenv="RKC_MEMORY_HIGH_MIB=$guard_memory_high_mib" \
             --setenv="RKC_MEMORY_MAX_MIB=$guard_memory_max_mib" \
             --setenv="RKC_MEMORY_SWAP_MAX_MIB=$guard_memory_swap_max_mib" \
@@ -296,7 +313,7 @@ case "$mode" in
             --setenv="RKC_HIGHER_PRIORITY_LOAD_MAX=$guard_priority_load_max" \
             --property CPUWeight=1 \
             --property IOWeight=1 \
-            --property CPUQuota=100% \
+            --property "CPUQuota=${guard_cpu_quota_percent}%" \
             --property "MemoryHigh=${guard_memory_high_mib}M" \
             --property "MemoryMax=${guard_memory_max_mib}M" \
             --property "MemorySwapMax=${guard_memory_swap_max_mib}M" \

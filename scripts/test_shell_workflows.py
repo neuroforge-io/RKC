@@ -242,6 +242,59 @@ class ShellWorkflowTests(unittest.TestCase):
                 self.assertNotIn(value, result.stderr)
                 self.assertNotIn(sentinel, result.stderr)
 
+    def test_resource_guard_cpu_quota_is_bounded_and_private(self) -> None:
+        sentinel = "PRIVATE_CPU_QUOTA_SENTINEL"
+        for value in ("0", "101", "-1", "+25", "25.5", "025", "9" * 64, sentinel):
+            with self.subTest(value_length=len(value)):
+                environment = os.environ.copy()
+                environment["RKC_CPU_QUOTA_PERCENT"] = value
+                result = subprocess.run(
+                    ["/bin/sh", str(ROOT / "scripts/with-rkc-limits.sh"), "true"],
+                    cwd=ROOT, env=environment, check=False,
+                    stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                    text=True, timeout=10,
+                )
+                self.assertEqual(result.returncode, 2, result.stderr)
+                self.assertIn("between 1 and 100", result.stderr)
+                self.assertNotIn(sentinel, result.stderr)
+
+        with tempfile.TemporaryDirectory() as temporary:
+            binary_dir = Path(temporary)
+            for name, body in {
+                "pgrep": "#!/bin/sh\nexit 1\n",
+                "ps": "#!/bin/sh\nprintf '1\\n'\n",
+                "readlink": "#!/bin/sh\nexit 1\n",
+                "systemd-run": "#!/bin/sh\nprintf '%s\\n' \"$@\"\n",
+                "ionice": "#!/bin/sh\nexit 0\n",
+                "nice": "#!/bin/sh\nexit 0\n",
+                "choom": "#!/bin/sh\nexit 0\n",
+            }.items():
+                executable = binary_dir / name
+                executable.write_text(body, encoding="utf-8")
+                executable.chmod(0o700)
+            for mode in ("scope", "service"):
+                for quota in ("1", "25", "100", ""):
+                    with self.subTest(mode=mode, quota=quota):
+                        environment = os.environ.copy()
+                        environment.update({
+                            "PATH": os.pathsep.join((str(binary_dir), "/usr/bin", "/bin")),
+                            "RKC_RESOURCE_GUARD_MODE": mode,
+                            "RKC_CPU_QUOTA_PERCENT": quota,
+                            "XDG_RUNTIME_DIR": temporary,
+                            "DBUS_SESSION_BUS_ADDRESS": "unix:path=/tmp/fixture-bus",
+                        })
+                        result = subprocess.run(
+                            ["/bin/sh", str(ROOT / "scripts/with-rkc-limits.sh"), "true"],
+                            cwd=ROOT, env=environment, check=False,
+                            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                            text=True, timeout=10,
+                        )
+                        self.assertEqual(result.returncode, 0, result.stderr)
+                        expected = quota or "100"
+                        self.assertIn(f"CPUQuota={expected}%", result.stdout.splitlines())
+                        if mode == "service":
+                            self.assertIn(f"--setenv=RKC_CPU_QUOTA_PERCENT={expected}", result.stdout.splitlines())
+
     def test_resource_guard_propagates_priority_contract_to_service(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             binary_dir = Path(temporary)

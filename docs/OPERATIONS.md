@@ -51,12 +51,13 @@ For a source-checkout workload sharing a memory-constrained host, the wrapper
 accepts a strictly smaller, fail-closed profile. For example:
 
 ```sh
-RKC_MEMORY_HIGH_MIB=1024 \
-RKC_MEMORY_MAX_MIB=1280 \
-RKC_MEMORY_SWAP_MAX_MIB=256 \
-RKC_GO_MEMORY_LIMIT_MIB=768 \
+RKC_CPU_QUOTA_PERCENT=25 \
+RKC_MEMORY_HIGH_MIB=512 \
+RKC_MEMORY_MAX_MIB=640 \
+RKC_MEMORY_SWAP_MAX_MIB=0 \
+RKC_GO_MEMORY_LIMIT_MIB=384 \
 RKC_HOST_AVAILABLE_MEMORY_MIN_MIB=1536 \
-scripts/with-rkc-limits.sh ./bin/rkc scan --stage-workers 1 --stage-memory-mib 768 --no-python /path/to/repository
+scripts/with-rkc-limits.sh ./bin/rkc scan --stage-workers 1 --stage-memory-mib 384 --no-python /path/to/repository
 ```
 
 The wrapper rejects non-integers, a hard ceiling below the soft ceiling, values
@@ -69,6 +70,14 @@ actual cgroup usage and accepts the smaller reserved unit; direct scan/open
 admission reuses that unit rather than creating a sibling with the default
 allowance. `rkc doctor` reports both the configured reserve and whether the
 current host satisfies it.
+
+`RKC_CPU_QUOTA_PERCENT` accepts integers from 1 through 100, defaults to 100,
+and applies in both scope and service mode. A value of 25 caps the entire
+workload at one quarter of a core, including child processes. Lower quotas
+increase wall time; choose bounded checks one at a time, retain their receipts,
+and leave full release assembly to CI on a busy host. Interrupted service-mode
+work is stopped as a group; output publication still uses RKC's existing owned
+staging and atomic publication rules.
 
 For a trusted single-user Linux checkout, `rkc open --workbench <path>` is the
 explicit interactive route. The guarded child writes its one-time URL-fragment
