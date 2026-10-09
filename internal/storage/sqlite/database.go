@@ -3,6 +3,7 @@ package sqlite
 import (
 	"context"
 	"database/sql"
+	"database/sql/driver"
 	"errors"
 	"fmt"
 	"net/url"
@@ -490,6 +491,39 @@ func sqliteURI(options Options) string {
 }
 
 func inspectOwnership(ctx context.Context, database *sql.DB, path string, plan []migration) error {
+	return withOwnershipReadSnapshot(ctx, database, path, func(view queryExecutor) error {
+		return inspectOwnershipView(ctx, view, path, plan)
+	})
+}
+
+// withOwnershipReadSnapshot pins every ownership check to one committed
+// database state. A deferred read transaction permits another WAL connection
+// to migrate and also works for ReadOnly opens. BeginTx is deliberately avoided:
+// the normal connection DSN selects immediate transactions for writers.
+func withOwnershipReadSnapshot(ctx context.Context, database *sql.DB, path string, inspect func(queryExecutor) error) (result error) {
+	connection, err := database.Conn(ctx)
+	if err != nil {
+		return operationError("open ownership snapshot", path, classifyDatabaseError(err), err)
+	}
+	defer connection.Close()
+	if _, err := connection.ExecContext(ctx, "BEGIN DEFERRED"); err != nil {
+		return operationError("begin ownership snapshot", path, classifyDatabaseError(err), err)
+	}
+	defer func() {
+		// The caller may already have canceled. Always release the read snapshot
+		// before returning this connection to the pool, including error paths.
+		cleanup, cancel := context.WithTimeout(context.Background(), defaultBusyTimeout)
+		defer cancel()
+		if _, err := connection.ExecContext(cleanup, "ROLLBACK"); err != nil {
+			// An open or uncertain transaction must never survive in the pool.
+			_ = connection.Raw(func(any) error { return driver.ErrBadConn })
+			result = errors.Join(result, operationError("release ownership snapshot", path, classifyDatabaseError(err), err))
+		}
+	}()
+	return inspect(connection)
+}
+
+func inspectOwnershipView(ctx context.Context, database queryExecutor, path string, plan []migration) error {
 	var appID int64
 	if err := database.QueryRowContext(ctx, "PRAGMA application_id").Scan(&appID); err != nil {
 		return operationError("read application id", path, classifyDatabaseError(err), err)

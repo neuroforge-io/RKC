@@ -391,7 +391,7 @@ func readSchemaVersion(ctx context.Context, executor queryExecutor) (int, error)
 
 func checkLegacyCatalog(
 	ctx context.Context,
-	database *sql.DB,
+	database queryExecutor,
 	version int,
 	plan []migration,
 ) error {
