@@ -16,7 +16,7 @@ import (
 )
 
 func TestPriorityCheckIsInjectedBeforeSpawn(t *testing.T) {
-	t.Parallel()
+	clearResourceProfile(t)
 
 	marker := filepath.Join(t.TempDir(), "spawned")
 	command, err := newCommand(context.Background(), Config{
@@ -35,6 +35,7 @@ func TestPriorityCheckIsInjectedBeforeSpawn(t *testing.T) {
 }
 
 func TestHigherPriorityArrivalStopsRunningProcess(t *testing.T) {
+	clearResourceProfile(t)
 	if runtime.GOOS == "windows" {
 		t.Skip("POSIX process fixture")
 	}
@@ -241,6 +242,7 @@ func TestPrioritySnapshotFailuresAreHermetic(t *testing.T) {
 }
 
 func TestUnguardedCommandLifecycleAndLimits(t *testing.T) {
+	clearResourceProfile(t)
 	if runtime.GOOS == "windows" {
 		t.Skip("POSIX process fixtures")
 	}
@@ -611,6 +613,7 @@ func replaceFakeUnitStateProbe(t *testing.T, state, probe string) {
 }
 
 func installFakeResourceGuardCommands(t *testing.T, launcherBody string) (string, string) {
+	clearResourceProfile(t)
 	t.Helper()
 	directory := t.TempDir()
 	state := filepath.Join(directory, "unit-state")
@@ -626,6 +629,14 @@ func installFakeResourceGuardCommands(t *testing.T, launcherBody string) (string
 	controllerBody := `#!/bin/sh
 case "$2" in
 show)
+    case "$*" in
+    *--property=ControlGroup*)
+        group=$(awk -F: '$1 == "0" { print $3 }' /proc/self/cgroup)
+        if [ "$5" = "${group##*/}" ]; then
+            printf '%s\n' "$group"
+        fi
+        ;;
+    esac
     exit 0
     ;;
 is-active)
@@ -653,6 +664,7 @@ exit 1
 }
 
 func TestConfigEnvironmentAndGuardArguments(t *testing.T) {
+	clearResourceProfile(t)
 	t.Setenv("RKC_SECRET_TEST", "secret")
 	environment := SanitizedModelEnvironment([]string{"OMP_NUM_THREADS=1", "RKC_SECRET_TEST=leak", "MALFORMED", "OMP_NUM_THREADS=2"})
 	joined := strings.Join(environment, "\n")
@@ -695,6 +707,7 @@ func TestConfigEnvironmentAndGuardArguments(t *testing.T) {
 }
 
 func TestGuardValidationBranchesDoNotInspectLiveProcesses(t *testing.T) {
+	clearResourceProfile(t)
 	allow := func() error { return nil }
 	publicCommand, err := NewCommand(context.Background(), Config{
 		Executable: "/bin/true", MaximumRSSBytes: 64 << 20,

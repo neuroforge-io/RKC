@@ -93,6 +93,10 @@ func policyPriorityCheck(policy Policy) func() error {
 }
 
 func newCommand(ctx context.Context, config Config, priorityCheck func() error) (*Command, error) {
+	return newCommandWithParentUnit(ctx, config, priorityCheck, currentParentRKCUnit)
+}
+
+func newCommandWithParentUnit(ctx context.Context, config Config, priorityCheck func() error, parentUnit func() (string, error)) (*Command, error) {
 	if ctx == nil {
 		return nil, errors.New("resource guard context is required")
 	}
@@ -101,6 +105,10 @@ func newCommand(ctx context.Context, config Config, priorityCheck func() error) 
 	}
 	if err := validateEnvironment(config.Environment); err != nil {
 		return nil, err
+	}
+	profile, err := resourceProfileFromEnvironment()
+	if err != nil {
+		return nil, fmt.Errorf("invalid resource guard profile: %w", err)
 	}
 	if config.MaximumRSSBytes < 0 {
 		return nil, errors.New("model RSS limit must not be negative")
@@ -115,15 +123,26 @@ func newCommand(ctx context.Context, config Config, priorityCheck func() error) 
 	if memoryMax < 64*1024*1024 || memoryMax > 64*1024*1024*1024 {
 		return nil, errors.New("model RSS limit must be between 64 MiB and 64 GiB")
 	}
+	memoryHigh, memoryMax := profile.commandMemory(memoryMax)
+	environment := profile.childEnvironment(config.Environment, memoryHigh, memoryMax)
 	if priorityCheck == nil {
 		priorityCheck = CheckHigherPriority
+	}
+	if profile.hostMemoryMinimum != 0 {
+		checkPriority := priorityCheck
+		priorityCheck = func() error {
+			if err := profile.hostMemoryCheck(); err != nil {
+				return err
+			}
+			return checkPriority()
+		}
 	}
 	if runtime.GOOS != "linux" && !config.UnsafeDisableCgroup {
 		return nil, errors.New("model cgroup resource guard is unsupported on this platform")
 	}
 	if config.UnsafeDisableCgroup {
 		command := exec.CommandContext(ctx, config.Executable, config.Arguments...)
-		command.Env = append([]string(nil), config.Environment...)
+		command.Env = environment
 		return &Command{cmd: command, priorityCheck: priorityCheck, maximumRSSBytes: memoryMax}, nil
 	}
 	for _, executable := range []string{"systemd-run", "systemctl", "choom", "ionice", "nice", "env"} {
@@ -131,18 +150,26 @@ func newCommand(ctx context.Context, config Config, priorityCheck func() error) 
 			return nil, fmt.Errorf("required model resource guard command %q is unavailable: %w", executable, err)
 		}
 	}
-	// Keep the default 4.5 GiB model ceiling aligned with the outer
-	// development envelope's exact 4 GiB pressure threshold. Smaller explicit
-	// limits retain the same ratio, while swap remains a fixed, narrow escape
-	// hatch rather than scaling with model size.
-	memoryHigh := memoryMax * 8 / 9
-	swapMax := int64(256 * 1024 * 1024)
+	// A transient model unit is a sibling of its caller, so inherited cgroup
+	// containment is insufficient. Apply the validated ambient ceiling here;
+	// explicit command budgets may narrow it but cannot enlarge it.
+	swapMax := profile.swapMaxMiB * profileMiB
 	prefix := config.UnitPrefix
 	if prefix == "" {
 		prefix = "rkc-model"
 	}
 	if !validUnitPrefix(prefix) {
 		return nil, errors.New("resource guard unit prefix contains unsupported characters")
+	}
+	if parentUnit == nil {
+		return nil, errors.New("resource guard parent unit inspector is required")
+	}
+	parent, err := parentUnit()
+	if err != nil {
+		return nil, fmt.Errorf("prove parent resource guard unit: %w", err)
+	}
+	if parent != "" && !validLowPriorityUnit(parent) {
+		return nil, errors.New("resource guard parent unit is not an admitted RKC unit")
 	}
 	unit := fmt.Sprintf("%s-%d-%d.service", prefix, os.Getpid(), time.Now().UnixNano())
 	// Receipt-bound executable and model arguments are opaque bytes. Prevent
@@ -156,7 +183,7 @@ func newCommand(ctx context.Context, config Config, priorityCheck func() error) 
 		"--user", "--wait", "--pipe", "--collect", "--quiet", "--same-dir", "--expand-environment=no", "--service-type=exec", "--unit", unit,
 		"--property", "CPUWeight=1",
 		"--property", "IOWeight=1",
-		"--property", "CPUQuota=100%",
+		"--property", "CPUQuota=" + strconv.FormatInt(profile.cpuPercent, 10) + "%",
 		"--property", "MemoryHigh=" + strconv.FormatInt(memoryHigh, 10),
 		"--property", "MemoryMax=" + strconv.FormatInt(memoryMax, 10),
 		"--property", "MemorySwapMax=" + strconv.FormatInt(swapMax, 10),
@@ -164,10 +191,14 @@ func newCommand(ctx context.Context, config Config, priorityCheck func() error) 
 		"--property", "OOMPolicy=stop",
 		"--property", "KillMode=control-group",
 		"--property", "TimeoutStopSec=2s",
-		"--",
-		"choom", "-n", "750", "--", "ionice", "-c", "3", "nice", "-n", "19", "env", "-i",
 	}
-	arguments = append(arguments, config.Environment...)
+	if parent != "" {
+		// The worker is a sibling service, so bind its lifetime to the proven
+		// outer unit. systemd stops it even if the Go Run monitor itself dies.
+		arguments = append(arguments, "--property", "BindsTo="+parent, "--property", "After="+parent)
+	}
+	arguments = append(arguments, "--", "choom", "-n", "750", "--", "ionice", "-c", "3", "nice", "-n", "19", "env", "-i")
+	arguments = append(arguments, environment...)
 	arguments = append(arguments, config.Executable)
 	arguments = append(arguments, config.Arguments...)
 	// Run owns the complete transient-service lifecycle. Binding the launcher to
@@ -564,6 +595,10 @@ func SanitizedModelEnvironment(extra []string) []string {
 		"HOME": {}, "PATH": {}, "TMPDIR": {}, "TEMP": {}, "TMP": {}, "LANG": {}, "LC_ALL": {},
 		"OMP_NUM_THREADS": {}, "GGML_NUMA": {},
 	}
+	for _, name := range profileEnvironmentNames {
+		allowed[name] = struct{}{}
+	}
+	allowed["GOMEMLIMIT"] = struct{}{}
 	overrides := environmentMap(os.Environ(), allowed)
 	for name, value := range environmentMap(extra, allowed) {
 		overrides[name] = value
@@ -575,12 +610,17 @@ func SanitizedModelEnvironment(extra []string) []string {
 	return sortedEnvironment(overrides)
 }
 
-// ResourceGuardEnvironment returns only values needed to reach user-systemd.
+// ResourceGuardEnvironment retains only user-systemd connection values and
+// explicit resource policy fields. It never copies ambient credentials.
 func ResourceGuardEnvironment() []string {
 	allowed := map[string]struct{}{
 		"HOME": {}, "PATH": {}, "TMPDIR": {}, "TEMP": {}, "TMP": {}, "LANG": {}, "LC_ALL": {},
 		"XDG_RUNTIME_DIR": {}, "DBUS_SESSION_BUS_ADDRESS": {},
 	}
+	for _, name := range profileEnvironmentNames {
+		allowed[name] = struct{}{}
+	}
+	allowed["GOMEMLIMIT"] = struct{}{}
 	return sortedEnvironment(environmentMap(os.Environ(), allowed))
 }
 

@@ -43,6 +43,44 @@ SHELL_WORKFLOWS = (
 )
 
 
+def supervisor_fixture_commands() -> dict[str, str]:
+    """Keep flag/privacy fixtures isolated from the real service manager.
+
+    Lifecycle tests exercise the real watchdog separately. These fixtures
+    only acknowledge its owner handshake and explicitly report no fake unit.
+    """
+    return {
+        "choom": '#!/bin/sh\nshift 3\nexec "$@"\n',
+        "ionice": '#!/bin/sh\nshift 2\nexec "$@"\n',
+        "nice": '#!/bin/sh\nshift 2\nexec "$@"\n',
+        "setsid": (
+            "#!/usr/bin/python3\n"
+            "import sys, time\nfrom pathlib import Path\n"
+            "state = Path(sys.argv[4])\n"
+            "(state / 'ready').touch()\n"
+            "while not (state / 'closing').exists(): time.sleep(0.01)\n"
+            "(state / 'done').touch()\n"
+        ),
+        "systemctl": (
+            "#!/bin/sh\n"
+            "case \"$*\" in *LoadState*) printf 'not-found\\n' ;; "
+            "*ActiveState*) printf 'inactive\\n' ;; esac\n"
+        ),
+        "awk": "#!/bin/sh\nexit 0\n",
+    }
+
+
+def fixture_executable(path: Path, body: str) -> None:
+    if path.name == "readlink":
+        body = body.replace(
+            "#!/bin/sh\n",
+            '#!/bin/sh\nif [ "${1-}" = -f ]; then exec /usr/bin/readlink "$@"; fi\n',
+            1,
+        )
+    path.write_text(body, encoding="utf-8")
+    path.chmod(0o700)
+
+
 class ShellWorkflowTests(unittest.TestCase):
     def test_release_demo_scans_the_exact_git_root(self) -> None:
         text = (ROOT / "scripts/generate-demo.sh").read_text(encoding="utf-8")
@@ -141,10 +179,9 @@ class ShellWorkflowTests(unittest.TestCase):
             }
             for name in ("systemd-run", "ionice", "nice", "choom"):
                 scripts[name] = "#!/bin/sh\nexit 0\n"
+            scripts.update(supervisor_fixture_commands())
             for name, body in scripts.items():
-                path = binary_dir / name
-                path.write_text(body, encoding="utf-8")
-                path.chmod(0o700)
+                fixture_executable(binary_dir / name, body)
             environment = os.environ.copy()
             environment["PATH"] = os.pathsep.join(
                 (str(binary_dir), "/usr/bin", "/bin")
@@ -288,7 +325,7 @@ class ShellWorkflowTests(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as temporary:
             binary_dir = Path(temporary)
-            for name, body in {
+            scripts = {
                 "pgrep": "#!/bin/sh\nexit 1\n",
                 "ps": "#!/bin/sh\nprintf '1\\n'\n",
                 "readlink": "#!/bin/sh\nexit 1\n",
@@ -296,10 +333,10 @@ class ShellWorkflowTests(unittest.TestCase):
                 "ionice": "#!/bin/sh\nexit 0\n",
                 "nice": "#!/bin/sh\nexit 0\n",
                 "choom": "#!/bin/sh\nexit 0\n",
-            }.items():
-                executable = binary_dir / name
-                executable.write_text(body, encoding="utf-8")
-                executable.chmod(0o700)
+            }
+            scripts.update(supervisor_fixture_commands())
+            for name, body in scripts.items():
+                fixture_executable(binary_dir / name, body)
             for mode in ("scope", "service"):
                 for quota in ("1", "25", "100", ""):
                     with self.subTest(mode=mode, quota=quota):
@@ -349,10 +386,9 @@ class ShellWorkflowTests(unittest.TestCase):
             }
             for name in ("ionice", "nice", "choom"):
                 scripts[name] = "#!/bin/sh\nexit 0\n"
+            scripts.update(supervisor_fixture_commands())
             for name, body in scripts.items():
-                path = binary_dir / name
-                path.write_text(body, encoding="utf-8")
-                path.chmod(0o700)
+                fixture_executable(binary_dir / name, body)
             environment = os.environ.copy()
             environment.update(
                 {

@@ -31,9 +31,11 @@ Intended for one trusted user and loopback clients.
 rkc open /path/to/repository
 ```
 
-On Linux the installed binary self-reexecutes through the exact one-core,
-nice-19, idle-I/O, 4 GiB pressure / 4.5 GiB hard-memory envelope before any
-atlas, cache, journal, or snapshot write. The outer guard continuously checks
+On Linux the installed binary self-reexecutes through the protected
+nice-19, idle-I/O envelope before any atlas, cache, journal, or snapshot write.
+Its default limits are one core and 4 GiB pressure / 4.5 GiB hard memory;
+a selected smaller host profile also applies to the installed launcher.
+The outer guard continuously checks
 for configured higher-priority workload classes under the active policy (the
 generic default is `torchrun,lm_eval`;
 `RKC_HIGHER_PRIORITY_MARKERS=training,benchmark` selects 1-16 unique lower-case
@@ -73,11 +75,32 @@ current host satisfies it.
 
 `RKC_CPU_QUOTA_PERCENT` accepts integers from 1 through 100, defaults to 100,
 and applies in both scope and service mode. A value of 25 caps the entire
-workload at one quarter of a core, including child processes. Lower quotas
+workload at one quarter of a core, including child processes. Internal guarded
+workers also inherit the selected profile when they need a separate service;
+an explicit worker memory allowance cannot enlarge the selected host ceiling.
+Smaller per-worker allowances retain their own lower hard limit. A reused RKC
+unit must prove controls no higher than the selected profile.
+Sibling worker services bind their lifetime to an outer RKC unit only after
+kernel membership, current controls, and the manager's control-group identity
+agree. An external or namespace-hidden parent cannot supply that proof; those
+workers retain the explicit `Run` cancellation monitor. Use the owned wrapper
+for the supervised development workflow described here.
+
+Lower quotas
 increase wall time; choose bounded checks one at a time, retain their receipts,
-and leave full release assembly to CI on a busy host. Interrupted service-mode
-work is stopped as a group; output publication still uses RKC's existing owned
-staging and atomic publication rules.
+and leave full release assembly to CI on a busy host. The wrapper checks the
+configured host-memory reserve before starting any command, including builds
+and tests, and checks it approximately once per second while work runs. A
+reserve violation stops the owned unit and returns temporary failure (75);
+an unavailable or malformed memory reading fails closed when a reserve is set.
+
+The wrapper supervises both scope and service modes. A small detached watchdog
+binds the fresh unit to its launcher's process identity and stops that unit
+after interruption or launcher death. Cleanup is bounded and only targets the
+unit created by this invocation. Output publication still uses RKC's existing
+owned staging and atomic publication rules. Verify the actual selected profile
+with `scripts/verify-resource-guard.sh`; the probe checks the exact CPU ratio
+alongside memory, swap, scheduling, and process-count controls.
 
 For a trusted single-user Linux checkout, `rkc open --workbench <path>` is the
 explicit interactive route. The guarded child writes its one-time URL-fragment

@@ -30,6 +30,7 @@ for controller in cpu memory pids; do
 done
 
 guard_require_io_controller=${RKC_REQUIRE_IO_CONTROLLER:-0}
+guard_cpu_quota_percent=${RKC_CPU_QUOTA_PERCENT:-100}
 guard_memory_high_mib=${RKC_MEMORY_HIGH_MIB:-4096}
 guard_memory_max_mib=${RKC_MEMORY_MAX_MIB:-4608}
 guard_memory_swap_max_mib=${RKC_MEMORY_SWAP_MAX_MIB:-256}
@@ -60,6 +61,8 @@ sh scripts/with-rkc-limits.sh sh -c '
     [ "${RKC_MEMORY_SWAP_MAX_MIB:-}" = "$4" ] || fail "swap profile did not survive guard entry"
     [ "${RKC_GO_MEMORY_LIMIT_MIB:-}" = "$5" ] || fail "Go-memory profile did not survive guard entry"
     [ "${RKC_HOST_AVAILABLE_MEMORY_MIN_MIB:-}" = "$6" ] || fail "host-memory reserve did not survive guard entry"
+    [ "${RKC_CPU_QUOTA_PERCENT:-}" = "$7" ] || fail "CPU-quota profile did not survive guard entry"
+    expected_cpu_quota_percent=$7
     expected_high=$(( $2 * 1024 * 1024 ))
     expected_max=$(( $3 * 1024 * 1024 ))
     expected_swap=$(( $4 * 1024 * 1024 ))
@@ -98,9 +101,22 @@ fi
     [ -d "$cgroup" ] || fail "guard cgroup is unavailable: $cgroup"
 
     [ "$(cat "$cgroup/cpu.weight")" = "1" ] || fail "CPUWeight is not 1"
-    set -- $(cat "$cgroup/cpu.max")
-    [ "$1" != "max" ] || fail "CPUQuota is unlimited"
-    [ "$1" -le "$2" ] || fail "CPUQuota exceeds one core"
+    # Integer percent profiles and the systemd period require an exact ratio.
+    # Bound numeric inputs to the kernel maximum period before multiplying;
+    # malformed, unlimited, or drifted controls must fail closed.
+    awk -v expected="$expected_cpu_quota_percent" '"'"'
+        BEGIN {
+            if (expected !~ /^([1-9]|[1-9][0-9]|100)$/) exit 1
+        }
+        NR != 1 || NF != 2 || $1 !~ /^[1-9][0-9]*$/ || $2 !~ /^[1-9][0-9]*$/ {
+            exit 1
+        }
+        length($1) > 7 || length($2) > 7 || $1 > 1000000 || $2 > 1000000 {
+            exit 1
+        }
+        $1 * 100 != $2 * expected { exit 1 }
+        END { if (NR != 1) exit 1 }
+    '"'"' "$cgroup/cpu.max" || fail "CPUQuota is malformed, unlimited, or does not match the selected profile"
     if [ -r "$cgroup/io.weight" ]; then
         grep -Eq "^default[[:space:]]+1$" "$cgroup/io.weight" || fail "IOWeight is not 1"
     else
@@ -117,6 +133,7 @@ fi
     ionice -p $$ | grep -Eq "^idle" || fail "I/O scheduling class is not idle"
     [ "$(systemctl --user show --property=OOMPolicy --value "$unit")" = "stop" ] || fail "OOMPolicy is not stop"
 ' guard-probe "$guard_require_io_controller" "$guard_memory_high_mib" "$guard_memory_max_mib" \
-    "$guard_memory_swap_max_mib" "$guard_go_memory_limit_mib" "$guard_host_available_memory_min_mib"
+    "$guard_memory_swap_max_mib" "$guard_go_memory_limit_mib" "$guard_host_available_memory_min_mib" \
+    "$guard_cpu_quota_percent"
 
 echo "rkc resource guard verification: passed"

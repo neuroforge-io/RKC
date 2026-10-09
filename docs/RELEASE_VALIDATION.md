@@ -39,8 +39,12 @@ cryptographic build provenance remains a planned release gate.
 | HTTP | `make smoke-api` | health and ranked search over a live server |
 | MCP | `make smoke-mcp` | initialize, tools/list, and search tool call |
 | Git | `make smoke-git` | promptless `file://` acquisition in controlled mode |
-| race | `make test-race` | Go race detector |
 | benchmark | `make benchmark` | self-scan timing and coverage report |
+| race | `make test-race` | Go race detector |
+
+The benchmark runs before the cold race check so source/export failures stop
+validation earlier. Both checks remain required, and the package assembler
+validates the same ordered inventory in the release receipt.
 
 ## Test coverage policy
 

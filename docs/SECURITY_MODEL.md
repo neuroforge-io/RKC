@@ -36,6 +36,9 @@ untrusted repository bytes
 ```
 
 Each boundary validates structure and enforces resource and capability policy.
+Source-verification failures report path-derived opaque artifact references;
+raw inventory paths and wrapped filesystem errors remain private even when
+an input disappears or is replaced before publication.
 No downstream component treats repository text as instructions.
 
 ## Current controls

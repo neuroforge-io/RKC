@@ -46,8 +46,9 @@ type externalEnvelopeDependencies struct {
 }
 
 // RequireCurrentProcessLowPriority proves that the calling process—not merely
-// a future model child—is already inside the exact low-priority envelope made
-// by the installed first-run launcher or scripts/with-rkc-limits.sh.
+// a future model child—is already inside the low-priority envelope made by the
+// installed first-run launcher or scripts/with-rkc-limits.sh. A selected ambient
+// profile tightens every admitted ceiling; smaller actual limits remain valid.
 // Constructors call this before expensive work so verification cannot compete
 // with higher-priority work.
 func RequireCurrentProcessLowPriority() error {
@@ -56,9 +57,9 @@ func RequireCurrentProcessLowPriority() error {
 
 // PrepareCurrentProcessLowPriority admits the current Linux process without a
 // sibling transient unit only when kernel state already proves the fixed RKC
-// hard-resource ceiling. An exact rkc-low unit retains
-// RequireCurrentProcessLowPriority's stricter 4 GiB pressure plus 4.5 GiB
-// hard-memory contract. The only external exception is a
+// hard-resource ceiling. A reserved rkc-low unit retains
+// RequireCurrentProcessLowPriority's stricter pressure and hard-memory contract,
+// tightened by any selected ambient profile. The only external exception is a
 // cgroup-namespaced container whose delegated root exposes every required hard
 // limit and low weight; the process's per-thread nice and I/O priorities may
 // then be monotonically lowered and are re-read before this function succeeds.
@@ -161,6 +162,10 @@ func requireProcessLowPriority(procRoot, cgroupRoot string, pid int, scheduling 
 	if pid <= 0 || scheduling == nil {
 		return fail("process identity or scheduling inspector is invalid")
 	}
+	profile, err := resourceProfileFromEnvironment()
+	if err != nil {
+		return fail("invalid selected resource profile: %v", err)
+	}
 	processRoot := filepath.Join(procRoot, strconv.Itoa(pid))
 	cgroupRecord, err := readSmallControl(filepath.Join(processRoot, "cgroup"))
 	if err != nil {
@@ -185,21 +190,21 @@ func requireProcessLowPriority(procRoot, cgroupRoot string, pid int, scheduling 
 	if err := requireControlInteger(cgroupPath, "cpu.weight", 1); err != nil {
 		return fail("%v", err)
 	}
-	if err := requireCPUQuotaAtMostOne(cgroupPath); err != nil {
+	if err := requireCPUQuotaAtMostPercent(cgroupPath, profile.cpuPercent); err != nil {
 		return fail("%v", err)
 	}
-	memoryHigh, err := requireControlInRange(cgroupPath, "memory.high", rkcMinimumMemoryBytes, rkcMemoryHighBytes)
+	memoryHigh, err := requireControlInRange(cgroupPath, "memory.high", rkcMinimumMemoryBytes, profile.memoryHighMiB*profileMiB)
 	if err != nil {
 		return fail("%v", err)
 	}
-	memoryMax, err := requireControlInRange(cgroupPath, "memory.max", rkcMinimumMemoryBytes, rkcMemoryMaxBytes)
+	memoryMax, err := requireControlInRange(cgroupPath, "memory.max", rkcMinimumMemoryBytes, profile.memoryMaxMiB*profileMiB)
 	if err != nil {
 		return fail("%v", err)
 	}
 	if memoryHigh > memoryMax {
 		return fail("memory.high %d exceeds memory.max %d", memoryHigh, memoryMax)
 	}
-	swapMax, err := requireControlAtMostValue(cgroupPath, "memory.swap.max", rkcSwapMaxBytes)
+	swapMax, err := requireControlAtMostValue(cgroupPath, "memory.swap.max", profile.swapMaxMiB*profileMiB)
 	if err != nil {
 		return fail("%v", err)
 	}
@@ -261,6 +266,10 @@ func requireExternalProcessLowPriority(
 	if allowSchedulingLowering && dependencies.lowerScheduling == nil {
 		return fail("external container scheduling normalizer is not configured")
 	}
+	profile, err := resourceProfileFromEnvironment()
+	if err != nil {
+		return fail("invalid selected resource profile: %v", err)
+	}
 	processRoot := filepath.Join(procRoot, strconv.Itoa(pid))
 	requireControls := func() (string, error) {
 		cgroupRecord, err := readSmallControl(filepath.Join(processRoot, "cgroup"))
@@ -292,14 +301,24 @@ func requireExternalProcessLowPriority(
 		if err := dependencies.verifyFilesystems(processRoot, cgroupPath); err != nil {
 			return "", fail("verify kernel control filesystems: %v", err)
 		}
-		if err := requireCPUQuotaAtMostOne(cgroupPath); err != nil {
+		if err := requireCPUQuotaAtMostPercent(cgroupPath, profile.cpuPercent); err != nil {
 			return "", fail("%v", err)
 		}
-		memoryMax, err := requireControlAtMostValue(cgroupPath, "memory.max", rkcMemoryMaxBytes)
+		var memoryHigh int64
+		if profile.selected {
+			memoryHigh, err = requireControlInRange(cgroupPath, "memory.high", rkcMinimumMemoryBytes, profile.memoryHighMiB*profileMiB)
+			if err != nil {
+				return "", fail("%v", err)
+			}
+		}
+		memoryMax, err := requireControlAtMostValue(cgroupPath, "memory.max", profile.memoryMaxMiB*profileMiB)
 		if err != nil {
 			return "", fail("%v", err)
 		}
-		swapMax, err := requireControlAtMostValue(cgroupPath, "memory.swap.max", rkcSwapMaxBytes)
+		if profile.selected && memoryHigh > memoryMax {
+			return "", fail("memory.high %d exceeds memory.max %d", memoryHigh, memoryMax)
+		}
+		swapMax, err := requireControlAtMostValue(cgroupPath, "memory.swap.max", profile.swapMaxMiB*profileMiB)
 		if err != nil {
 			return "", fail("%v", err)
 		}
@@ -414,7 +433,7 @@ func requireAllThreadsInCgroupNamespaceRoot(processRoot string) error {
 	return nil
 }
 
-func requireCPUQuotaAtMostOne(root string) error {
+func requireCPUQuotaAtMostPercent(root string, maximum int64) error {
 	cpuMax, err := readSmallControl(filepath.Join(root, "cpu.max"))
 	if err != nil {
 		return fmt.Errorf("read cpu.max: %w", err)
@@ -427,6 +446,12 @@ func requireCPUQuotaAtMostOne(root string) error {
 	period, periodErr := strconv.ParseInt(fields[1], 10, 64)
 	if quotaErr != nil || periodErr != nil || quota <= 0 || period <= 0 || quota > period {
 		return errors.New("cpu.max does not impose a one-core ceiling")
+	}
+	// Divide before multiplying to avoid integer overflow on malformed, large
+	// kernel-control fixtures while preserving the exact fractional ceiling.
+	limit := period/100*maximum + period%100*maximum/100
+	if quota > limit {
+		return fmt.Errorf("cpu.max exceeds the selected %d-percent ceiling", maximum)
 	}
 	burst, err := readControlInteger(filepath.Join(root, "cpu.max.burst"))
 	if err == nil && burst != 0 {
@@ -545,12 +570,20 @@ func validLowPriorityUnit(unit string) bool {
 	if identifier == "" || (unit != "rkc-low-"+identifier+".scope" && unit != "rkc-low-"+identifier+".service") {
 		return false
 	}
-	for _, segment := range strings.Split(identifier, "-") {
+	segments := strings.Split(identifier, "-")
+	for index, segment := range segments {
 		if segment == "" {
 			return false
 		}
 		for _, character := range segment {
-			if character < '0' || character > '9' {
+			if character >= '0' && character <= '9' {
+				continue
+			}
+			// Supervised wrappers use a positive PID followed by exactly 16
+			// ASCII alphanumeric nonce bytes. Historical all-numeric names
+			// remain valid; arbitrary reserved names never acquire authority.
+			letter := character >= 'a' && character <= 'z' || character >= 'A' && character <= 'Z'
+			if index != 1 || len(segments) != 2 || len(segment) != 16 || segments[0][0] == '0' || !letter {
 				return false
 			}
 		}

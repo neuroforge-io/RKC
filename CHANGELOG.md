@@ -24,6 +24,15 @@ and RKC contributors and Apache-2.0 licensed.
   redaction, distinct normalized outputs for colliding names, and versioned
   source-document identities that keep portable citations intact. New snapshot
   identities bind that producer version; stored snapshots remain readable.
+- Source-verification failures identify changed inputs by opaque references,
+  keeping private filenames and filesystem paths out of errors and run journals.
+- Inherited busy-host limits for guarded workers, exact CPU-quota verification,
+  and supervised shell workloads with host-memory admission and cleanup after
+  interruption or launcher death. Release benchmarks run before cold race
+  checks so failures stop expensive validation earlier.
+- Consistent SQLite ownership preflight during simultaneous opens and
+  migrations, retaining strict schema and journal verification in one read
+  snapshot, including read-only opens.
 
 These changes are in development source. Portable release qualification and
 real hosted-model quality remain separate from local tests and protocol mocks.

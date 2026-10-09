@@ -296,7 +296,14 @@ func TestEnvelopeParsingRejectsAmbiguousPathsAndSchedulingFailure(t *testing.T) 
 			t.Fatalf("invalid cgroup record was accepted: %q", record)
 		}
 	}
-	for _, unit := range []string{"", "rkc-low-.scope", "rkc-low-name.scope", "rkc-low-12-name.service", "rkc-low-12-.service", "rkc-low-12.slice", "other-12.scope"} {
+	for _, unit := range []string{
+		"", "rkc-low-.scope", "rkc-low-name.scope", "rkc-low-12-name.service",
+		"rkc-low-12-.service", "rkc-low-12.slice", "other-12.scope",
+		"rkc-low-12-abcdefghijklmno.scope", "rkc-low-12-abcdefghijklmnopq.service",
+		"rkc-low-12-aB12cD34eF56gH_8.scope", "rkc-low-12-abcdefghijklmné.scope",
+		"rkc-low-12-aB12cD34eF56gH78-7.scope", "rkc-low-0-aB12cD34eF56gH78.scope",
+		"rkc-low-012-aB12cD34eF56gH78.scope", "rkc-low-name-aB12cD34eF56gH78.scope",
+	} {
 		if validLowPriorityUnit(unit) {
 			t.Fatalf("invalid low-priority unit was accepted: %q", unit)
 		}
@@ -319,6 +326,25 @@ func TestEnvelopeParsingRejectsAmbiguousPathsAndSchedulingFailure(t *testing.T) 
 	}
 	if path, err := unifiedCgroupPathAllowRoot("0::/\n"); err != nil || path != "/" {
 		t.Fatalf("container unified root = %q, %v", path, err)
+	}
+}
+
+func TestSupervisedNonceUnitIsAdmittedByActualEnvelope(t *testing.T) {
+	for _, unit := range []string{"rkc-low-42-aB12cD34eF56gH78.scope", "rkc-low-42-aB12cD34eF56gH78.service"} {
+		t.Run(unit, func(t *testing.T) {
+			fixture := newEnvelopeFixture(t)
+			parent := filepath.Join(fixture.cgroup, "user.slice", unit)
+			if err := os.Rename(fixture.unit, parent); err != nil {
+				t.Fatal(err)
+			}
+			fixture.unit = parent
+			fixture.writeProc("cgroup", "0::/user.slice/"+unit+"\n")
+			if err := requireProcessLowPriority(fixture.proc, fixture.cgroup, fixture.pid, func(int) (schedulingEnvelope, error) {
+				return schedulingEnvelope{nice: rkcNice, ioClass: rkcIOClassIdle}, nil
+			}); err != nil {
+				t.Fatalf("supervised nonce unit was rejected: %v", err)
+			}
+		})
 	}
 }
 
@@ -427,6 +453,7 @@ type envelopeFixture struct {
 
 func newEnvelopeFixture(t *testing.T) *envelopeFixture {
 	t.Helper()
+	clearResourceProfile(t)
 	root := t.TempDir()
 	fixture := &envelopeFixture{
 		t: t, proc: filepath.Join(root, "proc"), cgroup: filepath.Join(root, "cgroup"), pid: 42,
@@ -457,6 +484,7 @@ func newEnvelopeFixture(t *testing.T) *envelopeFixture {
 
 func newExternalEnvelopeFixture(t *testing.T) *envelopeFixture {
 	t.Helper()
+	clearResourceProfile(t)
 	root := t.TempDir()
 	fixture := &envelopeFixture{
 		t: t, proc: filepath.Join(root, "proc"), cgroup: filepath.Join(root, "cgroup"), pid: 42,
