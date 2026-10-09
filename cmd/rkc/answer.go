@@ -91,7 +91,7 @@ func runAnswer(args []string) error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	return runAnswerContext(ctx, args, answerDependencies{
-		loadDataset: loadDataset, openProvider: openQualifiedGenerationProvider,
+		loadDataset: loadDataset, openProvider: openAnswerGenerationProvider,
 		prepareSemantic: prepareQualifiedAnswerSemantic,
 		stdout:          os.Stdout, now: time.Now,
 	})
@@ -135,7 +135,10 @@ func runAnswerContext(ctx context.Context, args []string, dependencies answerDep
 	embeddingAsset := fs.String("embedding-asset", "", "qualified embedding asset ID; defaults to the lock default")
 	embeddingRuntimeReceipt := fs.String("embedding-runtime-receipt", "", "llama.cpp embedding runtime build receipt")
 	taskValue := fs.String("task", string(modelruntime.TaskModuleSummary), "module_summary, execution_explanation, symbol_summary, or documentation_gap_analysis")
-	providerType := fs.String("provider", cfg.Model.Provider, "model provider: llama.cpp")
+	providerType := fs.String("provider", cfg.Model.Provider, "model provider: llama.cpp or openai-compatible (credential-free loopback only)")
+	endpoint := fs.String("endpoint", "", "exact credential-free loopback chat/completions URL for openai-compatible")
+	httpModelName := fs.String("model-name", "", "server model ID for openai-compatible; no local weights are verified")
+	httpProfile := fs.String("endpoint-profile", "structured-claims", "HTTP capability profile: structured-claims or neuroforge-native-extractive")
 	modelPath := fs.String("model", cfg.Model.ModelPath, "qualified GGUF generation model file")
 	llamaCLI := fs.String("llama-cli", "llama-cli", "pinned llama.cpp CLI executable")
 	modelLock := fs.String("model-lock", defaultSynthesisModelLockPath(), "trusted RKC model supply-chain lock")
@@ -143,9 +146,9 @@ func runAnswerContext(ctx context.Context, args []string, dependencies answerDep
 	runtimeReceipt := fs.String("runtime-receipt", "", "llama.cpp build receipt; derived from a standard runtime layout when empty")
 	contextTokens := fs.Int("context", cfg.Model.ContextTokens, "model context tokens")
 	maxOutputTokens := fs.Int("max-output", cfg.Model.MaxOutputTokens, "maximum generated tokens")
-	maxRSSMiB := fs.Int64("max-rss-mib", cfg.Model.MaxRSSMiB, "estimated and observed process RSS limit")
-	threads := fs.Int("threads", 0, "model inference threads; 0 chooses a conservative default")
-	batchSize := fs.Int("batch-size", 128, "llama.cpp logical batch size")
+	maxRSSMiB := fs.Int64("max-rss-mib", cfg.Model.MaxRSSMiB, "llama.cpp only: estimated and observed process RSS limit")
+	threads := fs.Int("threads", 0, "llama.cpp only: inference threads; 0 chooses a conservative default")
+	batchSize := fs.Int("batch-size", 128, "llama.cpp only: logical batch size")
 	timeout := fs.Duration("timeout", 10*time.Minute, "model inference timeout, at most 1h")
 	maximumNodes := fs.Int("max-nodes", 24, "maximum canonical nodes supplied to the model")
 	maximumEdges := fs.Int("max-edges", 64, "maximum canonical edges supplied to the model")
@@ -163,6 +166,12 @@ func runAnswerContext(ctx context.Context, args []string, dependencies answerDep
 	}
 	if fs.NArg() == 0 {
 		return errors.New("question text is required")
+	}
+	if *providerType != "openai-compatible" && (*endpoint != "" || *httpModelName != "" || flagWasSet(fs, "endpoint-profile")) {
+		return errors.New("endpoint, model-name and endpoint-profile require --provider openai-compatible")
+	}
+	if *providerType == "openai-compatible" && (*modelPath != "" || flagWasSet(fs, "llama-cli") || flagWasSet(fs, "model-lock") || flagWasSet(fs, "model-asset") || flagWasSet(fs, "runtime-receipt") || flagWasSet(fs, "max-rss-mib") || flagWasSet(fs, "threads") || flagWasSet(fs, "batch-size")) {
+		return errors.New("GGUF, runtime qualification and process resource options require --provider llama.cpp")
 	}
 	mode, err := parseQueryRetrievalMode(*modeValue)
 	if err != nil {
@@ -265,7 +274,9 @@ func runAnswerContext(ctx context.Context, args []string, dependencies answerDep
 		}
 	}
 	generation, err := dependencies.openProvider(qualifiedGenerationRequest{
-		Provider: *providerType, ModelPath: *modelPath, LlamaCLI: *llamaCLI,
+		Provider: *providerType, Endpoint: *endpoint, HTTPModelName: *httpModelName,
+		HTTPProfile: *httpProfile,
+		ModelPath:   *modelPath, LlamaCLI: *llamaCLI,
 		ModelLock: *modelLock, ModelAsset: *modelAsset, RuntimeReceipt: *runtimeReceipt,
 		ContextTokens: *contextTokens, MaximumOutputTokens: *maxOutputTokens,
 		MaximumRSSMiB: *maxRSSMiB, Threads: *threads, BatchSize: *batchSize,

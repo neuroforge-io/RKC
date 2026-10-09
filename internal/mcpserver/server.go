@@ -715,6 +715,7 @@ func decodeStrict(data []byte, target any) error {
 
 func rejectDuplicateFields(data []byte) error {
 	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.UseNumber()
 	var consume func() error
 	consume = func() error {
 		token, err := decoder.Token()

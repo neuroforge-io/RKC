@@ -11,14 +11,17 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"path"
 	"reflect"
 	"sort"
 	"strings"
 	"time"
 	"unicode/utf8"
 
+	"github.com/neuroforge-io/RKC/internal/docparse"
 	"github.com/neuroforge-io/RKC/internal/modelruntime"
 	"github.com/neuroforge-io/RKC/internal/search"
+	"github.com/neuroforge-io/RKC/internal/security/secrets"
 	"github.com/neuroforge-io/RKC/pkg/rkcmodel"
 )
 
@@ -174,21 +177,22 @@ type RetrievalProvenance struct {
 // evidence packet, prompt, retrieval selection, provider descriptor, and usage.
 // Digests let a reviewer detect substitution without retaining hidden context.
 type Provenance struct {
-	SnapshotID       string                       `json:"snapshot_id"`
-	BundleDigest     string                       `json:"bundle_digest"`
-	QuestionNodeID   string                       `json:"question_node_id"`
-	PacketID         string                       `json:"packet_id"`
-	PacketDigest     string                       `json:"packet_digest"`
-	PromptDigest     string                       `json:"prompt_digest"`
-	PromptBytes      int                          `json:"prompt_bytes"`
-	Retrieval        RetrievalProvenance          `json:"retrieval"`
-	SelectedNodeIDs  []string                     `json:"selected_node_ids"`
-	SelectedEvidence []string                     `json:"selected_evidence_ids"`
-	Provider         modelruntime.ModelDescriptor `json:"provider"`
-	ModelRequestID   string                       `json:"model_request_id,omitempty"`
-	ModelResponseID  string                       `json:"model_response_id,omitempty"`
-	ModelID          string                       `json:"model_id,omitempty"`
-	Usage            modelruntime.Usage           `json:"usage,omitempty"`
+	SnapshotID           string                             `json:"snapshot_id"`
+	BundleDigest         string                             `json:"bundle_digest"`
+	QuestionNodeID       string                             `json:"question_node_id"`
+	PacketID             string                             `json:"packet_id"`
+	PacketDigest         string                             `json:"packet_digest"`
+	PromptDigest         string                             `json:"prompt_digest"`
+	PromptBytes          int                                `json:"prompt_bytes"`
+	Retrieval            RetrievalProvenance                `json:"retrieval"`
+	SelectedNodeIDs      []string                           `json:"selected_node_ids"`
+	SelectedEvidence     []string                           `json:"selected_evidence_ids"`
+	Provider             modelruntime.ModelDescriptor       `json:"provider"`
+	ProviderCapabilities *modelruntime.ProviderCapabilities `json:"provider_capabilities,omitempty"`
+	ModelRequestID       string                             `json:"model_request_id,omitempty"`
+	ModelResponseID      string                             `json:"model_response_id,omitempty"`
+	ModelID              string                             `json:"model_id,omitempty"`
+	Usage                modelruntime.Usage                 `json:"usage,omitempty"`
 }
 
 // Truncation accounts for every bounded input collection and text budget. A
@@ -269,9 +273,10 @@ type Result struct {
 // Service binds one immutable provider descriptor to normalized server-side
 // bounds. It rejects a provider whose descriptor changes after construction.
 type Service struct {
-	provider   modelruntime.Provider
-	descriptor modelruntime.ModelDescriptor
-	options    Options
+	provider     modelruntime.Provider
+	descriptor   modelruntime.ModelDescriptor
+	capabilities *modelruntime.ProviderCapabilities
+	options      Options
 }
 
 // New validates the provider identity and normalizes all zero-valued bounds to
@@ -289,7 +294,15 @@ func New(provider modelruntime.Provider, options Options) (*Service, error) {
 	if err := validateIdentifier(descriptor.ID, "provider model ID"); err != nil {
 		return nil, fmt.Errorf("%w: %v", ErrInvalidProvider, err)
 	}
-	return &Service{provider: provider, descriptor: descriptor, options: normalized}, nil
+	return &Service{provider: provider, descriptor: descriptor, capabilities: providerCapabilities(provider), options: normalized}, nil
+}
+
+func providerCapabilities(provider modelruntime.Provider) *modelruntime.ProviderCapabilities {
+	if declared, ok := provider.(modelruntime.CapabilityProvider); ok {
+		value := declared.Capabilities()
+		return &value
+	}
+	return nil
 }
 
 func normalizeOptions(options Options) (Options, error) {
@@ -374,6 +387,9 @@ func (service *Service) Answer(ctx context.Context, request Request) (Result, er
 	if current := service.provider.Descriptor(); !reflect.DeepEqual(current, service.descriptor) {
 		return Result{}, fmt.Errorf("%w: provider descriptor changed after service construction", ErrInvalidProvider)
 	}
+	if !reflect.DeepEqual(providerCapabilities(service.provider), service.capabilities) {
+		return Result{}, fmt.Errorf("%w: provider capabilities changed after service construction", ErrInvalidProvider)
+	}
 	question := strings.TrimSpace(request.Question)
 	if question == "" {
 		return Result{}, fmt.Errorf("%w: question is required", ErrInvalidRequest)
@@ -402,11 +418,29 @@ func (service *Service) Answer(ctx context.Context, request Request) (Result, er
 	if err != nil {
 		return Result{}, err
 	}
+	// Bind audit identity and budgeting to the actual provider prompt. Providers
+	// with a compact extractive protocol cannot reuse the generic JSON prompt's
+	// digest. Missing evidence still abstains before invoking a model.
+	if len(prepared.evidenceIDs) >= service.options.MinimumEvidence && len(prepared.nodeIDs) > 0 {
+		promptPacket, cloneErr := clonePacket(prepared.packet)
+		if cloneErr != nil {
+			return Result{}, fmt.Errorf("clone provider prompt packet: %w", cloneErr)
+		}
+		prompt, promptErr := modelruntime.BuildProviderPrompt(service.provider, modelruntime.Request{
+			Task: task, Packet: promptPacket, ValidationPass: request.VerificationPass,
+		})
+		if promptErr != nil {
+			return Result{}, fmt.Errorf("build provider grounded-answer prompt: %w", promptErr)
+		}
+		prepared.promptBytes = len(prompt)
+		prepared.promptDigest = contentDigest([]byte(prompt))
+	}
 	requestID := rkcmodel.StableID(
 		"grounded_answer_request", prepared.bundleDigest, prepared.packet.PacketID,
 		prepared.retrieval.Query, prepared.retrieval.Mode, prepared.retrieval.IndexVersion,
 		strings.Join(prepared.retrieval.HitIDs, ","), service.descriptor.ID,
 		service.descriptor.Digest, service.descriptor.RuntimeDigest,
+		service.descriptor.Runtime, service.descriptor.RuntimeRevision, prepared.promptDigest,
 		fmt.Sprintf("verification-pass:%d", request.VerificationPass),
 	)
 	result := Result{
@@ -415,17 +449,18 @@ func (service *Service) Answer(ctx context.Context, request Request) (Result, er
 		Question:        question,
 		Status:          StatusAbstained,
 		Provenance: Provenance{
-			SnapshotID:       prepared.packet.SnapshotID,
-			BundleDigest:     prepared.bundleDigest,
-			QuestionNodeID:   prepared.packet.Subject.ID,
-			PacketID:         prepared.packet.PacketID,
-			PacketDigest:     prepared.packetDigest,
-			PromptDigest:     prepared.promptDigest,
-			PromptBytes:      prepared.promptBytes,
-			Retrieval:        prepared.retrieval,
-			SelectedNodeIDs:  append([]string(nil), prepared.nodeIDs...),
-			SelectedEvidence: append([]string(nil), prepared.evidenceIDs...),
-			Provider:         service.descriptor,
+			SnapshotID:           prepared.packet.SnapshotID,
+			BundleDigest:         prepared.bundleDigest,
+			QuestionNodeID:       prepared.packet.Subject.ID,
+			PacketID:             prepared.packet.PacketID,
+			PacketDigest:         prepared.packetDigest,
+			PromptDigest:         prepared.promptDigest,
+			PromptBytes:          prepared.promptBytes,
+			Retrieval:            prepared.retrieval,
+			SelectedNodeIDs:      append([]string(nil), prepared.nodeIDs...),
+			SelectedEvidence:     append([]string(nil), prepared.evidenceIDs...),
+			Provider:             service.descriptor,
+			ProviderCapabilities: providerCapabilities(service.provider),
 		},
 		Truncation: prepared.truncation,
 	}
@@ -688,6 +723,7 @@ func prepareContext(question string, task modelruntime.Task, retrieval search.Re
 		}
 		sort.Strings(ownership[id])
 	}
+	sourceExcerpts := canonicalSourceExcerpts(canonical, catalog, selectedNodes, includedEvidence, budget)
 	truncation.ContextText = budget.truncated
 	truncation.IncludedContextBytes = options.MaximumContextTextBytes - budget.remaining
 	truncation.IncludedNodes = len(relatedNodes)
@@ -706,6 +742,7 @@ func prepareContext(question string, task modelruntime.Task, retrieval search.Re
 		RelatedNodes:           relatedNodes,
 		Edges:                  edges,
 		Evidence:               evidence,
+		SourceExcerpts:         sourceExcerpts,
 		AllowedClaimCategories: allowedAnswerCategories(),
 		Policy: modelruntime.PacketPolicy{
 			RequireCitations: true,
@@ -795,7 +832,11 @@ func indexBundle(bundle rkcmodel.Bundle) (bundleCatalog, error) {
 		if _, duplicate := catalog.nodes[node.ID]; duplicate {
 			return bundleCatalog{}, fmt.Errorf("%w: duplicate node ID %q", ErrInvalidBundle, node.ID)
 		}
-		if err := registerRetrievable(node.ID, "node"); err != nil {
+		if artifact, alias := catalog.artifacts[node.ID]; alias && isArtifactProjection(node, artifact) {
+			// The scanner deliberately uses one occurrence ID for the physical
+			// artifact and its graph projection. Only that exact identity is an
+			// alias; unrelated cross-type collisions remain ambiguous below.
+		} else if err := registerRetrievable(node.ID, "node"); err != nil {
 			return bundleCatalog{}, fmt.Errorf("%w: %v", ErrInvalidBundle, err)
 		}
 		if node.ArtifactID != "" {
@@ -829,6 +870,15 @@ func indexBundle(bundle rkcmodel.Bundle) (bundleCatalog, error) {
 				return bundleCatalog{}, fmt.Errorf("%w: document %q references missing subject %q", ErrInvalidBundle, document.ID, subjectID)
 			}
 		}
+		if document.Kind == "source_document" && document.Generator == docparse.PluginID {
+			sectionIDs := map[string]struct{}{}
+			for _, section := range document.Sections {
+				if _, duplicate := sectionIDs[section.ID]; duplicate {
+					return bundleCatalog{}, fmt.Errorf("%w: duplicate source-document section ID %q", ErrInvalidBundle, section.ID)
+				}
+				sectionIDs[section.ID] = struct{}{}
+			}
+		}
 		catalog.documents[document.ID] = document
 	}
 	seenEdges := map[string]struct{}{}
@@ -856,6 +906,12 @@ func indexBundle(bundle rkcmodel.Bundle) (bundleCatalog, error) {
 }
 
 func resolveHitNodes(id string, catalog bundleCatalog) []string {
+	if _, artifact := catalog.artifacts[id]; artifact {
+		// An artifact projection alone has no syntax/document evidence. Resolve
+		// the complete canonical ownership roster instead of shadowing it with
+		// the graph projection's shared ID.
+		return append([]string(nil), catalog.artifactNodes[id]...)
+	}
 	if _, exists := catalog.nodes[id]; exists {
 		return []string{id}
 	}
@@ -864,9 +920,113 @@ func resolveHitNodes(id string, catalog bundleCatalog) []string {
 	}
 	if document, exists := catalog.documents[id]; exists {
 		result := sortedCopy(document.SubjectIDs)
-		return uniqueStrings(result)
+		if document.Kind == "source_document" && document.Generator == docparse.PluginID {
+			for _, section := range document.Sections {
+				if node, exists := catalog.nodes[section.ID]; exists && node.Kind == "document_section" &&
+					node.Source != nil && node.Source.Path == document.Path {
+					result = append(result, section.ID)
+				}
+			}
+		}
+		return uniqueStrings(sortedCopy(result))
 	}
 	return nil
+}
+
+// isArtifactProjection mirrors the scanner's artifactNode identity contract.
+// It deliberately excludes sourced/symbol nodes even when their IDs collide.
+func isArtifactProjection(node rkcmodel.Node, artifact rkcmodel.Artifact) bool {
+	if _, known := rkcmodel.ArtifactKinds[artifact.Kind]; !known || artifact.Path == "" ||
+		artifact.Path == "." || path.IsAbs(artifact.Path) || path.Clean(artifact.Path) != artifact.Path ||
+		artifact.Path == ".." || strings.HasPrefix(artifact.Path, "../") {
+		return false
+	}
+	logicalID := artifact.LogicalID
+	if logicalID == "" {
+		logicalID = rkcmodel.StableID("logical", "artifact", artifact.Path)
+	}
+	return node.ID == artifact.ID && node.ArtifactID == artifact.ID && node.Kind == artifact.Kind &&
+		node.Name == path.Base(artifact.Path) && node.QualifiedName == artifact.Path &&
+		node.LogicalID == logicalID && node.Language == artifact.Language && node.Visibility == "repository" &&
+		node.Source == nil && len(node.EvidenceIDs) == 0 && node.Signature == "" && node.SemanticHash == "" && node.Stability == "" && !node.PublicSurface
+}
+
+// canonicalSourceExcerpts uses only the Markdown producer's canonical section
+// records. Retrieved bodies and repository filesystem paths are never authority.
+func canonicalSourceExcerpts(bundle rkcmodel.Bundle, catalog bundleCatalog, selectedNodes, includedEvidence map[string]struct{}, budget *textBudget) []modelruntime.SourceExcerpt {
+	var excerpts []modelruntime.SourceExcerpt
+	seen := map[string]struct{}{}
+	for _, document := range bundle.Documents {
+		if document.Kind != "source_document" || document.Generator != docparse.PluginID || document.Status != "validated" {
+			continue
+		}
+		for _, section := range document.Sections {
+			if _, selected := selectedNodes[section.ID]; !selected {
+				continue
+			}
+			node := catalog.nodes[section.ID]
+			for _, evidenceID := range sortedCopy(section.EvidenceIDs) {
+				if _, included := includedEvidence[evidenceID]; !included {
+					continue
+				}
+				if _, duplicate := seen[evidenceID]; duplicate {
+					continue
+				}
+				evidence := catalog.evidence[evidenceID]
+				if !isCanonicalMarkdownSection(document, section, node, evidence, catalog) {
+					continue
+				}
+				source := *evidence.Source
+				if len(source.Path) > budget.maximumField || len(source.Anchor) > budget.maximumField ||
+					len(source.Path)+len(source.Anchor) >= budget.remaining {
+					budget.truncated = true
+					continue
+				}
+				source.Path = budget.take(source.Path)
+				source.Anchor = budget.take(source.Anchor)
+				redacted := string(secrets.Redact([]byte(section.Markdown), secrets.Scan([]byte(section.Markdown))))
+				text := budget.take(redacted)
+				if text == "" {
+					continue
+				}
+				seen[evidenceID] = struct{}{}
+				excerpts = append(excerpts, modelruntime.SourceExcerpt{
+					EvidenceID: evidenceID, Source: source, Text: text, Truncated: text != redacted,
+				})
+			}
+		}
+	}
+	return excerpts
+}
+
+func isCanonicalMarkdownSection(document rkcmodel.Document, section rkcmodel.DocumentSection, node rkcmodel.Node, evidence rkcmodel.Evidence, catalog bundleCatalog) bool {
+	if node.Kind != "document_section" || node.Source == nil || evidence.Source == nil ||
+		evidence.Kind != "documentation_asserted" || evidence.Method != "markdown.heading" ||
+		evidence.Tool != docparse.PluginID || !reflect.DeepEqual(node.Source, evidence.Source) {
+		return false
+	}
+	source := evidence.Source
+	artifact, exists := catalog.artifacts[source.ArtifactID]
+	if !exists || !artifact.Text || artifact.Language != "markdown" || artifact.SHA256 == "" ||
+		node.ArtifactID != artifact.ID || source.Path != artifact.Path || document.Path != artifact.Path ||
+		source.StartLine < 1 || source.EndLine < source.StartLine || source.EndLine > artifact.LineCount ||
+		evidence.InputDigest != artifact.SHA256 || document.Attributes["artifact_id"] != artifact.ID ||
+		document.Attributes["source_sha256"] != artifact.SHA256 ||
+		document.ID != rkcmodel.StableID("document", "markdown", artifact.Path) ||
+		section.ID != rkcmodel.StableID("node", "document_section", artifact.Path, source.Anchor) ||
+		section.Heading != node.Name || section.Heading != evidence.Detail ||
+		section.Attributes["anchor"] != source.Anchor ||
+		section.Attributes["start_line"] != float64(source.StartLine) ||
+		section.Attributes["end_line"] != float64(source.EndLine) ||
+		len(section.EvidenceIDs) != 1 || section.EvidenceIDs[0] != evidence.ID {
+		return false
+	}
+	for _, id := range node.EvidenceIDs {
+		if id == evidence.ID {
+			return true
+		}
+	}
+	return false
 }
 
 type textBudget struct {
@@ -965,7 +1125,7 @@ func sanitizeSource(source rkcmodel.SourceRange, budget *textBudget) rkcmodel.So
 func allowedAnswerCategories() []string {
 	return []string{
 		"answer", "argument", "behavior", "branch", "conflict", "dependency", "entry", "error", "exit",
-		"limitation", "missing_documentation", "missing_test", "public_surface", "purpose", "relationship",
+		"constraint", "limitation", "missing_documentation", "missing_test", "public_surface", "purpose", "relationship", "signature",
 		"responsibility", "return", "risk", "side_effect", "step", "unresolved_relationship",
 	}
 }

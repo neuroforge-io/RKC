@@ -1,7 +1,8 @@
 # RKC through the Model Context Protocol
 
 `rkc-mcp` exposes processed repository evidence through JSON-RPC over standard
-input and output. It provides search, cited context, symbols, evidence, bounded
+input and output by default, with an optional local Streamable HTTP transport.
+It provides search, cited context, symbols, evidence, bounded
 graph traversal and coverage. The adapter reads local atlas data. It does not
 execute repository code, invoke models, refresh sources or contact remote hosts.
 
@@ -22,6 +23,68 @@ The workspace option cannot be combined with `--dir`, `--database`, `--snapshot`
 or the startup SQLite `--repository` selector. Existing atlas and SQLite modes
 retain their result shapes. Workspace mode adds explicit repository selectors
 and source labels; it never keeps a mutable “current repository.”
+
+## Local Streamable HTTP
+
+Use an explicit verified atlas directory to test an MCP HTTP client locally:
+
+```sh
+rkc-mcp --transport http --dir /absolute/path/to/fictional-atlas --listen 127.0.0.1:0
+```
+
+The process reports the assigned endpoint on stderr in this form:
+
+```text
+rkc-mcp: listening on http://127.0.0.1:PORT/mcp (snapshot SNAPSHOT_ID; credential-free local only)
+```
+
+Only exact `127.0.0.1:port` and `[::1]:port` listeners are accepted. Port `0`
+assigns an available local port. The loaded atlas remains pinned in memory until
+the process stops; after compiling an updated source, restart the process with
+the selected new atlas. HTTP mode rejects workspace and SQLite selectors,
+including explicitly empty selector flags, and refuses unverified legacy data.
+It exposes the existing read-only evidence tools and resources; it invokes no
+models and does not refresh or write source data.
+
+This is a stateless JSON subset of the
+[official Streamable HTTP transport](https://modelcontextprotocol.io/specification/2025-11-25/basic/transports).
+Send one JSON-RPC message per `POST /mcp`, with `Content-Type: application/json`
+and `Accept: application/json, text/event-stream`. Initialize with a
+`protocolVersion`, a capabilities object and `clientInfo` containing `name` and
+`version`, then send `notifications/initialized`. Initialization supports
+`2025-03-26`, `2025-06-18` and `2025-11-25`; another requested version receives
+the latest supported version. Subsequent requests should include the negotiated
+`MCP-Protocol-Version` header. A missing header uses the specified `2025-03-26`
+compatibility default; an empty or unsupported header is rejected.
+
+Requests receive bounded `application/json` replies. Valid notifications receive
+HTTP `202` with no body. The adapter allocates no sessions, rejects session
+headers and returns HTTP `405` for `GET` and `DELETE`; it does not offer an SSE
+stream. Request IDs must be strings of at most 256 bytes or signed 64-bit
+integers. Batch messages, duplicate object keys, case-variant protocol fields,
+non-object parameters and unsupported pagination parameters fail explicitly.
+
+The request body limit is 1 MiB, the response limit is 4 MiB, JSON nesting is
+limited to 64 levels, and the HTTP header limit is configured as 32 KiB. The
+default request deadline is 10 seconds and at most two requests execute at once.
+`--http-request-timeout` allows positive durations up to `30s`;
+`--http-concurrency` allows 1–8. Timed-out work retains its concurrency permit
+until it finishes, so repeated timeouts cannot create unlimited index work.
+Cancel the process with an interrupt or termination signal to close the listener.
+
+The exact bound IP and port must appear in `Host`. An `Origin`, when present,
+must be exactly the endpoint's `http://IP:port` origin. Other origins, DNS names,
+credential/cookie headers, forwarding headers, URL credentials and query strings
+are rejected. No browser CORS access is enabled. The server creates no
+authentication credentials and provides no public listener or tunnel.
+
+[ChatGPT developer mode supports remote MCP apps over streaming HTTP](https://developers.openai.com/api/docs/guides/developer-mode).
+This local listener implements the transport needed for that route, but a
+loopback URL is not a remotely reachable ChatGPT connection. An authenticated
+remote deployment, its TLS and access controls, account eligibility, and actual
+ChatGPT connection testing remain separate work. A ChatGPT subscription does
+not supply an OpenAI API key; these read-only MCP tools do not call the OpenAI
+API. Do not publish or tunnel this credential-free local server.
 
 ## Discover and select repositories
 
@@ -86,6 +149,15 @@ Workspace search/context responses have schema `rkc-workspace-query/v1`:
 Search values contain canonical lexical hits. Context values contain cited
 indexed excerpts with evidence references and source ranges where available.
 Context ranges identify source objects and may be broader than the excerpt.
+Canonical Markdown `source_document` context rows preserve their whole-document
+`source` and sorted document/section `evidence_ids`. The existing
+`rkc-context/v1` fields and snapshot/object citation identity are unchanged.
+References are attached only when the producer, document subject, all section
+nodes, artifact digests and exact source ranges agree. Missing or inconsistent
+bindings leave the row without source/evidence references. Generated-document
+export paths are not treated as repository source locations. Use
+`rkc.get_evidence` for each evidence ID; compilation updates require selecting
+the new snapshot, while retained packets keep their prior content.
 Search supports its existing query filters and `kinds`/`languages` arrays;
 context supports filters embedded in the query.
 

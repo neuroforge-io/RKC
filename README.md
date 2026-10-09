@@ -119,6 +119,10 @@ rkc knowledge build --out ./knowledge-pack ./atlas-a ./atlas-b
 rkc knowledge verify --dir ./knowledge-pack --json
 ```
 
+[Model endpoints and ChatGPT context](docs/MODEL_ENDPOINTS.md) provides an
+opt-in loopback model connection, a fictional evaluation SOP and the current
+remote-integration boundaries.
+
 [Workbench and integrations](docs/WORKBENCH_AND_INTEGRATIONS.md) covers the
 GUI, CLI, HTTP, and agent workflows. See the [HTTP contract](api/openapi.yaml),
 [knowledge-pack format](docs/KNOWLEDGE_PACKS.md), and

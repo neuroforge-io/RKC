@@ -110,6 +110,26 @@ func (dataset *Dataset) BuildContext(ctx context.Context, query string, limit, m
 	}
 	response := dataset.Search.Search(search.Query{Text: query, Limit: limit, RequireExcerpt: true})
 	packet.Truncated = response.Truncated
+	documentHits := make(map[string]struct{})
+	for _, hit := range response.Hits {
+		if hit.Document.ObjectType == "document" {
+			documentHits[hit.Document.ID] = struct{}{}
+		}
+	}
+	documents := make(map[string]rkcmodel.Document, len(documentHits))
+	if len(documentHits) > 0 {
+		for _, document := range dataset.Bundle.Documents {
+			if err := ctx.Err(); err != nil {
+				return rkcapi.ContextPacket{}, err
+			}
+			if _, wanted := documentHits[document.ID]; wanted {
+				documents[document.ID] = document
+				if len(documents) == len(documentHits) {
+					break
+				}
+			}
+		}
+	}
 	for _, hit := range response.Hits {
 		if err := ctx.Err(); err != nil {
 			return rkcapi.ContextPacket{}, err
@@ -133,6 +153,11 @@ func (dataset *Dataset) BuildContext(ctx context.Context, query string, limit, m
 			sort.Strings(item.EvidenceIDs)
 		} else if artifact, ok := dataset.ArtifactByID[doc.ID]; ok && doc.ObjectType == "artifact" {
 			item.Source = &rkcmodel.SourceRange{ArtifactID: artifact.ID, Path: artifact.Path}
+		} else if document, ok := documents[doc.ID]; ok && doc.ObjectType == "document" {
+			item.Source, item.EvidenceIDs = dataset.contextDocumentReferences(ctx, document)
+			if err := ctx.Err(); err != nil {
+				return rkcapi.ContextPacket{}, err
+			}
 		}
 		// Admission bounds the complete encoded item, including attacker-controlled
 		// metadata and JSON escaping. An oversized top hit cannot crowd out others.

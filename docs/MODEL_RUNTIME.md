@@ -16,6 +16,13 @@ The pinned build receipt and RKC's stricter resource, license, prompt, and
 qualification contracts remain authoritative; upstream capability alone never
 promotes a model or enables a default.
 
+For an explicitly selected, credential-free local HTTP server, `rkc answer`
+also offers an OpenAI-compatible endpoint adapter. It does not qualify the
+external model or measure its server resource use. See
+[Model endpoints and ChatGPT context](MODEL_ENDPOINTS.md) for its loopback-only
+contract, integration test and remote-provider boundaries. The qualified local
+process described below retains its existing gates.
+
 ## Workflow
 
 ```text

@@ -22,6 +22,9 @@ const qualifiedClaimResponseSchema = `{"type":"object","additionalProperties":fa
 
 type qualifiedGenerationRequest struct {
 	Provider            string
+	Endpoint            string
+	HTTPModelName       string
+	HTTPProfile         string
 	ModelPath           string
 	LlamaCLI            string
 	ModelLock           string

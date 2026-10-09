@@ -256,6 +256,49 @@ type Provider interface {
 	Close() error
 }
 
+// ProviderCapabilities declares adapter controls and protocol bounds. These
+// values describe request admission, not upstream quality or server attestation.
+type ProviderCapabilities struct {
+	Profile              string `json:"profile"`
+	ResponseProtocol     string `json:"response_protocol"`
+	JSONSchemaOutput     bool   `json:"json_schema_output"`
+	TemperatureControl   bool   `json:"temperature_control"`
+	SystemPrompt         bool   `json:"system_prompt"`
+	MaximumPromptBytes   int    `json:"maximum_prompt_bytes"`
+	MaximumOutputTokens  int    `json:"maximum_output_tokens"`
+	MaximumContextTokens int    `json:"maximum_context_tokens"`
+}
+
+// CapabilityProvider optionally exposes an adapter's auditable request profile.
+type CapabilityProvider interface {
+	Capabilities() ProviderCapabilities
+}
+
+// PromptRequest contains every field permitted to affect transmitted prompt
+// text. Request IDs, deadlines and inference options are transport/audit state,
+// not prompt inputs; excluding them avoids identity cycles and digest drift.
+type PromptRequest struct {
+	Task           Task
+	Packet         EvidencePacket
+	ValidationPass int
+}
+
+// PromptBuilder optionally defines a provider-specific deterministic prompt.
+// Callers use the same builder as Generate to bind actual transmitted text in
+// their provenance instead of hashing an unused generic prompt.
+type PromptBuilder interface {
+	BuildPrompt(PromptRequest) (string, error)
+}
+
+// BuildProviderPrompt uses a provider's explicit protocol, preserving the
+// existing generic prompt for providers without an optional PromptBuilder.
+func BuildProviderPrompt(provider Provider, request Request) (string, error) {
+	if builder, ok := provider.(PromptBuilder); ok {
+		return builder.BuildPrompt(PromptRequest{Task: request.Task, Packet: request.Packet, ValidationPass: request.ValidationPass})
+	}
+	return BuildPrompt(request)
+}
+
 // ClaimValidation separates structurally admitted claim candidates from rejected
 // drafts and records deterministic diagnostics. AcceptedSummary remains empty in
 // protocol v1.
