@@ -111,6 +111,35 @@ type brokenProfileReader struct{}
 
 func (brokenProfileReader) Read([]byte) (int, error) { return 0, errors.New("synthetic read failure") }
 
+func TestProviderProfileRejectsCaseAliasesBeforePolicyDecoding(t *testing.T) {
+	profile, err := NewProviderProfile("openai", "fictional-model", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, err := MarshalProviderProfile(profile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	valid := string(data)
+	for _, test := range []struct{ name, input string }{
+		{"single consent alias", strings.Replace(valid, `"allow_remote"`, `"ALLOW_REMOTE"`, 1)},
+		{"single endpoint alias", strings.Replace(valid, `"endpoint"`, `"Endpoint"`, 1)},
+		{"conflicting consent aliases", strings.Replace(valid, `"allow_remote": true`, `"allow_remote": false, "ALLOW_REMOTE": true`, 1)},
+		{"reversed conflicting consent aliases", strings.Replace(valid, `"allow_remote": true`, `"ALLOW_REMOTE": true, "allow_remote": false`, 1)},
+		{"conflicting endpoint aliases", strings.Replace(valid, `"endpoint":`, `"ENDPOINT": "https://unexpected.example.test/v1/chat/completions", "endpoint":`, 1)},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			if _, err := ReadProviderProfile(strings.NewReader(test.input)); err == nil || !strings.Contains(err.Error(), "exact documented lowercase") {
+				t.Fatalf("case-aliased policy was accepted or failed after policy decoding: %v", err)
+			}
+		})
+	}
+	decoded, err := ReadProviderProfile(strings.NewReader(valid))
+	if err != nil || decoded != profile {
+		t.Fatalf("canonical profile changed: %+v %v", decoded, err)
+	}
+}
+
 func TestProviderProfileReadsOnlyOneBoundedStrictObject(t *testing.T) {
 	profile, _ := NewProviderProfile("ollama", "fictional-model", false)
 	data, _ := MarshalProviderProfile(profile)

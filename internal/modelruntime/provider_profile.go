@@ -87,6 +87,8 @@ func NewProviderProfile(presetID, model string, allowRemote bool) (ProviderProfi
 }
 
 // ReadProviderProfile reads one bounded, duplicate-free strict JSON object.
+// Only canonical lowercase keys are accepted, preventing encoding/json's
+// case-insensitive struct matching from replacing consent or connection policy.
 func ReadProviderProfile(reader io.Reader) (ProviderProfile, error) {
 	if reader == nil {
 		return ProviderProfile{}, errors.New("provider profile reader is required")
@@ -95,9 +97,25 @@ func ReadProviderProfile(reader io.Reader) (ProviderProfile, error) {
 	if err != nil || len(data) > 32*1024 {
 		return ProviderProfile{}, errors.New("provider profile must be readable and no larger than 32 KiB")
 	}
-	var profile ProviderProfile
-	if err := decodeSingleJSONObject(data, &profile, true); err != nil {
+	var fields map[string]json.RawMessage
+	if err := decodeSingleJSONObject(data, &fields, true); err != nil {
 		return ProviderProfile{}, errors.New("provider profile must be one valid JSON object with only documented fields")
+	}
+	for key := range fields {
+		switch key {
+		case "schema_version", "provider", "endpoint", "model", "profile", "api_key_env",
+			"allow_remote", "context_tokens", "max_output_tokens", "timeout_seconds":
+		default:
+			return ProviderProfile{}, errors.New("provider profile keys must use the exact documented lowercase spellings")
+		}
+	}
+	canonical, err := json.Marshal(fields)
+	if err != nil {
+		return ProviderProfile{}, errors.New("cannot encode verified provider profile fields")
+	}
+	var profile ProviderProfile
+	if err := json.Unmarshal(canonical, &profile); err != nil {
+		return ProviderProfile{}, errors.New("provider profile fields must have their documented JSON types")
 	}
 	if err := profile.Validate(); err != nil {
 		return ProviderProfile{}, err
