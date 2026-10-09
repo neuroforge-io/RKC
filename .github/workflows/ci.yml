@@ -8,6 +8,12 @@ on:
 permissions:
   contents: read
 
+# Frequent pushes should replace obsolete verification on the same reference.
+# Keep other branches, pull requests, and workflows in independent groups.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   verify:
     runs-on: ubuntu-24.04

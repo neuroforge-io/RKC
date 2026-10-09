@@ -46,6 +46,11 @@ The benchmark runs before the cold race check so source/export failures stop
 validation earlier. Both checks remain required, and the package assembler
 validates the same ordered inventory in the release receipt.
 
+CI cancels superseded verification runs for the same workflow and reference,
+so frequent pushes do not keep obsolete release checks consuming runner time.
+Other references and workflows use independent
+[GitHub Actions concurrency groups](https://docs.github.com/en/actions/how-tos/write-workflows/choose-when-workflows-run/control-workflow-concurrency).
+
 ## Test coverage policy
 
 `scripts/coverage_gate.py` discovers every current-platform package in the main
