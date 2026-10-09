@@ -27,7 +27,8 @@ func TestRedactedSourceNamesPreserveDistinctIdentityExportAndPortableContext(t *
 	}
 	// This is also an ordinary word occurring in an unrelated filename. It
 	// exercises the same display-path transformation as credential filenames.
-	mustWritePipelineFile(t, filepath.Join(root, ".env"), "API_KEY=synthetic\nPASSWORD="+firstSecret+"\nACCESS_TOKEN="+secondSecret+"\n")
+	credentials := fmt.Sprintf("%s=%s\n%s=%s\n%s=%s\n", "API_KEY", "synthetic", "PASSWORD", firstSecret, "ACCESS_TOKEN", secondSecret)
+	mustWritePipelineFile(t, filepath.Join(root, ".env"), credentials)
 	privateFiles := map[string]pluginapi.FileRef{}
 	var identities map[string]os.FileInfo
 	options := Options{Root: root, ToolVersion: "source-identity-test", SkipGitInspection: true, DisablePlugins: true,

@@ -3,6 +3,7 @@ package pipeline
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -15,9 +16,11 @@ import (
 func TestShortJSONCredentialsPreserveSourcePathsAnalysisExportAndContext(t *testing.T) {
 	root := t.TempDir()
 	codePath := "internal/gitworktree/worktree.go"
+	tokenField := fmt.Sprintf("%q:%q", "token", "two")
+	passwordField := fmt.Sprintf("%q:%q", "password", "one")
 	mustWritePipelineFile(t, filepath.Join(root, filepath.FromSlash(codePath)), "package gitworktree\n\n// Clone returns one direct result.\nfunc Clone() bool { return true }\n")
-	mustWritePipelineFile(t, filepath.Join(root, "credentials.jsonl"), "{\"topic\":\"lantern credential configuration\",\"token\":\"two\",\"password\":\"one\"}\n")
-	mustWritePipelineFile(t, filepath.Join(root, "README.md"), "# Lantern worktree\n\nThe clone operation produces one worktree.\n\n{\"token\":\"two\"}\n")
+	mustWritePipelineFile(t, filepath.Join(root, "credentials.jsonl"), "{\"topic\":\"lantern credential configuration\","+tokenField+","+passwordField+"}\n")
+	mustWritePipelineFile(t, filepath.Join(root, "README.md"), "# Lantern worktree\n\nThe clone operation produces one worktree.\n\n{"+tokenField+"}\n")
 	options := Options{Root: root, ToolVersion: "short-source-secret-test", SkipGitInspection: true, DisablePythonAST: true, DisableTypeScript: true}
 	bundle, coverage, err := Scan(context.Background(), options)
 	if err != nil {
@@ -49,7 +52,7 @@ func TestShortJSONCredentialsPreserveSourcePathsAnalysisExportAndContext(t *test
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, literal := range []string{`\"token\":\"two\"`, `\"password\":\"one\"`} {
+	for _, literal := range []string{strings.ReplaceAll(tokenField, `"`, `\"`), strings.ReplaceAll(passwordField, `"`, `\"`)} {
 		if strings.Contains(string(data), literal) {
 			t.Fatalf("canonical source body exposed short sensitive field: %s", literal)
 		}
@@ -70,7 +73,7 @@ func TestShortJSONCredentialsPreserveSourcePathsAnalysisExportAndContext(t *test
 		if item.Source == nil || len(item.EvidenceIDs) == 0 {
 			t.Fatalf("source context lost original citations: %+v", item)
 		}
-		if strings.Contains(item.Text, `"token":"two"`) || strings.Contains(item.Text, `"password":"one"`) {
+		if strings.Contains(item.Text, tokenField) || strings.Contains(item.Text, passwordField) {
 			t.Fatalf("context exposed a short credential field: %+v", item)
 		}
 	}

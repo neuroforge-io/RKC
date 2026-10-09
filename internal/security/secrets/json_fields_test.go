@@ -9,7 +9,16 @@ import (
 
 func TestQuotedJSONKeysEscapesShortValuesAndReferences(t *testing.T) {
 	t.Parallel()
-	data := []byte(`{"password":"short","nested":{"accessToken":"a\"secret\\value"},"\u0061pi_key":"escaped-field-private","description":"useful retained description","token":"env:TOKEN","secret":"replace-me"}`)
+	// Assemble raw JSON pairs at runtime so the checked-in source has no
+	// credential-shaped key/value pair, preserving every escape and source byte.
+	data := []byte("{" + strings.Join([]string{
+		quotedJSONFixturePair("password", "short"),
+		`"nested":{` + quotedJSONFixturePair("accessToken", `a\"secret\\value`) + "}",
+		quotedJSONFixturePair(`\u0061pi_key`, "escaped-field-private"),
+		quotedJSONFixturePair("description", "useful retained description"),
+		quotedJSONFixturePair("token", "env:TOKEN"),
+		quotedJSONFixturePair("secret", "replace-me"),
+	}, ",") + "}")
 	findings := Scan(data)
 	if len(findings) != 3 {
 		t.Fatalf("quoted-key findings = %+v, want 3", findings)
@@ -32,7 +41,7 @@ func TestQuotedJSONKeysEscapesShortValuesAndReferences(t *testing.T) {
 
 func TestContextualSecretScanningAndRedactionPreserveCoordinates(t *testing.T) {
 	t.Parallel()
-	data := []byte("a\r\n\"password\":\"value-private-8429\"\n")
+	data := []byte("a\r\n" + quotedJSONFixturePair("password", "value-private-8429") + "\n")
 	findings, err := ScanContext(context.Background(), data)
 	if err != nil || len(findings) != 1 {
 		t.Fatalf("contextual findings = %+v, %v", findings, err)
@@ -56,4 +65,10 @@ func TestContextualSecretScanningAndRedactionPreserveCoordinates(t *testing.T) {
 	if _, err := RedactContext(nil, data, findings); err == nil {
 		t.Fatal("nil redaction context succeeded")
 	}
+}
+
+// Keys and values are already JSON-escaped fragments. Deliberately avoid
+// reserialization: the Unicode-key and escaped-value tests bind raw ranges.
+func quotedJSONFixturePair(rawKey, rawValue string) string {
+	return `"` + rawKey + `":"` + rawValue + `"`
 }

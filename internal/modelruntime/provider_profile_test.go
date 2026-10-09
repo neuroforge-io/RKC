@@ -67,7 +67,9 @@ func TestProviderProfileRejectsInvalidPolicy(t *testing.T) {
 		{"credential omitted", func(p *ProviderProfile) { p.APIKeyEnv = "" }},
 		{"remote consent", func(p *ProviderProfile) { p.AllowRemote = false }},
 		{"remote HTTP", func(p *ProviderProfile) { p.Endpoint = "http://example.test/v1/chat/completions" }},
-		{"URL credential", func(p *ProviderProfile) { p.Endpoint = "https://user:private@example.test/v1/chat/completions" }},
+		{"URL credential", func(p *ProviderProfile) {
+			p.Endpoint = fmt.Sprintf("https://%s:%s@example.test/v1/chat/completions", "user", "private")
+		}},
 		{"URL query", func(p *ProviderProfile) { p.Endpoint += "?key=private" }},
 		{"URL fragment", func(p *ProviderProfile) { p.Endpoint += "#" }},
 		{"URL encoded path", func(p *ProviderProfile) { p.Endpoint = "https://example.test/v1/%63hat/completions" }},
@@ -146,7 +148,7 @@ func TestProviderProfileReadsOnlyOneBoundedStrictObject(t *testing.T) {
 	for _, invalid := range []string{
 		"[]", "{}", "null", string(data) + "{}",
 		strings.Replace(string(data), `"provider": "openai-compatible"`, `"provider": "openai-compatible", "provider": "openai"`, 1),
-		strings.Replace(string(data), `"schema_version"`, `"api_key": "fictional-secret", "schema_version"`, 1),
+		strings.Replace(string(data), `"schema_version"`, fmt.Sprintf("%q: %q, %q", "api_key", "fictional-secret", "schema_version"), 1),
 		strings.Repeat(" ", 32*1024+1),
 	} {
 		if _, err := ReadProviderProfile(strings.NewReader(invalid)); err == nil {

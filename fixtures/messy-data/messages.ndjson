@@ -1,3 +1,3 @@
 {"topic":"Orchid research","message":"Citation clarity saves orientation time","count":9007199254740993}
 Malformed export line: retained as evidence-bearing text for review.
-{"topic":"Orchid API integration","api_key":"fictional-key-84612","message":"Use a configurable model endpoint"}
+{"topic":"Orchid API integration","api_key":"env:RKC_FIXTURE_API_KEY","message":"Use a configurable model endpoint"}

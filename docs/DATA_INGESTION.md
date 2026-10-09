@@ -149,7 +149,16 @@ sanitization remain active around cached analyzer results.
 
 The [messy-data fixture](../fixtures/messy-data/meeting-notes.txt) combines
 fictional prose, logs, quoted multiline CSV, malformed NDJSON, exact large
-integers, and synthetic credentials. Tests cover deterministic file-order
+integers, and synthetic credential examples. The checked-in NDJSON contains
+the inert `env:RKC_FIXTURE_API_KEY` reference. Its integration test requires
+exactly one matching field and materializes only that reference into a
+synthetic value in a private temporary copy before scanning. It performs no
+environment lookup or credential retrieval. The test preserves all other
+record bytes and verifies that the artifact digest binds the materialized
+input, keeping the redaction positive control without committing a literal
+credential-shaped pair.
+
+Tests cover deterministic file-order
 independence, source-range fidelity, source/cache/sequential equivalence,
 export-wide credential withholding, search, structural context validation,
 grounded answers, size/section limits, and cancellation.

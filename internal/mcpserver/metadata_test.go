@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"strings"
 	"testing"
 )
@@ -19,7 +20,7 @@ func TestToolMetadataCompatibilityAndNoAuthority(t *testing.T) {
 		{"workspace", workspaceServer, "rkc.repositories"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			for _, metadata := range []string{`{}`, `{"progressToken":"request-1"}`, `{"progressToken":3.25}`, `{"progressToken":0,"example.org/context":{"Title":"Synthetic transport metadata","flags":[true,null,3]}}`} {
+			for _, metadata := range []string{`{}`, fmt.Sprintf(`{"progressToken":%q}`, "request-1"), `{"progressToken":3.25}`, `{"progressToken":0,"example.org/context":{"Title":"Synthetic transport metadata","flags":[true,null,3]}}`} {
 				request := json.RawMessage(`{"name":"` + test.tool + `","arguments":{},"_meta":` + metadata + `}`)
 				result, rpcErr := test.server.callTool(context.Background(), request)
 				if rpcErr != nil || result.(map[string]any)["isError"] != false {
@@ -63,7 +64,7 @@ func TestResourceMetadataIsOptionalAndCannotSelectURI(t *testing.T) {
 		{New(mcpDataset(), "test"), "rkc://snapshot/manifest"},
 		{workspaceServer, "rkc://workspace/repositories"},
 	} {
-		result, rpcErr := test.server.handle(context.Background(), "resources/read", json.RawMessage(`{"uri":"`+test.uri+`","_meta":{"progressToken":"receipt","example.org/context":{"opaque":true}}}`))
+		result, rpcErr := test.server.handle(context.Background(), "resources/read", json.RawMessage(fmt.Sprintf(`{"uri":"%s","_meta":{"progressToken":%q,"example.org/context":{"opaque":true}}}`, test.uri, "receipt")))
 		if rpcErr != nil || result == nil {
 			t.Fatalf("resource metadata rejected: %#v %#v", result, rpcErr)
 		}

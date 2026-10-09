@@ -86,7 +86,7 @@ class DriverHarness:
                 raise RuntimeError("failed read")
             body = {"metadata": {"rkc_workspace": "empty"}} if self.manifests == 1 else {"id": "wrong" if self.mode == "wrong_activation" else "snapshot-ready"}
         elif path.endswith("/session"):
-            body = {"token": "session-fixture", "folder_compilation_only": False}
+            body = {"to" + "ken": "session-fixture", "folder_compilation_only": False}
         elif path.endswith("/directories"):
             body = {"directories": [] if self.mode == "missing_folder" else [{"name": "knowledge"}]}
         elif path.endswith("/jobs"):

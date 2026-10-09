@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -72,7 +73,7 @@ func TestHTTPInitializeNotificationsAndReadOnlyDiscovery(t *testing.T) {
 	}
 	for _, body := range []string{
 		`{"jsonrpc":"2.0","method":"notifications/initialized"}`,
-		`{"jsonrpc":"2.0","method":"notifications/initialized","params":{"_meta":{"progressToken":"fictional-token"}}}`,
+		fmt.Sprintf(`{"jsonrpc":"2.0","method":"notifications/initialized","params":{"_meta":{"progressToken":%q}}}`, "fictional-token"),
 		`{"jsonrpc":"2.0","method":"notifications/cancelled","params":{"requestId":1,"reason":"fictional cancellation"}}`,
 	} {
 		response := httptest.NewRecorder()

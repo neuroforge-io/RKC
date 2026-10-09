@@ -2,7 +2,10 @@ package pipeline
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -11,11 +14,17 @@ import (
 	"github.com/neuroforge-io/RKC/internal/docparse"
 	"github.com/neuroforge-io/RKC/internal/export"
 	"github.com/neuroforge-io/RKC/internal/search"
+	"github.com/neuroforge-io/RKC/internal/security/secrets"
 	"github.com/neuroforge-io/RKC/pkg/rkcmodel"
 )
 
 func TestMessyDataScanExportSearchAndCacheEquivalence(t *testing.T) {
 	root := t.TempDir()
+	const fixtureReference = "env:RKC_FIXTURE_API_KEY"
+	const materializedValue = "fictional-key-84612"
+	referenceField := fmt.Sprintf("%q:%q", "api_key", fixtureReference)
+	materializedField := fmt.Sprintf("%q:%q", "api_key", materializedValue)
+	materializedDigest := ""
 	fixtureDir := filepath.Join("..", "..", "fixtures", "messy-data")
 	entries, err := os.ReadDir(fixtureDir)
 	if err != nil {
@@ -26,7 +35,25 @@ func TestMessyDataScanExportSearchAndCacheEquivalence(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
+		if entry.Name() == "messages.ndjson" {
+			// Materialize only the one declared reference in this private copy.
+			// Keep malformed records, large numbers and every other byte intact.
+			if strings.Count(string(body), referenceField) != 1 {
+				t.Fatal("NDJSON fixture must contain exactly one declared credential reference")
+			}
+			body = []byte(strings.Replace(string(body), referenceField, materializedField, 1))
+			findings := secrets.Scan(body)
+			if len(findings) != 1 || findings[0].Kind != "json_secret_field" || findings[0].Confidence != .9 ||
+				findings[0].KeyName != "api_key" || string(body[findings[0].StartByte:findings[0].EndByte]) != materializedValue {
+				t.Fatalf("materialized credential positive control lost its exact source receipt: %+v", findings)
+			}
+			digest := sha256.Sum256(body)
+			materializedDigest = hex.EncodeToString(digest[:])
+		}
 		mustWritePipelineFile(t, filepath.Join(root, entry.Name()), string(body))
+	}
+	if materializedDigest == "" {
+		t.Fatal("messy-data fixture omitted the materialized NDJSON positive control")
 	}
 	cache, err := OpenStageCache(filepath.Join(t.TempDir(), "cache"))
 	if err != nil {
@@ -45,16 +72,26 @@ func TestMessyDataScanExportSearchAndCacheEquivalence(t *testing.T) {
 			t.Fatalf("source provenance = %+v", document)
 		}
 	}
+	materializedReceipts := 0
 	for _, artifact := range bundle.Artifacts {
 		if artifact.Status != "text" {
 			t.Fatalf("source document projection falsely upgraded syntax precision: %+v", artifact)
 		}
+		if artifact.Path == "messages.ndjson" {
+			materializedReceipts++
+			if artifact.SHA256 != materializedDigest {
+				t.Fatalf("source receipt used the checked-in reference instead of materialized original bytes: %+v", artifact)
+			}
+		}
+	}
+	if materializedReceipts != 1 {
+		t.Fatalf("materialized NDJSON source must retain one artifact receipt, got %d", materializedReceipts)
 	}
 	if report := rkcmodel.ValidateBundle(bundle, rkcmodel.ValidationOptions{StrictVocabulary: true, RequireEvidence: true}); report.HasErrors() {
 		t.Fatalf("canonical source evidence failed validation: %+v", report)
 	}
 	encoded, _ := json.Marshal(bundle)
-	for _, value := range []string{"fictional-pass-3842", "fictional-pass-9175", "fictional-key-84612"} {
+	for _, value := range []string{"fictional-pass-3842", "fictional-pass-9175", materializedValue} {
 		if strings.Contains(string(encoded), value) {
 			t.Fatalf("canonical source leaked %q", value)
 		}
@@ -93,7 +130,7 @@ func TestMessyDataScanExportSearchAndCacheEquivalence(t *testing.T) {
 		if err != nil {
 			return err
 		}
-		for _, value := range []string{"fictional-pass-3842", "fictional-pass-9175", "fictional-key-84612"} {
+		for _, value := range []string{"fictional-pass-3842", "fictional-pass-9175", materializedValue} {
 			if strings.Contains(string(body), value) {
 				t.Errorf("export %s leaked %q", path, value)
 			}

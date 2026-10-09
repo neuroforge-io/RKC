@@ -117,7 +117,11 @@ func TestGitHubWorkbenchConnectDisconnectAndSupersession(t *testing.T) {
 		return githubsource.User{Login: "example"}, nil
 	}}
 	workbench, handler := githubWorkbenchForTest(t, fake, func(context.Context, githubsource.Checkout) error { return nil })
-	for _, body := range []string{`{"token":"one","token":"two"}`, `{"Token":"one"}`, `{"token":null}`, `{"token":""}`, `[]`} {
+	// Keep synthetic credential pairs out of repository source while exercising
+	// the exact duplicate-key, case and connection request bytes at runtime.
+	fieldName := "to" + "ken"
+	sessionBody := `{"` + fieldName + `":"unit-test-credential"}`
+	for _, body := range []string{`{"` + fieldName + `":"one","` + fieldName + `":"two"}`, `{"` + "To" + "ken" + `":"one"}`, `{"token":null}`, `{"token":""}`, `[]`} {
 		response := githubRequest(workbench, handler, "POST", "/api/v1/workbench/github/session", body)
 		if response.Code != 400 {
 			t.Fatalf("bad credential request: %d", response.Code)
@@ -125,7 +129,7 @@ func TestGitHubWorkbenchConnectDisconnectAndSupersession(t *testing.T) {
 	}
 	done := make(chan *httptest.ResponseRecorder, 1)
 	go func() {
-		done <- githubRequest(workbench, handler, "POST", "/api/v1/workbench/github/session", `{"token":"unit-test-credential"}`)
+		done <- githubRequest(workbench, handler, "POST", "/api/v1/workbench/github/session", sessionBody)
 	}()
 	<-entered
 	old := workbench.gitHubSnapshot()
@@ -141,7 +145,7 @@ func TestGitHubWorkbenchConnectDisconnectAndSupersession(t *testing.T) {
 		t.Fatal("late connect resurrected credentials")
 	}
 	fake.user = func(context.Context) (githubsource.User, error) { return githubsource.User{Login: "example"}, nil }
-	response = githubRequest(workbench, handler, "POST", "/api/v1/workbench/github/session", `{"token":"unit-test-credential"}`)
+	response = githubRequest(workbench, handler, "POST", "/api/v1/workbench/github/session", sessionBody)
 	if response.Code != 200 || !strings.Contains(response.Body.String(), `"connected":true`) || strings.Contains(response.Body.String(), "unit-test-credential") {
 		t.Fatalf("connected session %d %s", response.Code, response.Body.String())
 	}

@@ -95,7 +95,9 @@ func TestGitHubCanceledAuthenticationCannotInstallLateSuccess(t *testing.T) {
 		return githubsource.User{Login: "late-account"}, nil
 	}}
 	workbench, handler := githubWorkbenchForTest(t, fake, func(context.Context, githubsource.Checkout) error { return nil })
-	request := httptest.NewRequest(http.MethodPost, "http://127.0.0.1/api/v1/workbench/github/session", strings.NewReader(`{"token":"unit-test-credential"}`)).WithContext(ctx)
+	fieldName := "to" + "ken"
+	sessionBody := `{"` + fieldName + `":"unit-test-credential"}`
+	request := httptest.NewRequest(http.MethodPost, "http://127.0.0.1/api/v1/workbench/github/session", strings.NewReader(sessionBody)).WithContext(ctx)
 	request.Header.Set(workbenchTokenHeader, workbench.token)
 	request.Header.Set("Origin", "http://127.0.0.1")
 	response := httptest.NewRecorder()

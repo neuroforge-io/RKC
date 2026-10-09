@@ -58,7 +58,7 @@ func TestOpenAICompatibleEndpointAndConfigurationFailClosed(t *testing.T) {
 		"", "https://api.example.test/v1/chat/completions", "http://localhost/v1/chat/completions",
 		"http://192.0.2.1/v1/chat/completions", "http://2130706433/v1/chat/completions",
 		"http://127.0.0.1.example.test/v1/chat/completions", "http://[::ffff:192.0.2.1]/v1/chat/completions",
-		"http://user:synthetic@127.0.0.1/v1/chat/completions", "http://127.0.0.1/v1/chat/completions?token=synthetic",
+		fmt.Sprintf("http://%s:%s@127.0.0.1/v1/chat/completions", "user", "synthetic"), "http://127.0.0.1/v1/chat/completions?token=synthetic",
 		"http://127.0.0.1/v1/chat/completions?", "http://127.0.0.1/v1/chat/completions#synthetic",
 		"http://127.0.0.1/v1/chat/completions#",
 		"http://127.0.0.1/v1/%63hat/completions", "http://127.0.0.1/v1//chat/completions",

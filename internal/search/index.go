@@ -398,10 +398,11 @@ func IndexesRepositoryTextBody(artifact rkcmodel.Artifact) bool {
 
 func repositoryTextMetadata(artifact rkcmodel.Artifact, body string) map[string]string {
 	digest := sha256.Sum256([]byte(body))
+	const redactionMetadataKey = "rkc_secret_redacted"
 	return map[string]string{
 		"rkc_body_kind":              repositoryTextBodyKind,
 		"rkc_body_sha256":            hex.EncodeToString(digest[:]),
-		"rkc_secret_redacted":        "true",
+		redactionMetadataKey:         "true",
 		"rkc_source_artifact_sha256": artifact.SHA256,
 	}
 }

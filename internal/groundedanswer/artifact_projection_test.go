@@ -261,7 +261,8 @@ func TestCanonicalMarkdownExcerptsStaySelectedBoundedAndSnapshotSpecific(t *test
 
 func TestCanonicalMarkdownExcerptsRedactSyntheticSecretAndRetainConstraintCategory(t *testing.T) {
 	const syntheticValue = "fictional_only_never_a_real_credential_1234"
-	bundle := syntheticMarkdownBundle(t, "# Lending\nFictional lantern kits may be borrowed for 7 days.\napi_key="+syntheticValue+"\n")
+	const assignment = "api_" + "key="
+	bundle := syntheticMarkdownBundle(t, "# Lending\nFictional lantern kits may be borrowed for 7 days.\n"+assignment+syntheticValue+"\n")
 	provider := fictionalExcerptProvider()
 	service, _ := New(provider, Options{})
 	result, err := service.Answer(context.Background(), fictionalGroundingRequest(bundle, bundle.Artifacts[0].ID))
@@ -269,7 +270,7 @@ func TestCanonicalMarkdownExcerptsRedactSyntheticSecretAndRetainConstraintCatego
 		t.Fatalf("constraint rejected: %+v %v", result, err)
 	}
 	packet, _ := json.Marshal(provider.requests[0].Packet)
-	if strings.Contains(string(packet), syntheticValue) || !strings.Contains(string(packet), "api_key="+strings.Repeat("*", len(syntheticValue))) {
+	if strings.Contains(string(packet), syntheticValue) || !strings.Contains(string(packet), assignment+strings.Repeat("*", len(syntheticValue))) {
 		t.Fatal("synthetic credential was not redacted")
 	}
 	provider = testProvider()

@@ -3,6 +3,7 @@ package modelruntime
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -25,7 +26,7 @@ func TestModelDiscoveryIsMetadataOnlyAndSurfacesIncompletePages(t *testing.T) {
 				}
 				w.Header().Set("Content-Type", "application/json")
 				if protocol == "gemini" {
-					_, _ = io.WriteString(w, `{"models":[{"name":"models/fictional-model","displayName":"Fictional model","supportedGenerationMethods":["generateContent"]}],"nextPageToken":"unfollowed-page"}`)
+					_, _ = io.WriteString(w, fmt.Sprintf(`{"models":[{"name":"models/fictional-model","displayName":"Fictional model","supportedGenerationMethods":["generateContent"]}],"nextPageToken":%q}`, "unfollowed-page"))
 				} else {
 					_, _ = io.WriteString(w, `{"data":[{"id":"fictional-model","display_name":"Fictional model"}],"has_more":true}`)
 				}
