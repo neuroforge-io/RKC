@@ -24,6 +24,7 @@ import (
 	"github.com/neuroforge-io/RKC/internal/safeoutput"
 	"github.com/neuroforge-io/RKC/internal/scheduler"
 	"github.com/neuroforge-io/RKC/internal/snapshot"
+	"github.com/neuroforge-io/RKC/pkg/pluginapi"
 	"github.com/neuroforge-io/RKC/pkg/rkcmodel"
 )
 
@@ -402,6 +403,8 @@ func runScanWithSource(ctx context.Context, args []string, importedSource *guiSo
 		}
 	}()
 	runJournalPath := runJournal.Path()
+	var sourceFiles map[string]pluginapi.FileRef
+	var sourceIdentities map[string]os.FileInfo
 	bundle, coverage, scanErr := pipeline.Scan(ctx, pipeline.Options{
 		ArchiveProvenance: archiveProvenance,
 		SkipGitInspection: *noGitMetadata,
@@ -426,6 +429,13 @@ func runScanWithSource(ctx context.Context, args []string, importedSource *guiSo
 		RunID:                  runID,
 		Journal:                runJournal,
 		DeferJournalCompletion: true,
+		OnSourceInventory: func(files []pluginapi.FileRef, identities map[string]os.FileInfo) {
+			sourceFiles = make(map[string]pluginapi.FileRef, len(files))
+			for _, file := range files {
+				sourceFiles[file.ArtifactID] = file
+			}
+			sourceIdentities = identities
+		},
 		ResourceBudget: scheduler.ResourceBudget{
 			MemoryMiB: *stageMemory,
 			CPU:       *stageWorkers,
@@ -485,6 +495,7 @@ func runScanWithSource(ctx context.Context, args []string, importedSource *guiSo
 		DisableStaticSite: *noStaticSite, DisableJSONLGraph: *noJSONLGraph,
 		DisableSearchIndex: *noSearchIndex, DisableIntegrations: *noIntegrations,
 		UnsafeIncludeSecrets: *unsafeIncludeSecrets,
+		SourceFiles:          sourceFiles, SourceIdentities: sourceIdentities,
 	})
 	if err != nil {
 		if sqlitePending != nil {

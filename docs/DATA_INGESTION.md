@@ -36,7 +36,7 @@ and are not introduced by this adapter.
 
 ## Reading source receipts
 
-The producer is `rkc.source-documents@0.1.0`. Every source document, section
+The producer is `rkc.source-documents@0.2.0`. Every source document, section
 node, and evidence record retains its inventoried artifact identity, relative
 path, original SHA-256, and original line and half-open byte ranges. Original
 UTF-8, CRLF/LF layout, large JSON numbers, duplicate JSON keys, and malformed
@@ -62,6 +62,13 @@ ranges, and projection metadata before granting source references. They do
 not need the original folder after the atlas has been moved. This is
 structural provenance validation; it does not authenticate an external
 export's original producer.
+
+Document and section identity uses the opaque inventoried artifact ID, so
+redacting a filename does not break its citations or combine two files that
+share a safe display name. Existing v0.1 atlases with original clean paths
+retain portable references; rescan older atlases with redacted paths to obtain
+the new binding. The [identity RFC](rfc/source-document-identity-v0.2.md)
+documents the producer migration and its cache boundary.
 
 ## Sensitive fields and malformed exports
 

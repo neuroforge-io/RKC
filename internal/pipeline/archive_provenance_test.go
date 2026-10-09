@@ -10,6 +10,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/neuroforge-io/RKC/internal/docparse"
 	"github.com/neuroforge-io/RKC/pkg/rkcmodel"
 )
 
@@ -74,7 +75,7 @@ func TestArchiveProvenanceMatchesStagedAndSequentialWithoutGit(t *testing.T) {
 
 func TestArchiveProvenanceIdentityPreservesNilHistory(t *testing.T) {
 	options := Options{ConfigDigest: "config", PolicyDigest: "policy", PluginLockDigest: "plugins", ToolchainDigest: "toolchain"}
-	expected := rkcmodel.StableID("snapshot", "repository", "commit", "inventory", "scip", "trace-input", "trace", "history-input", "history", "config", "policy", "plugins", "toolchain", rkcmodel.SchemaVersion)
+	expected := rkcmodel.StableID("snapshot", "repository", "commit", "inventory", "scip", "trace-input", "trace", "history-input", "history", "config", "policy", "plugins", "toolchain", rkcmodel.SchemaVersion, "builtin-source-documents/v1", docparse.SourcePluginID, docparse.SourcePluginVersion)
 	legacy := stableSnapshotID("repository", "commit", "inventory", "scip", "trace", "history", options)
 	if legacy != expected {
 		t.Fatal("nil archive provenance changed existing snapshot identity")

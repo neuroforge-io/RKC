@@ -117,6 +117,12 @@ type Options struct {
 	// OnStageEvent receives deterministic scheduler lifecycle events. Callers
 	// must return quickly; callbacks are serialized across concurrent stages.
 	OnStageEvent func(scheduler.Event)
+
+	// OnSourceInventory receives independent in-memory source references and
+	// baseline file identities only after a successful, reverified scan. These
+	// private paths must never be persisted in canonical bundles or diagnostics.
+	// Identities are keyed by ArtifactID, not by the sanitized display path.
+	OnSourceInventory func([]pluginapi.FileRef, map[string]os.FileInfo)
 }
 
 func scanSequential(ctx context.Context, opts Options) (rkcmodel.Bundle, rkcmodel.Coverage, error) {
@@ -402,6 +408,7 @@ func scanSequential(ctx context.Context, opts Options) (rkcmodel.Bundle, rkcmode
 		)
 	}
 	coverage := rkcmodel.BuildCoverage(bundle)
+	publishSourceInventory(opts, files, sourceIdentities)
 	return bundle, coverage, nil
 }
 
@@ -436,6 +443,12 @@ func stableSnapshotID(
 		opts.PluginLockDigest,
 		opts.ToolchainDigest,
 		rkcmodel.SchemaVersion,
+		// Built-in source-document identities are independent of the external
+		// plugin lock. Bind their recipe even when no documents are admitted,
+		// so changed canonical output never reuses an immutable snapshot ID.
+		"builtin-source-documents/v1",
+		docparse.SourcePluginID,
+		docparse.SourcePluginVersion,
 	)
 	return rkcmodel.StableID("snapshot", parts...)
 }

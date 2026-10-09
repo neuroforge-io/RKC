@@ -23,7 +23,7 @@ func SourceDocumentReferences(ctx context.Context, document rkcmodel.Document,
 	evidence map[string]rkcmodel.Evidence,
 ) (*rkcmodel.SourceRange, []string) {
 	if ctx == nil || ctx.Err() != nil || document.Kind != "source_document" ||
-		document.Generator != SourcePluginID || document.GeneratorVersion != SourcePluginVersion ||
+		document.Generator != SourcePluginID || (document.GeneratorVersion != SourcePluginVersion && document.GeneratorVersion != "0.1.0") ||
 		document.Status != "validated" || len(document.SubjectIDs) != 1 || len(document.Sections) == 0 ||
 		len(document.Sections) > MaximumSourceSections {
 		return nil, nil
@@ -37,7 +37,7 @@ func SourceDocumentReferences(ctx context.Context, document rkcmodel.Document,
 	}
 	artifactID, _ := document.Attributes["artifact_id"].(string)
 	artifact, ok := artifacts[artifactID]
-	if !ok || !artifact.Text || artifact.ID != artifactID || artifact.SizeBytes < 1 ||
+	if !ok || !artifact.Text || artifactID == "" || artifact.ID != artifactID || artifact.SizeBytes < 1 ||
 		artifact.SizeBytes > MaximumSourceFileBytes || artifact.LineCount < 1 ||
 		!IsSourceCandidate(pluginapi.FileRef{Language: artifact.Language}) ||
 		artifact.Path == "" || artifact.Path == "." || path.IsAbs(artifact.Path) ||
@@ -45,22 +45,39 @@ func SourceDocumentReferences(ctx context.Context, document rkcmodel.Document,
 		strings.HasPrefix(artifact.Path, "../") || strings.ContainsAny(artifact.Path, "\\\x00\r\n") ||
 		document.Path != artifact.Path || document.Title != path.Base(artifact.Path) ||
 		document.Attributes["source_sha256"] != artifact.SHA256 ||
-		document.Attributes["source_format"] != artifact.Language ||
-		document.ID != rkcmodel.StableID("document", SourcePluginID, artifact.Path) {
+		document.Attributes["source_format"] != artifact.Language {
 		return nil, nil
 	}
 	if digest, err := hex.DecodeString(artifact.SHA256); err != nil || len(digest) != 32 {
 		return nil, nil
 	}
+	identity := artifact.ID
+	if document.GeneratorVersion == "0.1.0" {
+		// The legacy producer used original path bytes in its ID formulas.
+		// It is admissible only when the artifact's opaque ID proves the display
+		// path still equals that original path; no redacted-path bypass exists.
+		if artifact.ID != rkcmodel.StableID("artifact", artifact.Path) {
+			return nil, nil
+		}
+		identity = artifact.Path
+	} else if digest, err := hex.DecodeString(strings.TrimPrefix(artifact.ID, "rkc:artifact:")); !strings.HasPrefix(artifact.ID, "rkc:artifact:") || err != nil || len(digest) != 12 || artifact.ID != strings.ToLower(artifact.ID) {
+		// v0.2 uses the existing opaque inventoried StableID, never a display
+		// path or a caller-provided string that could disclose original names.
+		return nil, nil
+	}
+	if document.ID != rkcmodel.StableID("document", SourcePluginID, identity) ||
+		document.LogicalID != rkcmodel.StableID("logical-document", SourcePluginID, identity) {
+		return nil, nil
+	}
 	whole := rkcmodel.SourceRange{ArtifactID: artifact.ID, Path: artifact.Path,
 		StartLine: 1, EndLine: artifact.LineCount, EndByte: artifact.SizeBytes}
-	nodeID := rkcmodel.StableID("node", SourcePluginID, artifact.Path)
+	nodeID := rkcmodel.StableID("node", SourcePluginID, identity)
 	wholeID := rkcmodel.StableID("evidence", SourcePluginID, artifact.ID, "document")
 	node, ok := nodes[document.SubjectIDs[0]]
-	if !ok || node.ID != nodeID || node.Kind != "document" || node.Language != artifact.Language ||
+	if !ok || document.SubjectIDs[0] != nodeID || node.ID != nodeID || node.LogicalID != rkcmodel.StableID("logical", SourcePluginID, identity) || node.Kind != "document" || node.Language != artifact.Language ||
 		node.ArtifactID != artifact.ID || node.Name != document.Title || node.QualifiedName != artifact.Path ||
 		!reflect.DeepEqual(node.Source, &whole) || len(node.EvidenceIDs) != 1 || node.EvidenceIDs[0] != wholeID ||
-		!validSourceEvidence(evidence[wholeID], wholeID, "source.document", artifact, &whole) {
+		!validSourceEvidence(evidence[wholeID], wholeID, "source.document", document.GeneratorVersion, artifact, &whole) {
 		return nil, nil
 	}
 	ids := []string{wholeID}
@@ -91,7 +108,8 @@ func SourceDocumentReferences(ctx context.Context, document rkcmodel.Document,
 		}
 		start, end := strconv.FormatInt(source.StartByte, 10), strconv.FormatInt(source.EndByte, 10)
 		id := rkcmodel.StableID("evidence", SourcePluginID, artifact.ID, start, end)
-		if section.ID != rkcmodel.StableID("node", SourcePluginID, artifact.Path, start, end) ||
+		if section.ID != rkcmodel.StableID("node", SourcePluginID, identity, start, end) ||
+			sectionNode.LogicalID != rkcmodel.StableID("logical", SourcePluginID, identity, start, end) ||
 			sectionNode.QualifiedName != artifact.Path+"#bytes-"+start+"-"+end || section.EvidenceIDs[0] != id {
 			return nil, nil
 		}
@@ -101,7 +119,7 @@ func SourceDocumentReferences(ctx context.Context, document rkcmodel.Document,
 			!(method == "source.csv_record" && (artifact.Language == "csv" || artifact.Language == "tsv")) {
 			return nil, nil
 		}
-		if !validSourceEvidence(item, id, method, artifact, source) {
+		if !validSourceEvidence(item, id, method, document.GeneratorVersion, artifact, source) {
 			return nil, nil
 		}
 		projection, _ := section.Attributes["projection"].(string)
@@ -148,9 +166,9 @@ func SourceDocumentReferences(ctx context.Context, document rkcmodel.Document,
 	return &whole, ids
 }
 
-func validSourceEvidence(item rkcmodel.Evidence, id, method string, artifact rkcmodel.Artifact, source *rkcmodel.SourceRange) bool {
+func validSourceEvidence(item rkcmodel.Evidence, id, method, version string, artifact rkcmodel.Artifact, source *rkcmodel.SourceRange) bool {
 	return item.ID == id && item.Kind == "documentation_asserted" && item.Method == method && item.Confidence == 1 &&
-		item.Tool == SourcePluginID && item.ToolVersion == SourcePluginVersion &&
+		item.Tool == SourcePluginID && item.ToolVersion == version &&
 		item.InputDigest == artifact.SHA256 && reflect.DeepEqual(item.Source, source)
 }
 

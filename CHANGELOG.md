@@ -20,6 +20,10 @@ and RKC contributors and Apache-2.0 licensed.
 - Lower configurable CPU quotas for busy development hosts, alongside smaller
   memory ceilings and one-at-a-time local checks. Short credential values stay
   masked in their fields without renaming unrelated files or code symbols.
+- Private, verified source references for file reads after display-name
+  redaction, distinct normalized outputs for colliding names, and versioned
+  source-document identities that keep portable citations intact. New snapshot
+  identities bind that producer version; stored snapshots remain readable.
 
 These changes are in development source. Portable release qualification and
 real hosted-model quality remain separate from local tests and protocol mocks.

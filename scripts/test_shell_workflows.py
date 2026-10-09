@@ -9,6 +9,7 @@ release/CI jobs provide the execution evidence for the destructive paths.
 """
 from __future__ import annotations
 
+import ast
 import os
 import re
 import shutil
@@ -62,6 +63,33 @@ class ShellWorkflowTests(unittest.TestCase):
         text = (ROOT / "scripts/benchmark-reference.sh").read_text(encoding="utf-8")
         self.assertIn("--no-cache", text)
         self.assertIn('--runs-dir "$WORK/runs"', text)
+
+    def test_release_benchmark_precedes_race_and_receipt_order_matches(self) -> None:
+        text = (ROOT / "scripts/verify-release.sh").read_text(encoding="utf-8")
+        inventory = re.search(r"^EXPECTED_STEPS='([^']+)'$", text, re.MULTILINE)
+        self.assertIsNotNone(inventory)
+        assert inventory is not None
+        expected = tuple(inventory.group(1).split())
+        executed = tuple(re.findall(r"^run_step ([a-z-]+) ", text, re.MULTILINE))
+        self.assertEqual(len(expected), 18)
+        self.assertEqual(len(set(expected)), 18)
+        self.assertEqual(executed, expected)
+        self.assertEqual(executed[-2:], ("benchmark", "race"))
+
+        package = ast.parse(
+            (ROOT / "scripts/package-complete.py").read_text(encoding="utf-8")
+        )
+        release_steps = [
+            node.value
+            for node in package.body
+            if isinstance(node, ast.Assign)
+            and any(
+                isinstance(target, ast.Name) and target.id == "RELEASE_STEPS"
+                for target in node.targets
+            )
+        ]
+        self.assertEqual(len(release_steps), 1)
+        self.assertEqual(ast.literal_eval(release_steps[0]), expected)
 
     def test_workflows_exist_have_strict_mode_and_parse(self) -> None:
         discovered = {"install.sh"} | {

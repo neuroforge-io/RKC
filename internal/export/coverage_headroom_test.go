@@ -255,9 +255,23 @@ func TestCoverageHeadroomNormalizedOutputFaults(t *testing.T) {
 	}
 	redacted := exportFixture(root, "b.go", secretB)
 	second := exportFixture(root, "a.go", secretA)
+	redacted.Artifacts[0].ID = model.StableID("artifact", "b.go")
+	redacted.Nodes[1].ArtifactID = redacted.Artifacts[0].ID
+	redacted.Evidence[0].Source.ArtifactID = redacted.Artifacts[0].ID
+	second.Artifacts[0].ID = model.StableID("artifact", "a.go")
 	redacted.Artifacts = append(redacted.Artifacts, second.Artifacts[0])
-	if err := writeNormalizedSources(redacted, Options{Root: root, Output: t.TempDir()}); err != nil {
+	redactionOutput := t.TempDir()
+	if err := writeNormalizedSources(redacted, Options{Root: root, Output: redactionOutput}); err != nil {
 		t.Fatalf("sorted redaction export: %v", err)
+	}
+	var redactionReceipt struct {
+		Findings []struct {
+			Path string `json:"path"`
+		} `json:"findings"`
+	}
+	readExportJSON(t, filepath.Join(redactionOutput, "normalized", "redactions.json"), &redactionReceipt)
+	if len(redactionReceipt.Findings) != 2 || redactionReceipt.Findings[0].Path != "a.go" || redactionReceipt.Findings[1].Path != "b.go" {
+		t.Fatalf("redaction findings lost sorted source identity: %+v", redactionReceipt.Findings)
 	}
 
 	gitBundle := bundle

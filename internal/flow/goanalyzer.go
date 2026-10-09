@@ -12,6 +12,7 @@ import (
 	"strings"
 	"unicode/utf8"
 
+	"github.com/neuroforge-io/RKC/pkg/pluginapi"
 	"github.com/neuroforge-io/RKC/pkg/rkcmodel"
 )
 
@@ -25,12 +26,14 @@ type goAnalyzer struct {
 	fragment  rkcmodel.Fragment
 	stats     Stats
 
-	seenNodes    map[string]struct{}
-	seenEdges    map[string]struct{}
-	nodeByID     map[string]rkcmodel.Node
-	artifacts    map[string]rkcmodel.Artifact
-	boundSeen    map[string]struct{}
-	omissionSeen map[string]struct{}
+	seenNodes        map[string]struct{}
+	seenEdges        map[string]struct{}
+	nodeByID         map[string]rkcmodel.Node
+	artifacts        map[string]rkcmodel.Artifact
+	sourceFiles      map[string]pluginapi.FileRef
+	duplicateSources map[string]struct{}
+	boundSeen        map[string]struct{}
+	omissionSeen     map[string]struct{}
 
 	cfgBlockLimitHit   bool
 	cfgEdgeLimitHit    bool
@@ -57,6 +60,8 @@ func newGoAnalyzer(ctx context.Context, options Options, graph *callGraph, limit
 		boundSeen: map[string]struct{}{}, omissionSeen: map[string]struct{}{},
 		fileASTs: map[string]*ast.File{}, fileSets: map[string]*token.FileSet{},
 		fileMissing:         map[string]struct{}{},
+		sourceFiles:         map[string]pluginapi.FileRef{},
+		duplicateSources:    map[string]struct{}{},
 		flowEdgesByFunction: map[string]int{},
 		deferredBoundSeen:   map[string]struct{}{},
 	}
@@ -66,21 +71,23 @@ func newGoAnalyzer(ctx context.Context, options Options, graph *callGraph, limit
 	for _, artifact := range options.Artifacts {
 		analyzer.artifacts[artifact.ID] = artifact
 	}
+	for _, file := range options.Files {
+		if _, exists := analyzer.sourceFiles[file.ArtifactID]; exists {
+			analyzer.duplicateSources[file.ArtifactID] = struct{}{}
+		}
+		analyzer.sourceFiles[file.ArtifactID] = file
+	}
 	return analyzer
 }
 
 func (analyzer *goAnalyzer) analyze() error {
-	artifactsByID := map[string]rkcmodel.Artifact{}
-	for _, artifact := range analyzer.options.Artifacts {
-		artifactsByID[artifact.ID] = artifact
-	}
 	// Deterministic order: process function nodes in ID order.
 	var functions []rkcmodel.Node
 	for _, node := range analyzer.options.Bundle.Nodes {
 		if !isFunctionLike(node.Kind) || node.Language != "go" || node.Source == nil {
 			continue
 		}
-		if _, ok := artifactsByID[node.ArtifactID]; !ok {
+		if _, ok := analyzer.artifacts[node.ArtifactID]; !ok {
 			continue
 		}
 		functions = append(functions, node)
@@ -136,18 +143,32 @@ func (analyzer *goAnalyzer) fileFor(function rkcmodel.Node) (*ast.File, *token.F
 	if _, missing := analyzer.fileMissing[function.ArtifactID]; missing {
 		return nil, nil, false
 	}
-	var artifact *rkcmodel.Artifact
-	for index := range analyzer.options.Artifacts {
-		if analyzer.options.Artifacts[index].ID == function.ArtifactID {
-			artifact = &analyzer.options.Artifacts[index]
-			break
-		}
-	}
-	if artifact == nil {
+	artifact, exists := analyzer.artifacts[function.ArtifactID]
+	if !exists {
 		analyzer.fileMissing[function.ArtifactID] = struct{}{}
 		return nil, nil, false
 	}
-	source, err := readArtifactSource(analyzer.options.Root, *artifact)
+	var source []byte
+	var err error
+	if analyzer.options.Files != nil {
+		file, exists := analyzer.sourceFiles[artifact.ID]
+		_, duplicate := analyzer.duplicateSources[artifact.ID]
+		if !exists || duplicate {
+			analyzer.fileMissing[function.ArtifactID] = struct{}{}
+			analyzer.addDiagnostic("RKC-FLOW-2002", "missing or ambiguous inventoried Go source: "+artifact.Path)
+			return nil, nil, false
+		}
+		source, err = readInventoriedFlowSource(analyzer.options.Root, artifact, file)
+	} else {
+		// Legacy direct callers can still analyze an unredacted artifact. A
+		// redacted display label is never a filesystem operand.
+		if strings.Contains(artifact.Path, "[REDACTED]") {
+			analyzer.fileMissing[function.ArtifactID] = struct{}{}
+			analyzer.addDiagnostic("RKC-FLOW-2002", "inventoried source authority is required: "+artifact.Path)
+			return nil, nil, false
+		}
+		source, err = readArtifactSource(analyzer.options.Root, artifact)
+	}
 	if err != nil {
 		analyzer.fileMissing[function.ArtifactID] = struct{}{}
 		analyzer.addDiagnostic("RKC-FLOW-2002", "cannot read Go source for flow analysis: "+artifact.Path)

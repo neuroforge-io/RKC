@@ -268,6 +268,17 @@ fingerprint. Raw values are not written to diagnostics or graph attributes.
 Normalized export masks values while preserving byte length where practical, so
 line/source maps remain valid.
 
+Canonical repository paths are display and citation labels and may themselves
+be redacted. A successful live scan supplies export with a separate, bounded
+in-memory registry of original inventory references and file identities. Reads
+bind the original path to its artifact ID, size, SHA-256 and inode; source errors
+withhold private path details. This registry is never persisted in the atlas.
+Redacted or colliding normalized-source names use opaque artifact-derived
+filenames, with the artifact ID retained in each Markdown envelope. Stored
+snapshots without this registry use metadata-only export when source labels were
+redacted; requesting normalized source bodies requires a fresh scan. Clean-path
+stored exports retain their existing verified source lookup.
+
 Cloud or remote model providers require a separate egress policy, approved host
 allowlist, secret scan, repository-owner consent, retention policy, and audit
 record. Local mode denies model egress.

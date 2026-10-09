@@ -50,8 +50,8 @@ RELEASE_STEPS = (
     "api-smoke",
     "mcp-smoke",
     "git-smoke",
-    "race",
     "benchmark",
+    "race",
 )
 RELEASE_SUMMARY_KEYS = frozenset(
     {"schema_version", "ok", "source", "elapsed_seconds", "steps"}

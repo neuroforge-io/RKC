@@ -174,6 +174,7 @@ func Scan(ctx context.Context, opts Options) (rkcmodel.Bundle, rkcmodel.Coverage
 	if state.bundle.Snapshot.ID == "" || state.coverage.SnapshotID != state.bundle.Snapshot.ID {
 		return rkcmodel.Bundle{}, rkcmodel.Coverage{}, errors.New("execute scan DAG: final coverage is not bound to the compiled snapshot")
 	}
+	publishSourceInventory(opts, state.files, state.sourceIdentities)
 	return state.bundle, state.coverage, nil
 }
 

@@ -25,8 +25,8 @@ import (
 const (
 	// SourcePluginID identifies the deterministic messy-data document producer.
 	SourcePluginID = "rkc.source-documents"
-	// SourcePluginVersion pins chunking, record interpretation, and redaction.
-	SourcePluginVersion = "0.1.0"
+	// SourcePluginVersion pins identity, chunking, record interpretation, and redaction.
+	SourcePluginVersion = "0.2.0"
 	// MaximumSourceFileBytes bounds one admitted input independently of scan policy.
 	MaximumSourceFileBytes = 8 * 1024 * 1024
 	// MaximumSourceTotalBytes bounds original input bytes per extraction pass.
@@ -362,19 +362,19 @@ func appendSourceDocument(ctx context.Context, fragment *rkcmodel.Fragment, file
 			lineOffsets = append(lineOffsets, index+1)
 		}
 	}
-	nodeID := rkcmodel.StableID("node", SourcePluginID, file.Path)
+	nodeID := rkcmodel.StableID("node", SourcePluginID, file.ArtifactID)
 	evidenceID := rkcmodel.StableID("evidence", SourcePluginID, file.ArtifactID, "document")
 	source := sourceRange(file, lineOffsets, 0, len(data))
 	fragment.Evidence = append(fragment.Evidence, rkcmodel.Evidence{ID: evidenceID, Kind: "documentation_asserted", Method: "source.document", Confidence: 1, Source: source, Tool: SourcePluginID, ToolVersion: SourcePluginVersion, InputDigest: file.SHA256})
-	fragment.Nodes = append(fragment.Nodes, rkcmodel.Node{ID: nodeID, LogicalID: rkcmodel.StableID("logical", SourcePluginID, file.Path), Kind: "document", Name: filepath.Base(file.Path), QualifiedName: file.Path, Language: file.Language, Visibility: "repository", ArtifactID: file.ArtifactID, Source: source, EvidenceIDs: []string{evidenceID}})
+	fragment.Nodes = append(fragment.Nodes, rkcmodel.Node{ID: nodeID, LogicalID: rkcmodel.StableID("logical", SourcePluginID, file.ArtifactID), Kind: "document", Name: filepath.Base(file.Path), QualifiedName: file.Path, Language: file.Language, Visibility: "repository", ArtifactID: file.ArtifactID, Source: source, EvidenceIDs: []string{evidenceID}})
 	fragment.Edges = append(fragment.Edges, rkcmodel.Edge{ID: rkcmodel.StableID("edge", "derived_from", nodeID, file.ArtifactID), Kind: "derived_from", From: nodeID, To: file.ArtifactID, Resolution: "declared", Confidence: 1, Producer: SourcePluginID, EvidenceIDs: []string{evidenceID}})
-	document := rkcmodel.Document{ID: rkcmodel.StableID("document", SourcePluginID, file.Path), LogicalID: rkcmodel.StableID("logical-document", SourcePluginID, file.Path), Kind: "source_document", Title: filepath.Base(file.Path), Path: file.Path, SubjectIDs: []string{nodeID}, Generator: SourcePluginID, GeneratorVersion: SourcePluginVersion, Status: "validated", Attributes: map[string]any{"artifact_id": file.ArtifactID, "source_sha256": file.SHA256, "source_format": file.Language, "complete": receipt.complete, "record_count": receipt.records, "invalid_record_count": receipt.invalidRecords, "producer_verified": false}}
+	document := rkcmodel.Document{ID: rkcmodel.StableID("document", SourcePluginID, file.ArtifactID), LogicalID: rkcmodel.StableID("logical-document", SourcePluginID, file.ArtifactID), Kind: "source_document", Title: filepath.Base(file.Path), Path: file.Path, SubjectIDs: []string{nodeID}, Generator: SourcePluginID, GeneratorVersion: SourcePluginVersion, Status: "validated", Attributes: map[string]any{"artifact_id": file.ArtifactID, "source_sha256": file.SHA256, "source_format": file.Language, "complete": receipt.complete, "record_count": receipt.records, "invalid_record_count": receipt.invalidRecords, "producer_verified": false}}
 	for ordinal, part := range receipt.parts {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
 		start, end := strconv.Itoa(part.start), strconv.Itoa(part.end)
-		sectionID := rkcmodel.StableID("node", SourcePluginID, file.Path, start, end)
+		sectionID := rkcmodel.StableID("node", SourcePluginID, file.ArtifactID, start, end)
 		partEvidence := rkcmodel.StableID("evidence", SourcePluginID, file.ArtifactID, start, end)
 		partSource := sourceRange(file, lineOffsets, part.start, part.end)
 		heading := fmt.Sprintf("Lines %d–%d", partSource.StartLine, partSource.EndLine)
@@ -387,7 +387,7 @@ func appendSourceDocument(ctx context.Context, fragment *rkcmodel.Fragment, file
 			attributes["projection"] = "secret-redacted-column-values"
 		}
 		fragment.Evidence = append(fragment.Evidence, rkcmodel.Evidence{ID: partEvidence, Kind: "documentation_asserted", Method: part.method, Confidence: 1, Source: partSource, Tool: SourcePluginID, ToolVersion: SourcePluginVersion, InputDigest: file.SHA256})
-		fragment.Nodes = append(fragment.Nodes, rkcmodel.Node{ID: sectionID, LogicalID: rkcmodel.StableID("logical", SourcePluginID, file.Path, start, end), Kind: "document_section", Name: heading, QualifiedName: file.Path + "#bytes-" + start + "-" + end, Language: file.Language, Visibility: "repository", ArtifactID: file.ArtifactID, Source: partSource, EvidenceIDs: []string{partEvidence}, Attributes: map[string]any{"ordinal": ordinal}})
+		fragment.Nodes = append(fragment.Nodes, rkcmodel.Node{ID: sectionID, LogicalID: rkcmodel.StableID("logical", SourcePluginID, file.ArtifactID, start, end), Kind: "document_section", Name: heading, QualifiedName: file.Path + "#bytes-" + start + "-" + end, Language: file.Language, Visibility: "repository", ArtifactID: file.ArtifactID, Source: partSource, EvidenceIDs: []string{partEvidence}, Attributes: map[string]any{"ordinal": ordinal}})
 		fragment.Edges = append(fragment.Edges, rkcmodel.Edge{ID: rkcmodel.StableID("edge", "contains", nodeID, sectionID), Kind: "contains", From: nodeID, To: sectionID, Resolution: "declared", Confidence: 1, Producer: SourcePluginID, EvidenceIDs: []string{partEvidence}})
 		document.Sections = append(document.Sections, rkcmodel.DocumentSection{ID: sectionID, ParentID: nodeID, Ordinal: ordinal, Heading: heading, Markdown: sourceFence(part.body), PlainText: part.body, EvidenceIDs: []string{partEvidence}, Attributes: attributes})
 	}

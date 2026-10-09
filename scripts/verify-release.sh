@@ -2,7 +2,7 @@
 set -eu
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 cd "$ROOT"
-EXPECTED_STEPS='go-modules python-environment format vet coverage contracts docs licenses model-lock build plugins smoke reproducibility api-smoke mcp-smoke git-smoke race benchmark'
+EXPECTED_STEPS='go-modules python-environment format vet coverage contracts docs licenses model-lock build plugins smoke reproducibility api-smoke mcp-smoke git-smoke benchmark race'
 
 prepare_validation_output() {
   output=$1
@@ -316,8 +316,8 @@ run_step reproducibility make reproducibility
 run_step api-smoke make smoke-api
 run_step mcp-smoke make smoke-mcp
 run_step git-smoke make smoke-git
-run_step race make test-race
 run_step benchmark timeout 180 sh scripts/benchmark-reference.sh dist/benchmark
+run_step race make test-race
 END=$(date +%s)
 if [ "$(git rev-parse --verify 'HEAD^{commit}')" != "$SOURCE_COMMIT" ] ||
    [ "$(git rev-parse --verify 'HEAD^{tree}')" != "$SOURCE_TREE" ]; then

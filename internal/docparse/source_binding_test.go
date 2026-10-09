@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"reflect"
 	"sort"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -105,6 +106,30 @@ func TestSourceBindingsRejectIncompleteOrForeignOwnership(t *testing.T) {
 	}{
 		{"foreign producer", func(f *sourceBindingFixture) { f.Document.Generator = "some.other.producer" }},
 		{"foreign producer version", func(f *sourceBindingFixture) { f.Document.GeneratorVersion = "future-unknown" }},
+		{"foreign evidence version", func(f *sourceBindingFixture) {
+			id := f.Document.Sections[0].EvidenceIDs[0]
+			e := f.Evidence[id]
+			e.ToolVersion = "0.1.0"
+			f.Evidence[id] = e
+		}},
+		{"wrong document logical identity", func(f *sourceBindingFixture) { f.Document.LogicalID = "foreign-logical-document" }},
+		{"wrong subject logical identity", func(f *sourceBindingFixture) {
+			id := f.Document.SubjectIDs[0]
+			n := f.Nodes[id]
+			n.LogicalID = "foreign-logical-subject"
+			f.Nodes[id] = n
+		}},
+		{"wrong section logical identity", func(f *sourceBindingFixture) {
+			id := f.Document.Sections[0].ID
+			n := f.Nodes[id]
+			n.LogicalID = "foreign-logical-section"
+			f.Nodes[id] = n
+		}},
+		{"subject alias map key", func(f *sourceBindingFixture) {
+			id := f.Document.SubjectIDs[0]
+			f.Document.SubjectIDs[0] = "alias-subject"
+			f.Nodes["alias-subject"] = f.Nodes[id]
+		}},
 		{"stale document", func(f *sourceBindingFixture) { f.Document.Status = "stale" }},
 		{"ambiguous subjects", func(f *sourceBindingFixture) {
 			f.Document.SubjectIDs = append(f.Document.SubjectIDs, "another-subject")
@@ -179,6 +204,146 @@ func TestSourceBindingsRejectIncompleteOrForeignOwnership(t *testing.T) {
 			test.mutate(&fixture)
 			if whole, ids := fixture.references(context.Background()); whole != nil || len(ids) != 0 {
 				t.Fatalf("%s retained citations: %+v, %v", test.name, whole, ids)
+			}
+		})
+	}
+}
+
+// convertSourceBindingToV01 reconstructs the original producer's complete
+// identity roster. Changing the version alone must never admit new IDs as old.
+func convertSourceBindingToV01(fixture *sourceBindingFixture) {
+	document := &fixture.Document
+	document.GeneratorVersion = "0.1.0"
+	document.ID = rkcmodel.StableID("document", SourcePluginID, document.Path)
+	document.LogicalID = rkcmodel.StableID("logical-document", SourcePluginID, document.Path)
+	oldSubject := document.SubjectIDs[0]
+	whole := fixture.Nodes[oldSubject]
+	delete(fixture.Nodes, oldSubject)
+	whole.ID = rkcmodel.StableID("node", SourcePluginID, document.Path)
+	whole.LogicalID = rkcmodel.StableID("logical", SourcePluginID, document.Path)
+	document.SubjectIDs = []string{whole.ID}
+	fixture.Nodes[whole.ID] = whole
+	for index := range document.Sections {
+		section := &document.Sections[index]
+		node := fixture.Nodes[section.ID]
+		delete(fixture.Nodes, section.ID)
+		start, end := strconv.FormatInt(node.Source.StartByte, 10), strconv.FormatInt(node.Source.EndByte, 10)
+		node.ID = rkcmodel.StableID("node", SourcePluginID, document.Path, start, end)
+		node.LogicalID = rkcmodel.StableID("logical", SourcePluginID, document.Path, start, end)
+		section.ID, section.ParentID = node.ID, whole.ID
+		fixture.Nodes[node.ID] = node
+	}
+	for id, evidence := range fixture.Evidence {
+		evidence.ToolVersion = "0.1.0"
+		fixture.Evidence[id] = evidence
+	}
+}
+
+func TestLegacySourceBindingsRequireExactV01ReceiptsAndOriginalPath(t *testing.T) {
+	t.Parallel()
+	fixture := newSourceBindingFixture(t, "records.jsonl", "jsonl", "{\"policy\":\"first\"}\nmalformed source\n{\"policy\":\"last\"}\n")
+	convertSourceBindingToV01(&fixture)
+	whole, ids := fixture.references(context.Background())
+	if whole == nil || whole.Path != "records.jsonl" || len(ids) != len(fixture.Document.Sections)+1 {
+		t.Fatalf("v0.1 original producer roster lost references: %+v, %v", whole, ids)
+	}
+	encoded, err := json.Marshal(fixture)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, test := range []struct {
+		name   string
+		mutate func(*sourceBindingFixture)
+	}{
+		{"unchanged JSON import", func(*sourceBindingFixture) {}},
+		{"unknown version", func(f *sourceBindingFixture) { f.Document.GeneratorVersion = "0.1.1" }},
+		{"mixed evidence version", func(f *sourceBindingFixture) {
+			id := f.Document.Sections[0].EvidenceIDs[0]
+			evidence := f.Evidence[id]
+			evidence.ToolVersion = SourcePluginVersion
+			f.Evidence[id] = evidence
+		}},
+		{"original path unavailable", func(f *sourceBindingFixture) {
+			id := f.Document.Attributes["artifact_id"].(string)
+			artifact := f.Artifacts[id]
+			artifact.Path = "[REDACTED].jsonl"
+			f.Artifacts[id] = artifact
+			f.Document.Path, f.Document.Title = artifact.Path, artifact.Path
+			for id, node := range f.Nodes {
+				source := *node.Source
+				source.Path = artifact.Path
+				node.Source = &source
+				if node.Kind == "document" {
+					node.Name, node.QualifiedName = artifact.Path, artifact.Path
+				} else {
+					node.QualifiedName = artifact.Path + "#bytes-" + strconv.FormatInt(source.StartByte, 10) + "-" + strconv.FormatInt(source.EndByte, 10)
+				}
+				f.Nodes[id] = node
+			}
+			for id, evidence := range f.Evidence {
+				source := *evidence.Source
+				source.Path = artifact.Path
+				evidence.Source = &source
+				f.Evidence[id] = evidence
+			}
+		}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			var imported sourceBindingFixture
+			if err := json.Unmarshal(encoded, &imported); err != nil {
+				t.Fatal(err)
+			}
+			test.mutate(&imported)
+			otherWhole, otherIDs := imported.references(context.Background())
+			if test.name == "unchanged JSON import" {
+				if !reflect.DeepEqual(otherWhole, whole) || !reflect.DeepEqual(otherIDs, ids) {
+					t.Fatalf("legacy JSON receipts lost references: %+v, %v", otherWhole, otherIDs)
+				}
+			} else if otherWhole != nil || len(otherIDs) != 0 {
+				t.Fatalf("inconsistent legacy receipts retained references: %+v, %v", otherWhole, otherIDs)
+			}
+		})
+	}
+}
+
+func TestSourceProducerVersionCannotRelabelIdentityFormula(t *testing.T) {
+	t.Parallel()
+	fixture := newSourceBindingFixture(t, "notes.txt", "text", "Fictional lantern notes.\n")
+	fixture.Document.GeneratorVersion = "0.1.0"
+	for id, evidence := range fixture.Evidence {
+		evidence.ToolVersion = "0.1.0"
+		fixture.Evidence[id] = evidence
+	}
+	if whole, ids := fixture.references(context.Background()); whole != nil || len(ids) != 0 {
+		t.Fatalf("v0.2 IDs accepted as a v0.1 roster: %+v, %v", whole, ids)
+	}
+}
+
+func TestSourceBindingsRejectNonOpaqueArtifactIdentity(t *testing.T) {
+	t.Parallel()
+	for _, identity := range []string{"artifact-private-path.txt", "rkc:node:" + strings.Repeat("a", 24), "rkc:artifact:" + strings.Repeat("A", 24), "rkc:artifact:" + strings.Repeat("a", 64)} {
+		t.Run(identity, func(t *testing.T) {
+			root := t.TempDir()
+			file := sourceTestFile(t, root, "notes.txt", "text", "Fictional lantern notes.\n")
+			inventoryResult, err := inventory.Scan(inventory.Options{Root: root})
+			if err != nil || len(inventoryResult.Artifacts) != 1 {
+				t.Fatalf("fixture inventory: %v", err)
+			}
+			artifact := inventoryResult.Artifacts[0]
+			artifact.ID, file.ArtifactID = identity, identity
+			fragment, err := ExtractSources(context.Background(), Options{Root: root, Files: []pluginapi.FileRef{file}})
+			if err != nil || len(fragment.Documents) != 1 {
+				t.Fatalf("fixture extraction: %v", err)
+			}
+			fixture := sourceBindingFixture{Document: fragment.Documents[0], Artifacts: map[string]rkcmodel.Artifact{identity: artifact}, Nodes: map[string]rkcmodel.Node{}, Evidence: map[string]rkcmodel.Evidence{}}
+			for _, node := range fragment.Nodes {
+				fixture.Nodes[node.ID] = node
+			}
+			for _, evidence := range fragment.Evidence {
+				fixture.Evidence[evidence.ID] = evidence
+			}
+			if whole, ids := fixture.references(context.Background()); whole != nil || len(ids) != 0 {
+				t.Fatalf("nonopaque inventoried identity gained portable references: %+v, %v", whole, ids)
 			}
 		})
 	}
