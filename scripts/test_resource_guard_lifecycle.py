@@ -33,6 +33,12 @@ class GuardFixture:
         self.config.write_text("{}", encoding="utf-8")
         self.processes: list[subprocess.Popen[str]] = []
         self.environment = os.environ.copy()
+        # Temporary service emulators and one-line fixture payloads are not
+        # production coverage targets. Avoid coverage's Python startup work
+        # inside the guard's strict controller deadlines. Instrumentation of
+        # this test process and all other product subprocesses is unchanged.
+        for key in ("COVERAGE_PROCESS_CONFIG", "COVERAGE_PROCESS_START"):
+            self.environment.pop(key, None)
         self.environment.update({
             "PATH": f"{self.bin}:/usr/bin:/bin",
             "XDG_RUNTIME_DIR": str(self.runtime),
@@ -100,11 +106,12 @@ assert unit.startswith('rkc-low-') and description.startswith('rkc-guard-')
 save(root / 'invocation.json', {'args': args, 'unit': unit, 'description': description})
 configuration = json.loads((root / 'config.json').read_text())
 if configuration.get('queued_start'):
-    subprocess.Popen(
-        [str(root / 'bin/unit-agent'), unit, description, json.dumps(command), json.dumps(environment)],
-        stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-        start_new_session=True,
-    )
+    # The fixture parent owns and reaps the queued agent even when this fake
+    # systemd-run launcher is killed before the queued request is dispatched.
+    save(root / 'queued.json', {
+        'unit': unit, 'description': description,
+        'command': command, 'environment': environment,
+    })
     (root / 'queued').touch()
     time.sleep(60)
     sys.exit(0)
@@ -125,14 +132,30 @@ else:
 sys.exit(status if status >= 0 else 128 - status)
 ''')
         self.write("unit-agent", prefix + r'''
-unit, description, command, environment = sys.argv[1:]
-time.sleep(1.25)
-process = subprocess.Popen(json.loads(command), env=json.loads(environment), start_new_session=True)
+queued = json.loads(Path(sys.argv[1]).read_text())
+unit, description = queued['unit'], queued['description']
+command, environment = queued['command'], queued['environment']
+owner_state = Path(command[command.index('--rkc-internal-payload') + 1])
+deadline = time.monotonic() + 10
+while owner_state.exists():
+    if time.monotonic() >= deadline: sys.exit(92)
+    time.sleep(0.02)
+# Publish only after cleanup acknowledgement, deterministically exercising a
+# queued manager request that arrives after the original owner state is gone.
+process = subprocess.Popen(command, env=environment, start_new_session=True)
 path = units / unit
 save(path, {'description': description, 'pid': process.pid, 'active': 'active'})
 (root / 'late-created').touch()
-process.wait(timeout=5)
+status = process.wait(timeout=5)
+save(root / 'late-child-exited.json', {'unit': unit, 'status': status})
+# Hold the transitional manager record until the test acknowledges it. This
+# makes observing active before terminal publication intentional, not a race.
+deadline = time.monotonic() + 10
+while not (root / 'allow-terminal-publication').exists():
+    if time.monotonic() >= deadline: sys.exit(93)
+    time.sleep(0.02)
 save(path, {'description': description, 'pid': process.pid, 'active': 'inactive'})
+save(root / 'late-finished.json', {'unit': unit, 'status': status})
 ''')
         self.write("systemctl", prefix + r'''
 args = sys.argv[1:]
@@ -194,6 +217,16 @@ sys.exit(91)
                 raise AssertionError(f"fixture did not create {name}")
             time.sleep(0.02)
         return target
+
+    def start_queued_agent(self) -> subprocess.Popen[str]:
+        process = subprocess.Popen(
+            [str(self.bin / "unit-agent"), str(self.root / "queued.json")],
+            env=self.environment, stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            text=True, start_new_session=True,
+        )
+        self.processes.append(process)
+        return process
 
     def cleanup_records(self) -> list[dict[str, object]]:
         path = self.root / "cleanup.jsonl"
@@ -290,7 +323,9 @@ class ResourceGuardLifecycleTests(unittest.TestCase):
         script = (
             "import json, os, sys; "
             "print(json.dumps({'args': sys.argv[1:], 'input': sys.stdin.read(), "
-            "'threads': os.environ['GOMAXPROCS'], 'memory': os.environ['GOMEMLIMIT']}))"
+            "'threads': os.environ['GOMAXPROCS'], 'memory': os.environ['GOMEMLIMIT'], "
+            "'coverage_bootstrap': any(key in os.environ for key in "
+            "('COVERAGE_PROCESS_CONFIG', 'COVERAGE_PROCESS_START'))}))"
         )
         for mode in ("scope", "service"):
             with self.subTest(mode=mode):
@@ -298,7 +333,10 @@ class ResourceGuardLifecycleTests(unittest.TestCase):
                 output, error = process.communicate(input="interactive input\n", timeout=12)
                 self.assertEqual(process.returncode, 0, error)
                 receipt = json.loads(output)
-                self.assertEqual(receipt, {"args": arguments, "input": "interactive input\n", "threads": "1", "memory": "384MiB"})
+                self.assertEqual(receipt, {
+                    "args": arguments, "input": "interactive input\n",
+                    "threads": "1", "memory": "384MiB", "coverage_bootstrap": False,
+                })
                 invocation = json.loads((self.fixture.root / "invocation.json").read_text())
                 for selected in ("CPUQuota=25%", "MemoryHigh=512M", "MemoryMax=640M", "MemorySwapMax=0M"):
                     self.assertIn(selected, invocation["args"])
@@ -396,9 +434,18 @@ class ResourceGuardLifecycleTests(unittest.TestCase):
         forbidden = self.fixture.root / "work-started-too-late"
         process = self.fixture.start(["/usr/bin/touch", str(forbidden)])
         self.fixture.wait_file("queued")
+        agent = self.fixture.start_queued_agent()
         process.kill()
         process.communicate(timeout=12)
         self.fixture.wait_file("late-created")
+        exited = json.loads(self.fixture.wait_file("late-child-exited.json").read_text())
+        self.assertEqual(exited["status"], 75)
+        transitional = json.loads((self.fixture.units / exited["unit"]).read_text())
+        self.assertEqual(transitional["active"], "active")
+        (self.fixture.root / "allow-terminal-publication").touch()
+        finished = json.loads(self.fixture.wait_file("late-finished.json").read_text())
+        self.assertEqual(finished, exited)
+        self.assertEqual(agent.wait(timeout=5), 0)
         self.assertFalse(forbidden.exists())
         self.assert_quiescent()
 
