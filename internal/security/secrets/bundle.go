@@ -11,6 +11,12 @@ import (
 
 const redactionToken = "[REDACTED]"
 
+// Short credential literals such as "one" and "two" can also occur inside
+// unrelated paths, identifiers, and prose. Preserve the former assignment
+// detector's eight-byte floor for cross-field substring propagation; short
+// values remain redacted in their source spans and named credential fields.
+const minimumPropagatedLiteralBytes = 8
+
 // SensitiveLiterals returns the exact source substrings identified by Scan.
 // Callers must keep the result in memory only; it exists solely to remove the
 // same values from parser/plugin records before they enter the canonical graph.
@@ -39,9 +45,10 @@ func SensitiveLiterals(data []byte, findings []Finding) []string {
 	return values
 }
 
-// SanitizeBundle removes transient secret literals from every string-valued
-// canonical field, including nested attributes and document sections. This is
-// intentionally performed before validation, search indexing, or any export.
+// SanitizeBundle masks detected source patterns and credential-like map fields.
+// Transient literals of at least eight bytes also propagate across canonical
+// strings. Short source literals never rewrite unrelated identities or prose.
+// This runs before validation, search indexing, or any export.
 func SanitizeBundle(bundle *rkcmodel.Bundle, literals []string) int {
 	if bundle == nil {
 		return 0
@@ -49,7 +56,7 @@ func SanitizeBundle(bundle *rkcmodel.Bundle, literals []string) int {
 	clean := make([]string, 0, len(literals))
 	seen := map[string]struct{}{}
 	for _, literal := range literals {
-		if literal == "" {
+		if len(literal) < minimumPropagatedLiteralBytes {
 			continue
 		}
 		if _, ok := seen[literal]; ok {
@@ -117,6 +124,9 @@ func redactReflect(value reflect.Value, literals []string, redactions *int) {
 			current := value.MapIndex(entry.originalKey)
 			copyValue := reflect.New(current.Type()).Elem()
 			copyValue.Set(current)
+			if name, ok := mapKeyString(entry.originalKey); ok && !entry.keyChanged && isCredentialValueKey(name) {
+				redactCredentialMapString(copyValue, redactions)
+			}
 			redactReflect(copyValue, literals, redactions)
 			key := uniqueMapKey(rebuilt, entry.sanitizedKey)
 			rebuilt.SetMapIndex(key, copyValue)
@@ -142,6 +152,47 @@ func redactReflect(value reflect.Value, literals []string, redactions *int) {
 		*redactions += count
 		value.SetString(text)
 	}
+}
+
+func isCredentialValueKey(name string) bool {
+	compact := strings.ToLower(strings.NewReplacer("-", "", ".", "", "_", "").Replace(name))
+	switch compact {
+	case "secret", "credential", "credentials", "privatekey", "secretkey", "clientsecret":
+		return true
+	}
+	// Value-bearing suffixes admit provider-specific fields such as
+	// openai_api_key and userPassword while metadata/reference suffixes such
+	// as APIKeyEnv, token_count, secret_kind, and tokenizer stay untouched.
+	for _, suffix := range []string{"password", "passwd", "token", "apikey", "privatekey", "secretkey", "clientsecret"} {
+		if strings.HasSuffix(compact, suffix) {
+			return true
+		}
+	}
+	return false
+}
+
+// Bare plugin attributes no longer have their original source syntax. Their
+// credential-like key supplies the missing context, without turning that value
+// into a substring replacement rule for every other field in the repository.
+func redactCredentialMapString(value reflect.Value, redactions *int) {
+	if value.Kind() == reflect.Interface && !value.IsNil() {
+		copyValue := reflect.New(value.Elem().Type()).Elem()
+		copyValue.Set(value.Elem())
+		redactCredentialMapString(copyValue, redactions)
+		if value.CanSet() {
+			value.Set(copyValue)
+		}
+		return
+	}
+	if value.Kind() != reflect.String || !value.CanSet() {
+		return
+	}
+	text := value.String()
+	if text == "" || text == redactionToken || isPlaceholder(text) || looksLikeReference(text) {
+		return
+	}
+	value.SetString(redactionToken)
+	*redactions++
 }
 
 type sanitizedMapEntry struct {

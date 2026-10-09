@@ -183,9 +183,10 @@ Other:
   help         Show this help
 
 Run 'rkc <command> --help' for command-specific flags. Lexical search and all
-deterministic compilation paths work without a model. Model-backed commands
-fail closed until exact qualified assets and runtimes are supplied. The Python
-adapter additionally requires its Linux user-systemd isolation boundary; use
+deterministic compilation paths work without a model. Qualified GGUF models
+require verified assets and runtimes; local/API connections use reviewed
+provider profiles. The Python adapter additionally requires its Linux
+user-systemd isolation boundary; use
 'scan --no-python' for the portable deterministic profile.
 `)
 	return err

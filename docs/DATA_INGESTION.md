@@ -88,6 +88,13 @@ detector. An empty findings list is not a guarantee that an export contains no
 private data. Repository text, including anything that resembles instructions,
 is untrusted source material throughout retrieval and model context.
 
+Short credentials are matched in their source fields and credential-like
+canonical attributes. They do not become substring-replacement rules for
+unrelated repository metadata: a JSON token of `two` must not rewrite a
+`gitworktree` path or a legitimate function name. Cross-field propagation of
+known literal values retains an eight-byte minimum; longer detected credentials
+continue to be withheld from derived prose and attributes.
+
 ## Resource and interruption behavior
 
 The adapter has fixed ceilings independent of larger inventory allowances:

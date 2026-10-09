@@ -17,6 +17,9 @@ and RKC contributors and Apache-2.0 licensed.
   projections, and structured secret redaction across documents and exports.
 - Local Streamable HTTP MCP, canonical document context bindings, and cited
   endpoint answer protocols preserved from the previous development work.
+- Lower configurable CPU quotas for busy development hosts, alongside smaller
+  memory ceilings and one-at-a-time local checks. Short credential values stay
+  masked in their fields without renaming unrelated files or code symbols.
 
 These changes are in development source. Portable release qualification and
 real hosted-model quality remain separate from local tests and protocol mocks.
