@@ -1,5 +1,10 @@
 # NeuroForgeIO branding and attribution
 
+The public brand is **NeuroForge** and the legal publisher and maintainer is
+**NeuroforgeIO Pty Ltd**. The shortened **NeuroForgeIO** credit in this project
+refers to that publisher. Individual and third-party contributor credits remain
+applicable; a publisher credit does not itself assign their rights.
+
 RKC (Repository Knowledge Compiler) is an open-source project created and
 published by **NeuroForgeIO** and maintained with RKC contributors. Copyright in
 original RKC source code, documentation, schemas, examples, and built-in
