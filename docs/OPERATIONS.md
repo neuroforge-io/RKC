@@ -135,6 +135,13 @@ budget cannot enlarge its parent allowance. CPU quotas, one-worker runtime
 settings, idle I/O, priority, process limits, and interruption cleanup apply in
 both profiles.
 
+Worker memory accounting is sampled ten times per second; the kernel enforces
+the hard CPU, memory, swap, and process limits continuously. Cancellation and
+launcher exit are handled independently of that sampling timer. Host reserve
+and higher-priority workload checks continue once per second. Cleanup retains
+its separate, faster checks when proving a stopped unit is inactive. This reduces
+routine accounting reads without changing the configured resource ceilings.
+
 On Linux, a new guarded worker also binds its lifetime to its current user
 service when the user manager and rechecked kernel membership agree. Stopping
 that service, including a watcher whose main process crashes, stops its bound

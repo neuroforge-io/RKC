@@ -39,6 +39,10 @@ const (
 	unitQuiescenceWindow  = 150 * time.Millisecond
 	unitQuiescencePoll    = 25 * time.Millisecond
 	unitStateQueryTimeout = 500 * time.Millisecond
+	// Kernel limits enforce the hard envelope continuously. Sample accounting
+	// at 10 Hz to avoid repeated procfs and cgroup reads on busy hosts; context
+	// cancellation and launcher exit use their own ready channels below.
+	workerMemoryPoll = 100 * time.Millisecond
 )
 
 // Config describes one guarded subprocess. Executable should already be an
@@ -269,7 +273,7 @@ func (command *Command) Run(ctx context.Context, stdout, stderr io.Writer) (int6
 	}
 	done := make(chan error, 1)
 	go func() { done <- command.cmd.Wait() }()
-	ticker := time.NewTicker(25 * time.Millisecond)
+	ticker := time.NewTicker(workerMemoryPoll)
 	defer ticker.Stop()
 	var peak int64
 	lastPriorityCheck := time.Now()

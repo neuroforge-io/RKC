@@ -5,6 +5,9 @@ and RKC contributors and Apache-2.0 licensed.
 
 ## Unreleased
 
+- Reduce routine worker accounting polls from forty to ten per second while
+  retaining kernel limits, independent cancellation, priority checks, and the
+  existing cleanup verification cadence.
 - Bind guarded workers to a proven owning user service so a stopped or crashed
   watcher service cannot leave its refresh running. Lifetime binding does not
   grant resource admission or permission to stop the parent service.
