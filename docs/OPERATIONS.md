@@ -149,6 +149,34 @@ The [automation integration guide](AUTOMATION_INTEGRATION.md) describes the
 versioned scan receipt and the evidence checks an external research or upgrade
 service can use.
 
+For a bounded Linux comparison, `scripts/profile-resource-workload.py` freezes
+up to 1 MiB across 128 encountered paths and runs two fresh native scans with
+one executable. Supply an existing caller-owned execution lock used by the
+other work on that host; the tool never creates or replaces it. A same-named
+file on another machine is a separate lock. Keep inputs and receipt paths
+private and outside the checkout being measured. For example:
+
+```sh
+python3 scripts/profile-resource-workload.py \
+  --binary /absolute/path/to/rkc --source /private/bounded-fixture \
+  --execution-lock /existing/shared-execution.lock \
+  --resource-profile desktop --host-reserve-mib 8192 \
+  --profile A:4096:4608:3072 --profile B:8192:10240:6144 \
+  --cpu-percent 25 --seconds 30 --output /private/new-profile-receipt.json
+```
+
+The tool requires fresh physical headroom and acceptable global and cgroup
+memory pressure before each arm, and monitors pressure, host reserve, caller
+identity and lock identity while it runs. Each arm has a 5..45 second work
+deadline plus bounded cleanup. A watchdog retains the lock lease through
+cleanup after interruption. Permanent service-manager failure can prevent
+cleanup proof; inspect any failed receipt before starting replacement work.
+The private receipt records input and executable hashes, canonical output
+parity, wall time, CPU counters, peak memory and pressure deltas. Failed or
+refused comparisons retain failure receipts. These are bounded performance
+observations, not the complete release or source-quality gate. No models,
+remote acquisition, repository scripts or Python extractors are invoked.
+
 ### Starting a trusted workbench
 
 For a trusted single-user Linux checkout, `rkc open --workbench <path>` is the

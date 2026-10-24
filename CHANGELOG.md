@@ -5,6 +5,8 @@ and RKC contributors and Apache-2.0 licensed.
 
 ## Unreleased
 
+- Add a bounded, lock-coordinated resource comparison tool with private receipts,
+  deterministic-output parity, pressure checks, and interruption cleanup tests.
 - Cleaner workbench onboarding, search examples, analysis-depth guidance, and
   assistant handoffs that retain source citations and clear stale context when
   retrieval settings change.
