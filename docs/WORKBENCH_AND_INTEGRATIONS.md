@@ -17,6 +17,11 @@ knowledge packs.
 | Combine processed source collections | `rkc knowledge build --out ../knowledge-pack atlas-a atlas-b` | Portable knowledge pack |
 | Discover integrations from code | `rkc capabilities` | Versioned JSON capability document |
 
+For a program that compiles source and consumes the results, use the
+[automation receipt and evidence handoff](AUTOMATION_INTEGRATION.md). It binds
+successful scan receipts to terminal run journals, quality checks, and pinned
+context without assigning research or upgrade policy to RKC.
+
 `rkc gui` opens a fresh workspace before reading or compiling any source. Choose
 **Browse**, select a folder, then choose **Compile folder**. A successful job
 activates its verified atlas in the same window. **Change source** returns to

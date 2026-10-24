@@ -22,6 +22,12 @@ REQUIRED_FILES = (
     Path("go.sum"),
     Path("third_party/go-modules.lock.json"),
 )
+# Retain historical publisher spelling while accepting the current legal
+# publisher. Each complete line preserves the same RKC contributor credit.
+NOTICE_COPYRIGHT_LINES = (
+    "Copyright 2026 NeuroforgeIO Pty Ltd and RKC contributors",
+    "Copyright 2026 NeuroForgeIO and RKC contributors",
+)
 MARKDOWN_EXCLUDED_FILES = {Path("THIRD_PARTY_NOTICES.md")}
 MARKDOWN_EXCLUDED_TREES = {
     ".git",
@@ -475,10 +481,16 @@ def validate_root_documents() -> None:
         documents[Path("NOTICE")],
         (
             "Repository Knowledge Compiler (RKC)",
-            "Copyright 2026 NeuroForgeIO and RKC contributors",
             "does not modify the Apache License, Version 2.0",
         ),
     )
+    notice = documents[Path("NOTICE")]
+    if notice is not None:
+        record(
+            "RKC NOTICE copyright credit",
+            any(line in NOTICE_COPYRIGHT_LINES for line in notice.splitlines()),
+            "requires an exact approved publisher and RKC contributor credit line",
+        )
     require_markers(
         "third-party inventory",
         documents[Path("THIRD_PARTY_NOTICES.md")],

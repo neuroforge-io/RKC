@@ -35,6 +35,10 @@ class ResourceGuardVerifierTests(unittest.TestCase):
         remove_cpu_environment: bool = False,
         controls: dict[str, str] | None = None,
         wrong_main_pid: bool = False,
+        profile: str | None = None,
+        profile_environment: dict[str, str] | None = None,
+        environment_profile: str | None = None,
+        remove_profile_environment: bool = False,
     ) -> subprocess.CompletedProcess[str]:
         with tempfile.TemporaryDirectory(prefix="rkc-guard-probe-") as temporary:
             work = Path(temporary)
@@ -58,6 +62,12 @@ class ResourceGuardVerifierTests(unittest.TestCase):
                 "memory.swap.max": str(256 * 1024 * 1024),
                 "pids.max": "128",
             }
+            if profile == "desktop":
+                observed.update({
+                    "memory.high": str(8192 * 1024 * 1024),
+                    "memory.max": str(10240 * 1024 * 1024),
+                    "memory.swap.max": "0",
+                })
             observed.update(controls or {})
             for name, value in observed.items():
                 (template / name).write_text(value + "\n", encoding="ascii")
@@ -75,6 +85,16 @@ class ResourceGuardVerifierTests(unittest.TestCase):
             )
 
             fake_commands = {
+                # Keep desktop host-headroom proof independent of this host;
+                # preserve the real awk CPU-ratio checks against fake controls.
+                "awk": f"""#!{sys.executable}
+import os
+import sys
+arguments = sys.argv[1:]
+if arguments[-1] == "/proc/meminfo":
+    arguments[-1] = {str(work / 'meminfo')!r}
+os.execv("/usr/bin/awk", ["awk", *arguments])
+""",
                 "pgrep": "#!/bin/sh\nexit 1\n",
                 "readlink": (
                     "#!/bin/sh\n[ \"${1:-}\" = -f ] || exit 1\n"
@@ -190,6 +210,10 @@ if {environment_cpu!r} is not None:
     environment["RKC_CPU_QUOTA_PERCENT"] = {environment_cpu!r}
 if {remove_cpu_environment!r}:
     environment.pop("RKC_CPU_QUOTA_PERCENT", None)
+if {environment_profile!r} is not None:
+    environment["RKC_RESOURCE_PROFILE"] = {environment_profile!r}
+if {remove_profile_environment!r}:
+    environment.pop("RKC_RESOURCE_PROFILE", None)
 control_group = Path({str(cgroup)!r}) / "fixture" / unit
 shutil.copytree({str(template)!r}, control_group)
 Path({str(proc_cgroup)!r}).write_text(
@@ -213,6 +237,13 @@ os.execve({str(binaries / 'choom')!r}, payload, environment)
                 "XDG_RUNTIME_DIR": str(runtime),
                 "DBUS_SESSION_BUS_ADDRESS": "unix:path=" + str(runtime / "bus"),
             })
+            (work / "meminfo").write_text(
+                "MemTotal: 67108864 kB\nMemAvailable: 33554432 kB\n",
+                encoding="ascii",
+            )
+            if profile is not None:
+                environment["RKC_RESOURCE_PROFILE"] = profile
+            environment.update(profile_environment or {})
             if selected is not None:
                 environment["RKC_CPU_QUOTA_PERCENT"] = selected
             # A bound Unix socket satisfies the existing read-only bus check;
@@ -303,6 +334,62 @@ os.execve({str(binaries / 'choom')!r}, payload, environment)
         )
         self.assertEqual(result.returncode, 1, result.stderr)
         self.assertIn("MainPID does not match", result.stderr)
+
+    def test_desktop_controls_pass_in_both_modes_with_exact_selector(self) -> None:
+        for mode in ("scope", "service"):
+            with self.subTest(mode=mode):
+                result = self.run_probe("25", "25000 100000", mode=mode, profile="desktop")
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertIn("verification: passed", result.stdout)
+
+    def test_desktop_selector_cannot_drift_or_disappear(self) -> None:
+        for mode in ("scope", "service"):
+            for changed in ("default", None):
+                with self.subTest(mode=mode, changed=changed):
+                    result = self.run_probe(
+                        "25", "25000 100000", mode=mode, profile="desktop",
+                        environment_profile=changed,
+                        remove_profile_environment=changed is None,
+                    )
+                    self.assertEqual(result.returncode, 1, result.stderr)
+                    self.assertIn("resource profile selector did not survive", result.stderr)
+
+    def test_desktop_memory_drift_and_unselected_larger_controls_fail(self) -> None:
+        for control, value in (
+            ("memory.high", str(8192 * 1024 * 1024 + 1)),
+            ("memory.max", str(10240 * 1024 * 1024 + 1)),
+            ("memory.swap.max", "1"),
+        ):
+            with self.subTest(control=control):
+                result = self.run_probe(
+                    "25", "25000 100000", profile="desktop", controls={control: value},
+                )
+                self.assertEqual(result.returncode, 1, result.stderr)
+                self.assertIn("does not match the selected profile", result.stderr)
+        result = self.run_probe(
+            "25", "25000 100000", profile="default",
+            controls={"memory.high": str(8192 * 1024 * 1024), "memory.max": str(10240 * 1024 * 1024)},
+        )
+        self.assertEqual(result.returncode, 1, result.stderr)
+        self.assertIn("MemoryHigh", result.stderr)
+
+    def test_desktop_maxima_and_coherent_busy_overrides_are_verified(self) -> None:
+        for settings, controls in (
+            (
+                {"RKC_MEMORY_HIGH_MIB": "12288", "RKC_MEMORY_MAX_MIB": "16384", "RKC_GO_MEMORY_LIMIT_MIB": "12288"},
+                {"memory.high": str(12288 * 1024 * 1024), "memory.max": str(16384 * 1024 * 1024)},
+            ),
+            (
+                {"RKC_MEMORY_HIGH_MIB": "512", "RKC_MEMORY_MAX_MIB": "640", "RKC_HOST_AVAILABLE_MEMORY_MIN_MIB": "4096"},
+                {"memory.high": str(512 * 1024 * 1024), "memory.max": str(640 * 1024 * 1024)},
+            ),
+        ):
+            with self.subTest(settings=settings):
+                result = self.run_probe(
+                    "25", "25000 100000", profile="desktop",
+                    profile_environment=settings, controls=controls,
+                )
+                self.assertEqual(result.returncode, 0, result.stderr)
 
 
 if __name__ == "__main__":

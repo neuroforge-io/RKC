@@ -9,6 +9,9 @@ import (
 )
 
 const (
+	// ResourceProfileEnvironment selects the explicit desktop memory envelope.
+	// Empty or "default" retains the historical limits and behavior.
+	ResourceProfileEnvironment = "RKC_RESOURCE_PROFILE"
 	cpuQuotaPercentEnvironment = "RKC_CPU_QUOTA_PERCENT"
 	memoryHighMiBEnvironment   = "RKC_MEMORY_HIGH_MIB"
 	memoryMaxMiBEnvironment    = "RKC_MEMORY_MAX_MIB"
@@ -18,14 +21,16 @@ const (
 )
 
 var profileEnvironmentNames = []string{
+	ResourceProfileEnvironment,
 	cpuQuotaPercentEnvironment, memoryHighMiBEnvironment, memoryMaxMiBEnvironment,
 	memorySwapMiBEnvironment, goMemoryLimitEnvironment, HostAvailableMemoryMinimumEnvironment,
 }
 
-// resourceProfile is the validated, equal-or-smaller development envelope.
+// resourceProfile is the validated, explicitly selected development envelope.
 // An absent profile retains historical per-command RSS budgets. Once a profile
 // is selected, even a separately managed model service must remain within it.
 type resourceProfile struct {
+	name              string
 	selected          bool
 	cpuPercent        int64
 	memoryHighMiB     int64
@@ -36,11 +41,21 @@ type resourceProfile struct {
 }
 
 func resourceProfileFromEnvironment() (resourceProfile, error) {
-	var profile resourceProfile
+	name, err := resourceProfileNameFromEnvironment()
+	if err != nil {
+		return resourceProfile{}, err
+	}
+	profile := resourceProfile{name: name, selected: name == "desktop"}
 	for _, name := range profileEnvironmentNames {
-		if value := os.Getenv(name); value != "" {
+		if value := os.Getenv(name); name != ResourceProfileEnvironment && value != "" {
 			profile.selected = true
 		}
+	}
+	defaultHigh, defaultMax, defaultSwap := int64(4096), int64(4608), int64(256)
+	maximumHigh, maximumMax := defaultHigh, defaultMax
+	if name == "desktop" {
+		defaultHigh, defaultMax, defaultSwap = 8192, 10240, 0
+		maximumHigh, maximumMax = 12288, 16384
 	}
 	settings := []struct {
 		name               string
@@ -48,9 +63,9 @@ func resourceProfileFromEnvironment() (resourceProfile, error) {
 		target             *int64
 	}{
 		{cpuQuotaPercentEnvironment, 100, 1, 100, &profile.cpuPercent},
-		{memoryHighMiBEnvironment, 4096, 64, 4096, &profile.memoryHighMiB},
-		{memoryMaxMiBEnvironment, 4608, 64, 4608, &profile.memoryMaxMiB},
-		{memorySwapMiBEnvironment, 256, 0, 256, &profile.swapMaxMiB},
+		{memoryHighMiBEnvironment, defaultHigh, 64, maximumHigh, &profile.memoryHighMiB},
+		{memoryMaxMiBEnvironment, defaultMax, 64, maximumMax, &profile.memoryMaxMiB},
+		{memorySwapMiBEnvironment, defaultSwap, 0, 256, &profile.swapMaxMiB},
 	}
 	for _, setting := range settings {
 		value, err := profileInteger(setting.name, setting.fallback, setting.min, setting.max)
@@ -62,8 +77,11 @@ func resourceProfileFromEnvironment() (resourceProfile, error) {
 	if profile.memoryMaxMiB < profile.memoryHighMiB {
 		return resourceProfile{}, fmt.Errorf("%s must not be below %s", memoryMaxMiBEnvironment, memoryHighMiBEnvironment)
 	}
-	var err error
-	profile.goMemoryMiB, err = profileInteger(goMemoryLimitEnvironment, profile.memoryHighMiB, 64, profile.memoryHighMiB)
+	defaultGo := profile.memoryHighMiB
+	if name == "desktop" && defaultGo > 6144 {
+		defaultGo = 6144
+	}
+	profile.goMemoryMiB, err = profileInteger(goMemoryLimitEnvironment, defaultGo, 64, profile.memoryHighMiB)
 	if err != nil {
 		return resourceProfile{}, err
 	}
@@ -72,6 +90,17 @@ func resourceProfileFromEnvironment() (resourceProfile, error) {
 		return resourceProfile{}, err
 	}
 	return profile, nil
+}
+
+func resourceProfileNameFromEnvironment() (string, error) {
+	switch os.Getenv(ResourceProfileEnvironment) {
+	case "", "default":
+		return "default", nil
+	case "desktop":
+		return "desktop", nil
+	default:
+		return "", fmt.Errorf("%s must be default or desktop", ResourceProfileEnvironment)
+	}
 }
 
 func profileInteger(name string, fallback, minimum, maximum int64) (int64, error) {
@@ -99,7 +128,7 @@ func profileInteger(name string, fallback, minimum, maximum int64) (int64, error
 
 func (profile resourceProfile) commandMemory(maximum int64) (int64, int64) {
 	if maximum == 0 {
-		maximum = LowPriorityMemoryMaxBytes
+		maximum = profile.memoryMaxMiB * profileMiB
 	}
 	if profile.selected && maximum > profile.memoryMaxMiB*profileMiB {
 		maximum = profile.memoryMaxMiB * profileMiB
@@ -150,11 +179,22 @@ func (profile resourceProfile) childEnvironment(values []string, high, maximum i
 		result[name] = strconv.FormatInt(value, 10)
 	}
 	result["GOMEMLIMIT"] = strconv.FormatInt(goMiB, 10) + "MiB"
+	result[ResourceProfileEnvironment] = profile.name
 	return sortedEnvironment(result)
 }
 
 func (profile resourceProfile) hostMemoryCheck() error {
 	return profile.hostMemoryCheckForPlatform(runtime.GOOS, "/proc/meminfo")
+}
+
+func (profile resourceProfile) hostMemoryAdmissionCheckForPlatform(platform, path string, maximum int64) error {
+	if profile.name != "desktop" {
+		return nil
+	}
+	if platform != "linux" {
+		return fmt.Errorf("%w: Linux /proc/meminfo is required for desktop admission", ErrHostMemoryReserve)
+	}
+	return checkDesktopHostMemoryAdmission(path, maximum, profile.hostMemoryMinimum)
 }
 
 func (profile resourceProfile) hostMemoryCheckForPlatform(platform, path string) error {

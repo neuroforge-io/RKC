@@ -331,6 +331,86 @@ class LicenseValidationTests(unittest.TestCase):
             LICENSES.ERRORS,
         )
 
+    def test_notice_accepts_legal_publisher_and_historical_brand_credit(self) -> None:
+        for credit in (
+            "Copyright 2026 NeuroforgeIO Pty Ltd and RKC contributors",
+            "Copyright 2026 NeuroForgeIO and RKC contributors",
+        ):
+            with self.subTest(credit=credit):
+                self.root_fixture()
+                self.write(
+                    "NOTICE", "Repository Knowledge Compiler (RKC)\n"
+                    + credit + "\n"
+                    "does not modify the Apache License, Version 2.0\n",
+                )
+                LICENSES.ERRORS.clear()
+                LICENSES.CHECKS.clear()
+                LICENSES.validate_root_documents()
+                self.assertFalse(LICENSES.ERRORS, LICENSES.ERRORS)
+                checks = [
+                    check for check in LICENSES.CHECKS
+                    if check["name"] == "RKC NOTICE copyright credit"
+                ]
+                self.assertEqual(len(checks), 1)
+                self.assertTrue(checks[0]["ok"])
+
+    def test_notice_rejects_changed_publisher_or_contributor_credit(self) -> None:
+        for credit in (
+            "Copyright 2026 NeuroforgeIO Pty Ltd",
+            "Copyright 2026 NeuroForgeIO",
+            "Copyright 2026 NeuroforgeIO Pty Ltd and contributors",
+            "Copyright 2026 Other Publisher and RKC contributors",
+            "Copyright 2026 NeuroforgeIO Pty Ltd and RKC contributor",
+            "Copyright 2025 NeuroforgeIO Pty Ltd and RKC contributors",
+            "prefix Copyright 2026 NeuroforgeIO Pty Ltd and RKC contributors",
+            "Copyright 2026 NeuroForgeIO and RKC contributors omitted",
+            "",
+        ):
+            with self.subTest(credit=credit):
+                self.root_fixture()
+                self.write(
+                    "NOTICE", "Repository Knowledge Compiler (RKC)\n"
+                    + credit + "\n"
+                    "does not modify the Apache License, Version 2.0\n",
+                )
+                LICENSES.ERRORS.clear()
+                LICENSES.CHECKS.clear()
+                LICENSES.validate_root_documents()
+                checks = [
+                    check for check in LICENSES.CHECKS
+                    if check["name"] == "RKC NOTICE copyright credit"
+                ]
+                self.assertEqual(len(checks), 1)
+                self.assertFalse(checks[0]["ok"])
+                self.assertTrue(any(
+                    "RKC NOTICE copyright credit" in error
+                    for error in LICENSES.ERRORS
+                ), LICENSES.ERRORS)
+
+    def test_legal_publisher_credit_does_not_relax_apache_notice_boundary(
+        self,
+    ) -> None:
+        self.root_fixture()
+        self.write(
+            "NOTICE", "Repository Knowledge Compiler (RKC)\n"
+            "Copyright 2026 NeuroforgeIO Pty Ltd and RKC contributors\n"
+            "This notice changes the license terms.\n",
+        )
+        LICENSES.validate_root_documents()
+        checks = {
+            check["name"]: check["ok"] for check in LICENSES.CHECKS
+            if check["name"] in {
+                "RKC NOTICE", "RKC NOTICE copyright credit", "Apache-2.0 license text",
+            }
+        }
+        self.assertTrue(checks["RKC NOTICE copyright credit"])
+        self.assertTrue(checks["Apache-2.0 license text"])
+        self.assertFalse(checks["RKC NOTICE"])
+        self.assertTrue(any(
+            "does not modify the Apache License, Version 2.0" in error
+            for error in LICENSES.ERRORS
+        ), LICENSES.ERRORS)
+
     def test_markdown_attribution_requires_footer_and_excludes_boundaries(
         self,
     ) -> None:

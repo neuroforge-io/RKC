@@ -192,7 +192,7 @@ func TestLaunchGuardedOpenUsesExactGuardAndCleansWatcherAndTemporaryReadiness(t 
 	if _, err := os.Stat(temporaryDirectory); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("temporary readiness directory remains after launch: %v", err)
 	}
-	if capturedConfig.Executable != "/opt/rkc" || capturedConfig.MaximumRSSBytes != resourceguard.LowPriorityMemoryMaxBytes ||
+	if capturedConfig.Executable != "/opt/rkc" || capturedConfig.MaximumRSSBytes != 0 ||
 		capturedConfig.UnitPrefix != "rkc-low" {
 		t.Fatalf("guard configuration = %+v", capturedConfig)
 	}
@@ -440,6 +440,39 @@ func TestGuardedOpenEnvironmentIsMinimalDeterministicAndSubordinate(t *testing.T
 	}
 	if os.Getenv("RKC_ENV_SECRET_SENTINEL") == "" {
 		t.Fatal("test sentinel unexpectedly absent from caller environment")
+	}
+}
+
+func TestGuardedOpenEnvironmentRetainsDesktopProfileWithoutCredentials(t *testing.T) {
+	profile := map[string]string{
+		resourceguard.ResourceProfileEnvironment:            "desktop",
+		"RKC_CPU_QUOTA_PERCENT":                             "25",
+		"RKC_MEMORY_HIGH_MIB":                               "8192",
+		"RKC_MEMORY_MAX_MIB":                                "10240",
+		"RKC_MEMORY_SWAP_MAX_MIB":                           "0",
+		"RKC_GO_MEMORY_LIMIT_MIB":                           "6144",
+		resourceguard.HostAvailableMemoryMinimumEnvironment: "8192",
+	}
+	for name, value := range profile {
+		t.Setenv(name, value)
+	}
+	t.Setenv("RKC_ENV_SECRET_SENTINEL", "must-not-pass")
+	t.Setenv("OPENAI_API_KEY", "must-not-pass")
+	values := make(map[string]string)
+	for _, entry := range guardedOpenEnvironment("") {
+		name, value, _ := strings.Cut(entry, "=")
+		values[name] = value
+	}
+	for name, value := range profile {
+		if values[name] != value {
+			t.Fatalf("protected desktop profile omitted %s", name)
+		}
+	}
+	if _, found := values["RKC_ENV_SECRET_SENTINEL"]; found {
+		t.Fatal("protected profile retained arbitrary RKC environment state")
+	}
+	if _, found := values["OPENAI_API_KEY"]; found {
+		t.Fatal("protected profile retained an ambient provider credential")
 	}
 }
 

@@ -31,11 +31,25 @@ done
 
 guard_require_io_controller=${RKC_REQUIRE_IO_CONTROLLER:-0}
 guard_cpu_quota_percent=${RKC_CPU_QUOTA_PERCENT:-100}
-guard_memory_high_mib=${RKC_MEMORY_HIGH_MIB:-4096}
-guard_memory_max_mib=${RKC_MEMORY_MAX_MIB:-4608}
-guard_memory_swap_max_mib=${RKC_MEMORY_SWAP_MAX_MIB:-256}
-guard_go_memory_limit_mib=${RKC_GO_MEMORY_LIMIT_MIB:-$guard_memory_high_mib}
-guard_host_available_memory_min_mib=${RKC_HOST_AVAILABLE_MEMORY_MIN_MIB:-0}
+guard_resource_profile=${RKC_RESOURCE_PROFILE:-default}
+guard_default_high=4096 guard_default_max=4608 guard_default_swap=256 guard_default_reserve=0
+case "$guard_resource_profile" in
+    default) ;;
+    desktop) guard_default_high=8192 guard_default_max=10240 guard_default_swap=0 guard_default_reserve=8192 ;;
+    *) fail "RKC_RESOURCE_PROFILE must be default or desktop" ;;
+esac
+guard_memory_high_mib=${RKC_MEMORY_HIGH_MIB:-$guard_default_high}
+guard_memory_max_mib=${RKC_MEMORY_MAX_MIB:-$guard_default_max}
+guard_memory_swap_max_mib=${RKC_MEMORY_SWAP_MAX_MIB:-$guard_default_swap}
+guard_default_go=$guard_memory_high_mib
+if [ "$guard_resource_profile" = desktop ]; then
+    # Validate before arithmetic; the wrapper remains the admission authority.
+    case "$guard_default_go" in ''|*[!0123456789]*) fail "invalid selected memory profile" ;; esac
+    [ "${#guard_default_go}" -le 5 ] || fail "invalid selected memory profile"
+    [ "$guard_default_go" -le 6144 ] || guard_default_go=6144
+fi
+guard_go_memory_limit_mib=${RKC_GO_MEMORY_LIMIT_MIB:-$guard_default_go}
+guard_host_available_memory_min_mib=${RKC_HOST_AVAILABLE_MEMORY_MIN_MIB:-$guard_default_reserve}
 CGO_ENABLED=0 \
 GOFLAGS=-mod=readonly \
 RKC_REQUIRE_IO_CONTROLLER="$guard_require_io_controller" \
@@ -62,6 +76,7 @@ sh scripts/with-rkc-limits.sh sh -c '
     [ "${RKC_GO_MEMORY_LIMIT_MIB:-}" = "$5" ] || fail "Go-memory profile did not survive guard entry"
     [ "${RKC_HOST_AVAILABLE_MEMORY_MIN_MIB:-}" = "$6" ] || fail "host-memory reserve did not survive guard entry"
     [ "${RKC_CPU_QUOTA_PERCENT:-}" = "$7" ] || fail "CPU-quota profile did not survive guard entry"
+    [ "${RKC_RESOURCE_PROFILE:-}" = "$8" ] || fail "resource profile selector did not survive guard entry"
     expected_cpu_quota_percent=$7
     expected_high=$(( $2 * 1024 * 1024 ))
     expected_max=$(( $3 * 1024 * 1024 ))
@@ -134,6 +149,6 @@ fi
     [ "$(systemctl --user show --property=OOMPolicy --value "$unit")" = "stop" ] || fail "OOMPolicy is not stop"
 ' guard-probe "$guard_require_io_controller" "$guard_memory_high_mib" "$guard_memory_max_mib" \
     "$guard_memory_swap_max_mib" "$guard_go_memory_limit_mib" "$guard_host_available_memory_min_mib" \
-    "$guard_cpu_quota_percent"
+    "$guard_cpu_quota_percent" "$guard_resource_profile"
 
 echo "rkc resource guard verification: passed"

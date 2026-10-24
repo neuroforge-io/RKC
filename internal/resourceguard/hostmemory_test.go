@@ -10,6 +10,7 @@ import (
 )
 
 func TestHostAvailableMemoryMinimumBytesFromEnvironment(t *testing.T) {
+	t.Setenv(ResourceProfileEnvironment, "")
 	tests := []struct {
 		name  string
 		value *string
@@ -42,6 +43,7 @@ func TestHostAvailableMemoryMinimumBytesFromEnvironment(t *testing.T) {
 }
 
 func TestHostAvailableMemoryMinimumRejectsMalformedValuesPrivately(t *testing.T) {
+	t.Setenv(ResourceProfileEnvironment, "")
 	sentinel := "HOST_MEMORY_PRIVATE_SENTINEL"
 	for _, value := range []string{
 		"-1", "+1", "1.5", "65537", "0001", "000001", "999999999999999999999999", sentinel,
@@ -124,6 +126,7 @@ func TestCheckHostAvailableMemoryFailsClosedOnUnreadableOrOversizedInput(t *test
 }
 
 func TestCheckHostAvailableMemoryDisabled(t *testing.T) {
+	t.Setenv(ResourceProfileEnvironment, "")
 	t.Setenv(HostAvailableMemoryMinimumEnvironment, "0")
 	if err := CheckHostAvailableMemory(); err != nil {
 		t.Fatalf("disabled host reserve = %v", err)
@@ -131,6 +134,7 @@ func TestCheckHostAvailableMemoryDisabled(t *testing.T) {
 }
 
 func TestCheckHostAvailableMemoryPlatformBoundary(t *testing.T) {
+	t.Setenv(ResourceProfileEnvironment, "")
 	t.Setenv(HostAvailableMemoryMinimumEnvironment, "1536")
 	if err := checkHostAvailableMemoryForPlatform("darwin", "unused"); !errors.Is(err, ErrHostMemoryReserve) || !strings.Contains(err.Error(), "Linux /proc/meminfo is required") {
 		t.Fatalf("portable host reserve = %v", err)

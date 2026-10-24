@@ -16,14 +16,14 @@ import (
 var ErrLowPriorityEnvelope = errors.New("current process is outside the RKC low-priority envelope")
 
 const (
-	// The host envelope may be tightened below these release-profile maxima.
-	// Reserved rkc-low units never accept a larger value, an unlimited value,
-	// or a hard ceiling too small to host a useful Go process.
+	// These compatibility defaults remain unchanged. The explicit desktop
+	// profile admits separately validated larger memory ceilings; neither
+	// profile admits unlimited controls or an unusably small Go process.
 	rkcMemoryHighBytes    = int64(4 * 1024 * 1024 * 1024)
 	rkcMinimumMemoryBytes = int64(64 * 1024 * 1024)
-	// LowPriorityMemoryMaxBytes is the hard memory ceiling shared by the
-	// installed first-run launcher, workbench, development guard, and model
-	// runtime. Keep it aligned with scripts/with-rkc-limits.sh.
+	// LowPriorityMemoryMaxBytes is the default-profile hard memory ceiling.
+	// A zero Config.MaximumRSSBytes selects the validated profile's allowance.
+	// Keep defaults aligned with scripts/with-rkc-limits.sh.
 	LowPriorityMemoryMaxBytes = int64(4608 * 1024 * 1024)
 	rkcMemoryMaxBytes         = LowPriorityMemoryMaxBytes
 	rkcSwapMaxBytes           = int64(256 * 1024 * 1024)
@@ -48,7 +48,7 @@ type externalEnvelopeDependencies struct {
 // RequireCurrentProcessLowPriority proves that the calling process—not merely
 // a future model child—is already inside the low-priority envelope made by the
 // installed first-run launcher or scripts/with-rkc-limits.sh. A selected ambient
-// profile tightens every admitted ceiling; smaller actual limits remain valid.
+// profile selects bounded memory ceilings; smaller actual limits remain valid.
 // Constructors call this before expensive work so verification cannot compete
 // with higher-priority work.
 func RequireCurrentProcessLowPriority() error {
@@ -56,8 +56,8 @@ func RequireCurrentProcessLowPriority() error {
 }
 
 // PrepareCurrentProcessLowPriority admits the current Linux process without a
-// sibling transient unit only when kernel state already proves the fixed RKC
-// hard-resource ceiling. A reserved rkc-low unit retains
+// sibling transient unit only when kernel state already proves the selected
+// RKC hard-resource ceiling. A reserved rkc-low unit retains
 // RequireCurrentProcessLowPriority's stricter pressure and hard-memory contract,
 // tightened by any selected ambient profile. The only external exception is a
 // cgroup-namespaced container whose delegated root exposes every required hard
@@ -217,7 +217,7 @@ func requireProcessLowPriority(procRoot, cgroupRoot string, pid int, scheduling 
 		policyLimit int64
 		actualLimit int64
 	}{
-		{name: "memory.current", policyLimit: rkcMemoryMaxBytes, actualLimit: memoryMax},
+		{name: "memory.current", policyLimit: profile.memoryMaxMiB * profileMiB, actualLimit: memoryMax},
 		{name: "memory.swap.current", policyLimit: rkcSwapMaxBytes, actualLimit: swapMax},
 		{name: "pids.current", policyLimit: rkcTasksMax, actualLimit: tasksMax},
 	} {
@@ -331,7 +331,7 @@ func requireExternalProcessLowPriority(
 			policyLimit int64
 			actualLimit int64
 		}{
-			{name: "memory.current", policyLimit: rkcMemoryMaxBytes, actualLimit: memoryMax},
+			{name: "memory.current", policyLimit: profile.memoryMaxMiB * profileMiB, actualLimit: memoryMax},
 			{name: "memory.swap.current", policyLimit: rkcSwapMaxBytes, actualLimit: swapMax},
 			{name: "pids.current", policyLimit: rkcTasksMax, actualLimit: pidsMax},
 		} {

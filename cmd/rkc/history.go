@@ -377,7 +377,7 @@ func launchGuardedHistory(ctx context.Context, args []string) error {
 		Executable:      executable,
 		Arguments:       arguments,
 		Environment:     guardedDirectEnvironment("history"),
-		MaximumRSSBytes: resourceguard.LowPriorityMemoryMaxBytes,
+		MaximumRSSBytes: 0, // Use the validated profile's default ceiling.
 		UnitPrefix:      "rkc-low",
 	})
 	if err != nil {

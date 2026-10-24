@@ -4,8 +4,11 @@
 # at most one CPU core, no more than 4 GiB soft / 4.5 GiB hard memory, idle I/O
 # scheduling, lowest CPU niceness, IOWeight=1 when the user manager delegates
 # that controller, and a high OOM-kill preference. Operators may select a
-# strictly smaller host profile with RKC_MEMORY_HIGH_MIB, RKC_MEMORY_MAX_MIB,
-# RKC_MEMORY_SWAP_MAX_MIB, and RKC_GO_MEMORY_LIMIT_MIB. An optional
+# smaller host profile with RKC_MEMORY_HIGH_MIB, RKC_MEMORY_MAX_MIB,
+# RKC_MEMORY_SWAP_MAX_MIB, and RKC_GO_MEMORY_LIMIT_MIB. The explicit
+# RKC_RESOURCE_PROFILE=desktop selects a larger bounded memory envelope with
+# mandatory host headroom; selecting it is not proof the host can admit work.
+# An optional (mandatory for desktop)
 # RKC_HOST_AVAILABLE_MEMORY_MIN_MIB reserve makes direct RKC work yield when
 # host-wide Linux MemAvailable falls below the selected floor.
 # RKC_CPU_QUOTA_PERCENT may lower the CPU ceiling to 1..100 percent of one
@@ -163,6 +166,7 @@ guard_cleanup_owned_unit() {
 
 guard_launch_unit() {
     guard_script=$0
+    guard_resource_profile=$RKC_RESOURCE_PROFILE
     guard_cpu_quota_percent=$RKC_CPU_QUOTA_PERCENT
     guard_memory_high_mib=$RKC_MEMORY_HIGH_MIB
     guard_memory_max_mib=$RKC_MEMORY_MAX_MIB
@@ -227,6 +231,7 @@ case "$guard_mode" in
             --setenv="GOMEMLIMIT=$GOMEMLIMIT" \
             --setenv="CGO_ENABLED=$guard_cgo_enabled" \
             --setenv="RKC_REQUIRE_IO_CONTROLLER=$guard_require_io_controller" \
+            --setenv="RKC_RESOURCE_PROFILE=$guard_resource_profile" \
             --setenv="RKC_CPU_QUOTA_PERCENT=$guard_cpu_quota_percent" \
             --setenv="RKC_MEMORY_HIGH_MIB=$guard_memory_high_mib" \
             --setenv="RKC_MEMORY_MAX_MIB=$guard_memory_max_mib" \
@@ -374,34 +379,59 @@ case "$guard_require_io_controller" in
         ;;
 esac
 
-guard_memory_high_mib=${RKC_MEMORY_HIGH_MIB:-4096}
-guard_memory_max_mib=${RKC_MEMORY_MAX_MIB:-4608}
-guard_memory_swap_max_mib=${RKC_MEMORY_SWAP_MAX_MIB:-256}
-guard_go_memory_limit_mib=${RKC_GO_MEMORY_LIMIT_MIB:-$guard_memory_high_mib}
-guard_host_available_memory_min_mib=${RKC_HOST_AVAILABLE_MEMORY_MIN_MIB:-0}
+guard_resource_profile=${RKC_RESOURCE_PROFILE:-default}
+guard_default_high=4096 guard_default_max=4608 guard_default_swap=256
+guard_high_ceiling=4096 guard_max_ceiling=4608 guard_default_reserve=0 guard_minimum_reserve=0
+case "$guard_resource_profile" in
+    default) ;;
+    desktop)
+        guard_default_high=8192 guard_default_max=10240 guard_default_swap=0
+        guard_high_ceiling=12288 guard_max_ceiling=16384
+        guard_default_reserve=8192 guard_minimum_reserve=4096
+        ;;
+    *)
+        echo "rkc resource guard: RKC_RESOURCE_PROFILE must be default or desktop" >&2
+        exit 2
+        ;;
+esac
+RKC_RESOURCE_PROFILE=$guard_resource_profile
+export RKC_RESOURCE_PROFILE
+guard_memory_high_mib=${RKC_MEMORY_HIGH_MIB:-$guard_default_high}
+guard_memory_max_mib=${RKC_MEMORY_MAX_MIB:-$guard_default_max}
+guard_memory_swap_max_mib=${RKC_MEMORY_SWAP_MAX_MIB:-$guard_default_swap}
+guard_default_go=$guard_memory_high_mib
+guard_host_available_memory_min_mib=${RKC_HOST_AVAILABLE_MEMORY_MIN_MIB:-$guard_default_reserve}
 invalid_memory_profile() {
-    echo "rkc resource guard: memory profile must use integer MiB values with high=64..4096, max=high..4608, swap=0..256, Go limit=64..high, and host reserve=0..65536" >&2
+    echo "rkc resource guard: memory profile must use integer MiB values with high=64..$guard_high_ceiling, max=high..$guard_max_ceiling, swap=0..256, Go limit=64..high, and host reserve=$guard_minimum_reserve..65536" >&2
     exit 2
 }
-for guard_memory_value in "$guard_memory_high_mib" "$guard_memory_max_mib" "$guard_memory_swap_max_mib" "$guard_go_memory_limit_mib"; do
+for guard_memory_value in "$guard_memory_high_mib" "$guard_memory_max_mib" "$guard_memory_swap_max_mib"; do
     case "$guard_memory_value" in
         ''|*[!0123456789]*) invalid_memory_profile ;;
     esac
-    [ "${#guard_memory_value}" -le 4 ] || invalid_memory_profile
+    [ "${#guard_memory_value}" -le 5 ] || invalid_memory_profile
     case "$guard_memory_value" in
         0?*) invalid_memory_profile ;;
     esac
 done
-[ "$guard_memory_high_mib" -ge 64 ] && [ "$guard_memory_high_mib" -le 4096 ] || invalid_memory_profile
-[ "$guard_memory_max_mib" -ge "$guard_memory_high_mib" ] && [ "$guard_memory_max_mib" -le 4608 ] || invalid_memory_profile
+[ "$guard_memory_high_mib" -ge 64 ] && [ "$guard_memory_high_mib" -le "$guard_high_ceiling" ] || invalid_memory_profile
+[ "$guard_memory_max_mib" -ge "$guard_memory_high_mib" ] && [ "$guard_memory_max_mib" -le "$guard_max_ceiling" ] || invalid_memory_profile
 [ "$guard_memory_swap_max_mib" -le 256 ] || invalid_memory_profile
+if [ "$guard_resource_profile" = desktop ] && [ "$guard_default_go" -gt 6144 ]; then
+    guard_default_go=6144
+fi
+guard_go_memory_limit_mib=${RKC_GO_MEMORY_LIMIT_MIB:-$guard_default_go}
+case "$guard_go_memory_limit_mib" in
+    ''|*[!0123456789]*|0?*) invalid_memory_profile ;;
+esac
+[ "${#guard_go_memory_limit_mib}" -le 5 ] || invalid_memory_profile
 [ "$guard_go_memory_limit_mib" -ge 64 ] && [ "$guard_go_memory_limit_mib" -le "$guard_memory_high_mib" ] || invalid_memory_profile
 case "$guard_host_available_memory_min_mib" in
     ''|*[!0123456789]*) invalid_memory_profile ;;
     0?*) invalid_memory_profile ;;
 esac
 [ "${#guard_host_available_memory_min_mib}" -le 5 ] || invalid_memory_profile
-[ "$guard_host_available_memory_min_mib" -le 65536 ] || invalid_memory_profile
+[ "$guard_host_available_memory_min_mib" -ge "$guard_minimum_reserve" ] && [ "$guard_host_available_memory_min_mib" -le 65536 ] || invalid_memory_profile
 RKC_MEMORY_HIGH_MIB=$guard_memory_high_mib
 RKC_MEMORY_MAX_MIB=$guard_memory_max_mib
 RKC_MEMORY_SWAP_MAX_MIB=$guard_memory_swap_max_mib
@@ -562,7 +592,13 @@ case "$guard_mode" in
         ;;
 esac
 
-if ! guard_host_memory_available "$guard_host_available_memory_min_mib"; then
+guard_admission_memory_min_mib=$guard_host_available_memory_min_mib
+if [ "$guard_resource_profile" = desktop ]; then
+    # Only a new unit pays this admission allowance. The owner/watchdog's
+    # continuous monitor retains the reserve alone after the payload grows.
+    guard_admission_memory_min_mib=$((guard_memory_max_mib + guard_host_available_memory_min_mib))
+fi
+if ! guard_host_memory_available "$guard_admission_memory_min_mib"; then
     echo "rkc resource guard: host memory reserve is unavailable or cannot be verified; refusing to start" >&2
     exit 75
 fi

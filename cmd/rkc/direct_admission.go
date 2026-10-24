@@ -281,7 +281,7 @@ func launchGuardedDirectUsing(
 		Executable:      executable,
 		Arguments:       arguments,
 		Environment:     guardedDirectEnvironment(command),
-		MaximumRSSBytes: resourceguard.LowPriorityMemoryMaxBytes,
+		MaximumRSSBytes: 0, // Use the validated profile's default ceiling.
 		UnitPrefix:      "rkc-low",
 	})
 	if err != nil {

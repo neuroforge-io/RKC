@@ -33,6 +33,12 @@ and RKC contributors and Apache-2.0 licensed.
 - Consistent SQLite ownership preflight during simultaneous opens and
   migrations, retaining strict schema and journal verification in one read
   snapshot, including read-only opens.
+- An explicit Desktop memory profile for larger compilation and evidence
+  workloads, with coherent Go and kernel budgets, fresh physical headroom
+  admission, inherited limits, and continuous reserve monitoring. Existing
+  default limits and CPU, I/O, cancellation, and cleanup protections remain.
+- Versioned successful scan receipts for external automation, including
+  documented journal, snapshot, digest, quality-gate, and context checks.
 
 These changes are in development source. Portable release qualification and
 real hosted-model quality remain separate from local tests and protocol mocks.

@@ -15,6 +15,11 @@ import time
 import unittest
 from pathlib import Path
 
+try:
+    import fcntl
+except ImportError:
+    fcntl = None
+
 ROOT = Path(__file__).resolve().parents[1]
 GUARD = ROOT / "scripts/with-rkc-limits.sh"
 
@@ -45,6 +50,7 @@ class GuardFixture:
             "DBUS_SESSION_BUS_ADDRESS": "unix:path=/fixture/no-real-manager",
             "RKC_HIGHER_PRIORITY_MARKERS": "fixture_training",
             "RKC_HIGHER_PRIORITY_POLICY": "yield",
+            "RKC_RESOURCE_PROFILE": "default",
             "RKC_CPU_QUOTA_PERCENT": "25",
             "RKC_MEMORY_HIGH_MIB": "512",
             "RKC_MEMORY_MAX_MIB": "640",
@@ -173,11 +179,19 @@ if 'show' in args:
 if 'stop' in args or 'kill' in args:
     with (root / 'cleanup.jsonl').open('a') as output:
         output.write(json.dumps({'args': args, 'unit': unit}) + '\n')
+    configuration = json.loads((root / 'config.json').read_text())
+    if configuration.get('cleanup_gate') and not (root / 'allow-cleanup').exists():
+        # Acknowledge the cleanup request without publishing a terminal unit.
+        # The test releases this bounded handshake while the real watchdog
+        # still owns cleanup, rather than depending on a scheduling sleep.
+        (root / 'cleanup-blocked').touch()
+        sys.exit(0)
     if state:
         try: os.killpg(state['pid'], signal.SIGKILL)
         except ProcessLookupError: pass
         state['active'] = 'inactive'
         save(path, state)
+        (root / 'cleanup-acknowledged').touch()
     sys.exit(0)
 sys.exit(91)
 ''')
@@ -191,13 +205,16 @@ sys.exit(91)
         self.config.write_text(json.dumps(values), encoding="utf-8")
 
     def set_memory(self, available_mib: int) -> None:
+        total_mib = max(8192, available_mib)
         self.memory.write_text(
-            f"MemTotal:       8388608 kB\nMemAvailable:   {available_mib * 1024} kB\n",
+            f"MemTotal:       {total_mib * 1024} kB\n"
+            f"MemAvailable:   {available_mib * 1024} kB\n",
             encoding="utf-8",
         )
 
     def start(
         self, command: list[str], *, mode: str = "scope", umask: int = -1,
+        pass_fds: tuple[int, ...] = (),
     ) -> subprocess.Popen[str]:
         environment = self.environment.copy()
         environment["RKC_RESOURCE_GUARD_MODE"] = mode
@@ -205,6 +222,7 @@ sys.exit(91)
             ["/bin/sh", str(GUARD), *command], cwd=ROOT, env=environment,
             stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
             text=True, start_new_session=True, umask=umask,
+            pass_fds=pass_fds,
         )
         self.processes.append(process)
         return process
@@ -280,6 +298,275 @@ class ResourceGuardLifecycleTests(unittest.TestCase):
             except FileNotFoundError:
                 continue
             self.assertIn(process_stat.rsplit(") ", 1)[1].split()[0], ("Z", "X"))
+
+    def assert_execution_lock_busy(self, path: Path) -> None:
+        """Probe a separate open description without disturbing the lease."""
+        descriptor = os.open(path, os.O_RDWR | os.O_CLOEXEC)
+        try:
+            with self.assertRaises(BlockingIOError):
+                fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        finally:
+            os.close(descriptor)
+
+    def assert_real_watchdog_retains_execution_lease(
+        self, termination: str, mode: str,
+    ) -> None:
+        """Use the real shell/watchdog with fixture-owned cleanup handshakes."""
+        lock = self.fixture.root / "execution.lock"
+        lock.write_bytes(b"existing coordination inode\n")
+        lock.chmod(0o600)
+        original = os.open(lock, os.O_RDWR | os.O_CLOEXEC)
+        fcntl.flock(original, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        lease = fcntl.fcntl(original, fcntl.F_DUPFD_CLOEXEC, 10)
+        info = os.fstat(original)
+        self.assertGreaterEqual(lease, 10)
+        self.fixture.configure(cleanup_gate=True)
+        # Observe the inherited descriptor immediately before exec of the
+        # actual setsid/watchdog path. No substitute watchdog is used.
+        self.fixture.write("setsid", (
+            "#!/usr/bin/python3\nimport json, os, sys\nfrom pathlib import Path\n"
+            f"descriptor = {lease}\n"
+            "info = os.fstat(descriptor)\n"
+            f"receipt = Path({str(self.fixture.root / 'watchdog-lease.json')!r})\n"
+            "receipt.write_text(json.dumps({'pid': os.getpid(), 'fd': descriptor, "
+            "'device': info.st_dev, 'inode': info.st_ino, "
+            "'inheritable': os.get_inheritable(descriptor)}))\n"
+            "os.execv('/usr/bin/setsid', ['setsid', *sys.argv[1:]])\n"
+        ))
+        ready = self.fixture.root / "payload-ready"
+        release = self.fixture.root / "release-payload"
+        cleanup_release = self.fixture.root / "allow-cleanup"
+        payload = (
+            "import sys, time\nfrom pathlib import Path\n"
+            "ready, release = map(Path, sys.argv[1:])\n"
+            "ready.touch()\ndeadline = time.monotonic() + 15\n"
+            "while not release.exists():\n"
+            " if time.monotonic() >= deadline: sys.exit(93)\n"
+            " time.sleep(0.01)\n"
+        )
+        process = None
+        try:
+            process = self.fixture.start(
+                ["/usr/bin/python3", "-c", payload, str(ready), str(release)],
+                mode=mode, pass_fds=(lease,),
+            )
+        finally:
+            # Neither initiating descriptor may keep the lock busy. Later
+            # assertions must depend on the wrapper's inherited description.
+            os.close(lease)
+            os.close(original)
+        try:
+            self.fixture.wait_file("payload-ready")
+            self.fixture.wait_file("started")
+            watchdog = json.loads(
+                self.fixture.wait_file("watchdog-lease.json").read_text()
+            )
+            self.assertEqual(
+                (watchdog["fd"], watchdog["device"], watchdog["inode"],
+                 watchdog["inheritable"]),
+                (lease, info.st_dev, info.st_ino, True),
+            )
+            actual = os.stat(f"/proc/{watchdog['pid']}/fd/{lease}")
+            self.assertEqual(
+                (actual.st_dev, actual.st_ino), (info.st_dev, info.st_ino)
+            )
+            self.assert_execution_lock_busy(lock)
+            if termination == "normal":
+                release.touch()
+            elif termination == "term":
+                process.send_signal(signal.SIGTERM)
+            elif termination == "kill":
+                process.kill()
+            elif termination == "group-kill":
+                os.killpg(process.pid, signal.SIGKILL)
+            else:
+                self.fail("unknown owned termination fixture")
+            self.fixture.wait_file("cleanup-blocked")
+            self.assertFalse((self.fixture.root / "cleanup-acknowledged").exists())
+            invocation = json.loads((self.fixture.root / "invocation.json").read_text())
+            unit = json.loads((self.fixture.units / invocation["unit"]).read_text())
+            self.assertEqual(unit["active"], "active")
+            if termination != "normal":
+                payload_state = Path(f"/proc/{unit['pid']}/stat").read_text()
+                self.assertNotIn(payload_state.rsplit(") ", 1)[1].split()[0], ("Z", "X"))
+            # On KILL paths the initiator and launcher have died by this
+            # handshake; the detached real watchdog must still hold the lease.
+            actual = os.stat(f"/proc/{watchdog['pid']}/fd/{lease}")
+            self.assertEqual(
+                (actual.st_dev, actual.st_ino), (info.st_dev, info.st_ino)
+            )
+            self.assert_execution_lock_busy(lock)
+            cleanup_release.touch()
+            self.fixture.wait_file("cleanup-acknowledged")
+            _, error = process.communicate(timeout=12)
+            expected = {"normal": 0, "term": 143, "kill": -9, "group-kill": -9}
+            self.assertEqual(process.returncode, expected[termination], error)
+            self.assert_quiescent()
+            deadline = time.monotonic() + 8
+            while True:
+                descriptor = os.open(lock, os.O_RDWR | os.O_CLOEXEC)
+                try:
+                    try:
+                        fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    except BlockingIOError:
+                        if time.monotonic() >= deadline:
+                            self.fail("real watchdog did not release its completed lease")
+                    else:
+                        final_unit = json.loads(
+                            (self.fixture.units / invocation["unit"]).read_text()
+                        )
+                        self.assertEqual(final_unit["active"], "inactive")
+                        break
+                finally:
+                    os.close(descriptor)
+                time.sleep(0.01)
+            self.assertEqual(lock.read_bytes(), b"existing coordination inode\n")
+            self.assertEqual(
+                (lock.stat().st_dev, lock.stat().st_ino), (info.st_dev, info.st_ino)
+            )
+        finally:
+            cleanup_release.touch()
+            release.touch()
+            if process is not None:
+                if process.poll() is None:
+                    process.send_signal(signal.SIGTERM)
+                try:
+                    process.communicate(timeout=12)
+                except subprocess.TimeoutExpired:
+                    self.fixture.cleanup()
+
+    @unittest.skipUnless(
+        fcntl is not None and Path("/proc/self/stat").exists(), "Linux flock required"
+    )
+    def test_real_watchdog_retains_flock_lease_through_normal_cleanup(self) -> None:
+        self.assert_real_watchdog_retains_execution_lease("normal", "scope")
+
+    @unittest.skipUnless(
+        fcntl is not None and Path("/proc/self/stat").exists(), "Linux flock required"
+    )
+    def test_real_watchdog_retains_flock_lease_through_term_cleanup(self) -> None:
+        self.assert_real_watchdog_retains_execution_lease("term", "service")
+
+    @unittest.skipUnless(
+        fcntl is not None and Path("/proc/self/stat").exists(), "Linux flock required"
+    )
+    def test_real_watchdog_retains_flock_lease_after_initiator_sigkill(self) -> None:
+        self.assert_real_watchdog_retains_execution_lease("kill", "service")
+
+    @unittest.skipUnless(
+        fcntl is not None and Path("/proc/self/stat").exists(), "Linux flock required"
+    )
+    def test_real_watchdog_retains_flock_lease_after_group_sigkill(self) -> None:
+        self.assert_real_watchdog_retains_execution_lease("group-kill", "scope")
+
+    def select_desktop_profile(self) -> None:
+        """Select desktop against fake ample host memory, without allocating it."""
+        for name in (
+            "RKC_MEMORY_HIGH_MIB", "RKC_MEMORY_MAX_MIB", "RKC_MEMORY_SWAP_MAX_MIB",
+            "RKC_GO_MEMORY_LIMIT_MIB", "RKC_HOST_AVAILABLE_MEMORY_MIN_MIB",
+        ):
+            self.fixture.environment.pop(name, None)
+        self.fixture.environment["RKC_RESOURCE_PROFILE"] = "desktop"
+        self.fixture.set_memory(32768)
+
+    def test_desktop_defaults_propagate_with_subordinate_controls_in_both_modes(self) -> None:
+        self.select_desktop_profile()
+        script = (
+            "import json, os; print(json.dumps({key: os.environ[key] for key in "
+            "('RKC_RESOURCE_PROFILE', 'RKC_MEMORY_HIGH_MIB', 'RKC_MEMORY_MAX_MIB', "
+            "'RKC_MEMORY_SWAP_MAX_MIB', 'RKC_GO_MEMORY_LIMIT_MIB', "
+            "'RKC_HOST_AVAILABLE_MEMORY_MIN_MIB', 'GOMEMLIMIT', 'GOMAXPROCS')}))"
+        )
+        for mode in ("scope", "service"):
+            with self.subTest(mode=mode):
+                process = self.fixture.start(["/usr/bin/python3", "-c", script], mode=mode)
+                output, error = process.communicate(timeout=12)
+                self.assertEqual(process.returncode, 0, error)
+                self.assertEqual(json.loads(output), {
+                    "RKC_RESOURCE_PROFILE": "desktop", "RKC_MEMORY_HIGH_MIB": "8192",
+                    "RKC_MEMORY_MAX_MIB": "10240", "RKC_MEMORY_SWAP_MAX_MIB": "0",
+                    "RKC_GO_MEMORY_LIMIT_MIB": "6144", "RKC_HOST_AVAILABLE_MEMORY_MIN_MIB": "8192",
+                    "GOMEMLIMIT": "6144MiB", "GOMAXPROCS": "1",
+                })
+                invocation = json.loads((self.fixture.root / "invocation.json").read_text())
+                for setting in (
+                    "CPUQuota=25%", "CPUWeight=1", "IOWeight=1", "MemoryHigh=8192M",
+                    "MemoryMax=10240M", "MemorySwapMax=0M", "TasksMax=128", "OOMPolicy=stop",
+                ):
+                    self.assertIn(setting, invocation["args"])
+                self.assert_quiescent()
+
+    def test_desktop_invalid_selector_or_limits_fail_before_launch_privately(self) -> None:
+        self.select_desktop_profile()
+        original = self.fixture.environment.copy()
+        sentinel = "PRIVATE_PROFILE_INPUT_SENTINEL"
+        for name, value in (
+            ("RKC_RESOURCE_PROFILE", sentinel), ("RKC_RESOURCE_PROFILE", "Desktop"),
+            ("RKC_MEMORY_HIGH_MIB", "12289"), ("RKC_MEMORY_HIGH_MIB", "08192"),
+            ("RKC_MEMORY_MAX_MIB", "16385"), ("RKC_MEMORY_MAX_MIB", "8191"),
+            ("RKC_MEMORY_SWAP_MAX_MIB", "257"), ("RKC_GO_MEMORY_LIMIT_MIB", "8193"),
+            ("RKC_HOST_AVAILABLE_MEMORY_MIN_MIB", "0"), ("RKC_HOST_AVAILABLE_MEMORY_MIN_MIB", "4095"),
+            ("RKC_CPU_QUOTA_PERCENT", "101"),
+        ):
+            with self.subTest(name=name, value=value):
+                self.fixture.environment = original.copy()
+                self.fixture.environment[name] = value
+                process = self.fixture.start(["true"])
+                _, error = process.communicate(timeout=5)
+                self.assertEqual(process.returncode, 2, error)
+                self.assertNotIn(sentinel, error)
+                self.assertFalse((self.fixture.root / "invocation.json").exists())
+                self.assert_quiescent()
+
+    def test_desktop_host_reserve_cancels_owned_work_without_large_allocation(self) -> None:
+        self.select_desktop_profile()
+        process = self.fixture.start(["/bin/sleep", "60"], mode="service")
+        self.fixture.wait_file("started")
+        self.fixture.set_memory(8191)
+        _, error = process.communicate(timeout=12)
+        self.assertEqual(process.returncode, 75, error)
+        self.assert_quiescent()
+
+    def test_desktop_new_launch_requires_hard_allowance_plus_reserve(self) -> None:
+        self.select_desktop_profile()
+        # The default reserve alone is satisfied, but 10 GiB hard + 8 GiB
+        # reserve cannot fit. No service-manager launch may be attempted.
+        for content in (
+            "MemTotal: 33554432 kB\nMemAvailable: 8388608 kB\n",
+            "MemTotal: 8388608 kB\nMemAvailable: 8388608 kB\n",
+            "MemTotal: 33554432 kB\nMemAvailable: 18874367 kB\n",
+            "MemTotal: PRIVATE_ADMISSION_COUNTER kB\nMemAvailable: 25165824 kB\n",
+        ):
+            with self.subTest(content=content):
+                self.fixture.memory.write_text(content, encoding="ascii")
+                process = self.fixture.start(["true"])
+                _, error = process.communicate(timeout=5)
+                self.assertEqual(process.returncode, 75, error)
+                self.assertNotIn("PRIVATE_ADMISSION_COUNTER", error)
+                self.assertFalse((self.fixture.root / "invocation.json").exists())
+                self.assert_quiescent()
+
+    def test_desktop_running_monitor_preserves_reserve_alone(self) -> None:
+        self.select_desktop_profile()
+        process = self.fixture.start(["/bin/sleep", "60"], mode="service")
+        self.fixture.wait_file("started")
+        # Less than the new-launch sum, still above the running reserve.
+        self.fixture.set_memory(9000)
+        time.sleep(1.2)
+        self.assertIsNone(process.poll())
+        process.send_signal(signal.SIGTERM)
+        _, error = process.communicate(timeout=12)
+        self.assertEqual(process.returncode, 143, error)
+        self.assert_quiescent()
+
+    def test_desktop_owner_death_still_cleans_only_its_unit(self) -> None:
+        self.select_desktop_profile()
+        process = self.fixture.start(["/bin/sleep", "60"], mode="service")
+        self.fixture.wait_file("started")
+        process.kill()
+        process.communicate(timeout=12)
+        self.assertEqual(process.returncode, -signal.SIGKILL)
+        self.assert_quiescent()
 
     def test_admission_refuses_low_unreadable_and_invalid_meminfo_privately(self) -> None:
         sentinel = "PRIVATE_MEMORY_CONTENT_SENTINEL"

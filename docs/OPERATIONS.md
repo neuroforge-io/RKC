@@ -50,20 +50,21 @@ printed URL for headless use. The default server is read-only and remains the
 portable macOS/Windows first-run path.
 
 For a source-checkout workload sharing a memory-constrained host, the wrapper
-accepts a strictly smaller, fail-closed profile. For example:
+accepts a strictly smaller, fail-closed default profile. For example:
 
 ```sh
+RKC_RESOURCE_PROFILE=default \
 RKC_CPU_QUOTA_PERCENT=25 \
 RKC_MEMORY_HIGH_MIB=512 \
 RKC_MEMORY_MAX_MIB=640 \
 RKC_MEMORY_SWAP_MAX_MIB=0 \
 RKC_GO_MEMORY_LIMIT_MIB=384 \
 RKC_HOST_AVAILABLE_MEMORY_MIN_MIB=1536 \
-scripts/with-rkc-limits.sh ./bin/rkc scan --stage-workers 1 --stage-memory-mib 384 --no-python /path/to/repository
+scripts/with-rkc-limits.sh ./bin/rkc scan --stage-workers 1 --stage-memory-mib 512 --no-python /path/to/repository
 ```
 
 The wrapper rejects non-integers, a hard ceiling below the soft ceiling, values
-above the 4 GiB / 4.5 GiB / 256 MiB release maxima, and a Go heap target above
+above the default 4 GiB / 4.5 GiB / 256 MiB maxima, and a Go heap target above
 the soft ceiling. It also validates the optional host-wide reserve from 0
 through 65,536 MiB. When nonzero, protected `open`, `quickstart`, `scan`, and
 workbench execution fail closed before work and yield within one second if
@@ -101,6 +102,54 @@ unit created by this invocation. Output publication still uses RKC's existing
 owned staging and atomic publication rules. Verify the actual selected profile
 with `scripts/verify-resource-guard.sh`; the probe checks the exact CPU ratio
 alongside memory, swap, scheduling, and process-count controls.
+
+### Explicit Desktop memory profile
+
+On Linux, `RKC_RESOURCE_PROFILE=desktop` supports larger compilation and evidence
+workloads on a machine with freshly verified headroom. It leaves the default
+profile unchanged. Its defaults are 8 GiB soft memory, 10 GiB hard memory, a
+6 GiB Go memory target, zero swap, and an 8 GiB host-available-memory reserve.
+The Go target leaves room below the soft ceiling for runtime overhead, mapped
+data, filesystem cache, and other charged allocations. It is a runtime memory
+target, not an additional allocation or a prediction of resident memory.
+
+Before a new Desktop launch, both physical total and available memory must
+cover the effective hard allowance plus the reserve. The default launch
+therefore needs at least 18 GiB available. While it runs, the existing monitor
+enforces the reserve rather than repeatedly charging the unused hard allowance.
+This does not reserve RAM against peer processes; the workload still yields
+when actual host availability falls below the floor.
+
+```sh
+RKC_RESOURCE_PROFILE=desktop \
+RKC_CPU_QUOTA_PERCENT=25 \
+scripts/with-rkc-limits.sh ./bin/rkc scan --no-python --stage-workers 1 --stage-memory-mib 512 --out /private/new-atlas /path/to/repository
+```
+
+Existing MiB settings can narrow this profile. Desktop soft and hard ceilings
+cannot exceed 12 GiB and 16 GiB respectively, the Go target cannot exceed the
+soft ceiling, swap remains capped at 256 MiB, and the host reserve must be at
+least 4 GiB. An omitted Go target is at most 6 GiB and narrows with the soft
+ceiling. Every child retains the selector and reserve; a smaller explicit worker
+budget cannot enlarge its parent allowance. CPU quotas, one-worker runtime
+settings, idle I/O, priority, process limits, and interruption cleanup apply in
+both profiles.
+
+A larger soft ceiling can avoid reclaim stalls when the host has spare RAM.
+It is not a measured speedup. Compare the same bounded input and executable,
+retain input and output digests, and measure wall time, CPU use, peak memory,
+memory events and pressure. Do not infer current admission from an earlier
+headroom reading. A source update also does not change an already installed
+binary or running service. Preserve its configuration and last good generations,
+prove ownership and shutdown, then qualify a new runtime before activation.
+Optional model acquisition retains its separate exact 4 GiB / 4.5 GiB / 256 MiB
+memory guard; this profile does not expand qualified model or download budgets.
+
+The [automation integration guide](AUTOMATION_INTEGRATION.md) describes the
+versioned scan receipt and the evidence checks an external research or upgrade
+service can use.
+
+### Starting a trusted workbench
 
 For a trusted single-user Linux checkout, `rkc open --workbench <path>` is the
 explicit interactive route. The guarded child writes its one-time URL-fragment

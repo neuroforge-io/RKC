@@ -44,9 +44,11 @@ const (
 // Config describes one guarded subprocess. Executable should already be an
 // exact, validated path when a caller needs artifact identity guarantees.
 type Config struct {
-	Executable          string
-	Arguments           []string
-	Environment         []string
+	Executable  string
+	Arguments   []string
+	Environment []string
+	// MaximumRSSBytes zero uses the selected profile's hard limit. An explicit
+	// budget can narrow, but cannot enlarge, a selected outer envelope.
 	MaximumRSSBytes     int64
 	UnitPrefix          string
 	UnsafeDisableCgroup bool
@@ -66,6 +68,7 @@ type Command struct {
 	unit            string
 	controlGroup    string
 	priorityCheck   func() error
+	admissionCheck  func() error
 	maximumRSSBytes int64
 }
 
@@ -117,14 +120,17 @@ func newCommandWithParentUnit(ctx context.Context, config Config, priorityCheck 
 		return nil, errors.New("priority checks may be disabled only with the test-only cgroup bypass")
 	}
 	memoryMax := config.MaximumRSSBytes
-	if memoryMax == 0 {
-		memoryMax = 4608 * 1024 * 1024
-	}
-	if memoryMax < 64*1024*1024 || memoryMax > 64*1024*1024*1024 {
+	if memoryMax != 0 && (memoryMax < 64*1024*1024 || memoryMax > 64*1024*1024*1024) {
 		return nil, errors.New("model RSS limit must be between 64 MiB and 64 GiB")
 	}
 	memoryHigh, memoryMax := profile.commandMemory(memoryMax)
 	environment := profile.childEnvironment(config.Environment, memoryHigh, memoryMax)
+	var admissionCheck func() error
+	if profile.name == "desktop" {
+		admissionCheck = func() error {
+			return profile.hostMemoryAdmissionCheckForPlatform(runtime.GOOS, "/proc/meminfo", memoryMax)
+		}
+	}
 	if priorityCheck == nil {
 		priorityCheck = CheckHigherPriority
 	}
@@ -143,7 +149,7 @@ func newCommandWithParentUnit(ctx context.Context, config Config, priorityCheck 
 	if config.UnsafeDisableCgroup {
 		command := exec.CommandContext(ctx, config.Executable, config.Arguments...)
 		command.Env = environment
-		return &Command{cmd: command, priorityCheck: priorityCheck, maximumRSSBytes: memoryMax}, nil
+		return &Command{cmd: command, priorityCheck: priorityCheck, admissionCheck: admissionCheck, maximumRSSBytes: memoryMax}, nil
 	}
 	for _, executable := range []string{"systemd-run", "systemctl", "choom", "ionice", "nice", "env"} {
 		if _, err := exec.LookPath(executable); err != nil {
@@ -206,7 +212,7 @@ func newCommandWithParentUnit(ctx context.Context, config Config, priorityCheck 
 	// Run can terminate a still-active service and prove its cgroup inactive.
 	command := exec.Command("systemd-run", arguments...)
 	command.Env = ResourceGuardEnvironment()
-	return &Command{cmd: command, unit: unit, priorityCheck: priorityCheck, maximumRSSBytes: memoryMax}, nil
+	return &Command{cmd: command, unit: unit, priorityCheck: priorityCheck, admissionCheck: admissionCheck, maximumRSSBytes: memoryMax}, nil
 }
 
 // Run checks the host-priority policy immediately before spawn, then executes
@@ -230,6 +236,17 @@ func (command *Command) Run(ctx context.Context, stdout, stderr io.Writer) (int6
 	command.cmd.Stderr = stderr
 	// The priority check can be non-trivial and cancellation can arrive while it
 	// runs. Never spawn after that cancellation has already become observable.
+	if err := ctx.Err(); err != nil {
+		return 0, err
+	}
+	// This command always creates a new process/unit. Reusing an already
+	// admitted current RKC unit is handled by its caller before construction;
+	// a proven sibling's lifetime binding is not a shared memory reservation.
+	if command.admissionCheck != nil {
+		if err := command.admissionCheck(); err != nil {
+			return 0, err
+		}
+	}
 	if err := ctx.Err(); err != nil {
 		return 0, err
 	}

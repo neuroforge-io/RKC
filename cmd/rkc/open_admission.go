@@ -161,10 +161,11 @@ func launchGuardedOpenUsing(
 	arguments = append(arguments, "open")
 	arguments = append(arguments, args...)
 	command, err := dependencies.newCommand(ctx, resourceguard.Config{
-		Executable:      executable,
-		Arguments:       arguments,
-		Environment:     guardedOpenEnvironment(readyFile),
-		MaximumRSSBytes: resourceguard.LowPriorityMemoryMaxBytes,
+		Executable:  executable,
+		Arguments:   arguments,
+		Environment: guardedOpenEnvironment(readyFile),
+		// Zero resolves the validated profile's default, including desktop.
+		MaximumRSSBytes: 0,
 		UnitPrefix:      "rkc-low",
 	})
 	if err != nil {
@@ -310,6 +311,14 @@ func guardedOpenEnvironment(readyFile string) []string {
 	values := make(map[string]string, len(allowed)+14)
 	for _, name := range allowed {
 		if value, present := os.LookupEnv(name); present && !strings.ContainsRune(value, '\x00') {
+			values[name] = value
+		}
+	}
+	// Reuse the guard's allowlist for profile fields; never copy arbitrary RKC
+	// variables or ambient credentials into the protected process.
+	for _, entry := range resourceguard.ResourceGuardEnvironment() {
+		name, value, _ := strings.Cut(entry, "=")
+		if strings.HasPrefix(name, "RKC_") {
 			values[name] = value
 		}
 	}

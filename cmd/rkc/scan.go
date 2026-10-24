@@ -628,7 +628,8 @@ func runScanWithSource(ctx context.Context, args []string, importedSource *guiSo
 		displaySource = rootAbs
 	}
 	summary := map[string]any{
-		"snapshot_id": bundle.Snapshot.ID, "source": displaySource, "source_kind": acquired.Kind, "output": outAbs, "snapshot_store": *stateDir, "snapshot_store_noop": snapshotStoreNoop,
+		"schema_version": "rkc-scan-receipt/v1",
+		"snapshot_id":    bundle.Snapshot.ID, "source": displaySource, "source_kind": acquired.Kind, "output": outAbs, "snapshot_store": *stateDir, "snapshot_store_noop": snapshotStoreNoop,
 		"database": resolvedDatabase, "database_noop": sqliteNoop, "cache": resolvedCache, "cache_hits": cacheHits,
 		"run_id": runID, "run_journal": runJournalPath,
 		"artifacts": coverage.ArtifactsInventoried, "text_artifacts": coverage.TextArtifacts,

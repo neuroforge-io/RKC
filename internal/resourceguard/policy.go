@@ -23,7 +23,7 @@ import (
 //     or continue whenever any higher-priority process is visible.
 //   - PolicyYield (the default): RKC runs inside its exact low-priority
 //     envelope (one core, minimum CPU/I/O weight, nice 19, idle I/O,
-//     4.5 GiB hard memory, OOM-first) while higher-priority processes are
+//     bounded profile memory, OOM-first) while higher-priority processes are
 //     visible, and refuses or promptly cancels only when their aggregate CPU
 //     load reaches the configured fraction of one core. An idle or lightly
 //     active server therefore no longer blocks RKC, while genuine compute

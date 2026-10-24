@@ -538,7 +538,7 @@ func TestLaunchGuardedDirectUsesExactArgumentsGuardAndSanitizedEnvironment(t *te
 	if err := launchGuardedDirectUsing(context.Background(), "scan", args, dependencies); err != nil {
 		t.Fatalf("protected scan = %v", err)
 	}
-	if captured.Executable != "/opt/rkc" || captured.MaximumRSSBytes != resourceguard.LowPriorityMemoryMaxBytes ||
+	if captured.Executable != "/opt/rkc" || captured.MaximumRSSBytes != 0 ||
 		captured.UnitPrefix != "rkc-low" || captured.UnsafeDisableCgroup || captured.UnsafeDisablePriorityCheck {
 		t.Fatalf("guard config = %+v", captured)
 	}

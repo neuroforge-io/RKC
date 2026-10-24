@@ -3,12 +3,14 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/neuroforge-io/RKC/internal/scheduler"
+	"github.com/neuroforge-io/RKC/pkg/rkcmodel"
 )
 
 func TestScanCreatesInspectableRunJournal(t *testing.T) {
@@ -25,6 +27,7 @@ func TestScanCreatesInspectableRunJournal(t *testing.T) {
 			"--state-dir", state,
 			"--runs-dir", runs,
 			"--no-cache",
+			"--no-git-metadata",
 			"--no-plugins",
 			"--no-frameworks",
 			"--no-secret-scan",
@@ -42,6 +45,37 @@ func TestScanCreatesInspectableRunJournal(t *testing.T) {
 	var summary map[string]any
 	if err := json.Unmarshal([]byte(stdout), &summary); err != nil {
 		t.Fatalf("decode scan summary %q: %v", stdout, err)
+	}
+	if summary["schema_version"] != "rkc-scan-receipt/v1" {
+		t.Fatalf("scan receipt schema = %#v", summary["schema_version"])
+	}
+	for _, field := range []string{
+		"snapshot_id", "source", "source_kind", "output", "snapshot_store", "snapshot_store_noop",
+		"database", "database_noop", "cache", "cache_hits", "run_id", "run_journal",
+		"artifacts", "text_artifacts", "syntax_parsed", "semantic_parsed", "symbols", "edges",
+		"unresolved_edges", "error_diagnostics", "deterministic_digest",
+	} {
+		if _, present := summary[field]; !present {
+			t.Fatalf("scan receipt dropped existing field %q", field)
+		}
+	}
+	var bundle rkcmodel.Bundle
+	var coverage rkcmodel.Coverage
+	for name, target := range map[string]any{"bundle.json": &bundle, "coverage.json": &coverage} {
+		data, err := os.ReadFile(filepath.Join(output, name))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := json.Unmarshal(data, target); err != nil {
+			t.Fatalf("decode published %s: %v", name, err)
+		}
+	}
+	if summary["snapshot_id"] != bundle.Snapshot.ID || coverage.SnapshotID != bundle.Snapshot.ID ||
+		summary["deterministic_digest"] != rkcmodel.CanonicalDigest(bundle) ||
+		summary["deterministic_digest"] != coverage.DeterministicOutputDigest ||
+		summary["output"] != output || summary["snapshot_store"] != state ||
+		summary["artifacts"] != float64(coverage.ArtifactsInventoried) {
+		t.Fatalf("scan receipt does not identify its published atlas: %#v", summary)
 	}
 	runID, runIDOK := summary["run_id"].(string)
 	journalPath, pathOK := summary["run_journal"].(string)
@@ -99,17 +133,24 @@ func TestScanJournalTracksCommandFailuresAfterDAGCompletion(t *testing.T) {
 			t.Fatal(err)
 		}
 		runs := filepath.Join(root, "runs")
-		err := runScanContext(context.Background(), []string{
-			"--out", output,
-			"--runs-dir", runs,
-			"--no-cache",
-			"--no-plugins",
-			"--no-frameworks",
-			"--no-secret-scan",
-			repository,
+		stdout, err := captureStdout(t, func() error {
+			return runScanContext(context.Background(), []string{
+				"--out", output,
+				"--runs-dir", runs,
+				"--no-cache",
+				"--no-git-metadata",
+				"--no-plugins",
+				"--no-frameworks",
+				"--no-secret-scan",
+				"--json",
+				repository,
+			})
 		})
 		if err == nil {
 			t.Fatal("scan unexpectedly published over an existing output")
+		}
+		if stdout != "" {
+			t.Fatalf("failed publication emitted a success receipt: %q", stdout)
 		}
 		assertSingleRunJournalState(t, runs, scheduler.JournalStateFailed, "output directory already exists")
 	})
@@ -119,20 +160,48 @@ func TestScanJournalTracksCommandFailuresAfterDAGCompletion(t *testing.T) {
 		repository := filepath.Join(root, "repository")
 		writeTestFile(t, filepath.Join(repository, "openapi.json"), "{")
 		runs := filepath.Join(root, "runs")
-		err := runScanContext(context.Background(), []string{
-			"--out", filepath.Join(root, "atlas"),
-			"--runs-dir", runs,
-			"--no-cache",
-			"--no-plugins",
-			"--no-secret-scan",
-			"--fail-on-errors",
-			repository,
+		stdout, err := captureStdout(t, func() error {
+			return runScanContext(context.Background(), []string{
+				"--out", filepath.Join(root, "atlas"),
+				"--runs-dir", runs,
+				"--no-cache",
+				"--no-git-metadata",
+				"--no-plugins",
+				"--no-secret-scan",
+				"--fail-on-errors",
+				"--json",
+				repository,
+			})
 		})
 		if err == nil || !strings.Contains(err.Error(), "error diagnostic") {
 			t.Fatalf("scan diagnostic policy failure = %v", err)
 		}
+		if stdout != "" {
+			t.Fatalf("failed policy emitted a success receipt: %q", stdout)
+		}
 		assertSingleRunJournalState(t, runs, scheduler.JournalStateFailed, "error diagnostic")
 	})
+}
+
+func TestCancelledScanDoesNotEmitSuccessReceiptOrCreateRunState(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	root := t.TempDir()
+	output, runs := filepath.Join(root, "atlas"), filepath.Join(root, "runs")
+	stdout, err := captureStdout(t, func() error {
+		return runScanContext(ctx, []string{
+			"--out", output, "--runs-dir", runs, "--no-cache", "--no-git-metadata", "--no-plugins", "--json",
+			filepath.Join(root, "source-never-opened"),
+		})
+	})
+	if !errors.Is(err, context.Canceled) || stdout != "" {
+		t.Fatalf("canceled scan receipt=%q error=%v", stdout, err)
+	}
+	for _, path := range []string{output, runs} {
+		if _, err := os.Lstat(path); !os.IsNotExist(err) {
+			t.Fatalf("canceled scan created publication/run state %q: %v", path, err)
+		}
+	}
 }
 
 func TestRunsInspectionTextOrderingAndStrictFailures(t *testing.T) {

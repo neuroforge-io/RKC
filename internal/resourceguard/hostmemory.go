@@ -30,8 +30,19 @@ var ErrHostMemoryReserve = errors.New("host available memory is below the RKC re
 // HostAvailableMemoryMinimumBytesFromEnvironment parses the optional host
 // reserve without echoing malformed environment contents into diagnostics.
 func HostAvailableMemoryMinimumBytesFromEnvironment() (int64, error) {
+	profileName, err := resourceProfileNameFromEnvironment()
+	if err != nil {
+		return 0, err
+	}
+	minimum := int64(0)
+	if profileName == "desktop" {
+		minimum = 4096
+	}
 	value, present := os.LookupEnv(HostAvailableMemoryMinimumEnvironment)
 	if !present || strings.TrimSpace(value) == "" {
+		if profileName == "desktop" {
+			return 8192 * profileMiB, nil
+		}
 		return 0, nil
 	}
 	value = strings.TrimSpace(value)
@@ -44,7 +55,10 @@ func HostAvailableMemoryMinimumBytesFromEnvironment() (int64, error) {
 		}
 	}
 	parsed, err := strconv.ParseInt(value, 10, 64)
-	if err != nil || parsed < 0 || parsed > maximumHostAvailableMemoryMinimumMiB {
+	if err != nil || parsed < minimum || parsed > maximumHostAvailableMemoryMinimumMiB {
+		if minimum > 0 {
+			return 0, fmt.Errorf("%s must be an integer between %d and %d MiB for desktop", HostAvailableMemoryMinimumEnvironment, minimum, maximumHostAvailableMemoryMinimumMiB)
+		}
 		return 0, invalidHostAvailableMemoryMinimumError()
 	}
 	return parsed * 1024 * 1024, nil
@@ -124,6 +138,59 @@ func checkHostAvailableMemory(path string, minimum int64) error {
 			available,
 			minimum,
 		)
+	}
+	return nil
+}
+
+// checkDesktopHostMemoryAdmission reserves a new command's effective hard
+// allowance in addition to host headroom before it starts. This is admission
+// arithmetic, not a reservation or a memory-consumption measurement. Running
+// commands continue to check only their host reserve, without charging the
+// full allowance again after they have grown.
+func checkDesktopHostMemoryAdmission(path string, maximum, reserve int64) error {
+	if maximum < rkcMinimumMemoryBytes || reserve < 4096*profileMiB || maximum > math.MaxInt64-reserve {
+		return fmt.Errorf("%w: desktop memory admission budget is invalid", ErrHostMemoryReserve)
+	}
+	required := maximum + reserve
+	file, err := os.Open(path)
+	if err != nil {
+		return fmt.Errorf("%w: desktop memory admission counters are unavailable", ErrHostMemoryReserve)
+	}
+	defer file.Close()
+	data, err := io.ReadAll(io.LimitReader(file, maximumMeminfoBytes+1))
+	if err != nil || int64(len(data)) > maximumMeminfoBytes {
+		return fmt.Errorf("%w: desktop memory admission counters exceed the bounded read", ErrHostMemoryReserve)
+	}
+	scanner := bufio.NewScanner(bytes.NewReader(data))
+	scanner.Buffer(make([]byte, 1024), maximumMeminfoLineBytes)
+	values := map[string]int64{}
+	for scanner.Scan() {
+		fields := strings.Fields(scanner.Text())
+		if len(fields) == 0 || fields[0] != "MemAvailable:" && fields[0] != "MemTotal:" {
+			continue
+		}
+		_, duplicate := values[fields[0]]
+		if duplicate || len(fields) != 3 || fields[2] != "kB" || len(fields[1]) > 15 || len(fields[1]) > 1 && fields[1][0] == '0' {
+			return fmt.Errorf("%w: desktop memory admission counters are malformed", ErrHostMemoryReserve)
+		}
+		for _, character := range fields[1] {
+			if character < '0' || character > '9' {
+				return fmt.Errorf("%w: desktop memory admission counters are malformed", ErrHostMemoryReserve)
+			}
+		}
+		kilobytes, err := strconv.ParseInt(fields[1], 10, 64)
+		if err != nil || kilobytes > math.MaxInt64/1024 {
+			return fmt.Errorf("%w: desktop memory admission counters are malformed", ErrHostMemoryReserve)
+		}
+		values[fields[0]] = kilobytes * 1024
+	}
+	available, availablePresent := values["MemAvailable:"]
+	total, totalPresent := values["MemTotal:"]
+	if scanner.Err() != nil || !availablePresent || !totalPresent || total <= 0 || available > total {
+		return fmt.Errorf("%w: desktop memory admission counters are incomplete or inconsistent", ErrHostMemoryReserve)
+	}
+	if available < required || total < required {
+		return fmt.Errorf("%w: desktop command hard allowance plus host reserve exceeds available physical memory", ErrHostMemoryReserve)
 	}
 	return nil
 }
