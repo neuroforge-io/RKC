@@ -55,6 +55,16 @@ capture matched the registered folder. Later local edits do not alter that copy.
 A new generation must pass integrity, inventory accounting, symbol evidence,
 claim citation, error, and high-confidence secret gates.
 
+Redaction preserves valid typed content digests and canonical type/status
+vocabulary, even when a detected source literal happens to equal that metadata.
+Built-in source-document hash receipts stay bound to the same artifact. Source
+bodies and arbitrary plugin attributes still redact matching values; naming an
+attribute `sha256` or `kind` does not grant a payload exemption. Secret findings
+and operator review requirements are retained. A changed redaction recipe also
+changes snapshot identity, so existing immutable snapshots are not overwritten.
+See the [structural redaction contract](rfc/canonical-structural-redaction-v1.md)
+for the exact boundary and compatibility rules.
+
 RKC checks the live source again before switching the registry pointer. If newer
 edits arrived during compilation, it publishes the verified captured snapshot as
 `stale`; the next pass catches up. Changes during capture, compilation failures,

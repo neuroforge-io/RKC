@@ -268,7 +268,9 @@ func (state *stagedScanState) stages() []scheduler.Stage {
 	}
 	stages = append(stages,
 		state.stage("merge", append([]string(nil), analysisStageIDs...), nil, state.runMerge),
-		state.stage("resolve", []string{"merge"}, nil, state.runResolve),
+		state.stage("resolve", []string{"merge"}, map[string]any{
+			"redaction_contract": secrets.StructuralRedactionVersion,
+		}, state.runResolve),
 		state.stage("value-flow", []string{"resolve"}, map[string]any{
 			"enabled":        true,
 			"plugin_id":      flow.PluginID,
@@ -789,7 +791,7 @@ func (state *stagedScanState) runMerge(ctx context.Context) (scheduler.Result, e
 func (state *stagedScanState) runResolve(context.Context) (scheduler.Result, error) {
 	resolveHeuristicEdges(&state.bundle)
 	dedupeBundle(&state.bundle)
-	secrets.SanitizeBundle(&state.bundle, state.secretLiterals)
+	sanitizeCanonicalBundle(&state.bundle, state.secretLiterals)
 	return state.bundleResult("resolve"), nil
 }
 

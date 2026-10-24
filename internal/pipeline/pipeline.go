@@ -352,7 +352,7 @@ func scanSequential(ctx context.Context, opts Options) (rkcmodel.Bundle, rkcmode
 	dedupeBundle(&bundle)
 	resolveHeuristicEdges(&bundle)
 	dedupeBundle(&bundle)
-	secrets.SanitizeBundle(&bundle, secretLiterals)
+	sanitizeCanonicalBundle(&bundle, secretLiterals)
 	// The sequential oracle mirrors the staged value-flow pass so both paths
 	// produce byte-identical canonical output.
 	flowFragment, _, flowErr := flow.Analyze(ctx, flow.Options{
@@ -449,6 +449,9 @@ func stableSnapshotID(
 		"builtin-source-documents/v1",
 		docparse.SourcePluginID,
 		docparse.SourcePluginVersion,
+		// Redaction is part of canonical output, including structural receipts.
+		// Bind its recipe even when the current source contains no credentials.
+		secrets.StructuralRedactionVersion,
 	)
 	return rkcmodel.StableID("snapshot", parts...)
 }

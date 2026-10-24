@@ -47,8 +47,10 @@ func SensitiveLiterals(data []byte, findings []Finding) []string {
 
 // SanitizeBundle masks detected source patterns and credential-like map fields.
 // Transient literals of at least eight bytes also propagate across canonical
-// strings. Short source literals never rewrite unrelated identities or prose.
-// This runs before validation, search indexing, or any export.
+// payload strings. Valid typed digests and fixed vocabularies retain their
+// structural meaning; generic maps are always treated as payload. Short source
+// literals never rewrite unrelated identities or prose. This runs before
+// validation, search indexing, or any export.
 func SanitizeBundle(bundle *rkcmodel.Bundle, literals []string) int {
 	if bundle == nil {
 		return 0
@@ -77,13 +79,17 @@ func SanitizeBundle(bundle *rkcmodel.Bundle, literals []string) int {
 }
 
 func redactReflect(value reflect.Value, literals []string, redactions *int) {
+	redactValue(value, literals, redactions, true)
+}
+
+func redactValue(value reflect.Value, literals []string, redactions *int, structural bool) {
 	if !value.IsValid() {
 		return
 	}
 	switch value.Kind() {
 	case reflect.Pointer:
 		if !value.IsNil() {
-			redactReflect(value.Elem(), literals, redactions)
+			redactValue(value.Elem(), literals, redactions, structural)
 		}
 	case reflect.Interface:
 		if value.IsNil() {
@@ -91,15 +97,20 @@ func redactReflect(value reflect.Value, literals []string, redactions *int) {
 		}
 		copyValue := reflect.New(value.Elem().Type()).Elem()
 		copyValue.Set(value.Elem())
-		redactReflect(copyValue, literals, redactions)
+		redactValue(copyValue, literals, redactions, structural)
 		if value.CanSet() {
 			value.Set(copyValue)
 		}
 	case reflect.Struct:
+		owner := value.Type()
 		for index := 0; index < value.NumField(); index++ {
 			field := value.Field(index)
 			if field.CanSet() {
-				redactReflect(field, literals, redactions)
+				if structural && field.Kind() == reflect.String &&
+					preserveStructuralString(owner, owner.Field(index).Name, field.String()) {
+					continue
+				}
+				redactValue(field, literals, redactions, structural)
 			}
 		}
 	case reflect.Slice:
@@ -107,11 +118,11 @@ func redactReflect(value reflect.Value, literals []string, redactions *int) {
 			return
 		}
 		for index := 0; index < value.Len(); index++ {
-			redactReflect(value.Index(index), literals, redactions)
+			redactValue(value.Index(index), literals, redactions, structural)
 		}
 	case reflect.Array:
 		for index := 0; index < value.Len(); index++ {
-			redactReflect(value.Index(index), literals, redactions)
+			redactValue(value.Index(index), literals, redactions, structural)
 		}
 	case reflect.Map:
 		if value.IsNil() {
@@ -127,7 +138,9 @@ func redactReflect(value reflect.Value, literals []string, redactions *int) {
 			if name, ok := mapKeyString(entry.originalKey); ok && !entry.keyChanged && isCredentialValueKey(name) {
 				redactCredentialMapString(copyValue, redactions)
 			}
-			redactReflect(copyValue, literals, redactions)
+			// Attributes and other open maps are payload, including any typed
+			// structs nested inside them. Their keys cannot confer provenance.
+			redactValue(copyValue, literals, redactions, false)
 			key := uniqueMapKey(rebuilt, entry.sanitizedKey)
 			rebuilt.SetMapIndex(key, copyValue)
 		}

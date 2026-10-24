@@ -5,6 +5,9 @@ and RKC contributors and Apache-2.0 licensed.
 
 ## Unreleased
 
+- Preserve canonical digests and fixed vocabularies when source credential
+  literals happen to match them, retaining strict validation, source-document
+  receipts, payload redaction, and unchanged source secret-review requirements.
 - Reduce routine worker accounting polls from forty to ten per second while
   retaining kernel limits, independent cancellation, priority checks, and the
   existing cleanup verification cadence.

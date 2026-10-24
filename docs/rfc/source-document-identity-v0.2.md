@@ -87,6 +87,10 @@ producer recipe, and checks that source admission does not omit the binding.
 Binding every other built-in analysis version is a separate follow-up; this
 change makes the source-document migration safe within the existing contract.
 
+The later [structural redaction contract](canonical-structural-redaction-v1.md)
+adds its own unconditional version after this producer binding. The original
+source-document inputs and stored snapshot identities remain intact.
+
 ---
 _RKC is open source, published and maintained by **NeuroForgeIO**, under the
 **Apache License, Version 2.0**. Copyright 2026 NeuroForgeIO and RKC

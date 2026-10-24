@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/neuroforge-io/RKC/internal/docparse"
+	"github.com/neuroforge-io/RKC/internal/security/secrets"
 	"github.com/neuroforge-io/RKC/pkg/rkcmodel"
 )
 
@@ -17,14 +18,16 @@ func TestSnapshotIdentityBindsSourceProducerContract(t *testing.T) {
 	legacyID := rkcmodel.StableID("snapshot", originalInputs...)
 	recipeInputs := append(append([]string(nil), originalInputs...), "builtin-source-documents/v1", docparse.SourcePluginID)
 	oldProducerID := rkcmodel.StableID("snapshot", append(append([]string(nil), recipeInputs...), "0.1.0")...)
-	currentProducerID := rkcmodel.StableID("snapshot", append(append([]string(nil), recipeInputs...), docparse.SourcePluginVersion)...)
+	producerInputs := append(append([]string(nil), recipeInputs...), docparse.SourcePluginVersion)
+	oldRedactionID := rkcmodel.StableID("snapshot", producerInputs...)
+	currentProducerID := rkcmodel.StableID("snapshot", append(producerInputs, secrets.StructuralRedactionVersion)...)
 	for _, admission := range []string{"enabled", "frameworks disabled", "external plugins disabled"} {
 		t.Run(admission, func(t *testing.T) {
 			current := options
 			current.DisableFrameworks = admission == "frameworks disabled"
 			current.DisablePlugins = admission == "external plugins disabled"
 			id := stableSnapshotID("repository", "commit", "inventory", "", "", "", current)
-			if id == legacyID || id == oldProducerID || id != currentProducerID {
+			if id == legacyID || id == oldProducerID || id == oldRedactionID || id != currentProducerID {
 				t.Fatalf("source producer contract omitted or conditional: got %s; legacy %s; old producer %s; current producer %s", id, legacyID, oldProducerID, currentProducerID)
 			}
 		})
