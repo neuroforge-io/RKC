@@ -5,6 +5,9 @@ and RKC contributors and Apache-2.0 licensed.
 
 ## Unreleased
 
+- Bind guarded workers to a proven owning user service so a stopped or crashed
+  watcher service cannot leave its refresh running. Lifetime binding does not
+  grant resource admission or permission to stop the parent service.
 - Add a bounded, lock-coordinated resource comparison tool with private receipts,
   deterministic-output parity, pressure checks, and interruption cleanup tests.
 - Cleaner workbench onboarding, search examples, analysis-depth guidance, and

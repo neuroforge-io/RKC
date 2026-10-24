@@ -96,10 +96,22 @@ func policyPriorityCheck(policy Policy) func() error {
 }
 
 func newCommand(ctx context.Context, config Config, priorityCheck func() error) (*Command, error) {
-	return newCommandWithParentUnit(ctx, config, priorityCheck, currentParentRKCUnit)
+	return newCommandWithParentBinding(ctx, config, priorityCheck, currentParentUnitBinding)
 }
 
+// The legacy string injection seam cannot confer ordinary-service authority.
 func newCommandWithParentUnit(ctx context.Context, config Config, priorityCheck func() error, parentUnit func() (string, error)) (*Command, error) {
+	var resolver func() (parentUnitBinding, error)
+	if parentUnit != nil {
+		resolver = func() (parentUnitBinding, error) {
+			unit, err := parentUnit()
+			return parentUnitBinding{unit: unit}, err
+		}
+	}
+	return newCommandWithParentBinding(ctx, config, priorityCheck, resolver)
+}
+
+func newCommandWithParentBinding(ctx context.Context, config Config, priorityCheck func() error, parentUnit func() (parentUnitBinding, error)) (*Command, error) {
 	if ctx == nil {
 		return nil, errors.New("resource guard context is required")
 	}
@@ -174,8 +186,8 @@ func newCommandWithParentUnit(ctx context.Context, config Config, priorityCheck 
 	if err != nil {
 		return nil, fmt.Errorf("prove parent resource guard unit: %w", err)
 	}
-	if parent != "" && !validLowPriorityUnit(parent) {
-		return nil, errors.New("resource guard parent unit is not an admitted RKC unit")
+	if !parent.valid() {
+		return nil, errors.New("resource guard parent lifetime binding is invalid")
 	}
 	unit := fmt.Sprintf("%s-%d-%d.service", prefix, os.Getpid(), time.Now().UnixNano())
 	// Receipt-bound executable and model arguments are opaque bytes. Prevent
@@ -198,10 +210,12 @@ func newCommandWithParentUnit(ctx context.Context, config Config, priorityCheck 
 		"--property", "KillMode=control-group",
 		"--property", "TimeoutStopSec=2s",
 	}
-	if parent != "" {
+	if parent.unit != "" {
 		// The worker is a sibling service, so bind its lifetime to the proven
-		// outer unit. systemd stops it even if the Go Run monitor itself dies.
-		arguments = append(arguments, "--property", "BindsTo="+parent, "--property", "After="+parent)
+		// parent unit. An ordinary service grants lifetime only, never reusable
+		// admission. systemd stops this child when that parent unit becomes
+		// inactive; a watcher MainPID's death deactivates its ordinary service.
+		arguments = append(arguments, "--property", "BindsTo="+parent.unit, "--property", "After="+parent.unit)
 	}
 	arguments = append(arguments, "--", "choom", "-n", "750", "--", "ionice", "-c", "3", "nice", "-n", "19", "env", "-i")
 	arguments = append(arguments, environment...)

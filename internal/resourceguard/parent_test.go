@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -197,6 +198,158 @@ func TestWorkerServiceBindsOnlyToProvenParentUnit(t *testing.T) {
 		if _, err := newCommandWithParentUnit(context.Background(), Config{Executable: "/opt/model"},
 			func() error { return nil }, resolver); err == nil {
 			t.Fatal("invalid parent authority constructed a worker")
+		}
+	}
+}
+
+func TestOrdinaryUserServiceLifetimeProofDoesNotAdmitResources(t *testing.T) {
+	fixture := newEnvelopeFixture(t)
+	const uid = 1000
+	const unit = "rkc-neuroforge-workspace.service"
+	group := "/user.slice/user-1000.slice/user@1000.service/app.slice/" + unit
+	fixture.writeProc("cgroup", "0::"+group+"\n")
+	proofCalls := 0
+	binding, err := currentParentUnitBindingUsing(fixture.proc, fixture.pid, uid, func() error {
+		proofCalls++
+		return ErrLowPriorityEnvelope
+	}, func(observed string) (string, error) {
+		if observed != unit {
+			t.Fatalf("queried a different parent unit: %q", observed)
+		}
+		return group, nil
+	})
+	if err != nil || binding.unit != unit || !binding.lifetimeOnly || !binding.valid() || proofCalls != 0 {
+		t.Fatalf("ordinary lifetime proof = %+v, %v, envelope calls=%d", binding, err, proofCalls)
+	}
+	strict := func() error {
+		return requireProcessLowPriority(fixture.proc, fixture.cgroup, fixture.pid, func(int) (schedulingEnvelope, error) {
+			return schedulingEnvelope{nice: rkcNice, ioClass: rkcIOClassIdle}, nil
+		})
+	}
+	if err := strict(); !errors.Is(err, ErrLowPriorityEnvelope) {
+		t.Fatalf("ordinary lifetime proof admitted strict resources: %v", err)
+	}
+	for _, allowLowering := range []bool{false, true} {
+		err := prepareCurrentProcessLowPriorityUsing(strict,
+			func() (bool, error) { return currentProcessUsesReservedLowUnit(fixture.proc, fixture.pid) },
+			func() error {
+				return requireExternalProcessLowPriority(fixture.proc, fixture.cgroup, fixture.pid, externalEnvelopeDependencies{
+					verifyFilesystems: func(string, string) error { return nil },
+					inspectScheduling: func(int) (schedulingEnvelope, error) {
+						return schedulingEnvelope{nice: rkcNice, ioClass: rkcIOClassIdle}, nil
+					},
+					lowerScheduling: func(int) error { t.Fatal("ordinary service scheduling was changed"); return nil },
+				}, allowLowering)
+			})
+		if !errors.Is(err, ErrLowPriorityEnvelope) {
+			t.Fatalf("ordinary service gained prepare/reusable admission (lower=%t): %v", allowLowering, err)
+		}
+	}
+	if runtime.GOOS != "linux" {
+		return
+	}
+	installFakeResourceGuardCommands(t, "exit 0\n")
+	command, err := newCommandWithParentBinding(context.Background(), Config{Executable: "/opt/rkc"},
+		func() error { return nil }, func() (parentUnitBinding, error) { return binding, nil })
+	if err != nil {
+		t.Fatal(err)
+	}
+	arguments := strings.Join(command.cmd.Args, "\n")
+	for _, property := range []string{"BindsTo=" + unit, "After=" + unit,
+		"MemoryMax=" + strconv.FormatInt(rkcMemoryMaxBytes, 10), "KillMode=control-group"} {
+		if !strings.Contains(arguments, property) {
+			t.Errorf("ordinary lifetime-bound worker omitted %q", property)
+		}
+	}
+}
+
+func TestOrdinaryUserServiceLifetimeProofFailsClosedOnObservationDrift(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("POSIX cgroup-record replacement and symlink fixtures")
+	}
+	const group = "/user.slice/user-1000.slice/user@1000.service/app.slice/rkc-neuroforge-workspace.service"
+	for _, mutation := range []string{"manager mismatch", "manager failure", "moved", "removed", "replaced", "symlink"} {
+		t.Run(mutation, func(t *testing.T) {
+			fixture := newEnvelopeFixture(t)
+			fixture.writeProc("cgroup", "0::"+group+"\n")
+			path := filepath.Join(fixture.process, "cgroup")
+			binding, err := currentParentUnitBindingUsing(fixture.proc, fixture.pid, 1000,
+				func() error { t.Fatal("ordinary service acquired envelope authority"); return nil },
+				func(string) (string, error) {
+					switch mutation {
+					case "manager mismatch":
+						return "/system.slice/rkc-neuroforge-workspace.service", nil
+					case "manager failure":
+						return "", errors.New("manager unavailable")
+					case "moved":
+						fixture.writeProc("cgroup", "0::/\n")
+					case "removed":
+						if err := os.Remove(path); err != nil {
+							t.Fatal(err)
+						}
+					case "replaced", "symlink":
+						replacement := filepath.Join(fixture.process, "replacement")
+						if err := os.WriteFile(replacement, []byte("0::"+group+"\n"), 0o600); err != nil {
+							t.Fatal(err)
+						}
+						if mutation == "replaced" {
+							if err := os.Rename(replacement, path); err != nil {
+								t.Fatal(err)
+							}
+						} else {
+							if err := os.Remove(path); err != nil {
+								t.Fatal(err)
+							}
+							if err := os.Symlink(replacement, path); err != nil {
+								t.Fatal(err)
+							}
+						}
+					}
+					return group, nil
+				})
+			if err == nil || binding.unit != "" {
+				t.Fatalf("changed ordinary parent acquired binding: %+v, %v", binding, err)
+			}
+		})
+	}
+}
+
+func TestOrdinaryUserServiceRejectsOtherOwnersNamespacesAndUnitNames(t *testing.T) {
+	const prefix = "/user.slice/user-1000.slice/user@1000.service/"
+	for _, group := range []string{
+		"/", "/rkc.service", "/system.slice/rkc.service", "/user.slice/rkc.service",
+		"/user.slice/user-1001.slice/user@1001.service/app.slice/rkc.service",
+		"/user.slice/user-1000.slice/user@1001.service/app.slice/rkc.service",
+		strings.TrimSuffix(prefix, "/"), prefix + "session-4.scope/rkc.service",
+		prefix + "app.slice/rkc.scope", prefix + "app.slice/rkc.service/child.service",
+		prefix + "app.slice/-rkc.service", prefix + "app.slice/.service",
+		prefix + "app.slice/rkc%instance.service", prefix + "app.slice/rkc\n.service",
+		prefix + "app.slice/rkc-é.service", prefix + "app.slice/" + strings.Repeat("a", 248) + ".service",
+		prefix + "app.slice/rkc-low-fake.service",
+	} {
+		if unit := ordinaryUserService(group, 1000); unit != "" {
+			t.Errorf("unproven membership %q acquired ordinary parent %q", group, unit)
+		}
+	}
+	for _, uid := range []int{-1, 0, 1001} {
+		if unit := ordinaryUserService(prefix+"app.slice/rkc.service", uid); unit != "" {
+			t.Errorf("membership acquired owner %d authority: %q", uid, unit)
+		}
+	}
+	for _, group := range []string{prefix + "rkc.service", prefix + "app.slice/rkc-neuroforge-workspace.service", prefix + "background.slice/tools.slice/rkc@worker-1.service"} {
+		if unit := ordinaryUserService(group, 1000); unit != filepath.Base(group) {
+			t.Errorf("ordinary user membership %q was not recognized: %q", group, unit)
+		}
+	}
+	for _, binding := range []parentUnitBinding{
+		{unit: "rkc.service"},
+		{unit: "rkc.service", lifetimeOnly: true},
+		{unit: "rkc.service", userGroup: prefix + "app.slice/other.service", userID: 1000, lifetimeOnly: true},
+		{unit: "rkc-low-42.scope", userGroup: prefix + "app.slice/rkc-low-42.scope", userID: 1000, lifetimeOnly: true},
+		{lifetimeOnly: true},
+	} {
+		if binding.valid() {
+			t.Errorf("invalid injected lifetime binding was accepted: %+v", binding)
 		}
 	}
 }

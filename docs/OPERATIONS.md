@@ -135,6 +135,15 @@ budget cannot enlarge its parent allowance. CPU quotas, one-worker runtime
 settings, idle I/O, priority, process limits, and interruption cleanup apply in
 both profiles.
 
+On Linux, a new guarded worker also binds its lifetime to its current user
+service when the user manager and rechecked kernel membership agree. Stopping
+that service, including a watcher whose main process crashes, stops its bound
+worker. This lifetime proof does not admit analysis inside the ordinary service;
+the worker still needs its own resource limits and fresh admission. It does not
+prove cleanup after an arbitrary descendant process dies while its service stays
+active. System services, login sessions and hidden namespace memberships do not
+acquire this user-service binding through an environment variable.
+
 A larger soft ceiling can avoid reclaim stalls when the host has spare RAM.
 It is not a measured speedup. Compare the same bounded input and executable,
 retain input and output digests, and measure wall time, CPU use, peak memory,
