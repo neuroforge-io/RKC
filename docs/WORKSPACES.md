@@ -207,6 +207,33 @@ RKC does not install a daemon or change service policy automatically. Keep the
 workspace, service logs, and client configuration private. A watch is a polling
 process, not a background task after its process has exited.
 
+### Optionally defer refresh during ERAIS model work
+
+On Linux, opt a workspace refresh into the same user's canonical kernel model
+lease policy:
+
+```sh
+RKC_WORKSPACE_PRIORITY_LEASE=erais \
+  rkc workspace sync --workspace /absolute/private/workspace
+RKC_WORKSPACE_PRIORITY_LEASE=erais \
+  rkc workspace watch --workspace /absolute/private/workspace --interval 10m
+```
+
+Unset or empty keeps existing behavior. Set
+`Environment=RKC_WORKSPACE_PRIORITY_LEASE=erais` explicitly in a watcher service
+to forward the policy to its guarded refresh child. A held or unprovable lease
+defers the pass; a running protected refresh also checks once per second and
+cancels on refusal. The watcher waits its normal interval before retrying.
+Canceled refreshes preserve the last accepted generation, and existing readers
+continue serving it. Secret-review and quality gates still apply.
+
+The observer never reads or acquires the model lease. It requires an unfiltered
+initial-PID-namespace kernel view and safe owned paths; other values and
+unsupported visibility refuse refresh. This is a workspace scheduling option,
+not a reservation or general model/shell policy. See the
+[workspace model lease contract](rfc/WORKSPACE_MODEL_LEASE.md) for exact scope,
+bounds, absence semantics, and remaining observation races.
+
 ---
 _RKC is open source, published and maintained by **NeuroForgeIO**, under the
 **Apache License, Version 2.0**. Copyright 2026 NeuroForgeIO and RKC

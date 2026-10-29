@@ -606,11 +606,13 @@ class ResourceGuardLifecycleTests(unittest.TestCase):
         self.assert_quiescent()
 
     def test_argument_bytes_stdin_and_selected_limits_survive_both_modes(self) -> None:
+        self.fixture.environment["RKC_WORKSPACE_PRIORITY_LEASE"] = "erais"
         arguments = ["", "with space", "line\nbreak", "$HOME", "$(false)", "évidence"]
         script = (
             "import json, os, sys; "
             "print(json.dumps({'args': sys.argv[1:], 'input': sys.stdin.read(), "
             "'threads': os.environ['GOMAXPROCS'], 'memory': os.environ['GOMEMLIMIT'], "
+            "'workspace_lease': os.environ['RKC_WORKSPACE_PRIORITY_LEASE'], "
             "'coverage_bootstrap': any(key in os.environ for key in "
             "('COVERAGE_PROCESS_CONFIG', 'COVERAGE_PROCESS_START'))}))"
         )
@@ -623,11 +625,14 @@ class ResourceGuardLifecycleTests(unittest.TestCase):
                 self.assertEqual(receipt, {
                     "args": arguments, "input": "interactive input\n",
                     "threads": "1", "memory": "384MiB", "coverage_bootstrap": False,
+                    "workspace_lease": "erais",
                 })
                 invocation = json.loads((self.fixture.root / "invocation.json").read_text())
                 for selected in ("CPUQuota=25%", "MemoryHigh=512M", "MemoryMax=640M", "MemorySwapMax=0M"):
                     self.assertIn(selected, invocation["args"])
                 self.assertIn("--expand-environment=no", invocation["args"])
+                if mode == "service":
+                    self.assertIn("--setenv=RKC_WORKSPACE_PRIORITY_LEASE=erais", invocation["args"])
                 self.assert_quiescent()
 
     def test_normal_nonzero_exit_cleans_background_descendants_and_preserves_status(self) -> None:

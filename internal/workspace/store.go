@@ -214,8 +214,11 @@ func (store *Store) Refresh(ctx context.Context, id string, producer func(contex
 		return err
 	}
 	active, runErr := producer(ctx, source, filepath.Join(store.root, "generations"))
-	if runErr == nil {
-		runErr = ctx.Err()
+	if contextErr := ctx.Err(); contextErr != nil {
+		// Preserve cancellation even when a producer replaces it with a
+		// capture/validation failure. The worker has stopped for scheduling,
+		// not necessarily because the source changed; keep both causes.
+		runErr = errors.Join(runErr, contextErr)
 	}
 	now := time.Now().UTC()
 	current := &store.Registry.Sources[index]

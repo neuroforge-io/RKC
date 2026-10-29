@@ -655,6 +655,8 @@ func ResourceGuardEnvironment() []string {
 	for _, name := range profileEnvironmentNames {
 		allowed[name] = struct{}{}
 	}
+	// A workspace scheduling option is not a resource-profile selector.
+	allowed[WorkspacePriorityLeaseEnvironment] = struct{}{}
 	allowed["GOMEMLIMIT"] = struct{}{}
 	return sortedEnvironment(environmentMap(os.Environ(), allowed))
 }

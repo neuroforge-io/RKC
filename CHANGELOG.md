@@ -5,6 +5,10 @@ and RKC contributors and Apache-2.0 licensed.
 
 ## Unreleased
 
+- Add optional workspace-only ERAIS kernel-lease observation, with bounded
+  read-only checks, proven initial PID namespace visibility, fail-closed
+  refresh deferral and cancellation, retained accepted generations, and normal
+  watcher retry intervals. Existing reader sessions and secret gates remain.
 - Preserve canonical digests and fixed vocabularies when source credential
   literals happen to match them, retaining strict validation, source-document
   receipts, payload redaction, and unchanged source secret-review requirements.

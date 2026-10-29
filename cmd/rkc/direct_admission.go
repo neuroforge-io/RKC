@@ -126,13 +126,17 @@ func runProtectedDirectLocal(
 	args []string,
 	local func(context.Context, []string) error,
 ) error {
+	priorityCheck := resourceguard.CurrentPriorityCheck()
+	if command == "workspace" {
+		priorityCheck = resourceguard.WorkspacePriorityCheck()
+	}
 	return runProtectedDirectLocalUsing(
 		ctx,
 		command,
 		args,
 		local,
 		protectedDirectLocalDependencies{
-			checkHigherPriority: resourceguard.CurrentPriorityCheck(),
+			checkHigherPriority: priorityCheck,
 			checkHostMemory:     resourceguard.CheckHostAvailableMemory,
 			requireEnvelope:     resourceguard.RequireCurrentProcessReusableLowPriority,
 			newTicker: func(interval time.Duration) (<-chan time.Time, func()) {
@@ -269,6 +273,11 @@ func launchGuardedDirectUsing(
 	}
 	if err != nil {
 		return err
+	}
+	if command == "workspace" {
+		if err := resourceguard.CheckWorkspaceModelLease(); err != nil {
+			return fmt.Errorf("workspace refresh deferred before worker launch: %w", err)
+		}
 	}
 	executable, err := dependencies.executable()
 	if err != nil {

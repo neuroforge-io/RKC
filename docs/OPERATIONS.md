@@ -193,6 +193,15 @@ refused comparisons retain failure receipts. These are bounded performance
 observations, not the complete release or source-quality gate. No models,
 remote acquisition, repository scripts or Python extractors are invoked.
 
+Workspace refreshes can additionally select `RKC_WORKSPACE_PRIORITY_LEASE=erais`
+to defer to the same user's canonical kernel model lease on Linux. Refused
+watch passes wait their configured interval, canceled refreshes retain their
+last accepted generations, and established readers keep serving. The option
+requires proven kernel visibility and safe paths, adds no resource allowance,
+and does not configure arbitrary commands or model acquisition. See
+[workspace configuration](WORKSPACES.md#optionally-defer-refresh-during-erais-model-work)
+and the [workspace model lease contract](rfc/WORKSPACE_MODEL_LEASE.md).
+
 ### Starting a trusted workbench
 
 For a trusted single-user Linux checkout, `rkc open --workbench <path>` is the

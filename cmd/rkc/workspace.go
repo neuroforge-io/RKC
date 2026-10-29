@@ -21,6 +21,7 @@ import (
 	"github.com/neuroforge-io/RKC/internal/acquire"
 	"github.com/neuroforge-io/RKC/internal/inventory"
 	"github.com/neuroforge-io/RKC/internal/privatepath"
+	"github.com/neuroforge-io/RKC/internal/resourceguard"
 	"github.com/neuroforge-io/RKC/internal/server"
 	"github.com/neuroforge-io/RKC/internal/workspace"
 	"github.com/neuroforge-io/RKC/pkg/rkcmodel"
@@ -250,6 +251,9 @@ func runWorkspaceSyncContext(ctx context.Context, args []string) error {
 	if err != nil {
 		return err
 	}
+	if err := resourceguard.CheckWorkspaceModelLease(); err != nil {
+		return fmt.Errorf("workspace refresh deferred before opening its writer: %w", err)
+	}
 	store, err := workspace.Open(path)
 	if err != nil {
 		return err
@@ -287,6 +291,9 @@ func runWorkspaceSyncContext(ctx context.Context, args []string) error {
 				}
 			}
 		}
+	}
+	if err := ctx.Err(); err != nil {
+		return errors.Join(append(failures, err)...)
 	}
 	if err := store.Prune(); err != nil {
 		failures = append(failures, fmt.Errorf("workspace generation cleanup: %w", err))

@@ -178,6 +178,7 @@ guard_launch_unit() {
     higher_priority_policy=$RKC_HIGHER_PRIORITY_POLICY
     higher_priority_markers=$RKC_HIGHER_PRIORITY_MARKERS
     guard_priority_load_max=${RKC_HIGHER_PRIORITY_LOAD_MAX-}
+    guard_workspace_priority_lease=${RKC_WORKSPACE_PRIORITY_LEASE-}
 case "$guard_mode" in
     scope)
         exec systemd-run \
@@ -241,6 +242,7 @@ case "$guard_mode" in
             --setenv="RKC_HIGHER_PRIORITY_POLICY=$higher_priority_policy" \
             --setenv="RKC_HIGHER_PRIORITY_MARKERS=$higher_priority_markers" \
             --setenv="RKC_HIGHER_PRIORITY_LOAD_MAX=$guard_priority_load_max" \
+            --setenv="RKC_WORKSPACE_PRIORITY_LEASE=$guard_workspace_priority_lease" \
             --property "Description=$guard_description" \
             --property "UMask=$guard_record_umask" \
             --property CPUWeight=1 \
