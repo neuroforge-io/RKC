@@ -5,6 +5,8 @@ and RKC contributors and Apache-2.0 licensed.
 
 ## Unreleased
 
+- Check Go formatting in small sequential batches and fail on tool errors,
+  including failures with empty output, to reduce task pressure on shared hosts.
 - Add optional workspace-only ERAIS kernel-lease observation, with bounded
   read-only checks, proven initial PID namespace visibility, fail-closed
   refresh deferral and cancellation, retained accepted generations, and normal

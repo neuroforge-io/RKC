@@ -24,7 +24,7 @@ install-check: build
 	sh scripts/test_install.sh
 
 format-check:
-	@test -z "$$(gofmt -l cmd internal pkg storage)" || { echo "Go files require gofmt:"; gofmt -l cmd internal pkg storage; exit 1; }
+	$(PYTHON) scripts/check_go_format.py
 
 vet:
 	go vet ./...

@@ -95,6 +95,16 @@ and tests, and checks it approximately once per second while work runs. A
 reserve violation stops the owned unit and returns temporary failure (75);
 an unavailable or malformed memory reading fails closed when a reserve is set.
 
+`make format-check` also limits the formatter to sequential batches of sixteen
+Go files, with one runnable Go processor. A single directory-wide formatter
+invocation can create many file tasks even with that processor setting. The
+check reports inventory, launch, syntax, and formatter failures as failures,
+including a failed formatter with no standard output. It only reads source;
+use the same guarded wrapper for formatting checks on a shared host.
+Go source symlinks and special files fail inventory rather than being silently
+omitted or opened. Directory symlinks are not traversed; diagnostics are bounded
+and escape unusual filename characters.
+
 The wrapper supervises both scope and service modes. A small detached watchdog
 binds the fresh unit to its launcher's process identity and stops that unit
 after interruption or launcher death. Cleanup is bounded and only targets the
