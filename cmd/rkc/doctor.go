@@ -4,6 +4,7 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -116,18 +117,8 @@ func runDoctor(args []string) error {
 		if err := writeJSONStdout(result); err != nil {
 			return err
 		}
-	} else {
-		for _, check := range checks {
-			status := strings.ToUpper(check.Status)
-			if check.Status == "fail" && !check.Fatal {
-				status = "WARN"
-			}
-			fmt.Printf("%-5s %-24s %s\n", status, check.Name, check.Detail)
-			if check.Remediation != "" {
-				fmt.Printf("      %-24s %s\n", "fix", check.Remediation)
-			}
-		}
-		fmt.Printf("Result: fatal=%d warnings=%d ok=%t strict=%t\n", fatalFailures, warnings, ok, *strict)
+	} else if err := writeDoctorReport(os.Stdout, checks, fatalFailures, warnings, ok, *strict); err != nil {
+		return err
 	}
 	if fatalFailures > 0 {
 		return fmt.Errorf("doctor found %d fatal problem(s)", fatalFailures)
@@ -136,6 +127,25 @@ func runDoctor(args []string) error {
 		return fmt.Errorf("doctor found %d optional capability warning(s) in strict mode", warnings)
 	}
 	return nil
+}
+
+func writeDoctorReport(output io.Writer, checks []doctorCheck, fatalFailures, warnings int, ok, strict bool) error {
+	for _, check := range checks {
+		status := strings.ToUpper(check.Status)
+		if check.Status == "fail" && !check.Fatal {
+			status = "WARN"
+		}
+		if _, err := fmt.Fprintf(output, "%-5s %-24s %s\n", status, check.Name, check.Detail); err != nil {
+			return err
+		}
+		if check.Remediation != "" {
+			if _, err := fmt.Fprintf(output, "      %-24s %s\n", "fix", check.Remediation); err != nil {
+				return err
+			}
+		}
+	}
+	_, err := fmt.Fprintf(output, "Result: fatal=%d warnings=%d ok=%t strict=%t\n", fatalFailures, warnings, ok, strict)
+	return err
 }
 
 func hostMemoryReserveCheck() doctorCheck {
